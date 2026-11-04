@@ -7,7 +7,7 @@ agreed with the user covers stages 1 to 3. All documentation: [index](README.md)
 
 `AGENTS.md`, `docs/`, `devlog/`. No code.
 
-## Stage 1: skeleton and shared infrastructure (done 2026-11-05, except the web check)
+## Stage 1: skeleton and shared infrastructure (done 2026-11-05)
 
 - Done: CMake project, presets (`debug`, `release`, `asan`, `tsan`, `host-tools`, `ios-sim-release`,
   `ios-device-release`), pinned dependencies, `THIRD_PARTY_LICENSES`, `-Wall -Wextra` on engine targets with
@@ -19,7 +19,8 @@ agreed with the user covers stages 1 to 3. All documentation: [index](README.md)
 - Done: `quench_core`: `FixedStepClock`, JSON, `quench::fs` (standard library backend), worker thread priority.
 - Done: `quench_physics`: `PhysicsWorld` with both games' additions (Apple QoS for Jolt's workers, `tempAllocator()`).
 - Done: CTest with headless tests, one CTest test per case.
-- Open: an Emscripten build of the headless targets run under Node.js (Emscripten is not installed on the Mac).
+- Done: the `wasm-node` preset: the headless targets and their tests built with Emscripten and run under Node.js,
+  single-threaded (`PhysicsWorld` uses Jolt's `JobSystemSingleThreaded` there).
 - Moved: a separate `headless` preset is only useful once non-headless targets exist; it comes with stage 2.
 
 ## Stage 2: GPU layer

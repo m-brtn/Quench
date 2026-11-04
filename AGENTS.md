@@ -23,8 +23,8 @@ skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`
 **Current state (2026-11-05): stage 1 of `docs/roadmap.md` is in place: the CMake skeleton and presets, `quench_core`
 (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard library backend,
 worker thread priority), `quench_physics` (`PhysicsWorld` on Jolt), the shader build (`quench_shaderc`,
-`quench_add_shaders()`) and headless tests. There is no window, GPU layer, renderer or sample app yet, so the capture
-and benchmark gates cannot run.** `docs/migration.md` describes what exists in the two games; the rest of `docs/` is
+`quench_add_shaders()`) and headless tests, also run as WebAssembly under Node.js. There is no window, GPU layer,
+renderer or sample app yet, so the capture and benchmark gates cannot run.** `docs/migration.md` describes what exists in the two games; the rest of `docs/` is
 design and plan beyond stage 1. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) with one HLSL shader source compiled at build
@@ -48,7 +48,8 @@ How each backend is verified:
   validation layers, not real Vulkan drivers: say so whenever Vulkan results are mentioned.
 - **Web**: the pinned SDL (3.4.18) has no WebGPU backend in SDL GPU (only an experimental pull request,
   libsdl-org/SDL#16020). Until one is usable, web compatibility is verified only for headless modules, built with
-  Emscripten and run as CTest under Node.js on the Mac.
+  Emscripten and run as CTest under Node.js on the Mac (the `wasm-node` preset, single-threaded, with stack overflow
+  checks). Node.js is not a browser: say "under Node.js" whenever web results are mentioned.
 
 ## Build and test
 
@@ -62,11 +63,15 @@ tools/format.sh --check            # tools/format.sh without arguments formats i
 # iOS: libraries only for now; the shaders are compiled by a macOS quench_shaderc from the host-tools preset
 cmake --preset host-tools && cmake --build --preset host-tools
 cmake --preset ios-sim-release && cmake --build --preset ios-sim-release        # or ios-device-release
+# Web check: headless tests as WebAssembly under Node.js, single-threaded (needs host-tools and Homebrew's
+# emscripten; the preset points EMSDK_PYTHON at Homebrew's python3, Xcode's is too old)
+emcmake cmake --preset wasm-node && cmake --build --preset wasm-node && ctest --preset wasm-node -j8
 ```
 
 Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...). A test
 executable runs one case by name (`build/debug/tests/quench_core_tests json_round_trip`), all cases without
-arguments, and lists them with `--list`.
+arguments, and lists them with `--list`. A case that cannot run in a build (threads in the single-threaded web build)
+calls `QUENCH_SKIP` and is reported as skipped, not passed.
 
 All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
 
@@ -75,6 +80,7 @@ All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
   assume).
 - **Core, job system, assets or anything threaded:** also `ctest` under the `asan` preset (AddressSanitizer and
   UndefinedBehaviorSanitizer); job system and threading changes also under `tsan` (ThreadSanitizer).
+- **Headless modules (core, physics, assets, animation, navigation, audio mixer):** also the `wasm-node` web check.
 - **Platform, GPU or app code:** also build for iOS; ask the user to run on the iPhone when the change can behave
   differently on the device.
 - **Rendering or frame-time-sensitive code:** run the benchmark and compare with the numbers before the change (see

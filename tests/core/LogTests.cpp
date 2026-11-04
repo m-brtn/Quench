@@ -1,6 +1,7 @@
 #include "Test.h"
 
 #include <quench/core/Log.h>
+#include <quench/core/Thread.h>
 
 #include <mutex>
 #include <string>
@@ -79,6 +80,7 @@ QUENCH_TEST(log_throttle) {
 }
 
 QUENCH_TEST(log_threads) {
+    if (!threadsAvailable()) QUENCH_SKIP("no threads in this build");
     Capture c;
     constexpr int kThreads = 4, kPerThread = 500;
     std::vector<std::thread> threads;

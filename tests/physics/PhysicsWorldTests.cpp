@@ -55,6 +55,18 @@ QUENCH_TEST(physics_sphere_settles) {
     CHECK(world.bodies().GetLinearVelocity(sphere).Length() < 0.05f, "still moving");
 }
 
+// Without worker threads, Jolt's jobs run on the thread that calls step(), with the same result.
+QUENCH_TEST(physics_single_threaded) {
+    PhysicsWorld::Settings settings;
+    settings.workerThreads = 0;
+    PhysicsWorld world(settings);
+    const JPH::BodyID sphere = addScene(world, 5.0f);
+    world.optimizeBroadPhase();
+    const float y = settle(world, sphere, 3.0);
+    CHECK(world.jobSystem().GetMaxConcurrency() == 1, "max concurrency %d", world.jobSystem().GetMaxConcurrency());
+    CHECK(restsOnBox(world, y), "y = %.4f", y);
+}
+
 // The Jolt runtime is reference-counted: destroying one world keeps another one working.
 QUENCH_TEST(physics_two_worlds) {
     PhysicsWorld kept;
@@ -71,6 +83,7 @@ QUENCH_TEST(physics_two_worlds) {
 // Jobs run on Jolt's worker threads with the worker priority (user-interactive QoS on Apple platforms). The main thread
 // only polls, so it never runs a job itself.
 QUENCH_TEST(physics_worker_priority) {
+    if (!threadsAvailable()) QUENCH_SKIP("no threads in this build");
     {
         bool plain = false;
         std::thread([&] { plain = hasWorkerThreadPriority(); }).join();

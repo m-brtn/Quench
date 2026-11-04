@@ -50,6 +50,18 @@
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "QUENCH_BUILD_TESTS": "OFF" }
     },
     {
+      "name": "wasm-node",
+      "displayName": "WebAssembly, headless tests under Node.js, no threads (configure with emcmake; build host-tools first)",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "environment": { "EMSDK_PYTHON": "/opt/homebrew/bin/python3" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXE_LINKER_FLAGS": "-sALLOW_MEMORY_GROWTH=1 -sNODERAWFS=1 -sEXIT_RUNTIME=1 -sSTACK_OVERFLOW_CHECK=2 -sASSERTIONS=1",
+        "QUENCH_HOST_SHADERC": "${sourceDir}/build/host-tools/quench_shaderc"
+      }
+    },
+    {
       "name": "ios-base",
       "hidden": true,
       "inherits": "base",
@@ -81,6 +93,7 @@
     { "name": "asan", "configurePreset": "asan" },
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "host-tools", "configurePreset": "host-tools", "targets": ["quench_shaderc"] },
+    { "name": "wasm-node", "configurePreset": "wasm-node" },
     { "name": "ios-sim-release", "configurePreset": "ios-sim-release" },
     { "name": "ios-device-release", "configurePreset": "ios-device-release" }
   ],
@@ -88,6 +101,7 @@
     { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
     { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
     { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
-    { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true } }
+    { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true } },
+    { "name": "wasm-node", "configurePreset": "wasm-node", "output": { "outputOnFailure": true } }
   ]
 }

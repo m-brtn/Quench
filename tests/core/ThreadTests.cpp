@@ -7,6 +7,7 @@
 using namespace quench;
 
 QUENCH_TEST(thread_priority) {
+    if (!threadsAvailable()) QUENCH_SKIP("no threads in this build");
     bool raised = false;
     std::thread([&] {
         raiseWorkerThreadPriority();

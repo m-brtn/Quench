@@ -36,6 +36,8 @@ Build-time shader toolchain (host tools, not shipped in the binary):
 | SPIRV-Cross | `6c09849fe88c48eaed08413aa022aaa136a3a057` | Apache-2.0 | SPIR-V -> MSL |
 | DXC | 1.9.2609 (`dxc_2026_09_29.zip`) | NCSA | HLSL -> DXIL, Windows hosts only |
 | `xcrun metal` | Xcode | Apple | MSL -> metallib |
+| Emscripten | 6.0.13 (Homebrew, not pinned) | MIT or NCSA; Apache-2.0 (with LLVM exception) parts | the `wasm-node` web check; needs Python 3.10+ |
+| Node.js | 26.13.0 (Homebrew, installed with Emscripten) | MIT | runs the WebAssembly tests |
 
 TrailForge's texture and model compiler (`tools/texc`, host tool) also uses stb
 (`003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5`) and bc7enc_rdo (`b9438627eef73a1157e84201b6fa6eb2ffd6d9f0`).
@@ -72,7 +74,9 @@ its command line tool), miniaudio (audio device and capture), Dear ImGui (diagno
   configure libktx with `LIBKTX_FEATURE_ETC_UNPACK=NO` so it is not built. Apache-2.0 NOTICE files must be shipped.
 - **Jolt Physics 5.6.0** (pinned commit): provides `JobSystemWithBarrier` (base for a custom job system),
   `JobSystemSingleThreaded` and `JobSystemThreadPool`. The engine job system implements `JobSystemWithBarrier` on
-  enkiTS.
+  enkiTS. Single-threaded, Jolt runs dependent jobs nested on the caller's stack: under Emscripten one `step()` of a
+  sphere on a box overflowed the 64 KB default stack by about 12 KB. `quench_physics` therefore links WebAssembly
+  programs with `-sSTACK_SIZE=1048576`, the value Jolt uses for its own WebAssembly programs.
 - **enkiTS**: `ProfilerCallbacks::threadStart` runs on each worker at start; the engine sets Apple QoS there.
 - **SDL GPU**: no ray tracing, no GPU timestamps, no native handles (see
   [Architecture](architecture.md#graphics-layer)).

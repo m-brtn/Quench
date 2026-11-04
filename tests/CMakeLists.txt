@@ -11,7 +11,8 @@ function(quench_add_test_executable name)
     set(list_file ${CMAKE_CURRENT_BINARY_DIR}/${name}_cases.cmake)
     add_custom_command(TARGET ${name} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:${name}> -DPREFIX=${arg_PREFIX} -DOUTPUT=${list_file}
-                -DWORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/DiscoverTests.cmake
+                -DWORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR} -DSKIP_RETURN_CODE=77
+                "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" -P ${CMAKE_CURRENT_SOURCE_DIR}/DiscoverTests.cmake
         VERBATIM)
     set(include_file ${CMAKE_CURRENT_BINARY_DIR}/${name}_include.cmake)
     file(CONFIGURE OUTPUT ${include_file} CONTENT

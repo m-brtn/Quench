@@ -10,6 +10,8 @@ project(Quench VERSION 0.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# No C++20 modules in the engine or its dependencies: skip the dependency scan.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 if(PROJECT_IS_TOP_LEVEL)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif()
@@ -48,6 +50,11 @@ endif()
 add_library(quench_physics STATIC src/physics/PhysicsWorld.cpp)
 quench_configure_target(quench_physics)
 target_link_libraries(quench_physics PUBLIC quench_core Jolt)
+if(EMSCRIPTEN)
+    # Single-threaded, Jolt runs its jobs nested on the stack of step(): Emscripten's 64 KB default overflows (found by
+    # the wasm-node tests). 1 MB is what Jolt links its own WebAssembly programs with.
+    target_link_options(quench_physics INTERFACE -sSTACK_SIZE=1048576)
+endif()
 
 # ------------------------------------------------------------------ gpu
 # Header-only until stage 2: the table type of embedded shaders (quench_add_shaders).

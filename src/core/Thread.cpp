@@ -8,6 +8,14 @@
 
 namespace quench {
 
+bool threadsAvailable() {
+#if QUENCH_PLATFORM_WEB && !defined(__EMSCRIPTEN_PTHREADS__)
+    return false;
+#else
+    return true;
+#endif
+}
+
 void raiseWorkerThreadPriority() {
 #if QUENCH_PLATFORM_APPLE
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
