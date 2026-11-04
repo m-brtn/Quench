@@ -1,7 +1,8 @@
 # Architecture
 
-Design of the engine. **None of this exists yet**; sections describe the intended structure and the reasons for it.
-The binding rules are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
+Design of the engine. Stage 1 exists (CMake, `quench_core`, `quench_physics`, the shader build, headless tests; the
+current layout is in [AGENTS.md](../AGENTS.md#layout)); everything else here describes the intended structure and the
+reasons for it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
 
 ## Planned layout
 
@@ -52,8 +53,12 @@ docs/releases/        release notes per version
 Headless targets build and test without SDL video or a GPU. This is what lets the games keep their headless test
 presets and what makes the Node.js web check possible.
 
-`quench::fs` has two implementations: SDL_IOStream (apps: bundle, APK, browser file system) and the C++ standard
-library (headless host tests and tools). Which one the headless targets link is decided in stage 1.
+`quench::fs` has two backends behind one interface (`quench::fs::Backend`), chosen at run time: the C++ standard
+library one in `quench_core` is the default (headless host tests and tools), and the app module installs an
+SDL_IOStream one at startup (bundle, APK, browser file system). Headless targets therefore need no SDL. Paths are
+checked in one place before any backend sees them: relative, '/' separators, no '.', '..' or empty segments, no '\'
+or ':'. User files are written next to the target and renamed over it, so an interrupted write leaves the previous file
+intact (no fsync: a power loss right after the rename is not covered).
 
 ## Graphics layer
 
@@ -101,10 +106,21 @@ SPIRV-Cross MSL -> `xcrun metal` -> metallib; DXC -> DXIL on Windows hosts; all 
 entry point is guarded by a macro and follows the SDL GPU register conventions (vertex: resources space0, uniforms
 space1; fragment: resources space2, uniforms space3).
 
+Done in stage 1 (`quench_add_shaders()` in `cmake/QuenchShaders.cmake`):
+
+- One table per shader set, `quench::shaders::<name>` (`include/quench/gpu/ShaderBlob.h`), so the engine and a game
+  can each have several sets. A row holds the entry name, the stage and the resource counts SDL GPU needs to create
+  the shader (samplers, storage textures, storage buffers, uniform buffers), read from the compiled SPIR-V by
+  `quench_shaderc`; the games pass those counts by hand today.
+- `#include "x"` resolves next to the including file, then in the set's `INCLUDE_DIRS`, then in the engine shader
+  library (`shaders/`, empty until stage 5). `quench_shaderc` writes a depfile, so editing an included file
+  recompiles the shaders that use it (verified with Ninja). DXC gets the same directories with `-I`.
+- Cross builds (iOS) use a macOS `quench_shaderc` given by `QUENCH_HOST_SHADERC` (the `host-tools` preset builds it).
+- Storage textures and combined image samplers are refused with an error for now; no shader uses them yet.
+
 Planned changes:
 
-- `#include` support in `quench_shaderc` (glslang includer, `-I` for DXC, CMake dependencies on included files) and an
-  engine shader library in `shaders/quench/`.
+- The engine shader library in `shaders/quench/`.
 - Uniform structs in shared headers read by both C++ and HLSL.
 - WGSL output for the web (from SPIR-V through Tint or naga) once SDL has a WebGPU backend.
 - Ray queries need Shader Model 6.5. Whether glslang's HLSL front end can compile them is unverified; the likely path

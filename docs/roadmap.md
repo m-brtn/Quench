@@ -7,17 +7,20 @@ agreed with the user covers stages 1 to 3. All documentation: [index](README.md)
 
 `AGENTS.md`, `docs/`, `devlog/`. No code.
 
-## Stage 1: skeleton and shared infrastructure
+## Stage 1: skeleton and shared infrastructure (done 2026-11-05, except the web check)
 
-- CMake project, presets (`debug`, `release`, `headless`, `asan`, `tsan`, `host-tools`, `ios-sim-release`,
-  `ios-device-release`), pinned dependencies, `THIRD_PARTY_LICENSES`, `-Wall -Wextra -Werror` on engine targets.
-- Code rules in code: `quench::log`, `quench::Result<T>`, `QUENCH_ASSERT`, the header self-containment test, the
-  formatting check; the decision on `-fno-exceptions`.
-- Shader toolchain: `quench_shaderc` (from TrailForge, entry guards `QUENCH_ENTRY_<name>`), `#include` support,
-  `quench_add_shaders()` and blob embedding for game shaders.
-- `quench_core`: `FixedStepClock`, `Json`, `quench::fs`.
-- `quench_physics`: `PhysicsWorld` with both games' additions (Apple QoS for Jolt's workers, `tempAllocator()`).
-- CTest with headless tests; an Emscripten build of the headless targets run under Node.js.
+- Done: CMake project, presets (`debug`, `release`, `asan`, `tsan`, `host-tools`, `ios-sim-release`,
+  `ios-device-release`), pinned dependencies, `THIRD_PARTY_LICENSES`, `-Wall -Wextra` on engine targets with
+  `-Werror` when the engine is built on its own.
+- Done: code rules in code: `quench::log`, `quench::Result<T>`, `QUENCH_ASSERT`, the header self-containment check,
+  `tools/format.sh --check`; exceptions stay enabled ([AGENTS.md](../AGENTS.md#errors-and-assertions)).
+- Done: shader toolchain: `quench_shaderc` (from TrailForge, entry guards `QUENCH_ENTRY_<name>`), `#include` with a
+  depfile, resource counts in the blob table, `quench_add_shaders()` for engine and game shader sets.
+- Done: `quench_core`: `FixedStepClock`, JSON, `quench::fs` (standard library backend), worker thread priority.
+- Done: `quench_physics`: `PhysicsWorld` with both games' additions (Apple QoS for Jolt's workers, `tempAllocator()`).
+- Done: CTest with headless tests, one CTest test per case.
+- Open: an Emscripten build of the headless targets run under Node.js (Emscripten is not installed on the Mac).
+- Moved: a separate `headless` preset is only useful once non-headless targets exist; it comes with stage 2.
 
 ## Stage 2: GPU layer
 

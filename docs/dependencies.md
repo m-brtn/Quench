@@ -6,9 +6,10 @@ checked on 2026-11-04 in the libraries' repositories. All documentation: [index]
 
 ## Carried over from the games
 
-All are fetched as GitHub archives of a fixed commit with a SHA256 hash. The SHA256 values are in TrailForge's
-`cmake/Dependencies.cmake`, `cmake/ShaderToolchain.cmake` and `tools/texc/CMakeLists.txt`; the engine copies them
-when the CMake files move.
+All are fetched as GitHub archives of a fixed commit with a SHA256 hash. Pinned in the engine so far (stage 1), with
+TrailForge's commits, hashes and options: Jolt Physics (`cmake/Dependencies.cmake`) and the shader toolchain
+(`cmake/ShaderToolchain.cmake`). The others are added with the stage that uses them; until then their SHA256 values
+are in TrailForge's `cmake/Dependencies.cmake` and `tools/texc/CMakeLists.txt`.
 
 | Library | Version | Commit | Licence | Used by | Purpose |
 |---|---|---|---|---|---|
@@ -27,14 +28,14 @@ patches. Ashfall plays audio through an SDL3 audio stream with sounds synthesize
 
 Build-time shader toolchain (host tools, not shipped in the binary):
 
-| Tool | Commit or version | Purpose |
-|---|---|---|
-| SPIRV-Headers | `29981f65241605e08b0ede4cfeb999fe3b723c6a` | SPIR-V definitions |
-| SPIRV-Tools | `9a49b0883b9b635689a85b5647dbfcb223268151` | legalization of glslang's HLSL output |
-| glslang | `168d452a4f460d24b588fed08477a81c44ee27a1` | HLSL -> SPIR-V |
-| SPIRV-Cross | `6c09849fe88c48eaed08413aa022aaa136a3a057` | SPIR-V -> MSL |
-| DXC | 1.9.2609 (`dxc_2026_09_29.zip`) | HLSL -> DXIL, Windows hosts only |
-| `xcrun metal` | Xcode | MSL -> metallib |
+| Tool | Commit or version | Licence | Purpose |
+|---|---|---|---|
+| SPIRV-Headers | `29981f65241605e08b0ede4cfeb999fe3b723c6a` | MIT | SPIR-V definitions |
+| SPIRV-Tools | `9a49b0883b9b635689a85b5647dbfcb223268151` | Apache-2.0 | legalization of glslang's HLSL output |
+| glslang | `168d452a4f460d24b588fed08477a81c44ee27a1` | BSD-3-Clause, BSD-2-Clause, MIT, Apache-2.0 | HLSL -> SPIR-V |
+| SPIRV-Cross | `6c09849fe88c48eaed08413aa022aaa136a3a057` | Apache-2.0 | SPIR-V -> MSL |
+| DXC | 1.9.2609 (`dxc_2026_09_29.zip`) | NCSA | HLSL -> DXIL, Windows hosts only |
+| `xcrun metal` | Xcode | Apple | MSL -> metallib |
 
 TrailForge's texture and model compiler (`tools/texc`, host tool) also uses stb
 (`003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5`) and bc7enc_rdo (`b9438627eef73a1157e84201b6fa6eb2ffd6d9f0`).
@@ -75,3 +76,9 @@ its command line tool), miniaudio (audio device and capture), Dear ImGui (diagno
 - **enkiTS**: `ProfilerCallbacks::threadStart` runs on each worker at start; the engine sets Apple QoS there.
 - **SDL GPU**: no ray tracing, no GPU timestamps, no native handles (see
   [Architecture](architecture.md#graphics-layer)).
+- **glslang** (pinned commit): its configure step warns that `ENABLE_HLSL` is deprecated and that the HLSL front end
+  will be removed in a future major release (KhronosGroup/glslang#4210). The pin keeps working. Before moving the
+  glslang pin, check that the HLSL front end is still there; if it is gone, the SPIR-V path needs another HLSL
+  compiler on the Mac (DXC can emit SPIR-V; whether it builds and runs on macOS hosts is not checked yet).
+- **SPIRV-Cross**: built from an archive without `.git`, its configure step picks up the git hash of the enclosing
+  repository (the engine's or a game's) as its version string. Cosmetic; it does not affect the output.

@@ -20,9 +20,12 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-05): the repository holds only these rules, the documentation and the devlog. There is no
-engine code, no build and no test yet.** `docs/migration.md` describes what exists in the two games; everything else in
-`docs/` is design and plan. Update this paragraph whenever that changes.
+**Current state (2026-11-05): stage 1 of `docs/roadmap.md` is in place: the CMake skeleton and presets, `quench_core`
+(`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard library backend,
+worker thread priority), `quench_physics` (`PhysicsWorld` on Jolt), the shader build (`quench_shaderc`,
+`quench_add_shaders()`) and headless tests. There is no window, GPU layer, renderer or sample app yet, so the capture
+and benchmark gates cannot run.** `docs/migration.md` describes what exists in the two games; the rest of `docs/` is
+design and plan beyond stage 1. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) with one HLSL shader source compiled at build
 time, Jolt Physics, Dear ImGui (diagnostics), GLM, miniaudio. Planned additions and their licences:
@@ -49,14 +52,27 @@ How each backend is verified:
 
 ## Build and test
 
-Not set up yet. The planned presets, sample app and test layout are in `docs/roadmap.md` (stage 1). Replace this
-paragraph with the real commands when the first build exists.
+Requirements: CMake 3.28+, Ninja, Xcode with its command line tools, and the Metal toolchain for precompiled
+metallibs (`xcodebuild -downloadComponent MetalToolchain`; without it the MSL source is embedded and compiled at
+startup). The first configure of every preset downloads the pinned dependencies.
 
-All checks run locally; there is no CI (user decision, 2026-11-05). Gates, in force as soon as code exists:
+```sh
+cmake --preset debug && cmake --build --preset debug && ctest --preset debug -j8   # also release, asan, tsan
+tools/format.sh --check            # tools/format.sh without arguments formats in place
+# iOS: libraries only for now; the shaders are compiled by a macOS quench_shaderc from the host-tools preset
+cmake --preset host-tools && cmake --build --preset host-tools
+cmake --preset ios-sim-release && cmake --build --preset ios-sim-release        # or ios-device-release
+```
 
-- **Every code change:** build `debug` and `release`, run `ctest` for both, check formatting (`clang-format
-  --dry-run --Werror` on the changed files), and run the sample's capture check against its golden images, looking
-  at the image (do not assume).
+Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...). A test
+executable runs one case by name (`build/debug/tests/quench_core_tests json_round_trip`), all cases without
+arguments, and lists them with `--list`.
+
+All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
+
+- **Every code change:** build `debug` and `release`, run `ctest` for both, `tools/format.sh --check`, and (once the
+  sample exists, stage 3) run the sample's capture check against its golden images, looking at the image (do not
+  assume).
 - **Core, job system, assets or anything threaded:** also `ctest` under the `asan` preset (AddressSanitizer and
   UndefinedBehaviorSanitizer); job system and threading changes also under `tsan` (ThreadSanitizer).
 - **Platform, GPU or app code:** also build for iOS; ask the user to run on the iPhone when the change can behave
@@ -101,14 +117,16 @@ Details and rationale: `docs/architecture.md`.
 - **Main loop.** SDL main callbacks (`SDL_AppInit`, `SDL_AppIterate`, `SDL_AppEvent`, `SDL_AppQuit`): the engine owns
   `main`, a game implements the engine's game interface. No blocking `while (running)` loop: browsers and mobile
   lifecycles do not allow it.
-- **Files.** Engine and game runtime code reads assets and writes user files only through `quench::fs` (SDL_IOStream
-  underneath: assets from the bundle, the APK or the browser's virtual file system; writes only to the user directory
-  from `SDL_GetPrefPath`). No `std::ifstream`, `std::ofstream` or `fopen` for assets or saves. Host-only tools and
-  tests may use the standard library.
+- **Files.** Engine and game runtime code reads assets and writes user files only through `quench::fs`: relative
+  paths with '/' and no '..', assets read-only, writes only to the user directory. Its default backend uses the
+  standard library (host tests and tools); the app installs an SDL_IOStream backend (assets from the bundle, the APK
+  or the browser's virtual file system; the user directory from `SDL_GetPrefPath`). No `std::ifstream`,
+  `std::ofstream` or `fopen` for assets or saves elsewhere. Host-only tools and tests may use the standard library.
 - **Threads.** Only through the engine job system (enkiTS, planned), which also runs Jolt's jobs through a
-  `JPH::JobSystemWithBarrier` implementation, so there is one thread pool. It must also work with a single thread (the
-  web without cross-origin isolation). Worker threads run at user-interactive QoS on Apple platforms: the frame thread
-  waits for them, and a lower QoS would be a priority inversion.
+  `JPH::JobSystemWithBarrier` implementation, so there is one thread pool (until then `PhysicsWorld` keeps Jolt's own
+  pool). It must also work with a single thread (the web without cross-origin isolation). Every worker thread calls
+  `quench::raiseWorkerThreadPriority()` (user-interactive QoS on Apple platforms): the frame thread waits for the
+  workers, and a lower QoS would be a priority inversion.
 - **No ECS in the core, no plugin system.** Engine APIs take plain handles; a game may put an ECS on top (Flecs is the
   candidate, as an optional module). Modules are linked statically.
 - **No abstraction without a concrete need.** The GPU layer above is the decided exception, for the reasons given.
@@ -121,7 +139,7 @@ These keep the later platforms reachable without rewriting the games. They apply
 are built:
 
 - Nothing outside a platform backend may assume Apple (or any single OS): platform code lives in clearly named
-  backend files or behind `QUENCH_PLATFORM_*` checks in one place.
+  backend files or behind `QUENCH_PLATFORM_*` checks, which only `src/core/Platform.h` defines.
 - Keep the SPIR-V, DXIL and MSL outputs of the shader build working even where only Metal is run.
 - Texture formats are chosen by device capability: BC7 today; ASTC or Basis Universal transcoding is needed for Android
   and the web.
@@ -144,8 +162,10 @@ are built:
   main type (`PhysicsWorld.h`, `PhysicsWorld.cpp`).
 - Headers use `#pragma once`. Include order, separated by blank lines: the file's own header, engine headers,
   third-party headers, the standard library.
-- Engine targets build with `-Wall -Wextra -Werror` (`/W4 /WX` when MSVC is added). Public headers must also compile
-  without warnings under the games' flags. Third-party code is built without `-Werror`.
+- Engine targets build with `-Wall -Wextra`, plus `-Werror` when the engine is the top-level project (`QUENCH_WERROR`;
+  inside a game, a warning from a newer compiler must not break the game's build). `/W4 /WX` when MSVC is added.
+  Public headers must also compile without warnings under the games' flags (both use `-Wall -Wextra` today).
+  Third-party code is built without `-Werror`.
 
 ### Errors and assertions
 
@@ -155,16 +175,19 @@ are built:
   fallback (placeholder, disabled feature) and a log line, never a crash.
 - Programming errors (broken invariants, wrong use of an API) are `QUENCH_ASSERT(condition, "message")`: active in
   debug and development builds, compiled out in release; it logs the file, line and message and stops in the debugger.
-- Exceptions from third-party code do not cross engine APIs. Whether engine targets build with `-fno-exceptions` is
-  decided in stage 1, after checking every dependency.
+- Exceptions from third-party code do not cross engine APIs. Engine targets build with exceptions enabled (decided in
+  stage 1): both games build Jolt with exceptions and throw their own (TrailForge's renderer throws
+  `std::runtime_error`), and a game exception passing through engine frames must still run their destructors. Engine
+  runtime code does not throw; host tools may (SPIRV-Cross reports errors by throwing).
 
 ### Logging
 
 - Engine runtime code logs only through `quench::log`: levels error, warning, info and debug, a category per module
   (`gpu`, `assets`, `physics`, `audio`, `app`, ...). No `printf`, `std::cout` or `std::cerr` in engine runtime code;
   host tools and tests may print.
-- Output goes to SDL_Log (the Xcode console and the device log on iOS, logcat on Android, the browser console on the
-  web) and to stderr on desktop. Games can add sinks (an on-screen console, a file in the user directory).
+- Output goes to stderr (a default sink) and, once the app module adds its sink, to SDL_Log (the Xcode console and the
+  device log on iOS, logcat on Android, the browser console on the web). Games can add sinks (an on-screen console, a
+  file in the user directory).
 - One line per message, with the values that explain it (path, size, count, device feature). Messages that could
   repeat every frame are rate-limited. The debug level is compiled out in release builds.
 
@@ -295,12 +318,20 @@ LFS only when unavoidable and keep it small.
 ## Layout
 
 ```
-AGENTS.md       these rules
-README.md       short overview
-LICENSE         MIT licence of the engine
-.clang-format   code format; .editorconfig for editors
-docs/           documentation (index docs/README.md): architecture, platforms, dependencies, migration, roadmap
-devlog/         daily development log (template in devlog/README.md)
+AGENTS.md              these rules
+README.md              short overview
+LICENSE                MIT licence of the engine; THIRD_PARTY_LICENSES: licences of the libraries it ships
+CMakeLists.txt         engine targets; CMakePresets.json: configure, build and test presets
+cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), QuenchShaders
+                       (quench_add_shaders), EmbedShaders, QuenchTargets (warnings, include directories)
+include/quench/        public headers per module: core/, physics/, gpu/
+src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*)
+tools/shaderc/         quench_shaderc, the build-time shader compiler
+tools/format.sh        clang-format over the C and C++ sources (--check)
+tests/                 headless tests: harness/, core/, physics/, gpu/ (with test shaders), header check
+docs/                  documentation (index docs/README.md): architecture, platforms, dependencies, migration, roadmap
+devlog/                daily development log (template in devlog/README.md)
+.clang-format          code format; .editorconfig for editors
 ```
 
-The planned source layout is in `docs/architecture.md`; move it here when it exists.
+Modules and directories that do not exist yet are planned in `docs/architecture.md`.

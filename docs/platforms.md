@@ -10,8 +10,10 @@ Android and the web are later targets; the portability rules in [AGENTS.md](../A
 
 ## Status
 
-The engine has not run anywhere yet (there is no code). The table shows what the games have run, which is what the
-engine code starts from.
+The engine itself (stage 1, headless only) builds and passes its tests on macOS (arm64; also under the address,
+undefined-behaviour and thread sanitizers), and its libraries build for the iOS Simulator and iOS devices; nothing of
+it has run on iOS or on a GPU yet. Its shaders are compiled to SPIR-V and macOS / iOS metallibs, but not loaded by any
+GPU. The table shows what the games have run, which is what the engine code starts from.
 
 | Platform | SDL GPU backend | Shader format | Run so far (games) |
 |---|---|---|---|
