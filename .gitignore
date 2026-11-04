@@ -1,0 +1,10 @@
+build/
+dist/
+.cache/
+*.bmp
+*.png
+!tests/golden/**/*.png
+imgui.ini
+.DS_Store
+compile_commands.json
+__pycache__/
