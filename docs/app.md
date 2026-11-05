@@ -61,7 +61,9 @@ const ActionId left = input.addAction("left", {*Binding::key("A"), Binding::game
 Dear ImGui 1.92.9b with the engine's own renderer on `quench::gpu` (`src/app/ImGuiRenderer.cpp`): dynamic font
 textures (`ImGuiBackendFlags_RendererHasTextures`), any swapchain format (sRGB-aware), clip rectangles in pixels. The
 font and the style scale with the display's content scale, 1.5 times larger on iOS and Android. `imgui.ini` is not
-written. `quench::app::imguiTexture(texture)` gives an id for `ImGui::Image`.
+written. `quench::app::imguiTexture(texture)` gives an id for `ImGui::Image`. The renderer is public
+(`quench/app/ImGuiRenderer.h`), so a program with its own window and loop (a game on its way to the app shell) can
+draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and the SDL3 platform backend itself.
 
 ## Command line flags
 

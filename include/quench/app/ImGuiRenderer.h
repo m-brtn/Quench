@@ -3,6 +3,10 @@
 // Dear ImGui renderer over quench::gpu (ImGuiBackendFlags_RendererHasTextures, RendererHasVtxOffset). The SDL3
 // platform backend from ImGui handles windowing and input; this replaces ImGui's SDL GPU renderer backend, so ImGui
 // goes through the same GPU layer as the engine and games.
+//
+// The app shell (App.h) creates and drives it. A program with its own window and loop can use it directly: create an
+// ImGui context and ImGui_ImplSDL3_InitForOther(window), then create(device); per frame, after ImGui::Render(),
+// prepare() before the render pass and draw() inside it; shutdown() before ImGui::DestroyContext().
 
 #include <quench/core/Result.h>
 #include <quench/gpu/Device.h>
@@ -50,5 +54,8 @@ private:
     gpu::TransferBuffer m_staging;
     bool m_prepared = false;
 };
+
+// ImGui texture id of a sampled texture (ImGui::Image). The texture must outlive the frame that draws it.
+std::uint64_t imguiTexture(const gpu::Texture& texture);
 
 } // namespace quench::app

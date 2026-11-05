@@ -102,6 +102,7 @@ RenderPass CommandBuffer::beginRenderPass(std::span<const ColorTarget> colors, c
         info.resolve_mip_level = in.resolveMipLevel;
         info.resolve_layer = in.resolveLayer;
         info.cycle = in.cycle;
+        info.cycle_resolve_texture = in.cycleResolve;
         pass.m_targets.colorFormats[i] = in.texture.desc.format;
     }
     pass.m_targets.colorTargets = std::uint32_t(colors.size());

@@ -6,6 +6,7 @@
 // Per frame: events -> input -> scenario -> fixed simulation ticks -> update -> ImGui -> render -> ImGui on top ->
 // present. Rendering is skipped while the app is in the background (iOS) or the window is minimized.
 
+#include <quench/app/ImGuiRenderer.h> // imguiTexture()
 #include <quench/core/Result.h>
 #include <quench/gpu/Device.h>
 
@@ -153,8 +154,5 @@ private:
     explicit App(detail::AppState& state) : m_state(state) {}
     detail::AppState& m_state;
 };
-
-// ImGui texture id of a sampled texture (ImGui::Image). The texture must outlive the frame that draws it.
-std::uint64_t imguiTexture(const gpu::Texture& texture);
 
 } // namespace quench::app

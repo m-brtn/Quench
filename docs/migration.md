@@ -98,14 +98,16 @@ Order: TrailForge first (the engine was written for it, it has the most tests an
 | Game | Moved to the engine | Engine pin | Date |
 |---|---|---|---|
 | TrailForge | `PhysicsWorld` and `JoltRuntime` (`quench_physics`), `FixedStepClock` and JSON (`quench_core`), the shader build (`quench_add_shaders`, `quench_shaderc`; also `tools/texc` for JSON) | `502c35e` | 2026-11-05 |
+| TrailForge | the renderer on `quench::gpu`, ImGui drawn by `quench::app::ImGuiRenderer` (`quench_imgui`), GPU timing; its own window and loop stay | not pinned yet | 2026-11-05 |
 | Ashfall | nothing yet | | |
 
 What a game changes when it switches (TrailForge's switch as the example):
 
 - CMake: `cmake_minimum_required(VERSION 3.28)` and `set(CMAKE_CXX_SCAN_FOR_MODULES OFF)`; the engine's
-  `FetchContent_Declare` comes after the game's own declarations of shared dependencies (SDL3, Jolt, ImGui, GLM):
-  the first declaration wins, so both use the game's sources (the pins must match). `QUENCH_HEADLESS`
-  follows the game's own headless option.
+  `FetchContent_Declare` comes after the game's own declarations of shared dependencies (SDL3, Jolt, GLM):
+  the first declaration wins, so both use the game's sources (the pins must match). Once the game draws ImGui through
+  the engine it drops its own ImGui declaration and target and links `quench_imgui`. `QUENCH_HEADLESS` follows the
+  game's own headless option.
 - iOS: the presets pass `QUENCH_HOST_SHADERC` (the macOS `quench_shaderc` from a host build) instead of the game's
   own shader compiler; the host preset builds the target `quench_shaderc`.
 - Shaders: `quench_add_shaders(<target> NAME <name> SOURCE <hlsl> ENTRIES ...)` replaces the game's embed step;
@@ -114,3 +116,14 @@ What a game changes when it switches (TrailForge's switch as the example):
 - JSON: `quench::json::parse` returns `quench::Result<Value>` instead of taking an error string; a namespace alias
   (`namespace json = quench::json;` inside the game's namespace) keeps the call sites short.
 - Physics: `quench::PhysicsWorld`, `quench::JoltRuntime`, `quench::PhysicsLayers::kStatic` / `kMoving`.
+- Renderer: SDL GPU calls become `quench::gpu` objects (`Device`, `Texture`, `Buffer`, `Sampler`,
+  `GraphicsPipeline`, `TransferBuffer`, `CommandBuffer` and its passes), released by their destructors; the `Device`
+  is the first member so it is destroyed last. The engine's descriptors have defaults where SDL's zero-initialized
+  structs had zeros: a sampler's `maxLod` is 1000 (SDL zero: 0) and its mipmap mode Linear (SDL zero: Nearest), so a
+  game that relied on the zeros sets them. A pipeline that draws in a pass with a depth target declares the depth
+  format even with depth test and write off. GPU timing comes from `Device::gpuMilliseconds(fence)` instead of a
+  game's own Metal file.
+- ImGui with the game's own loop: `ImGui_ImplSDL3_InitForOther(window)` and `quench::app::ImGuiRenderer` (`prepare()`
+  before the pass, `draw()` inside it) instead of ImGui's SDL GPU backend; image ids from
+  `quench::app::imguiTexture()`. Link order `quench_app quench_gpu quench_imgui` (otherwise ld warns about a duplicate
+  library).

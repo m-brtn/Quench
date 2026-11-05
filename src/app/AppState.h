@@ -3,10 +3,10 @@
 // The state behind quench::app::App, owned by the SDL main callbacks (Main.cpp). Members are destroyed in reverse
 // order: the game first, then ImGui, the GPU device, the window, the file system backend and the log sink.
 
-#include "ImGuiRenderer.h"
 #include "Options.h"
 
 #include <quench/app/App.h>
+#include <quench/app/ImGuiRenderer.h>
 #include <quench/app/Input.h>
 #include <quench/app/Scenario.h>
 #include <quench/core/FileSystem.h>

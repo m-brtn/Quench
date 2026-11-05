@@ -40,7 +40,8 @@ struct ColorTarget {
     TextureRef resolveTexture{}; // StoreOp::Resolve or ResolveAndStore: the single-sample texture to resolve into
     std::uint32_t resolveMipLevel = 0;
     std::uint32_t resolveLayer = 0;
-    bool cycle = false; // write to fresh memory if the GPU may still use the texture (not with LoadOp::Load)
+    bool cycle = false;        // write to fresh memory if the GPU may still use the texture (not with LoadOp::Load)
+    bool cycleResolve = false; // the same for resolveTexture
 };
 
 struct DepthTarget {

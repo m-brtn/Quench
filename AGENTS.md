@@ -29,8 +29,9 @@ standard library backend, worker thread priority), `quench_physics` (`PhysicsWor
 `tests/golden/`, input and benchmark scenarios); `templates/game` and `tools/new_game.py` start a new game. Tests run
 on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator, on the user's iPhone (one signed test app) and,
 for the headless modules, as WebAssembly under Node.js. Stage 4 has started: TrailForge builds on the engine's
-`quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, the rest of TrailForge and all of Ashfall
-still use their own copies; `tools/check_games.sh` builds both games against this checkout and starts them. There is
+`quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, and renders through `quench_gpu` and the
+engine's `ImGuiRenderer` with its own window and loop; its app shell and all of Ashfall still use their own code;
+`tools/check_games.sh` builds both games against this checkout and starts them. There is
 no retained scene or render module (stage 5).** `docs/migration.md` describes what exists in the two games; `docs/app.md`
 and `docs/performance.md` describe what is built; the rest of `docs/` is design and plan beyond stage 3. Update this
 paragraph whenever that changes.

@@ -59,7 +59,10 @@ change; each game's full gates at the end of the work.
 - Done: `tools/check_games.sh`.
 - Done (TrailForge): `PhysicsWorld`, `FixedStepClock`, JSON and the shader build from the engine, pinned with
   FetchContent (2026-11-05; progress table in [Migration](migration.md)).
-- Next: TrailForge's app shell (`quench_app`, `quench_main`, `quench_gpu`), then Ashfall.
+- Done (TrailForge, not pinned yet): the renderer on `quench::gpu`, ImGui through the engine's `ImGuiRenderer`, with
+  TrailForge's own window and loop (2026-11-05).
+- Next: TrailForge's app shell (`quench_main`, `quench_app`: SDL main callbacks, flags, scenarios, input), then
+  Ashfall.
 
 ## Stage 5: render modules and the retained scene
 

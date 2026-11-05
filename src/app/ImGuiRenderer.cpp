@@ -1,8 +1,7 @@
-#include "ImGuiRenderer.h"
+#include <quench/app/ImGuiRenderer.h>
 
 #include "shaders/ImGuiUniforms.h"
 
-#include <quench/app/App.h>
 #include <quench/core/Log.h>
 
 #include <imgui.h>
@@ -34,7 +33,8 @@ std::uint64_t imguiTexture(const gpu::Texture& texture) {
 Result<ImGuiRenderer> ImGuiRenderer::create(gpu::Device& device) {
     ImGuiRenderer renderer;
     renderer.m_device = &device;
-    Result<gpu::Sampler> sampler = device.createSampler({.mipmapMode = gpu::MipmapMode::Nearest,
+    // Linear mipmaps like ImGui's own SDL GPU backend: images with mip levels (ImGui::Image) look the same.
+    Result<gpu::Sampler> sampler = device.createSampler({.mipmapMode = gpu::MipmapMode::Linear,
                                                          .addressU = gpu::AddressMode::ClampToEdge,
                                                          .addressV = gpu::AddressMode::ClampToEdge,
                                                          .addressW = gpu::AddressMode::ClampToEdge,
