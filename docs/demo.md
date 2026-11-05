@@ -20,6 +20,7 @@ ends with a packaged build of it in `dist/` (`tools/package_demo.sh`, below).
 | 5 | `hdr` | HDR display output: a sun at 14 degrees, seven emissive panels from 0.5 to 32 times the radiance at the HDR knee, a white card in the shade; with HDR the sun and the brighter panels go above paper white, the card and the UI do not | output mode (off, auto, on), the display's headroom and support and the output in use, the SDR curve for comparison, a custom peak instead of the display's, panel brightness, sun elevation |
 | 6 | `physics` | Jolt through `quench::PhysicsWorld` at 120 Hz, drawn interpolated: a stack of boxes and balls | drop a box (B, gamepad X), drop a ball (N, gamepad Y), blast (P, gamepad B, or a click or tap on the floor), reset (R, gamepad Back) |
 | 7 | `input` | Named actions over every device, shown live: a character that walks, runs, jumps and fires | WASD, left stick or a finger on the left half: walk; Left Shift or the left stick button: run; J, gamepad A or a tap on the right half: jump; F, gamepad X, a click or a tap: fire |
+| 8 | `assets` | Cooked assets loaded through the app's asset manager ([Jobs, assets and the cook](assets.md)): a row of models (a crate from a glTF with an external texture, a pillar from a GLB with embedded JPEG and PNG textures, a vertex-colored ball, a corrupt file and a missing one) shows the load states: gray boxes while loading, magenta on failure. Behind it a 6 x 5 grid of tiles, each with one of eight BC7 textures and a model, streams around a moving focus point | simulated latency, texture cache budget (unlimited, 64, 16, 4 KB), uploads per frame (8 MB, 16 KB, 1 byte), focus angle, moving focus, models on and off, hot reload, reload all; counts of ready, loading, failed, queued and in-flight assets, reloads, evictions, memory per type against its budget, streamed cells |
 
 Every section has a "Frame and fallbacks" panel: the 3D resolution, draws, culled instances, lights, shadow draws,
 what runs after the device fallbacks (cascades, depth clamp, anti-aliasing), the HDR and depth formats and the device
@@ -27,37 +28,57 @@ capabilities.
 
 Common controls:
 
-- Sections: `]` / `[`, Page Down / Page Up, the digits 1 to 7, the gamepad shoulder buttons, a click or tap on the
+- Sections: `]` / `[`, Page Down / Page Up, the digits 1 to 8, the gamepad shoulder buttons, a click or tap on the
   list. ImGui keyboard and gamepad navigation is on (the demo's keys keep working while a window has focus).
 - Camera (all sections but input): drag with the left or right mouse button or one finger to orbit, the wheel or a
   pinch to zoom, the right stick and the triggers on a gamepad.
 - H or the gamepad Start button hides the windows.
 
 Flags: `--section ID` starts in a section (an unknown id fails with a message); the engine's flags (`--help`, App
-shell) work as everywhere.
+shell) work as everywhere, for the assets section also `--asset-latency SECONDS`, `--hot-reload` and
+`--worker-threads N`.
+
+The assets section's content is procedural (`tools/assets/make_demo_assets.py`, CC0, `assets_src/CREDITS.md`):
+`examples/demo/assets_src` (glTF, GLB, PNG; the GLB embeds a JPEG) is cooked at build time by
+`quench_cook_assets(quench_demo_cooked ...)` and merged into the build's `assets/` next to the executable
+(`quench_add_game(... COOKED_ASSETS quench_demo_cooked)`, target `quench_demo_assets`), and
+`examples/demo/assets/models/broken.qmodel` is a deliberately corrupt file. With hot reload on, editing a file in
+`assets_src` and building `quench_demo_assets` while the demo runs re-cooks that file, and the demo loads it again.
 
 ## Checks
 
 | CTest test | What it runs |
 |---|---|
-| `demo_<section>_metal`, `demo_<section>_vulkan` | `--section <id> --script examples/demo/scenarios/<id>.txt` at 960 x 540 (`--window` and `--frame-size`), with GPU validation; the scenario switches the section's options and checks the renderer's and the section's values, puts the start state back, and the frame at 2 s (input: 3 s) is compared with `tests/golden/<backend>/<device>/demo_<id>.png`. The scenarios point at the window in percent or at named points (`@menu:<section>`, `@floor`), so their checks also pass in a portrait phone window (the captures are compared on the Mac only) |
+| `demo_<section>_metal`, `demo_<section>_vulkan` | `--section <id> --script examples/demo/scenarios/<id>.txt` at 960 x 540 (`--window` and `--frame-size`), with GPU validation; the scenario switches the section's options and checks the renderer's and the section's values, puts the start state back, and the frame at 2 s (input: 3 s, assets: 1.5 s) is compared with `tests/golden/<backend>/<device>/demo_<id>.png`. The scenarios point at the window in percent or at named points (`@menu:<section>`, `@floor`), so their checks also pass in a portrait phone window (the captures are compared on the Mac only) |
 | `demo_hdr_on_metal`, `demo_hdr_on_vulkan` | the HDR section with `--hdr on --hdr-headroom 4` and `scenarios/hdr_on.txt`: the output is HDR extended linear with headroom 4 and the capture's peak is above 2 and at most 4 times paper white; the capture (clipped at paper white) is compared with `demo_hdr_on.png` |
 | `demo_menu` | `scenarios/menu.txt`: switching sections by keys, gamepad, a click and a tap on the list; hiding the windows |
 | `demo_version`, `demo_bad_section` | `--version` prints "Quench Demo <version>"; an unknown `--section` fails |
+
+The assets check (`scenarios/assets.txt`, about 3.6 s per backend) loads with a simulated latency of 0.2 s and checks
+the placeholders first (loads in flight, no model ready), then waits for the manager to be idle: three models ready,
+the corrupt and the missing one failed (two failures in all), more than four streamed cells. It reloads every asset
+(at least six reloads, the failures stay failures), lowers the texture cache to 4 KB, turns the focus to the other
+side of the grid and waits for cells to unload and the cache to evict. It runs with FXAA, not TAA: loads finish in
+real time, and with TAA the history of the frames before a load arrived made two runs differ.
 
 The scenarios turn dithering off (`set dither 0`), which keeps the golden PNGs at 120 to 380 KB. Game values a
 scenario can read: `section`, `sections`, `ui`, `aa` (0 none, 1 FXAA, 2 TAA, after fallbacks), `cascades`, `bloom`,
 `draws`, `instances`, `culled`, `shadow_draws`, `shadow_instances`, `moved`, `lights`, `render_w`, `render_h`,
 `camera_yaw`, `camera_pitch`, `camera_distance`, `clicks`, then the section's own (for example `bodies`, `blasts`,
-`player_x`, `jumps`, `marker_draws`, `exposure`). Game commands: `section ID`, `camera YAW PITCH DISTANCE` (degrees,
-meters), `set NAME VALUE` (render settings: `aa none|fxaa|taa`, `tone aces|agx`, `cascades`, `shadow_size`,
-`shadow_filter`, `shadow_distance`, `scale`, `bloom`, `bloom_strength`, `sky`, `dither`, `sharpen`, `vignette`;
-otherwise the section's options).
+`player_x`, `jumps`, `marker_draws`, `exposure`; the assets section's `assets_loading`, `assets_ready`,
+`assets_failed`, `assets_idle`, `assets_loads`, `assets_reloads`, `assets_evictions`, `showcase_ready`,
+`showcase_failed`, `streaming_active`, `streaming_loads`, `streaming_unloads`). Game commands: `section ID`,
+`camera YAW PITCH DISTANCE` (degrees, meters), `set NAME VALUE` (render settings: `aa none|fxaa|taa`,
+`tone aces|agx`, `cascades`, `shadow_size`, `shadow_filter`, `shadow_distance`, `scale`, `bloom`, `bloom_strength`,
+`sky`, `dither`, `sharpen`, `vignette`; otherwise the section's options, for the assets section `latency SECONDS`,
+`texture_budget BYTES|unlimited`, `upload_budget BYTES|unlimited`, `focus_angle DEGREES`, `move_focus`, `reload`,
+`models`, `hot_reload`).
 
 ## Benchmark
 
-`scenarios/benchmark.txt` measures the materials, shadows, sky, post-processing, HDR (in SDR, then with HDR output on)
-and physics sections for 5 s each in real time (budgets and numbers: [Performance](performance.md)):
+`scenarios/benchmark.txt` measures the materials, shadows, sky, post-processing, HDR (in SDR, then with HDR output on),
+physics and assets sections for 5 s each in real time (budgets and numbers: [Performance](performance.md)); the
+assets region streams with the moving focus and the default budgets, after the first loads have finished:
 
 ```sh
 build/release/examples/demo/quench-demo --frame-size 1920x1080 --script examples/demo/scenarios/benchmark.txt
@@ -76,7 +97,8 @@ that commit). The script builds `quench_demo` with the `release` preset (`--pres
 
 - **macOS**: assembles `QuenchDemo.app` (the executable, an Info.plist with the version and the binary's minimum
   macOS as `LSMinimumSystemVersion`, an icns made from `examples/demo/icon/icon.png`, `LICENSE` and
-  `THIRD_PARTY_LICENSES` in `Contents/Resources`), checks that it links only system libraries, signs it ad hoc and
+  `THIRD_PARTY_LICENSES` in `Contents/Resources`, the demo's cooked assets in `Contents/Resources/assets`, where
+  SDL's base path of a bundled app points), checks that it links only system libraries, signs it ad hoc and
   zips it with `LICENSE` and `THIRD_PARTY_LICENSES` next to it. The archives carry no extended attributes: `ditto`
   would store them as AppleDouble `._` files, which a plain `unzip` turns into files inside the bundle that break its
   signature; the script fails on any `._` entry. It then unzips the archive with a plain `unzip` into a temporary

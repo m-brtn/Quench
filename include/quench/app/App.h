@@ -7,6 +7,8 @@
 // present. Rendering is skipped while the app is in the background (iOS) or the window is minimized.
 
 #include <quench/app/ImGuiRenderer.h> // imguiTexture()
+#include <quench/assets/AssetManager.h>
+#include <quench/core/Jobs.h>
 #include <quench/core/Result.h>
 #include <quench/gpu/Device.h>
 
@@ -141,6 +143,13 @@ class App {
 public:
     const AppDesc& desc() const;
     gpu::Device& device();
+    // The engine's thread pool (--worker-threads), created before Game::init and destroyed after Game::shutdown and the
+    // game's destructor.
+    JobSystem& jobs();
+    // The engine's asset cache on that job system (--asset-latency, --hot-reload), updated every frame before
+    // Game::update; created and destroyed like jobs(). Asset types are registered by the modules that use them
+    // (render::SceneAssets: textures and models).
+    assets::AssetManager& assets();
     SDL_Window* window() const;
     Input& input();
     const Input& input() const;

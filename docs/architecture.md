@@ -2,9 +2,11 @@
 
 Design of the engine. Stages 1 to 3 exist (CMake, `quench_core`, `quench_physics`, the shader build, headless tests;
 `quench_gpu` over SDL GPU, see "The layer as built"; `quench_app` and `quench_main`, see [App shell](app.md); the
-sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#layout)), and stage 5: `quench_render`
-(see "Rendering" and [Render module](render.md)) and the engine demo ([Engine demo](demo.md)); everything else here
-describes the intended structure and the reasons for it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation:
+sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#layout)), stage 5: `quench_render`
+(see "Rendering" and [Render module](render.md)) and the engine demo ([Engine demo](demo.md)), and stage 6 apart from
+shader hot reload: the job system, `quench_assets` and `quench_cook` (see "Threads and jobs", "Assets" and
+[Jobs, assets and the cook](assets.md)); everything else here describes the intended structure and the reasons for
+it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation:
 [index](README.md).
 
 ## Planned layout
@@ -47,17 +49,18 @@ docs/releases/        release notes per version
 
 | Target | Contents | Depends on | Headless |
 |---|---|---|---|
-| `quench_core` | clock, Json, hashing, logging, `quench::fs` interface, job system | enkiTS | yes |
+| `quench_core` | clock, Json, logging, `quench::fs` interface, job system | enkiTS | yes |
 | `quench_physics` | Jolt wrapper, character controller, terrain tiles | core, Jolt, GLM | yes |
-| `quench_assets` | IDs, manager, cache, cooked formats, streaming | core, libktx, meshoptimizer | yes |
+| `quench_assets` | IDs, manager, cache, cooked formats (KTX2, `.qmodel`), BC7 decoding, streaming grid | core, GLM, xxHash, meshoptimizer, bc7decomp | yes |
 | `quench_anim` | animation runtime and state machines | core, ozz | yes |
 | `quench_nav` | navmesh and crowds | core, Recast & Detour | yes |
 | `quench_audio` | mixer; device in a separate target | core, miniaudio | mixer yes |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
 | `quench_gpu` | GPU layer and backends | core, gpu_shaders, SDL3 | no |
-| `quench_render` | retained scene, standard frame, render modules | core, gpu, gpu_shaders, GLM (later assets, anim) | no |
-| `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log | core, gpu, GLM, ImGui, SDL3 (later render, audio) | no |
+| `quench_render` | retained scene, standard frame, render modules, `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, GLM (later anim) | no |
+| `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log, the app's job system and asset manager | core, assets, gpu, GLM, ImGui, SDL3 (later render, audio) | no |
 | `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
+| `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files; `quench_cook_assets()` | assets, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
 
 The `QUENCH_HEADLESS` option (the `headless` preset, forced on for Emscripten) builds only the headless targets and
 does not fetch SDL.
@@ -215,30 +218,40 @@ moves to the engine.
 
 ## Threads and jobs
 
-One job system (enkiTS) for the engine: asset decoding, animation, streaming and Jolt (through a
-`JPH::JobSystemWithBarrier` implementation, so Jolt does not start a second pool). It must also run with a single
-thread. Worker threads get user-interactive QoS on Apple platforms through enkiTS's thread start callback, as
-TrailForge does for Jolt's workers today.
+One job system for the engine, `quench::JobSystem` on enkiTS (`include/quench/core/Jobs.h`): asset reading and
+decoding, the cook's BC7 encoding, Jolt's jobs (through `JoltJobSystem`, a `JPH::JobSystemWithBarrier`, so Jolt does
+not start a second pool) and game work. Jobs have dependencies and three priorities; `parallelFor` splits a range.
+`wait` runs queued jobs on the waiting thread, so waiting inside a job does not deadlock. Worker threads call
+`raiseWorkerThreadPriority()` from enkiTS's thread start callback (user-interactive QoS on Apple platforms), as
+TrailForge does for Jolt's workers. With zero workers (builds without threads, the web without cross-origin isolation)
+jobs run on the creating thread inside `wait`, `waitAll` and `runFor`; the asset manager calls `runFor` with a time
+slice per frame, so loading still makes progress without blocking. The app owns one job system (`App::jobs()`);
+`PhysicsWorld(JobSystem*)` runs Jolt's jobs on it (with `nullptr`, on the thread that calls `step()`). Details:
+[Jobs, assets and the cook](assets.md).
 
 ## Assets
 
-- **IDs**: a 64-bit hash (xxHash) of the logical asset path, identical on every platform.
-- **Manager**: reference-counted handles; states loading, ready, failed; a placeholder until ready (TrailForge already
-  uses 1x1 placeholders); memory accounting per type (CPU and GPU bytes) with budgets; LRU eviction for streamed
-  assets.
-- **Asynchronous loading**: decoding and transcoding on job threads; GPU uploads on the render thread under a byte
-  budget per frame, so a frame never waits for a load.
-- **Cooked formats**: games ship only cooked assets: meshes optimized and quantized with meshoptimizer (LODs, compressed
-  buffers), textures as KTX2 (BC7 for the Mac and the iPhone; Basis Universal for Android and the web), skeletons and
-  animations as ozz archives, materials as data. The importers (fastgltf, stb_image, the KTX encoder) live in
-  `quench_cook` and in development builds, not in release builds.
-- **Hot reload** (development builds on the Mac first): a changed source file is cooked again and the manager swaps the
-  resource under the same ID. Shaders are recompiled at run time to MSL source, which SDL GPU on Metal accepts
-  (TrailForge already supports the "MSL source (runtime compile)" path). On the iPhone hot reload needs an asset server
-  over the network (later).
-- **Streaming by distance**: world cells with a priority by distance, hysteresis and a memory budget; a
-  generalisation of TrailForge's streamed physics terrain tiles (`TerrainTiles`) to render resources and physics
-  bodies.
+As built in stage 6 ([Jobs, assets and the cook](assets.md)):
+
+- **IDs**: `AssetId`, XXH64 of the asset path as `quench::fs` takes it, identical on every platform and in the cook.
+- **Manager**: `AssetManager` for every asset type (textures and models in `quench_render`; sounds and animations are
+  later types of the same manager): reference-counted `AssetRef`s, states loading, ready and failed, a placeholder
+  until ready and after a failure (one log line, never a crash), CPU and GPU bytes per type with budgets, and LRU
+  eviction of unreferenced assets over budget.
+- **Asynchronous loading**: files are read through `quench::fs` and decoded on jobs; the main-thread part (the GPU
+  upload) runs in `AssetManager::update()` under a byte budget per frame, so a frame never waits for a load.
+- **Cooked formats**: games ship cooked files: KTX2 textures (BC7 or RGBA8 with mips; BC7 is decoded to RGBA8 on a
+  device that cannot sample it; ASTC or Basis Universal transcoding for Android and the web is later work) and
+  `.qmodel` models (meshoptimizer-ordered and compressed vertex and index streams, LOD ranges, materials naming their
+  textures). The importers (fastgltf, stb_image, bc7enc) live only in `quench_cook`, a host tool; games call
+  `quench_cook_assets()` and `quench_add_game(... COOKED_ASSETS ...)`.
+- **Hot reload** (on the Mac): the manager polls the modification time of loaded files and swaps a changed file in
+  under the same ID and handles; rebuilding the game's assets target cooks the changed sources and copies the changed
+  files. Shaders are not reloaded yet (stage 6 remaining work: SDL GPU on Metal accepts MSL source compiled at run
+  time). On the iPhone hot reload needs an asset server over the network (later).
+- **Streaming by distance**: `StreamingGrid`, cells on a grid around any number of focus points with a load and a
+  larger keep radius, nearest first; generalized from TrailForge's `TerrainTiles` (physics terrain tiles). What a cell
+  holds is the game's (typically `AssetRef`s loaded with the distance as priority).
 
 ## Animation
 

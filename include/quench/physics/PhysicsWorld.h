@@ -1,5 +1,7 @@
 #pragma once
 
+#include <quench/core/Jobs.h>
+
 #include <Jolt/Jolt.h>
 
 #include <Jolt/Core/JobSystem.h>
@@ -28,21 +30,24 @@ public:
     JoltRuntime& operator=(const JoltRuntime&) = delete;
 };
 
-// Owns a Jolt PhysicsSystem with its temp allocator and job system. Gravity is (0, -9.81, 0) m/s^2.
+// Owns a Jolt PhysicsSystem with its temp allocator. Jolt's jobs run on the engine's JobSystem (no thread pool of its
+// own). Gravity is (0, -9.81, 0) m/s^2.
 class PhysicsWorld {
 public:
     struct Settings {
         JPH::uint maxBodies = 2048;
         JPH::uint maxBodyPairs = 4096;
         JPH::uint maxContactConstraints = 4096;
-        // -1: hardware threads - 1, clamped to 1..4, or 0 where threadsAvailable() is false. 0: no worker threads,
-        // jobs run on the thread that calls step().
-        int workerThreads = -1;
+        // Threads working on one step at most (Jolt splits its work by this): -1 for the job system's threads, at
+        // most 5.
+        int maxConcurrency = -1;
         JPH::uint tempAllocatorBytes = 32 * 1024 * 1024;
     };
 
-    PhysicsWorld();
-    explicit PhysicsWorld(const Settings& settings);
+    // Jolt's jobs run on `jobs`, which must outlive the world. nullptr, or a job system without worker threads: they
+    // run on the thread that calls step().
+    explicit PhysicsWorld(JobSystem* jobs);
+    PhysicsWorld(JobSystem* jobs, const Settings& settings);
     ~PhysicsWorld();
     PhysicsWorld(const PhysicsWorld&) = delete;
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;

@@ -50,7 +50,7 @@
     },
     {
       "name": "host-tools",
-      "displayName": "macOS host tools for cross builds (quench_shaderc only)",
+      "displayName": "macOS host tools for cross builds (quench_shaderc and quench_cook only)",
       "inherits": "base",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "QUENCH_BUILD_TESTS": "OFF", "QUENCH_HEADLESS": "ON" }
@@ -77,7 +77,8 @@
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
         "QUENCH_BUILD_TESTS": "OFF",
-        "QUENCH_HOST_SHADERC": "${sourceDir}/build/host-tools/quench_shaderc"
+        "QUENCH_HOST_SHADERC": "${sourceDir}/build/host-tools/quench_shaderc",
+        "QUENCH_HOST_COOK": "${sourceDir}/build/host-tools/quench_cook"
       }
     },
     {
@@ -117,7 +118,7 @@
     { "name": "headless", "configurePreset": "headless" },
     { "name": "asan", "configurePreset": "asan" },
     { "name": "tsan", "configurePreset": "tsan" },
-    { "name": "host-tools", "configurePreset": "host-tools", "targets": ["quench_shaderc"] },
+    { "name": "host-tools", "configurePreset": "host-tools", "targets": ["quench_shaderc", "quench_cook"] },
     { "name": "wasm-node", "configurePreset": "wasm-node" },
     { "name": "ios-sim-release", "configurePreset": "ios-sim-release" },
     { "name": "ios-sim-tests", "configurePreset": "ios-sim-tests" },

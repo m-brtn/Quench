@@ -8,11 +8,16 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             core/AssertTests.cpp
             core/FileSystemTests.cpp
             core/FixedStepClockTests.cpp
+            core/JobsTests.cpp
             core/JsonTests.cpp
             core/LogTests.cpp
             core/ResultTests.cpp
             core/ThreadTests.cpp
             physics/PhysicsWorldTests.cpp
+            assets/AssetManagerTests.cpp
+            assets/ModelTests.cpp
+            assets/StreamingGridTests.cpp
+            assets/TextureTests.cpp
             app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
             app/OptionsTests.cpp
@@ -25,10 +30,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             gpu/RenderTests.cpp
             gpu/WindowTests.cpp
             render/RenderMathTests.cpp
-            render/RendererTests.cpp)
+            render/RendererTests.cpp
+            render/SceneAssetsTests.cpp)
     quench_configure_target(quench_device_tests)
     target_include_directories(quench_device_tests PRIVATE harness gpu)
-    target_link_libraries(quench_device_tests PRIVATE quench_physics quench_render)
+    target_link_libraries(quench_device_tests PRIVATE quench_physics quench_assets quench_render)
     target_compile_definitions(quench_device_tests PRIVATE
         QUENCH_TEST_SDL_MAIN=1
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
@@ -87,6 +93,7 @@ quench_add_test_executable(quench_core_tests PREFIX core
         core/AssertTests.cpp
         core/FileSystemTests.cpp
         core/FixedStepClockTests.cpp
+        core/JobsTests.cpp
         core/JsonTests.cpp
         core/LogTests.cpp
         core/ResultTests.cpp
@@ -96,6 +103,27 @@ quench_add_test_executable(quench_core_tests PREFIX core
 quench_add_test_executable(quench_physics_tests PREFIX physics
     SOURCES physics/PhysicsWorldTests.cpp
     LIBS quench_physics)
+
+quench_add_test_executable(quench_assets_tests PREFIX assets
+    SOURCES
+        assets/AssetManagerTests.cpp
+        assets/ModelTests.cpp
+        assets/StreamingGridTests.cpp
+        assets/TextureTests.cpp
+    LIBS quench_assets)
+
+# quench_cook (host builds that build the cook themselves): the library's cases, and the command line run twice on the
+# demo's sources with byte-identical outputs.
+if(TARGET quench_cook_lib)
+    quench_add_test_executable(quench_cook_tests PREFIX cook
+        SOURCES cook/CookTests.cpp
+        LIBS quench_cook_lib quench_glm)
+    target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_SOURCE_DIR="${Quench_SOURCE_DIR}")
+    add_test(NAME cook_cli COMMAND ${CMAKE_COMMAND} -DCOOK=$<TARGET_FILE:quench_cook>
+             -DSOURCES=${Quench_SOURCE_DIR}/examples/demo/assets_src -DOUT=${CMAKE_CURRENT_BINARY_DIR}/tmp/cook_cli
+             -P ${CMAKE_CURRENT_SOURCE_DIR}/CookCli.cmake)
+    add_dependencies(quench_cook_tests quench_cook)
+endif()
 
 quench_add_test_executable(quench_gpu_tests PREFIX gpu
     SOURCES gpu/ShaderTests.cpp
@@ -169,6 +197,7 @@ if(NOT QUENCH_HEADLESS)
             gpu/GpuTest.cpp
             render/RenderMathTests.cpp
             render/RendererTests.cpp
+            render/SceneAssetsTests.cpp
         LIBS quench_render quench_gpu SDL3::SDL3-static
         ENVIRONMENT ${gpu_environment})
     target_include_directories(quench_render_tests PRIVATE gpu)
@@ -231,7 +260,7 @@ if(NOT QUENCH_HEADLESS)
         if(TARGET quench_demo)
             # The engine demo: per section a scripted check that ends in a golden capture (section:capture time).
             set(demo_scenarios ${Quench_SOURCE_DIR}/examples/demo/scenarios)
-            foreach(entry materials:2 shadows:2 sky:2 post:2 hdr:2 physics:2 input:3)
+            foreach(entry materials:2 shadows:2 sky:2 post:2 hdr:2 physics:2 input:3 assets:1.5)
                 string(REPLACE ":" ";" entry "${entry}")
                 list(GET entry 0 section)
                 list(GET entry 1 capture_at)
@@ -279,7 +308,7 @@ foreach(header IN LISTS public_headers)
 endforeach()
 add_library(quench_header_check OBJECT ${header_sources})
 quench_configure_target(quench_header_check)
-target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_gpu_shaders)
+target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_assets quench_gpu_shaders)
 if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_header_check PRIVATE quench_app quench_render)
 endif()

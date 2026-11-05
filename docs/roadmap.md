@@ -105,13 +105,34 @@ code may be moved), verified with the engine's tests and the engine demo; no ver
   the gamepad lines of the demo's and hello's input scenarios fail in the Simulator only).
 - Done: version 0.3.0, release notes in [docs/releases/v0.3.0.md](releases/v0.3.0.md).
 
-## Stage 6: assets
+## Stage 6: assets (mostly done 2026-11-05; shader hot reload remaining; no version change yet)
 
-- Job system on enkiTS (Jolt's jobs included, single-thread mode, Apple QoS).
-- Asset IDs, manager, cache, placeholders, memory budgets; asynchronous loading with a per-frame GPU upload budget.
-- `quench_cook`: glTF / GLB (fastgltf), PNG, JPEG, KTX2 -> cooked meshes (meshoptimizer) and KTX2 textures (BC7 now,
-  Basis Universal later) with mipmaps. Replaces TrailForge's `texc` / `modelc` and Ashfall's Python converters.
-- Hot reload on the Mac (assets and shaders); streaming by distance generalized from `TerrainTiles`.
+User decisions for this stage (2026-11-05): engine only (the games are not switched, built or tested), verified with
+the engine's tests and the demo's new "Assets" section. Described in [Jobs, assets and the cook](assets.md).
+
+- Done: the job system on enkiTS (`quench::JobSystem` in `quench_core`): one pool, tasks with dependencies,
+  parallel-for, a wait that runs other jobs, a mode without workers (the single-threaded web build), worker priority
+  through `raiseWorkerThreadPriority()`. Jolt's jobs run on it through a `JPH::JobSystemWithBarrier`
+  (`PhysicsWorld(JobSystem*)`); the demo's physics capture is byte-identical with Jolt's old pool, with one thread and
+  with the job system.
+- Done: `quench_assets`: asset IDs (XXH64 of the path) and reference-counted handles (`AssetRef<T>`), a manager with
+  a cache, placeholders while loading and on failure (an error and a log line, never a crash), memory budgets per type
+  with eviction of unreferenced assets, reads and decodes on jobs, a per-frame GPU upload budget, and a time budget
+  per frame for the jobs the frame thread runs when there are no workers. `quench_render`'s `SceneAssets` puts
+  textures and models into the retained scene.
+- Done: `quench_cook` (host tool, `quench_cook_assets()` and `quench_add_game(... COOKED_ASSETS ...)` in CMake): glTF
+  and GLB through fastgltf, PNG and JPEG through stb_image, KTX2 in; cooked models (meshoptimizer: optimized,
+  quantized, LODs, encoded streams) and KTX2 textures (BC7 where possible, else RGBA8; mipmaps filtered in linear
+  light) out; byte-identical output for any number of workers; a depfile per asset. Generalized from TrailForge's
+  `tools/texc` (`TexCore.h`) and `src/core/Ktx2.cpp`. TrailForge's `texc` / `modelc` and Ashfall's Python converters
+  stay in the games until they switch.
+- Done: asset hot reload on the Mac (with `--hot-reload` or `AssetManager::setHotReload`, a changed file in the asset
+  directory reloads in place), checked by replacing files while the demo ran and by rebuilding `quench_demo_assets`.
+- Done: streaming by distance (`StreamingGrid`, generalized from TrailForge's `TerrainTiles`): cells load and unload
+  around a focus point with hysteresis, nearest first.
+- Not done, remaining: shader hot reload; ASTC and Basis Universal for Android and the web; normal and emissive
+  textures in the standard surface; an asset server for hot reload on the iPhone; the demo's "Assets" section on the
+  iPhone (not run there: running on the device needs the user's approval).
 
 ## Stage 7: audio
 
@@ -165,7 +186,7 @@ TODO for stage 9:
 Requested by the user (2026-11-05). Started in stage 5 (user decision, 2026-11-05; it replaces the planned
 `examples/scene`): every stage adds its section, with a scripted check and golden captures, and ends with a packaged
 build of the demo in `dist/` (`tools/package_demo.sh`); stage 10 finishes and polishes it. Sections so far: materials
-and lights, shadows, sky and fog, post-processing, HDR output, physics, input ([Engine demo](demo.md)).
+and lights, shadows, sky and fog, post-processing, HDR output, physics, input, assets ([Engine demo](demo.md)).
 
 - One app built with the engine (`examples/demo`, "Quench Demo") for the Mac and iOS: a menu of sections, each a
   small interactive scene of primitives or procedural content (CC0 assets only where a feature needs real content,
@@ -191,12 +212,12 @@ Priorities from the user's request of 2026-11-05.
 
 | Feature | Priority | Stage |
 |---|---|---|
-| Asynchronous loading | P0 | 6 |
-| Asset manager and cache | P0 | 6 |
-| Asset pipeline (glTF / GLB, PNG, JPEG, KTX2 -> cooked formats) | P0 | 6 |
-| Mipmaps and compression | P1 | 2 (GPU mipmaps), 6 (cooked) |
-| Hot reload | P1 | 6 |
-| Streaming by distance | P1 | 6 |
+| Asynchronous loading | P0 | 6 (done) |
+| Asset manager and cache | P0 | 6 (done) |
+| Asset pipeline (glTF / GLB, PNG, JPEG, KTX2 -> cooked formats) | P0 | 6 (done) |
+| Mipmaps and compression | P1 | 2 (GPU mipmaps), 6 (cooked, BC7; done) |
+| Hot reload | P1 | 6 (assets done, shaders remaining) |
+| Streaming by distance | P1 | 6 (done) |
 | Audio: mixer, buses, music, 3D sound, device output (added 2026-11-05) | P0 | 7 |
 | Skeletal animation and GPU skinning (ozz) | P0 | 8 |
 | Animation state machine | P0 | 8 |

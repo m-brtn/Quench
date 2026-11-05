@@ -1,7 +1,8 @@
 #pragma once
 
 // The state behind quench::app::App, owned by the SDL main callbacks (Main.cpp). Members are destroyed in reverse
-// order: the game first, then ImGui, the GPU device, the window, the file system backend and the log sink.
+// order: the game first, then ImGui, the GPU device, the window, the asset manager, the job system, the file system
+// backend and the log sink.
 
 #include "DisplayHeadroom.h"
 #include "Options.h"
@@ -11,8 +12,10 @@
 #include <quench/app/ImGuiRenderer.h>
 #include <quench/app/Input.h>
 #include <quench/app/Scenario.h>
+#include <quench/assets/AssetManager.h>
 #include <quench/core/FileSystem.h>
 #include <quench/core/FixedStepClock.h>
+#include <quench/core/Jobs.h>
 
 #include <SDL3/SDL.h>
 
@@ -69,6 +72,8 @@ struct AppState {
     Options options;
 
     LogSinkGuard logSink;
+    std::unique_ptr<JobSystem> jobs;
+    std::unique_ptr<assets::AssetManager> assets;
     std::unique_ptr<SDL_Window, WindowDeleter> window;
     std::optional<gpu::Device> device;
     ImGuiContextGuard imgui;

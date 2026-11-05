@@ -50,6 +50,62 @@ target_compile_definitions(quench_glm INTERFACE
     GLM_FORCE_DEPTH_ZERO_TO_ONE # clip-space z in [0, 1] (Metal, Vulkan, Direct3D)
     GLM_FORCE_RADIANS)
 
+# ---------------------------------------------------------------- enkiTS
+# v1.12, the task scheduler under quench::JobSystem. Built here from its one source file (no C interface, no examples);
+# its headers stay private to quench_core and quench_physics.
+FetchContent_Declare(enkits
+    URL https://github.com/dougbinks/enkiTS/archive/0289cf6ffce86697e1f46cb4eeca1c946bffec71.tar.gz
+    URL_HASH SHA256=c1bcf45e359d2097045d43efa68084b8e0e2d8dc6bfeec532099cc4569e79fb4
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(enkits)
+add_library(quench_enkits STATIC ${enkits_SOURCE_DIR}/src/TaskScheduler.cpp)
+target_include_directories(quench_enkits SYSTEM PUBLIC ${enkits_SOURCE_DIR}/src)
+target_compile_definitions(quench_enkits PUBLIC ENKITS_TASK_PRIORITIES_NUM=3)
+target_compile_features(quench_enkits PUBLIC cxx_std_20)
+if(NOT EMSCRIPTEN)
+    find_package(Threads REQUIRED)
+    target_link_libraries(quench_enkits PUBLIC Threads::Threads)
+endif()
+
+# ---------------------------------------------------------------- xxHash
+# v0.8.4, header-only use (XXH_INLINE_ALL in src/assets/AssetId.cpp): XXH64 of asset paths.
+FetchContent_Declare(xxhash
+    URL https://github.com/Cyan4973/xxHash/archive/c87183a77d67f7d37e3d2d1b7eaac5e7c695e4f0.tar.gz
+    URL_HASH SHA256=ed9fa05b338a5b308eca0c25e93fe4ba8e3adfaa6f94bedf1f39b0a0d1010751
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(xxhash)
+add_library(quench_xxhash INTERFACE)
+target_include_directories(quench_xxhash SYSTEM INTERFACE ${xxhash_SOURCE_DIR})
+
+# ---------------------------------------------------------------- meshoptimizer
+# v1.3 (TrailForge's pin). The runtime decodes the cooked vertex and index streams with it; quench_cook optimizes,
+# simplifies and encodes with it.
+FetchContent_Declare(meshoptimizer
+    URL https://github.com/zeux/meshoptimizer/archive/9e1f07b159d3cb777f1c67ed31fc11fd117986f4.tar.gz
+    URL_HASH SHA256=e753b45fbc410031bd69cb278180ae31fa0d5430d0c3e662e3a3b100467ce0b3
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(meshoptimizer)
+file(GLOB _meshopt_sources ${meshoptimizer_SOURCE_DIR}/src/*.cpp)
+add_library(quench_meshoptimizer STATIC ${_meshopt_sources})
+target_include_directories(quench_meshoptimizer SYSTEM PUBLIC ${meshoptimizer_SOURCE_DIR}/src)
+target_compile_features(quench_meshoptimizer PUBLIC cxx_std_20)
+
+# ---------------------------------------------------------------- bc7enc_rdo
+# TrailForge's pin. bc7decomp.cpp (MIT or public domain) decodes BC7 at run time on devices without BC textures;
+# quench_cook also encodes with bc7enc.cpp (cmake/CookToolchain.cmake). bc7e.ispc (Apache-2.0) is not used.
+FetchContent_Declare(bc7enc
+    URL https://github.com/richgel999/bc7enc_rdo/archive/b9438627eef73a1157e84201b6fa6eb2ffd6d9f0.tar.gz
+    URL_HASH SHA256=bbb33d1dbb6178a3a2c044956c3cc0b8ea9fc2f2903824379dd86f87d53b64c6
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(bc7enc)
+add_library(quench_bc7decomp STATIC ${bc7enc_SOURCE_DIR}/bc7decomp.cpp)
+target_include_directories(quench_bc7decomp SYSTEM PUBLIC ${bc7enc_SOURCE_DIR})
+target_compile_features(quench_bc7decomp PUBLIC cxx_std_20)
+
 if(QUENCH_HEADLESS)
     return()
 endif()

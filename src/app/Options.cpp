@@ -49,6 +49,10 @@ const char* optionsHelp() {
            "                       the display has HDR range); default: the game's choice, normally off\n"
            "  --hdr-headroom N     peak brightness of HDR output in multiples of paper white (N >= 1) instead of\n"
            "                       the display's (repeatable HDR captures)\n"
+           "  --worker-threads N   worker threads of the job system (default: hardware threads - 1; 0: jobs run on\n"
+           "                       the main thread, as in builds without threads)\n"
+           "  --asset-latency S    every asset load waits S seconds before it starts (to see the placeholders)\n"
+           "  --hot-reload         load asset files again when they change (cooked files in the build tree)\n"
            "  --version            print the version and exit\n"
            "  --help               print this help and exit\n"
            "With --script or --capture every frame advances the app time by one fixed step (deterministic runs),\n"
@@ -120,6 +124,22 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
             if (!headroom || *headroom < 1.0 || *headroom > 1000.0)
                 return Error{std::format("--hdr-headroom: '{}' is not a number from 1 to 1000", *v)};
             options.hdrHeadroom = float(*headroom);
+        } else if (flag == "--worker-threads") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            const auto count = parseDouble(*v);
+            if (!count || *count < 0.0 || *count > 64.0 || *count != double(int(*count)))
+                return Error{std::format("--worker-threads: '{}' is not a whole number from 0 to 64", *v)};
+            options.workerThreads = int(*count);
+        } else if (flag == "--asset-latency") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            const auto seconds = parseDouble(*v);
+            if (!seconds || *seconds < 0.0 || *seconds > 60.0)
+                return Error{std::format("--asset-latency: '{}' is not a number of seconds from 0 to 60", *v)};
+            options.assetLatency = *seconds;
+        } else if (flag == "--hot-reload" && !inlineValue) {
+            options.hotReload = true;
         } else if (flag == "--gpu-debug" && !inlineValue) {
             options.gpuDebug = true;
         } else if (flag == "--version" && !inlineValue) {

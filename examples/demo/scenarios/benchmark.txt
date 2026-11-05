@@ -58,4 +58,13 @@ perf_begin physics
 wait 5
 perf_end
 expect perf_frames >= 150
+
+# Streaming around the moving focus with the default budgets, after the first loads have finished.
+section assets
+until assets_idle == 1 3
+wait 1
+perf_begin assets
+wait 5
+perf_end
+expect perf_frames >= 150
 quit

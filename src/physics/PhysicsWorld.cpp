@@ -1,12 +1,11 @@
 #include <quench/physics/PhysicsWorld.h>
 
-#include <quench/core/Assert.h>
 #include <quench/core/Log.h>
-#include <quench/core/Thread.h>
+
+#include "physics/JoltJobSystem.h"
 
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemSingleThreaded.h>
-#include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/RegisterTypes.h>
@@ -15,7 +14,6 @@
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
-#include <thread>
 
 namespace quench {
 namespace {
@@ -89,22 +87,19 @@ JoltRuntime::~JoltRuntime() {
     }
 }
 
-PhysicsWorld::PhysicsWorld() : PhysicsWorld(Settings{}) {}
+PhysicsWorld::PhysicsWorld(JobSystem* jobs) : PhysicsWorld(jobs, Settings{}) {}
 
-PhysicsWorld::PhysicsWorld(const Settings& settings)
+PhysicsWorld::PhysicsWorld(JobSystem* jobs, const Settings& settings)
     : m_filters(std::make_unique<Filters>()),
       m_tempAllocator(std::make_unique<JPH::TempAllocatorImpl>(settings.tempAllocatorBytes)),
       m_system(std::make_unique<JPH::PhysicsSystem>()) {
-    int threads = settings.workerThreads;
-    if (threads < 0) threads = threadsAvailable() ? std::clamp(int(std::thread::hardware_concurrency()) - 1, 1, 4) : 0;
-    QUENCH_ASSERT(threads == 0 || threadsAvailable(), "worker threads requested in a build without threads");
-    if (threads == 0) {
+    if (!jobs || jobs->workerCount() == 0) {
         m_jobSystem = std::make_unique<JPH::JobSystemSingleThreaded>(JPH::cMaxPhysicsJobs);
     } else {
-        auto pool = std::make_unique<JPH::JobSystemThreadPool>();
-        pool->SetThreadInitFunction([](int) { raiseWorkerThreadPriority(); });
-        pool->Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, threads);
-        m_jobSystem = std::move(pool);
+        int concurrency = settings.maxConcurrency < 0 ? std::min(jobs->threadCount(), 5) : settings.maxConcurrency;
+        concurrency = std::clamp(concurrency, 1, jobs->threadCount());
+        m_jobSystem =
+            std::make_unique<JoltJobSystem>(*jobs, JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, concurrency);
     }
 
     m_system->Init(settings.maxBodies, 0, settings.maxBodyPairs, settings.maxContactConstraints,

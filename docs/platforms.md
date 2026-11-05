@@ -69,6 +69,10 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   (`Caps::bcTextures` false, ASTC true), no depth clip mode (`Caps::depthClamp` false) and no indirect draws
   (`Caps::indirectDraw` false: Metal validation aborts on them). SDL GPU needs its video subsystem even for offscreen
   work; test executables without `SDL_main` call `SDL_SetMainReady()` first.
+- Stage 6 in the Simulator (2026-11-05): without BC textures, cooked BC7 textures are decoded to RGBA8 on the CPU at
+  load (`render.scene_assets_texture_states` checks the format and the pixels there); the cooked demo assets are made
+  by the `host-tools` `quench_cook` and bundled by the iOS presets. Not run on the iPhone yet (needs the user's
+  approval), so BC7 sampling on the device is still unchecked.
 
 ## HDR output
 

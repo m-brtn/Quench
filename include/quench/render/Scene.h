@@ -10,6 +10,7 @@
 // point or spot light's is the irradiance at 1 m; ambient values are the radiance of a uniform surround (a white
 // surface reflects all of it).
 
+#include <quench/assets/Texture.h>
 #include <quench/core/Result.h>
 #include <quench/render/Handles.h>
 
@@ -144,12 +145,21 @@ public:
     Scene& operator=(const Scene&) = delete;
     ~Scene();
 
+    gpu::Device& device() const;
+
     // Uploads the vertices and indices (without waiting for the GPU). Bounds for culling are computed here.
     Result<MeshId> addMesh(const MeshDesc& desc);
     // Instances that use the mesh must be removed first.
     void removeMesh(MeshId mesh);
 
     Result<TextureId> addTexture(const TextureData& data);
+    // Pixel data with its mip levels (cooked KTX2 textures), in a format the device can sample.
+    Result<TextureId> addTexture(const assets::TextureImage& image, std::string_view name = {});
+    // A texture without pixels yet: materials sample it as white until setTexture() fills it (asset loading).
+    TextureId addEmptyTexture();
+    // New pixels (size and format may change) under the same handle; on an error the texture keeps its old ones.
+    Result<void> setTexture(TextureId texture, const TextureData& data);
+    Result<void> setTexture(TextureId texture, const assets::TextureImage& image, std::string_view name = {});
     // Materials that use the texture sample white afterwards.
     void removeTexture(TextureId texture);
 
@@ -178,7 +188,11 @@ public:
     bool contains(MaterialId material) const;
     bool contains(InstanceId instance) const;
     bool contains(LightId light) const;
+    // Instances that use a mesh or a material (0 for a stale handle).
+    std::uint32_t meshUsers(MeshId mesh) const;
+    std::uint32_t materialUsers(MaterialId material) const;
     std::uint32_t meshCount() const;
+    std::uint32_t textureCount() const;
     std::uint32_t materialCount() const;
     std::uint32_t instanceCount() const;
     std::uint32_t lightCount() const;

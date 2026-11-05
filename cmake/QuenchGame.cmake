@@ -1,8 +1,8 @@
 # Game executables: quench_add_game(). The engine owns main (quench_main, SDL main callbacks); the game defines
 # quench::app::createGame() (include/quench/app/App.h).
 #
-#   macOS: a plain executable; ASSETS is copied to assets/ next to it (SDL_GetBasePath() is the executable's
-#          directory). Run it from the build tree.
+#   macOS: a plain executable; ASSETS and the output of COOKED_ASSETS are copied to assets/ next to it
+#          (SDL_GetBasePath() is the executable's directory). Run it from the build tree.
 #   iOS, Ninja (Simulator and device): <OUTPUT_NAME>.app with Info.plist (cmake/Info.ios.plist.in), the icon compiled
 #          by actool, the assets in assets/ at the bundle root, signed with QUENCH_IOS_SIGN_IDENTITY ("-" = ad-hoc,
 #          enough for the Simulator).
@@ -21,13 +21,14 @@ set(QUENCH_IOS_BUNDLE_ID_SUFFIX "${_quench_bundle_suffix}" CACHE STRING "Appende
 
 # quench_add_game(<target> NAME <display name> SOURCES <file>...
 #                 [OUTPUT_NAME <file name>] [BUNDLE_ID <reverse dns>] [VERSION <x.y.z>]
-#                 [ASSETS <dir>] [ICON <square png, 1024 px or larger>] [ORIENTATIONS landscape|portrait|all]
-#                 [CUSTOM_MAIN])
+#                 [ASSETS <dir>] [COOKED_ASSETS <quench_cook_assets name>...]
+#                 [ICON <square png, 1024 px or larger>] [ORIENTATIONS landscape|portrait|all] [CUSTOM_MAIN])
+# ASSETS is copied as it is; COOKED_ASSETS (cmake/QuenchCook.cmake) are cooked first and merged into the same assets/.
 # CUSTOM_MAIN: the target defines main itself instead of linking quench_main (the device test app).
 # The sources get QUENCH_GAME_NAME and QUENCH_GAME_VERSION (string literals) for AppDesc.
 function(quench_add_game target)
     cmake_parse_arguments(PARSE_ARGV 1 arg "CUSTOM_MAIN" "NAME;OUTPUT_NAME;BUNDLE_ID;VERSION;ASSETS;ICON;ORIENTATIONS"
-                          "SOURCES")
+                          "SOURCES;COOKED_ASSETS")
     if(NOT arg_NAME OR NOT arg_SOURCES)
         message(FATAL_ERROR "quench_add_game: NAME and SOURCES are required")
     endif()
@@ -54,6 +55,19 @@ function(quench_add_game target)
     if(arg_ICON)
         get_filename_component(arg_ICON ${arg_ICON} ABSOLUTE)
     endif()
+    set(_cooked_dirs "")
+    foreach(_cook IN LISTS arg_COOKED_ASSETS)
+        if(NOT TARGET ${_cook})
+            message(FATAL_ERROR "quench_add_game: COOKED_ASSETS '${_cook}' is not a quench_cook_assets() target")
+        endif()
+        get_target_property(_dir ${_cook} QUENCH_COOK_OUTPUT_DIR)
+        if(NOT _dir)
+            message(FATAL_ERROR "quench_add_game: COOKED_ASSETS '${_cook}' is not a quench_cook_assets() target")
+        endif()
+        list(APPEND _cooked_dirs ${_dir})
+    endforeach()
+    # The asset directories in copy order: cooked files win over plain ones of the same name.
+    set(_asset_dirs ${arg_ASSETS} ${_cooked_dirs})
 
     add_executable(${target} ${arg_SOURCES})
     if(arg_CUSTOM_MAIN)
@@ -65,12 +79,17 @@ function(quench_add_game target)
     target_compile_definitions(${target} PRIVATE QUENCH_GAME_NAME="${arg_NAME}" QUENCH_GAME_VERSION="${arg_VERSION}")
 
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-        if(arg_ASSETS)
-            add_custom_target(${target}_assets ALL
-                COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${arg_ASSETS} $<TARGET_FILE_DIR:${target}>/assets
-                COMMENT "Copying the assets of ${target}"
-                VERBATIM)
+        if(_asset_dirs)
+            set(_copies "")
+            foreach(_dir IN LISTS _asset_dirs)
+                list(APPEND _copies COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${_dir}
+                     $<TARGET_FILE_DIR:${target}>/assets)
+            endforeach()
+            add_custom_target(${target}_assets ALL ${_copies} COMMENT "Copying the assets of ${target}" VERBATIM)
             add_dependencies(${target} ${target}_assets)
+            if(arg_COOKED_ASSETS)
+                add_dependencies(${target}_assets ${arg_COOKED_ASSETS})
+            endif()
         endif()
         return()
     endif()
@@ -142,7 +161,19 @@ function(quench_add_game target)
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${arg_ICON})
             list(APPEND _resources ${_xcassets})
         endif()
-        if(arg_ASSETS)
+        if(arg_COOKED_ASSETS)
+            # One folder reference named assets/: the plain and the cooked assets are merged into it first.
+            set(_stage ${_gen}/assets)
+            file(MAKE_DIRECTORY ${_stage})
+            set(_copies "")
+            foreach(_dir IN LISTS _asset_dirs)
+                list(APPEND _copies COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${_dir} ${_stage})
+            endforeach()
+            add_custom_target(${target}_assets ${_copies} COMMENT "Merging the assets of ${target}" VERBATIM)
+            add_dependencies(${target}_assets ${arg_COOKED_ASSETS})
+            add_dependencies(${target} ${target}_assets)
+            list(APPEND _resources ${_stage})
+        elseif(arg_ASSETS)
             # A directory source becomes a folder reference: Xcode copies it to the bundle root as assets/.
             list(APPEND _resources ${arg_ASSETS})
         endif()
@@ -196,8 +227,11 @@ function(quench_add_game target)
         list(APPEND _bundle_steps COMMAND ${CMAKE_COMMAND} -E copy ${_icon_out}/Assets.car
              ${_icon_out}/AppIcon60x60@2x.png ${_icon_out}/AppIcon76x76@2x~ipad.png ${_app}/)
     endif()
-    if(arg_ASSETS)
-        list(APPEND _bundle_steps COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${arg_ASSETS} ${_app}/assets)
+    foreach(_dir IN LISTS _asset_dirs)
+        list(APPEND _bundle_steps COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${_dir} ${_app}/assets)
+    endforeach()
+    if(arg_COOKED_ASSETS)
+        add_dependencies(${target} ${arg_COOKED_ASSETS})
     endif()
     # Runs on every build: the signature covers the executable and every resource.
     add_custom_target(${target}_bundle ALL

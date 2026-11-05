@@ -663,8 +663,9 @@ void RendererImpl::bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, c
     std::uint32_t mask = 0;
     for (std::size_t i = 0; i < 4; ++i) {
         const TextureEntry* t = scene.textures.get(m.textures[i]);
-        bindings[i] = {t ? gpu::TextureRef(t->texture) : gpu::TextureRef(white), materialSampler};
-        if (t) mask |= 1u << i;
+        const bool bound = t && t->texture; // an empty texture (still loading) samples as unset
+        bindings[i] = {bound ? gpu::TextureRef(t->texture) : gpu::TextureRef(white), materialSampler};
+        if (bound) mask |= 1u << i;
     }
     u.surface = glm::vec4(m.roughness, m.metallic, m.alphaCutoff, float(mask));
     for (std::size_t i = 0; i < 4; ++i) u.params[i] = m.params[i];

@@ -8,6 +8,7 @@
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <cstring>
 #include <format>
 #include <string>
 
@@ -33,6 +34,8 @@ Scene::Scene(gpu::Device& device) : m_impl(std::make_unique<detail::SceneImpl>()
 Scene::Scene(Scene&& other) noexcept = default;
 Scene& Scene::operator=(Scene&& other) noexcept = default;
 Scene::~Scene() = default;
+
+gpu::Device& Scene::device() const { return *m_impl->device; }
 
 Result<MeshId> Scene::addMesh(const MeshDesc& desc) {
     const std::string name(desc.name.empty() ? std::string_view("mesh") : desc.name);
@@ -80,12 +83,13 @@ void Scene::removeMesh(MeshId mesh) {
     m_impl->meshes.remove(mesh);
 }
 
-Result<TextureId> Scene::addTexture(const TextureData& data) {
+namespace {
+
+Result<gpu::Texture> createTexture(gpu::Device& device, const TextureData& data) {
     const std::string name(data.name.empty() ? std::string_view("texture") : data.name);
     if (data.width == 0 || data.height == 0 || data.pixels.size() != std::size_t(data.width) * data.height * 4)
         return Error{std::format("texture '{}': {} x {} needs {} bytes of RGBA8, got {}", name, data.width, data.height,
                                  std::size_t(data.width) * data.height * 4, data.pixels.size())};
-    gpu::Device& device = *m_impl->device;
     gpu::TextureUsage usage = gpu::TextureUsage::Sampled;
     if (data.mipmaps) usage |= gpu::TextureUsage::ColorTarget;
     const gpu::TextureFormat format = data.srgb ? gpu::TextureFormat::Rgba8UnormSrgb : gpu::TextureFormat::Rgba8Unorm;
@@ -106,7 +110,96 @@ Result<TextureId> Scene::addTexture(const TextureData& data) {
         commands.generateMipmaps(*texture);
         if (Result<void> r = commands.submit(); !r) return Error{std::format("texture '{}': {}", name, r.error())};
     }
+    return std::move(*texture);
+}
+
+gpu::TextureFormat gpuFormat(assets::PixelFormat format) {
+    switch (format) {
+    case assets::PixelFormat::Rgba8: return gpu::TextureFormat::Rgba8Unorm;
+    case assets::PixelFormat::Rgba8Srgb: return gpu::TextureFormat::Rgba8UnormSrgb;
+    case assets::PixelFormat::Bc7: return gpu::TextureFormat::Bc7RgbaUnorm;
+    case assets::PixelFormat::Bc7Srgb: return gpu::TextureFormat::Bc7RgbaUnormSrgb;
+    case assets::PixelFormat::Astc4x4: return gpu::TextureFormat::Astc4x4Unorm;
+    case assets::PixelFormat::Astc4x4Srgb: return gpu::TextureFormat::Astc4x4UnormSrgb;
+    }
+    return gpu::TextureFormat::Invalid;
+}
+
+// Every level through one transfer buffer and one copy pass.
+Result<gpu::Texture> createTexture(gpu::Device& device, const assets::TextureImage& image, std::string_view label) {
+    const std::string name(label.empty() ? std::string_view("texture") : label);
+    const gpu::TextureFormat format = gpuFormat(image.format);
+    if (image.width == 0 || image.height == 0 || image.mipLevels == 0 ||
+        image.mipLevels > gpu::fullMipCount(image.width, image.height))
+        return Error{
+            std::format("texture '{}': {} x {} with {} levels", name, image.width, image.height, image.mipLevels)};
+    if (image.levelOffset(image.mipLevels) != image.data.size())
+        return Error{std::format("texture '{}': {} bytes of data, the levels need {}", name, image.data.size(),
+                                 image.levelOffset(image.mipLevels))};
+    if (image.data.size() > 0xffffffffu)
+        return Error{std::format("texture '{}': {} bytes is too large to upload at once", name, image.data.size())};
+    if (!device.supportsFormat(format, gpu::TextureType::Texture2D, gpu::TextureUsage::Sampled))
+        return Error{std::format("texture '{}': the device cannot sample {}", name, gpu::formatInfo(format).name)};
+    Result<gpu::Texture> texture = device.createTexture({
+        .format = format,
+        .usage = gpu::TextureUsage::Sampled,
+        .width = image.width,
+        .height = image.height,
+        .mipLevels = image.mipLevels,
+        .name = name,
+    });
+    if (!texture) return Error{std::format("texture '{}': {}", name, texture.error())};
+    Result<gpu::TransferBuffer> staging = device.createTransferBuffer(
+        {gpu::TransferDirection::Upload, std::uint32_t(image.data.size()), "texture upload"});
+    if (!staging) return Error{std::format("texture '{}': {}", name, staging.error())};
+    std::span<std::byte> mapped = staging->map();
+    if (mapped.size() < image.data.size()) return Error{std::format("texture '{}': cannot map the upload", name)};
+    std::memcpy(mapped.data(), image.data.data(), image.data.size());
+    staging->unmap();
+    gpu::CommandBuffer commands = device.acquireCommandBuffer();
+    if (!commands) return Error{std::format("texture '{}': no command buffer for the upload", name)};
+    {
+        gpu::CopyPass copy = commands.beginCopyPass();
+        for (std::uint32_t level = 0; level < image.mipLevels; ++level)
+            copy.upload(*staging, std::uint32_t(image.levelOffset(level)),
+                        gpu::TextureRegion{.texture = *texture, .mipLevel = level});
+    }
+    if (Result<void> r = commands.submit(); !r) return Error{std::format("texture '{}': {}", name, r.error())};
+    return std::move(*texture);
+}
+
+} // namespace
+
+Result<TextureId> Scene::addTexture(const TextureData& data) {
+    Result<gpu::Texture> texture = createTexture(*m_impl->device, data);
+    if (!texture) return Error{texture.error()};
     return m_impl->textures.add({std::move(*texture)});
+}
+
+Result<TextureId> Scene::addTexture(const assets::TextureImage& image, std::string_view name) {
+    Result<gpu::Texture> texture = createTexture(*m_impl->device, image, name);
+    if (!texture) return Error{texture.error()};
+    return m_impl->textures.add({std::move(*texture)});
+}
+
+TextureId Scene::addEmptyTexture() { return m_impl->textures.add({}); }
+
+Result<void> Scene::setTexture(TextureId texture, const TextureData& data) {
+    detail::TextureEntry* entry = lookup(m_impl->textures, texture, "setTexture: stale or null texture");
+    if (!entry) return Error{"setTexture: stale or null texture"};
+    Result<gpu::Texture> created = createTexture(*m_impl->device, data);
+    if (!created) return Error{created.error()};
+    entry->texture = std::move(*created);
+    return {};
+}
+
+Result<void> Scene::setTexture(TextureId texture, const assets::TextureImage& image, std::string_view name) {
+    detail::TextureEntry* entry = lookup(m_impl->textures, texture, "setTexture: stale or null texture");
+    if (!entry) return Error{"setTexture: stale or null texture"};
+    Result<gpu::Texture> created = createTexture(*m_impl->device, image, name);
+    if (!created) return Error{created.error()};
+    entry->texture = std::move(*created);
+    return {};
 }
 
 void Scene::removeTexture(TextureId texture) {
@@ -206,7 +299,16 @@ bool Scene::contains(TextureId texture) const { return m_impl->textures.get(text
 bool Scene::contains(MaterialId material) const { return m_impl->materials.get(material) != nullptr; }
 bool Scene::contains(InstanceId instance) const { return m_impl->instances.get(instance) != nullptr; }
 bool Scene::contains(LightId light) const { return m_impl->lights.get(light) != nullptr; }
+std::uint32_t Scene::meshUsers(MeshId mesh) const {
+    const MeshEntry* entry = m_impl->meshes.get(mesh);
+    return entry ? entry->users : 0;
+}
+std::uint32_t Scene::materialUsers(MaterialId material) const {
+    const MaterialEntry* entry = m_impl->materials.get(material);
+    return entry ? entry->users : 0;
+}
 std::uint32_t Scene::meshCount() const { return m_impl->meshes.size(); }
+std::uint32_t Scene::textureCount() const { return m_impl->textures.size(); }
 std::uint32_t Scene::materialCount() const { return m_impl->materials.size(); }
 std::uint32_t Scene::instanceCount() const { return m_impl->instances.size(); }
 std::uint32_t Scene::lightCount() const { return m_impl->lights.size(); }

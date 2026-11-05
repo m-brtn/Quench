@@ -1,6 +1,7 @@
 #include <quench/core/FileSystem.h>
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <system_error>
 
@@ -55,6 +56,14 @@ public:
         return {};
     }
 
+    std::optional<std::int64_t> modifiedTime(Root root, std::string_view path) override {
+        if (root == Root::User && m_userRoot.empty()) return std::nullopt;
+        std::error_code ec;
+        const auto time = std::filesystem::last_write_time(resolve(root, path), ec);
+        if (ec) return std::nullopt;
+        return std::int64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(time.time_since_epoch()).count());
+    }
+
 private:
     std::filesystem::path resolve(Root root, std::string_view path) const {
         const std::filesystem::path& base = root == Root::Assets ? m_assetRoot : m_userRoot;
@@ -107,6 +116,11 @@ Result<std::string> readAssetText(std::string_view path) {
 }
 
 bool assetExists(std::string_view path) { return checkPath(path).empty() && backend()->exists(Root::Assets, path); }
+
+std::optional<std::int64_t> assetModifiedTime(std::string_view path) {
+    if (!checkPath(path).empty()) return std::nullopt;
+    return backend()->modifiedTime(Root::Assets, path);
+}
 
 Result<Bytes> readUser(std::string_view path) {
     if (std::string reason = checkPath(path); !reason.empty()) return Error{reason + ": " + std::string(path)};

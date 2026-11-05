@@ -39,15 +39,17 @@ include(cmake/QuenchGame.cmake)
 
 # ------------------------------------------------------------------ core
 # Headless: no SDL, no GPU. Result, assertions, logging, fixed-step clock, JSON, file system, number parsing, thread
-# priority.
+# priority, the job system (enkiTS).
 add_library(quench_core STATIC
     src/core/Assert.cpp
     src/core/FileSystem.cpp
+    src/core/Jobs.cpp
     src/core/Json.cpp
     src/core/Log.cpp
     src/core/Parse.cpp
     src/core/Thread.cpp)
 quench_configure_target(quench_core)
+target_link_libraries(quench_core PRIVATE quench_enkits)
 if(QUENCH_ASSERTS STREQUAL "ON")
     target_compile_definitions(quench_core PUBLIC QUENCH_ENABLE_ASSERTS=1)
 elseif(QUENCH_ASSERTS STREQUAL "OFF")
@@ -56,7 +58,7 @@ endif()
 
 # ------------------------------------------------------------------ physics
 # Headless: Jolt Physics wrapper.
-add_library(quench_physics STATIC src/physics/PhysicsWorld.cpp)
+add_library(quench_physics STATIC src/physics/JoltJobSystem.cpp src/physics/PhysicsWorld.cpp)
 quench_configure_target(quench_physics)
 target_link_libraries(quench_physics PUBLIC quench_core Jolt)
 if(EMSCRIPTEN)
@@ -64,6 +66,21 @@ if(EMSCRIPTEN)
     # the wasm-node tests). 1 MB is what Jolt links its own WebAssembly programs with.
     target_link_options(quench_physics INTERFACE -sSTACK_SIZE=1048576)
 endif()
+
+# ------------------------------------------------------------------ assets
+# Headless: asset IDs, the asset manager (cache, budgets, loads on the job system, hot reload), cooked KTX2 textures
+# and models, streaming by distance. GPU resources for textures and models are quench_render's (SceneAssets).
+add_library(quench_assets STATIC
+    src/assets/AssetId.cpp
+    src/assets/AssetManager.cpp
+    src/assets/Model.cpp
+    src/assets/StreamingGrid.cpp
+    src/assets/Texture.cpp)
+quench_configure_target(quench_assets)
+target_link_libraries(quench_assets PUBLIC quench_core quench_glm PRIVATE quench_xxhash quench_meshoptimizer
+                                                                          quench_bc7decomp)
+# The asset cooker (host tool, tools/cook) and quench_cook_assets().
+include(cmake/QuenchCook.cmake)
 
 # ------------------------------------------------------------------ gpu
 # Headless: the table type of embedded shaders (quench_add_shaders).
@@ -116,7 +133,8 @@ if(NOT QUENCH_HEADLESS)
         endif()
     endif()
     quench_configure_target(quench_app)
-    target_link_libraries(quench_app PUBLIC quench_core quench_gpu quench_glm quench_imgui SDL3::SDL3-static)
+    target_link_libraries(quench_app PUBLIC quench_core quench_assets quench_gpu quench_glm quench_imgui
+                                            SDL3::SDL3-static)
     target_compile_definitions(quench_app PRIVATE QUENCH_VERSION="${PROJECT_VERSION}")
     quench_add_shaders(quench_app NAME imgui SOURCE src/app/shaders/imgui.hlsl
         ENTRIES imgui_vs:vertex imgui_fs:fragment fullscreen_vs:vertex ui_composite_fs:fragment)
@@ -131,9 +149,10 @@ if(NOT QUENCH_HEADLESS)
         src/render/Projection.cpp
         src/render/Renderer.cpp
         src/render/Scene.cpp
+        src/render/SceneAssets.cpp
         src/render/ToneMap.cpp)
     quench_configure_target(quench_render)
-    target_link_libraries(quench_render PUBLIC quench_core quench_gpu quench_gpu_shaders quench_glm)
+    target_link_libraries(quench_render PUBLIC quench_core quench_assets quench_gpu quench_gpu_shaders quench_glm)
     quench_add_shaders(quench_render NAME render_frame SOURCE src/render/shaders/frame.hlsl
         ENTRIES fullscreen_vs:vertex shadow_vs:vertex shadow_fs:fragment sky_fs:fragment velocity_fs:fragment
                 velocity_obj_vs:vertex velocity_obj_fs:fragment taa_fs:fragment bloom_down_fs:fragment

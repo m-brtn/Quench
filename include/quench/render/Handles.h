@@ -24,5 +24,6 @@ using InstanceId = Handle<struct InstanceTag>;
 using LightId = Handle<struct LightTag>;
 using SurfaceId = Handle<struct SurfaceTag>;
 using PassId = Handle<struct PassTag>;
+using ModelInstanceId = Handle<struct ModelInstanceTag>; // render::SceneAssets
 
 } // namespace quench::render

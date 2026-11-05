@@ -74,6 +74,13 @@ public:
         return {};
     }
 
+    // SDL_GetPathInfo works on directories of the file system (the bundle, the user directory), not inside an APK.
+    std::optional<std::int64_t> modifiedTime(fs::Root root, std::string_view path) override {
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(resolve(root, path).c_str(), &info) || info.type != SDL_PATHTYPE_FILE) return std::nullopt;
+        return std::int64_t(info.modify_time);
+    }
+
 private:
     std::string resolve(fs::Root root, std::string_view path) const {
         return (root == fs::Root::Assets ? m_assetRoot : m_userRoot) + std::string(path);

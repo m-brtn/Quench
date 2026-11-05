@@ -8,8 +8,8 @@
 #   tools/package_demo.sh --preset NAME  # the macOS configure and build preset (default: release)
 #
 # macOS: build quench_demo with the preset, run the demo's CTest checks, assemble QuenchDemo.app (the executable, an
-# Info.plist, an icns made from examples/demo/icon/icon.png, the licences), check its version, minimum macOS and
-# dynamic dependencies (system libraries only), sign it ad hoc and zip it together with LICENSE and
+# Info.plist, an icns made from examples/demo/icon/icon.png, the licences, the assets), check its version, minimum
+# macOS and dynamic dependencies (system libraries only), sign it ad hoc and zip it together with LICENSE and
 # THIRD_PARTY_LICENSES. Then the app is started from a fresh unzip with examples/demo/scenarios/smoke.txt: exit code 0
 # and a capture, left in dist/ to be looked at.
 # iOS: the ios-xcode preset, configured with the team (an Apple ID signed in to Xcode), builds quench_demo with
@@ -67,6 +67,8 @@ ZIP="$DIST/$NAME-macos.zip"
 rm -rf "$STAGE" "$ZIP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$EXE" "$APP/Contents/MacOS/quench-demo"
+# The asset directory (plain and cooked) goes to Resources: SDL_GetBasePath() of a bundled app.
+cp -R "$(dirname "$EXE")/assets" "$APP/Contents/Resources/assets"
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES" "$APP/Contents/Resources/"
 cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES" "$STAGE/"
 
@@ -135,7 +137,8 @@ UNZIP="$(mktemp -d -t quench_demo_unzip)"
 unzip -q "$ZIP" -d "$UNZIP"
 UNZIPPED="$UNZIP/$NAME-macos"
 for f in QuenchDemo.app LICENSE THIRD_PARTY_LICENSES QuenchDemo.app/Contents/Resources/QuenchDemo.icns \
-         QuenchDemo.app/Contents/Resources/LICENSE QuenchDemo.app/Contents/Resources/THIRD_PARTY_LICENSES; do
+         QuenchDemo.app/Contents/Resources/LICENSE QuenchDemo.app/Contents/Resources/THIRD_PARTY_LICENSES \
+         QuenchDemo.app/Contents/Resources/assets/models/crate.qmodel; do
     [[ -e "$UNZIPPED/$f" ]] || fail "$f missing in the archive"
 done
 codesign --verify --deep --strict "$UNZIPPED/QuenchDemo.app"

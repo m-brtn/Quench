@@ -21,6 +21,8 @@ namespace quench::app {
 
 const AppDesc& App::desc() const { return m_state.desc; }
 gpu::Device& App::device() { return *m_state.device; }
+JobSystem& App::jobs() { return *m_state.jobs; }
+assets::AssetManager& App::assets() { return *m_state.assets; }
 SDL_Window* App::window() const { return m_state.window.get(); }
 Input& App::input() { return m_state.input; }
 const Input& App::input() const { return m_state.input; }
@@ -379,6 +381,10 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
         makeSdlFileSystem({.org = s.desc.organization, .app = s.desc.name, .assetDir = s.desc.assetDir, .userDir = {}});
     if (!files) return fail(std::format("file system: {}", files.error()));
     fs::setBackend(std::move(*files));
+    s.jobs = std::make_unique<JobSystem>(JobSystemDesc{.workerThreads = s.options.workerThreads});
+    s.assets = std::make_unique<assets::AssetManager>(
+        *s.jobs,
+        assets::AssetManagerSettings{.simulatedLatency = s.options.assetLatency, .hotReload = s.options.hotReload});
 
     if (!s.options.script.empty()) {
         // A host path given on the command line (also in the iOS Simulator), not an asset. On a device the host's
@@ -483,6 +489,7 @@ SDL_AppResult iterate(AppState& s) {
         ++s.ticks;
     }
     s.time += frameDt;
+    s.assets->update();
     s.game->update(s.app, frameDt);
 
     ImGui_ImplSDL3_NewFrame();
@@ -547,6 +554,9 @@ void quit(AppState& s, SDL_AppResult result) {
     if (s.gameStarted) s.game->shutdown(s.app);
     s.gameStarted = false;
     s.game.reset();
+    // Loads and jobs a game left behind may still read files: they finish before the file system backend goes.
+    s.assets.reset();
+    s.jobs.reset();
     releaseScenarioInput(s);
     for (gpu::Fence& fence : s.fences) fence.reset();
     s.frameTexture.reset();

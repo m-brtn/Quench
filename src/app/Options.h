@@ -28,7 +28,10 @@ struct Options {
     bool gpuDebug = false;
     std::optional<gpu::PresentMode> presentMode;
     std::optional<HdrMode> hdr;
-    float hdrHeadroom = 0.0f; // > 0: the headroom of HDR output instead of the display's
+    float hdrHeadroom = 0.0f;  // > 0: the headroom of HDR output instead of the display's
+    int workerThreads = -1;    // job system workers; -1: JobSystemDesc's default
+    double assetLatency = 0.0; // AssetManagerSettings::simulatedLatency
+    bool hotReload = false;
     bool printVersion = false;
     bool printHelp = false;
     std::vector<std::string> gameArgs;

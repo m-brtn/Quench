@@ -60,6 +60,7 @@ public:
         m_sections.push_back(demo::makeHdrSection());
         m_sections.push_back(demo::makePhysicsSection());
         m_sections.push_back(demo::makeInputSection());
+        m_sections.push_back(demo::makeAssetsSection());
         for (const std::unique_ptr<Section>& section : m_sections)
             if (Result<void> r = section->init(*m_context); !r)
                 return Error{std::format("section {}: {}", section->id(), r.error())};
@@ -466,7 +467,7 @@ private:
 
 constexpr const char* kHelp =
     "quench_demo options:\n"
-    "  --section ID   start in a section: materials, shadows, sky, post, hdr, physics, input\n";
+    "  --section ID   start in a section: materials, shadows, sky, post, hdr, physics, input, assets\n";
 
 } // namespace
 

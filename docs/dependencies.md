@@ -6,11 +6,12 @@ checked on 2026-11-04 in the libraries' repositories. All documentation: [index]
 
 ## Carried over from the games
 
-All are fetched as GitHub archives of a fixed commit with a SHA256 hash. Pinned in the engine so far (stages 1 to 3),
-with TrailForge's commits and hashes: Jolt Physics, SDL3, GLM and Dear ImGui (`cmake/Dependencies.cmake`; SDL and
-ImGui only when `QUENCH_HEADLESS` is off) and the shader toolchain (`cmake/ShaderToolchain.cmake`). The others are
-added with the stage that uses them; until then their SHA256 values are in TrailForge's `cmake/Dependencies.cmake` and
-`tools/texc/CMakeLists.txt`. The engine builds ImGui with its SDL3 platform backend only and draws it through
+All are fetched as GitHub archives of a fixed commit with a SHA256 hash. Pinned in the engine so far, with
+TrailForge's commits and hashes: Jolt Physics, SDL3, GLM and Dear ImGui (`cmake/Dependencies.cmake`; SDL and ImGui
+only when `QUENCH_HEADLESS` is off), the shader toolchain (`cmake/ShaderToolchain.cmake`) and, since stage 6,
+meshoptimizer, bc7enc_rdo and stb; stage 6 also pins enkiTS, xxHash and fastgltf, which no game uses (see "Added in
+stage 6"). miniaudio and cgltf are not pinned in the engine (cgltf is
+replaced by fastgltf in the cooker); their SHA256 values are in TrailForge's `cmake/Dependencies.cmake`. The engine builds ImGui with its SDL3 platform backend only and draws it through
 `quench::gpu` (`src/app/ImGuiRenderer.cpp`), so ImGui's SDL GPU renderer backend and TrailForge's iOS patch for it are
 not needed. GLM is configured with `GLM_FORCE_DEPTH_ZERO_TO_ONE` and `GLM_FORCE_RADIANS`; it is offered under the
 Happy Bunny License or MIT, and the engine uses it under MIT.
@@ -50,24 +51,42 @@ Build-time shader toolchain (host tools, not shipped in the binary):
 TrailForge's texture and model compiler (`tools/texc`, host tool) also uses stb
 (`003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5`) and bc7enc_rdo (`b9438627eef73a1157e84201b6fa6eb2ffd6d9f0`).
 
+## Added in stage 6
+
+The job system, the asset runtime and the asset cooker ([Jobs, assets and the cook](assets.md)). Runtime libraries are
+in `cmake/Dependencies.cmake` and listed with their licence texts in `THIRD_PARTY_LICENSES`; the cooker's libraries are
+in `cmake/CookToolchain.cmake`: every configure for the host downloads them (also when nothing is cooked; not cross
+builds given a `QUENCH_HOST_COOK`, not the web build), and they are built only where something cooks (a
+`quench_cook_assets()` call, the cook tests, the `host-tools` preset).
+
+| Library | Version | Commit | Licence | Linked into | Purpose |
+|---|---|---|---|---|---|
+| enkiTS | 1.12 | `0289cf6ffce86697e1f46cb4eeca1c946bffec71` | zlib | `quench_core` | `quench::JobSystem` (tasks, dependencies, parallel-for); Jolt's jobs |
+| xxHash | 0.8.4 | `c87183a77d67f7d37e3d2d1b7eaac5e7c695e4f0` | BSD-2-Clause | `quench_assets` | asset IDs (XXH64 of the path), header only |
+| meshoptimizer | 1.3 | `9e1f07b159d3cb777f1c67ed31fc11fd117986f4` (TrailForge's) | MIT | `quench_assets`, `quench_cook` | decoding cooked vertex and index streams; optimization, quantization, LOD simplification and encoding in the cooker |
+| bc7enc_rdo | none (commit) | `b9438627eef73a1157e84201b6fa6eb2ffd6d9f0` (TrailForge's) | MIT or public domain; `bc7e.ispc` Apache-2.0 (not used) | `quench_assets` (`bc7decomp.cpp`), `quench_cook` (`bc7enc.cpp`) | BC7 decoding where a device cannot sample BC7; BC7 encoding in the cooker |
+| fastgltf | 1.0.0 | `0b800b4a584704f9e9add67c79c4c8732e552787` | MIT | `quench_cook` only | glTF and GLB import |
+| simdjson, simdutf | 5.1.0, 9.3.3 | release files, SHA256 checked by fastgltf | Apache-2.0 or MIT | `quench_cook` only | fastgltf's JSON parser and UTF conversion |
+| stb (`stb_image.h`) | none (commit) | `003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5` (TrailForge's) | MIT or public domain | `quench_cook` only | PNG and JPEG decoding |
+
+None of the pins of the games changes: TrailForge keeps its own meshoptimizer, stb and bc7enc_rdo pins (the same
+commits), Ashfall uses none of these libraries.
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.
 
 | Library | Latest release | Licence | Planned use |
 |---|---|---|---|
-| enkiTS | 1.12 (2026-07-04) | zlib | job system; runs Jolt's jobs |
 | ozz-animation | 0.17.0 (2026-08-01) | MIT | skeletal animation runtime and offline tools |
-| fastgltf | 1.0.0 (2026-10-31) | MIT | glTF / GLB import in the asset cooker |
-| KTX-Software (libktx) | 4.4.2 (2025-10-04) | Apache-2.0, with exceptions (see below) | KTX2 reading, writing, Basis Universal transcoding |
-| Basis Universal | 2_50 (2026-08-03) | Apache-2.0 | supercompressed textures (bundled in libktx) |
-| xxHash | 0.8.4 (2026-09-19) | BSD-2-Clause | asset IDs |
+| KTX-Software (libktx) | 4.4.2 (2025-10-04) | Apache-2.0, with exceptions (see below) | Basis Universal transcoding, ASTC encoding (stage 6 writes and reads KTX2 itself, BC7 and RGBA8 only) |
+| Basis Universal | 2_50 (2026-08-03) | Apache-2.0 | supercompressed textures for Android and the web (bundled in libktx) |
 | Recast & Detour | 1.6.0 (2023-05-21) | zlib | navmesh building, path queries, crowds |
 | Tracy | 0.14.1 (2026-08-22) | BSD-3-Clause | CPU and GPU profiler (development builds) |
 | Flecs | 4.2.0 (2026-11-04) | MIT | optional ECS module for games that want one |
 
-Already pinned and kept: meshoptimizer (cooker: LODs, quantization, compressed vertex and index buffers; gltfpack is
-its command line tool), miniaudio (audio device and capture), Dear ImGui (diagnostics).
+Already pinned and kept: miniaudio (audio device and capture, pinned in the engine with the audio stage), Dear ImGui
+(diagnostics).
 
 ## Verified capabilities and caveats
 
@@ -76,7 +95,10 @@ its command line tool), miniaudio (audio device and capture), Dear ImGui (diagno
   attachments, foot IK, two-bone IK, user channels, motion extraction and skinning. It is tested on WebAssembly and its
   runtime needs C++17. It has no state machine, no retargeting and no GPU skinning: the engine implements those.
 - **fastgltf**: current versions require C++20 (`cxx_std_20` in its CMake); C++17 support ended with the 0.9 series.
-  The engine is C++20, so this is fine.
+  The engine is C++20, so this is fine. Checked in the 1.0.0 source: unless a `simdjson` or `simdutf` package is
+  found, its configure downloads their single-file releases (5.1.0, 9.3.3) from GitHub with `EXPECTED_HASH SHA256`;
+  `cmake/CookToolchain.cmake` disables `find_package` for both, so only the pinned files are used. Their headers
+  trigger about 200 `-Wundef` warnings, so the cooker's third-party targets build without the engine warnings.
 - **KTX-Software**: bundles Basis Universal (with zstd inside it), astc-encoder, dfdutils and an ETC decoder in
   `external/`. Most files are Apache-2.0, but `external/etcdec/etcdec.cxx` is not open source (Ericsson licence):
   configure libktx with `LIBKTX_FEATURE_ETC_UNPACK=NO` so it is not built. Apache-2.0 NOTICE files must be shipped.
@@ -85,7 +107,9 @@ its command line tool), miniaudio (audio device and capture), Dear ImGui (diagno
   enkiTS. Single-threaded, Jolt runs dependent jobs nested on the caller's stack: under Emscripten one `step()` of a
   sphere on a box overflowed the 64 KB default stack by about 12 KB. `quench_physics` therefore links WebAssembly
   programs with `-sSTACK_SIZE=1048576`, the value Jolt uses for its own WebAssembly programs.
-- **enkiTS**: `ProfilerCallbacks::threadStart` runs on each worker at start; the engine sets Apple QoS there.
+- **enkiTS**: `ProfilerCallbacks::threadStart` runs on each worker at start; the engine calls
+  `raiseWorkerThreadPriority()` there. `WaitforTask` runs other tasks while it waits, so a wait on the frame thread
+  helps instead of blocking. Built from its one source file (`src/TaskScheduler.cpp`) with three task priorities.
 - **SDL GPU**: no ray tracing, no GPU timestamps, no native handles (see
   [Architecture](architecture.md#graphics-layer)). Checked in the 3.4.18 source: device creation needs SDL's video
   subsystem for every driver; parameter checks (mipmap generation, texture format support) run only in its debug

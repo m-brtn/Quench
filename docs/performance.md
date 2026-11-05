@@ -76,6 +76,30 @@ with frame p50 16.67 ms: presentation jitter outside the budget, not a missed in
 
 ## Measurements
 
+Stage 6 A/B, 2026-11-05 23:23-23:37, Release, vsync, Mac, Apple M4 Pro, LG UltraFine 5K at 60 Hz,
+`--frame-size 1920x1080`: HEAD `8898598` (built from `git archive` in `/tmp/qs6head`) against the stage 6 working
+tree, interleaved, nothing else rendering. The CPU times of this session are about 1.5 to 2 times those of 21:58
+(hello CPU p50 0.255 ms then, 0.41 ms now, in both builds): a difference between sessions, which is why only the
+interleaved runs are compared. Medians of the runs, HEAD and stage 6, in milliseconds:
+
+| Run | Runs | CPU p50 | CPU p99 | GPU p50 |
+|---|---|---|---|---|
+| hello | 5 + 5 | 0.409, 0.411 (+0.5 %) | 0.594, 0.616 (+3.7 %) | 0.548, 0.548 |
+| demo materials (focused) | 4 + 4 | 1.2145, 1.220 (+0.5 %) | 1.567, 1.612 (+2.9 %) | 7.182, 7.190 |
+| demo sky (focused) | 4 + 4 | 1.1085, 1.142 (+3.0 %) | 1.333, 1.395 (+4.7 %) | 6.394, 6.399 |
+| demo physics (focused) | 4 + 4 | 1.3585, 1.374 (+1.1 %) | 1.7045, 1.7495 (+2.6 %) | 5.553, 5.556 |
+
+The complete demo benchmark, three runs per build, gave CPU p50 between -10 % (sky) and +3.4 % (materials) per
+section and CPU p99 between -7.2 % (post) and +8.9 % (sky), with the per-run values of the two builds overlapping in
+every section; the three sections above 5 % in p99 (materials +6.6 %, sky +8.9 %, physics +6.4 %) were measured
+again on their own (the focused rows). GPU p50 the same within 0.012 ms in every section. The new `assets` region (streaming with the moving
+focus, the default budgets): CPU p50 1.232, p99 1.641, GPU p50 6.445 ms (three runs), within the demo's budget.
+
+Jolt's step time, a host program against `PhysicsWorld` (2,000 boxes falling on a floor, 600 steps of 1/120 s after
+120), three interleaved runs each: Jolt's own pool (HEAD, 4 workers, concurrency 5) median 0.662, 0.576, 0.588 ms
+(p99 3.411, 0.689, 1.299); the engine's job system (11 workers, concurrency 5) median 0.580, 0.576, 0.591 ms (p99
+0.729, 0.705, 0.763). Without workers: 1.315 ms (HEAD) and 1.322 ms.
+
 2026-11-05 19:34, the engine demo's benchmark, Release, vsync, Mac, Apple M4 Pro, LG UltraFine 5K at 60 Hz,
 `--frame-size 1920x1080`, three runs, medians of the runs (frame p95 and max: the largest of the three). During these
 runs a second app was rendering on the same GPU (an interactive `QuenchDemo.app` started from `dist/` at 18:32), so

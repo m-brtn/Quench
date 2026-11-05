@@ -3,7 +3,7 @@
 
 wait 0.1
 expect section == 0
-expect sections == 7
+expect sections == 8
 tap ]
 until section == 1 1
 tap PageDown
@@ -22,9 +22,11 @@ until section == 5 1
 gamepad button rightshoulder tap
 until section == 6 1
 gamepad button rightshoulder tap
+until section == 7 1
+gamepad button rightshoulder tap
 until section == 0 1
 gamepad button leftshoulder tap
-until section == 6 1
+until section == 7 1
 gamepad detach
 until gamepad == 0 2
 

@@ -33,7 +33,10 @@ with 0, for game flags that only print (TrailForge's `--paths`). `quench_add_gam
 On iOS the app stops rendering between `SDL_EVENT_WILL_ENTER_BACKGROUND` and `SDL_EVENT_DID_ENTER_FOREGROUND`, and the
 clock is reset on return, so no ticks pile up. A minimized desktop window also skips rendering.
 
-`App` gives the device, the window, `Input`, sizes in points and pixels, the safe area (notches, rounded corners),
+`App` gives the device, the engine's job system (`jobs()`, one pool for the engine and the game) and asset manager
+(`assets()`, updated every frame before `Game::update`; both created before `Game::init` and destroyed after the
+game, [Jobs, assets and the cook](assets.md)), the window, `Input`, sizes in points and pixels, the safe area
+(notches, rounded corners),
 time, frame and tick counters, frame statistics (`FrameStats`: frame time, CPU time until the submit without the wait
 for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`), the display output (`output()`, `hdrMode()`,
 `hdrSupported()`, `displayHeadroom()`, `displayPotentialHeadroom()`), and actions: `requestCapture`,
@@ -86,6 +89,9 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--present-mode MODE` | `vsync`, `immediate` or `mailbox`; falls back to vsync where the window does not support it |
 | `--hdr MODE` | HDR output: `off` (SDR), `on` (wherever the GPU backend can composite the window in HDR) or `auto` (while the display reports HDR range); default `AppDesc::hdr`, normally off ([HDR output](#hdr-output)) |
 | `--hdr-headroom N` | peak of HDR output in multiples of paper white (1 to 1000) instead of the display's, for repeatable HDR runs |
+| `--worker-threads N` | worker threads of the job system (0 to 64; default: hardware threads minus one); 0 runs jobs on the main thread, as in builds without threads |
+| `--asset-latency S` | every asset load waits S seconds (0 to 60) before it starts, to see the placeholders |
+| `--hot-reload` | load asset files again when they change on disk (the cooked files in the build tree; Mac only so far) |
 | `--version` | print the version and exit |
 
 With `--script` or `--capture` the run is **deterministic**: every frame advances the app time by exactly one fixed
@@ -204,12 +210,18 @@ Vulkan differ in the driver name the sample prints, so each backend has its own 
 ```cmake
 quench_add_game(<target> NAME <display name> SOURCES <file>...
                 [OUTPUT_NAME <file name>] [BUNDLE_ID <reverse dns>] [VERSION <x.y.z>]
-                [ASSETS <dir>] [ICON <square png, 1024 px or larger>] [ORIENTATIONS landscape|portrait|all]
-                [CUSTOM_MAIN])
+                [ASSETS <dir>] [COOKED_ASSETS <quench_cook_assets name>...]
+                [ICON <square png, 1024 px or larger>] [ORIENTATIONS landscape|portrait|all] [CUSTOM_MAIN])
 quench_add_shaders(<target> NAME <set> SOURCE <file.hlsl> ENTRIES <entry>:vertex <entry>:fragment ...)
+quench_cook_assets(<name> SOURCE_DIR <dir> [TEXTURES <file>...] [MODELS <file>...] ...)
 ```
 
-- **macOS**: a plain executable; `ASSETS` is copied to `assets/` next to it. Run it from the build tree.
+`ASSETS` is copied as it is; `COOKED_ASSETS` names `quench_cook_assets()` targets, whose output (KTX2 textures and
+`.qmodel` models from glTF, GLB, PNG, JPEG and KTX2 sources) is merged into the same `assets/`. The cook runs at build
+time, per file and only when a source changed ([Jobs, assets and the cook](assets.md#quench_cook)).
+
+- **macOS**: a plain executable; `ASSETS` and the cooked assets are copied to `assets/` next to it. Run it from the
+  build tree.
 - **iOS with Ninja** (`ios-sim-release`, `ios-device-release`): `<OUTPUT_NAME>.app` with an Info.plist from
   `cmake/Info.ios.plist.in`, the icon compiled by `actool`, the assets at `assets/` in the bundle, signed with
   `QUENCH_IOS_SIGN_IDENTITY` (`-`, ad-hoc: enough for the Simulator).

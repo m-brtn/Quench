@@ -79,7 +79,7 @@ public:
         const glm::vec3 towardSun = glm::normalize(glm::vec3(0.4f, 0.85f, 0.3f));
         s.addLight({.type = LightType::Directional, .color = glm::vec3(5.0f, 4.8f, 4.4f), .direction = -towardSun});
 
-        m_world = std::make_unique<PhysicsWorld>();
+        m_world = std::make_unique<PhysicsWorld>(&c.app.jobs());
         JPH::BodyInterface& bodies = m_world->bodies();
         bodies.CreateAndAddBody(JPH::BodyCreationSettings(new JPH::BoxShape(JPH::Vec3(kFloorHalf, 0.5f, kFloorHalf)),
                                                           JPH::RVec3(0.0f, -0.5f, 0.0f), JPH::Quat::sIdentity(),

@@ -20,10 +20,14 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-05, version 0.3.0): stages 1 to 3 and 5 of `docs/roadmap.md` are in place, stage 4 for
-TrailForge only: the CMake skeleton and presets, `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`,
-`FixedStepClock`, JSON, `quench::fs` with its standard library backend, worker thread priority), `quench_physics`
-(`PhysicsWorld` on Jolt), the shader build (`quench_shaderc`, `quench_add_shaders()`) and the engine shader library in
+**Current state (2026-11-05, version 0.3.0; stage 6 not released yet): stages 1 to 3 and 5 of `docs/roadmap.md` are
+in place, stage 4 for TrailForge only, stage 6 except shader hot reload: the CMake skeleton and presets,
+`quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
+library backend, worker thread priority, the job system `quench::JobSystem` on enkiTS), `quench_physics`
+(`PhysicsWorld` on Jolt, its jobs on the engine's job system), `quench_assets` (asset IDs, the `AssetManager` cache
+with reference counts, placeholders, budgets, loads on jobs, a per-frame upload budget, hot reload on the Mac,
+streaming by distance; KTX2 textures and cooked `.qmodel` models), `quench_cook` (the host tool: glTF, GLB, PNG, JPEG,
+KTX2 to BC7 or RGBA8 KTX2 with mips and meshoptimizer models; `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`) and the engine shader library in
 `shaders/quench/` (uniform structs shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain
 compositions for HDR), `quench_app` and `quench_main` (SDL main callbacks, the game interface, input actions, ImGui,
 common flags, scenarios with points in window points, percent or names a game gives (`Game::scenarioPoint`), HDR
@@ -31,7 +35,8 @@ display output (`--hdr auto|on|off`, an HDR tone curve up to the display's headr
 platforms; the UI at paper white; SDR captures), captures), `quench_render` (the retained scene: meshes, textures,
 materials, instances and lights by handle; the standard frame of cascaded sun shadows, the HDR pass with reversed
 depth, sky and atmosphere, height fog, bloom, ACES or AgX tone mapping and TAA or FXAA, with fallbacks by device
-capability; game passes and surface shaders) and `quench_add_game()` (macOS executables, iOS bundles).
+capability; game passes and surface shaders; `SceneAssets` puts asset textures and models into the scene) and
+`quench_add_game()` (macOS executables, iOS bundles, cooked assets).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (a section per feature, each with a scripted
 check and golden captures; `tools/package_demo.sh` packages it into `dist/`); `templates/game` and
 `tools/new_game.py` start a new game. Tests run on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator,
@@ -42,14 +47,16 @@ JSON), `quench_physics` and shader build, renders its own passes through `quench
 and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and captures; pinned
 `d708783`, not yet moved to a release) with its own input layer fed through `Game::event` and its own physics clock;
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
-`tools/check_games.sh` builds both games against this checkout and starts them. No asset pipeline, job system, audio
-or animation yet (stages 6 to 8).** `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`,
-`docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is built; the rest of `docs/` is design
-and plan beyond stage 5. Update this paragraph whenever that changes.
+`tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system or
+the asset system yet. No shader hot reload, ASTC or Basis Universal textures, audio or animation yet (stage 6
+remaining work, stages 7 and 8).** `docs/migration.md` describes what exists in the two games; `docs/app.md`,
+`docs/render.md`, `docs/assets.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is
+built; the rest of `docs/` is design and plan beyond stage 6. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) with one HLSL shader source compiled at build
-time, Jolt Physics, Dear ImGui (diagnostics), GLM, miniaudio. Planned additions and their licences:
-`docs/dependencies.md`.
+time, Jolt Physics, Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer and bc7enc_rdo's
+BC7 decoder (assets), miniaudio (planned with audio); the cooker adds fastgltf and stb_image at build time. Pins,
+planned additions and their licences: `docs/dependencies.md`.
 
 ## Platforms
 
@@ -83,7 +90,7 @@ startup). The first configure of every preset downloads the pinned dependencies.
 cmake --preset debug && cmake --build --preset debug && ctest --preset debug -j8   # also release, asan, tsan
 cmake --preset headless && cmake --build --preset headless && ctest --preset headless -j8   # no SDL, no GPU
 tools/format.sh --check            # tools/format.sh without arguments formats in place
-# iOS: the shaders are compiled by a macOS quench_shaderc from the host-tools preset
+# iOS: the shaders and assets are compiled by a macOS quench_shaderc and quench_cook from the host-tools preset
 cmake --preset host-tools && cmake --build --preset host-tools
 cmake --preset ios-sim-release && cmake --build --preset ios-sim-release        # or ios-device-release (libraries)
 # Tests in the iOS Simulator, run through `xcrun simctl spawn booted` (build and ctest need a booted Simulator)
@@ -104,6 +111,8 @@ python3 tools/new_game.py "My Game" ../my-game
 # The engine demo (docs/demo.md), one section or the menu; its package for dist/ at the end of a stage
 build/release/examples/demo/quench-demo --section shadows
 tools/package_demo.sh                    # --ios also builds a development-signed .ipa (ios-xcode, not installed)
+# The asset cooker (docs/assets.md); games and the demo cook at build time through quench_cook_assets()
+build/debug/quench_cook --help
 ```
 
 Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...). A test
@@ -197,9 +206,9 @@ Details and rationale: `docs/architecture.md`.
   standard library (host tests and tools); the app installs an SDL_IOStream backend (assets from the bundle, the APK
   or the browser's virtual file system; the user directory from `SDL_GetPrefPath`). No `std::ifstream`,
   `std::ofstream` or `fopen` for assets or saves elsewhere. Host-only tools and tests may use the standard library.
-- **Threads.** Only through the engine job system (enkiTS, planned), which also runs Jolt's jobs through a
-  `JPH::JobSystemWithBarrier` implementation, so there is one thread pool (until then `PhysicsWorld` keeps Jolt's own
-  pool). It must also work with a single thread (the web without cross-origin isolation). Every worker thread calls
+- **Threads.** Only through the engine job system (`quench::JobSystem` on enkiTS, `App::jobs()` in a game), which
+  also runs Jolt's jobs through a `JPH::JobSystemWithBarrier` implementation, so there is one thread pool
+  (`PhysicsWorld(&jobs)`; a `PhysicsWorld` without one runs single-threaded). It must also work with a single thread (the web without cross-origin isolation). Every worker thread calls
   `quench::raiseWorkerThreadPriority()` (user-interactive QoS on Apple platforms): the frame thread waits for the
   workers, and a lower QoS would be a priority inversion.
 - **No ECS in the core, no plugin system.** Engine APIs take plain handles; a game may put an ECS on top (Flecs is the
@@ -408,31 +417,38 @@ AGENTS.md              these rules
 README.md              short overview
 LICENSE                MIT licence of the engine; THIRD_PARTY_LICENSES: licences of the libraries it ships
 CMakeLists.txt         engine targets; CMakePresets.json: configure, build and test presets
-cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), QuenchShaders
-                       (quench_add_shaders), EmbedShaders, QuenchTargets (warnings, include directories),
-                       QuenchGame (quench_add_game) and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
-include/quench/        public headers per module: core/, physics/, gpu/, app/, render/
+cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), CookToolchain (asset
+                       cooker pins), QuenchShaders (quench_add_shaders), QuenchCook (quench_cook_assets),
+                       EmbedShaders, QuenchTargets (warnings, include directories), QuenchGame (quench_add_game)
+                       and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
+include/quench/        public headers per module: core/, physics/, assets/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
-                       src/gpu/sdlgpu/: the SDL GPU backend; src/app/Main.cpp: quench_main; src/render/: the
-                       scene, the frame modules and their shaders)
+                       src/core/Jobs.cpp: the job system; src/physics/JoltJobSystem: Jolt's jobs on it;
+                       src/assets/: the asset manager, KTX2, cooked models, streaming; src/gpu/sdlgpu/: the SDL
+                       GPU backend; src/app/Main.cpp: quench_main; src/render/: the scene, SceneAssets, the frame
+                       modules and their shaders)
 shaders/quench/        the engine shader library (#include "quench/..."): BRDF, shadows, sky, fog, tone curves,
                        surface shaders; SceneUniforms.h, the uniform structs shared by C++ and HLSL
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
-examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input), per
-                       section a scenario with a golden capture; smoke and benchmark scenarios
+examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input,
+                       assets), per section a scenario with a golden capture; smoke and benchmark scenarios;
+                       assets_src/ (procedural sources cooked at build time) and assets/ (files used as they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
+tools/cook/            quench_cook, the build-time asset cooker (glTF, GLB, PNG, JPEG, KTX2 -> KTX2, .qmodel)
+tools/assets/          make_demo_assets.py: writes the demo's procedural source assets
 tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the icons of the sample and the demo
 tools/new_game.py      creates a game from templates/game
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
 tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a development-signed .ipa)
 tools/format.sh        clang-format over the C and C++ sources (--check)
-tests/                 harness/, core/, physics/, gpu/ (shader tests; GPU device tests and their shaders), app/,
-                       render/ (scene and frame tests), header check, RunCapture.cmake (capture checks);
-                       golden/ (reference captures)
-docs/                  documentation (index docs/README.md): architecture, app shell, render module, engine demo,
-                       performance, platforms, dependencies, migration, roadmap, releases/
+tests/                 harness/, core/ (job system included), physics/, assets/, cook/ (and CookCli.cmake), gpu/
+                       (shader tests; GPU device tests and their shaders), app/, render/ (scene, scene assets and
+                       frame tests), header check, RunCapture.cmake (capture checks); golden/ (reference captures)
+docs/                  documentation (index docs/README.md): architecture, app shell, jobs, assets and the cook,
+                       render module, engine demo, performance, platforms, dependencies, migration, roadmap,
+                       releases/
 dist/                  demo packages from tools/package_demo.sh (not committed)
 devlog/                daily development log (template in devlog/README.md)
 .clang-format          code format; .editorconfig for editors
