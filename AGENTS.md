@@ -129,9 +129,11 @@ All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
   engine and checks only that each one starts, renders and quits with exit code 0 (`[--preset NAME] [trailforge]
   [ashfall]`; checkouts from `TRAILFORGE_DIR` and `ASHFALL_DIR`, default `../trailforge-public` and `../strategy`;
   each game builds in its own `build/quench-check-<preset>`).
-- **At the end of the work, before the commits:** the games' full gates once (TrailForge: `debug` + `release`,
-  `ctest`, `tools/scenarios/full_check.txt`; Ashfall: `debug` + `release`, `ctest`, the capture check in its
-  `AGENTS.md`) and their captures compared before and after with `compare_captures.py`.
+- **Games' full gates only when the user asks for them** (user decision, 2026-11-05: they take up to an hour):
+  TrailForge: `debug` + `release`, `ctest`, `tools/scenarios/full_check.txt`; Ashfall: `debug` + `release`, `ctest`,
+  the capture check in its `AGENTS.md`; captures compared before and after with `compare_captures.py`. Otherwise
+  `tools/check_games.sh` is the games' gate, also before the commits. Problems inside a game are not fixed in engine
+  work; only engine causes are.
 
 ## Architecture rules
 
