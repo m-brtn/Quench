@@ -1,8 +1,8 @@
 # Quench documentation
 
-Stages 1 to 3 of the [Roadmap](roadmap.md) are implemented (version 0.2.0): the core and physics modules, the GPU
-layer over SDL GPU, the app shell, the sample and the game template. Stage 5 came after 0.2.0 and is not in a release
-yet: the render module (a retained scene and the standard frame), HDR display output and the engine demo. Where a
+Stages 1 to 3 and 5 of the [Roadmap](roadmap.md) are implemented, and stage 4 (games on the engine) for one game
+(version 0.3.0): the core and physics modules, the GPU layer over SDL GPU, the app shell with HDR display output, the
+render module (a retained scene and the standard frame), the sample, the engine demo and the game template. Where a
 document describes something planned, it says so. [Migration](migration.md) describes the engine code in the two
 games, what has moved and what is not moved yet.
 

@@ -20,33 +20,30 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-05, version 0.2.0): stages 1 to 3 of `docs/roadmap.md` are in place: the CMake skeleton and
-presets, `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its
-standard library backend, worker thread priority), `quench_physics` (`PhysicsWorld` on Jolt), the shader build
-(`quench_shaderc`, `quench_add_shaders()`), `quench_gpu` (the GPU layer over SDL GPU), `quench_app` and `quench_main`
-(SDL main callbacks, the game interface, input actions, ImGui, common flags, scenarios, captures) and
-`quench_add_game()` (macOS executables, iOS bundles). `examples/hello` is the sample (capture checks against
-`tests/golden/`, input and benchmark scenarios); `templates/game` and `tools/new_game.py` start a new game. Tests run
-on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator, on the user's iPhone (one signed test app) and,
-for the headless modules, as WebAssembly under Node.js. Stage 4 is done for TrailForge only (version 0.2.0):
-TrailForge builds on the engine's `quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders
-through `quench_gpu`, and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and
-captures; pinned `d708783`, not yet moved to `v0.2.0`) with its own input layer fed through `Game::event` and its own
-physics clock; Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
-`tools/check_games.sh` builds both games against this checkout and starts them. Stage 5 is done in the engine (not
-in a release yet, not used by either game): `quench_render` (the retained scene: meshes, textures, materials,
-instances and lights by handle; the standard frame of cascaded shadow maps, the HDR pass with reversed depth, sky and
-atmosphere, height fog, bloom, tone mapping and TAA, with fallbacks by device capability; game passes and surface
-shaders), HDR display output (the swapchain composition in `quench_gpu`, `--hdr auto|on|off` and the app API, an HDR
-tone curve up to the display's headroom, the UI at paper white, SDR captures; seen only through readbacks and capture
-peaks, as this Mac's display has no HDR range) and the engine shader library in `shaders/quench/`; `examples/demo`
-is the engine demo (a section per feature, each with a scripted check and golden captures) and
-`tools/package_demo.sh` packages it into `dist/`. Scenario points are in window points, percent of the window or
-names a game gives (`Game::scenarioPoint`), so the demo's scenarios work at any window size; the display headroom is
-read every frame from the screen on Apple platforms (current and potential). On the iPhone (2026-11-05, signed by
-the user's paid team) the device test app passed (94 passed, 1 skipped), every demo section check passed in
-portrait, the benchmark ran at 120 Hz, and the user looked at every section, HDR on and off included ("everything
-is fine").** `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`,
+**Current state (2026-11-05, version 0.3.0): stages 1 to 3 and 5 of `docs/roadmap.md` are in place, stage 4 for
+TrailForge only: the CMake skeleton and presets, `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`,
+`FixedStepClock`, JSON, `quench::fs` with its standard library backend, worker thread priority), `quench_physics`
+(`PhysicsWorld` on Jolt), the shader build (`quench_shaderc`, `quench_add_shaders()`) and the engine shader library in
+`shaders/quench/` (uniform structs shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain
+compositions for HDR), `quench_app` and `quench_main` (SDL main callbacks, the game interface, input actions, ImGui,
+common flags, scenarios with points in window points, percent or names a game gives (`Game::scenarioPoint`), HDR
+display output (`--hdr auto|on|off`, an HDR tone curve up to the display's headroom, read every frame on Apple
+platforms; the UI at paper white; SDR captures), captures), `quench_render` (the retained scene: meshes, textures,
+materials, instances and lights by handle; the standard frame of cascaded sun shadows, the HDR pass with reversed
+depth, sky and atmosphere, height fog, bloom, ACES or AgX tone mapping and TAA or FXAA, with fallbacks by device
+capability; game passes and surface shaders) and `quench_add_game()` (macOS executables, iOS bundles).
+`examples/hello` is the minimal sample, `examples/demo` the engine demo (a section per feature, each with a scripted
+check and golden captures; `tools/package_demo.sh` packages it into `dist/`); `templates/game` and
+`tools/new_game.py` start a new game. Tests run on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator,
+on the user's iPhone (one signed test app; signed by the user's paid team) and, for the headless modules, as
+WebAssembly under Node.js. HDR output was looked at on the iPhone (the user, 2026-11-05: "everything is fine"), never
+on a Mac display (this Mac's has no HDR range). TrailForge builds on the engine's `quench_core` (`FixedStepClock`,
+JSON), `quench_physics` and shader build, renders its own passes through `quench_gpu` (not through `quench_render`),
+and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and captures; pinned
+`d708783`, not yet moved to a release) with its own input layer fed through `Game::event` and its own physics clock;
+Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
+`tools/check_games.sh` builds both games against this checkout and starts them. No asset pipeline, job system, audio
+or animation yet (stages 6 to 8).** `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`,
 `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is built; the rest of `docs/` is design
 and plan beyond stage 5. Update this paragraph whenever that changes.
 

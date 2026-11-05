@@ -10,15 +10,17 @@ Android and the web are later targets; the portability rules in [AGENTS.md](../A
 
 ## Status
 
-The engine (version 0.2.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+The engine (version 0.3.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers). Its GPU tests render offscreen and check the pixels read back on Metal (Apple M4 Pro, with the
 Metal API validation layer), on Vulkan through MoltenVK on the same Mac (with the Khronos validation layer; a test of
 the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables
 run through `simctl spawn`) and on the user's iPhone 18 Pro Max (A20 Pro GPU, iOS 27, Metal with the API validation
-layer; all cases in one signed app, `quench_device_tests`, launched through `devicectl`; last run at version 0.1.0).
-The sample `hello` runs on the Mac (Metal, and Vulkan through MoltenVK, with capture checks against golden images), in
-the iOS Simulator and on the iPhone at 120 Hz; on the iPhone the picture, touch input and rotation were checked by the
-user (report of 2026-11-05). The headless modules also pass as single-threaded WebAssembly under Node.js (Emscripten
+layer; all cases in one signed app, `quench_device_tests`, launched through `devicectl`; last run with the stage 5
+code, 2026-11-05). The sample `hello` runs on the Mac (Metal, and Vulkan through MoltenVK, with capture checks against
+golden images), in the iOS Simulator and on the iPhone at 120 Hz; on the iPhone the picture, touch input and rotation
+were checked by the user (report of 2026-11-05). The engine demo runs on the Mac (with capture checks on both
+backends), in the iOS Simulator and on the iPhone at 120 Hz, where every section's check passed in portrait and the
+user looked at every section, HDR output on and off included (report of 2026-11-05). The headless modules also pass as single-threaded WebAssembly under Node.js (Emscripten
 6.0.13; the cases that need threads are skipped there). Nothing of the engine has run in a browser.
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |

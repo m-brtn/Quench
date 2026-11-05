@@ -70,10 +70,11 @@ change; each game's full gates only when the user asks (user decision, 2026-11-0
 - Done: version 0.2.0, release notes in [docs/releases/v0.2.0.md](releases/v0.2.0.md). TrailForge stays pinned to
   `d708783` until it moves to `v0.2.0`.
 
-## Stage 5: render modules and the retained scene (done in the engine 2026-11-05; not released, games not switched)
+## Stage 5: render modules and the retained scene (done 2026-11-05, version 0.3.0; games not switched)
 
 User decisions for this stage (2026-11-05): engine only (TrailForge and Ashfall are not switched to the modules; their
-code may be moved), verified with the engine's tests and the engine demo; no version change.
+code may be moved), verified with the engine's tests and the engine demo; no version change. Released afterwards as
+0.3.0 at the user's request (2026-11-05, 21:22).
 
 - Done: `quench_render` ([Render module](render.md)): the retained scene (meshes, RGBA8 textures, materials,
   instances, lights, environment, by generation-checked handles); material registration replaces the fixed `MatId`
@@ -102,6 +103,7 @@ code may be moved), verified with the engine's tests and the engine demo; no ver
   user looked at the demo's HDR section, on and off, on 2026-11-05: "everything is fine"); PQ encoding for `Hdr10`
   output; auto exposure; scripted gamepad input in the iOS Simulator (the virtual gamepad does not attach there, so
   the gamepad lines of the demo's and hello's input scenarios fail in the Simulator only).
+- Done: version 0.3.0, release notes in [docs/releases/v0.3.0.md](releases/v0.3.0.md).
 
 ## Stage 6: assets
 
