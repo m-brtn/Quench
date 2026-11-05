@@ -98,16 +98,48 @@ if(NOT QUENCH_HEADLESS)
         src/app/App.cpp
         src/app/AppScenario.cpp
         src/app/Capture.cpp
+        src/app/DisplayHeadroom.cpp
         src/app/ImGuiRenderer.cpp
         src/app/Input.cpp
         src/app/Options.cpp
         src/app/Scenario.cpp
+        src/app/ScenarioPoint.cpp
         src/app/SdlFileSystem.cpp
-        src/app/SdlLog.cpp)
+        src/app/SdlLog.cpp
+        src/app/UiComposite.cpp)
+    if(APPLE)
+        target_sources(quench_app PRIVATE src/app/DisplayHeadroomApple.m)
+        if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+            target_link_libraries(quench_app PRIVATE "-framework UIKit")
+        else()
+            target_link_libraries(quench_app PRIVATE "-framework AppKit")
+        endif()
+    endif()
     quench_configure_target(quench_app)
     target_link_libraries(quench_app PUBLIC quench_core quench_gpu quench_glm quench_imgui SDL3::SDL3-static)
     target_compile_definitions(quench_app PRIVATE QUENCH_VERSION="${PROJECT_VERSION}")
-    quench_add_shaders(quench_app NAME imgui SOURCE src/app/shaders/imgui.hlsl ENTRIES imgui_vs:vertex imgui_fs:fragment)
+    quench_add_shaders(quench_app NAME imgui SOURCE src/app/shaders/imgui.hlsl
+        ENTRIES imgui_vs:vertex imgui_fs:fragment fullscreen_vs:vertex ui_composite_fs:fragment)
+
+    # ------------------------------------------------------------------ render
+    # The retained scene and the standard frame (shadows, HDR pass, sky, fog, TAA, bloom, tone mapping) on quench_gpu.
+    add_library(quench_render STATIC
+        src/render/Cascades.cpp
+        src/render/Daylight.cpp
+        src/render/Effects.cpp
+        src/render/MeshBuilder.cpp
+        src/render/Projection.cpp
+        src/render/Renderer.cpp
+        src/render/Scene.cpp
+        src/render/ToneMap.cpp)
+    quench_configure_target(quench_render)
+    target_link_libraries(quench_render PUBLIC quench_core quench_gpu quench_gpu_shaders quench_glm)
+    quench_add_shaders(quench_render NAME render_frame SOURCE src/render/shaders/frame.hlsl
+        ENTRIES fullscreen_vs:vertex shadow_vs:vertex shadow_fs:fragment sky_fs:fragment velocity_fs:fragment
+                velocity_obj_vs:vertex velocity_obj_fs:fragment taa_fs:fragment bloom_down_fs:fragment
+                bloom_up_fs:fragment tonemap_fs:fragment fxaa_fs:fragment)
+    quench_add_shaders(quench_render NAME render_standard SOURCE src/render/shaders/standard.hlsl
+        ENTRIES surface_vs:vertex surface_fs:fragment)
 
     # SDL main callbacks (src/app/Main.cpp): an object library, so the symbols land in the game executable.
     add_library(quench_main OBJECT src/app/Main.cpp)

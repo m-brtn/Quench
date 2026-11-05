@@ -1,0 +1,62 @@
+# Input (ctest: demo_input_metal, demo_input_vulkan): keyboard, gamepad, touch and mouse through the section's
+# actions. Deterministic run: one 1/120 s step per frame; the character walks at 4 m/s. The capture is taken at
+# 3 s. Any window size: touches and the click are in percent of the window, with the windows hidden for them.
+
+set dither 0
+wait 0.1
+expect section == 6
+
+# Keyboard: D walks right (+x with the default camera), W forward (-z), J jumps, F fires.
+mark player_x
+down D
+wait 0.5
+up D
+expect d_player_x > 1.9
+expect d_player_x < 2.1
+mark player_z
+down W
+wait 0.25
+up W
+expect d_player_z < -0.95
+tap J
+until jumps == 1 1
+until player_y > 0.5 1
+until player_y == 0 2
+tap F
+until shots == 1 1
+
+# Gamepad: the left stick walks, A jumps, X fires.
+gamepad attach
+until gamepad == 1 2
+mark player_x
+gamepad axis leftx -1
+wait 0.25
+gamepad axis leftx 0
+expect d_player_x < -0.95
+gamepad button a tap
+until jumps == 2 1
+gamepad button x tap
+until shots == 2 1
+gamepad detach
+until gamepad == 0 2
+
+# Touch: a finger dragged 60 points on the left half is a virtual stick (full deflection at 50 points); a tap on the
+# right half jumps (and fires).
+tap H
+until ui == 0 1
+mark player_x
+touch 25% 70% 60 0 30
+until fingers == 0 1
+expect d_player_x > 0.3
+until player_y == 0 2
+touch 75% 70%
+until jumps == 3 1
+until shots == 3 1
+
+# Mouse: a click on the scene fires toward the clicked point.
+click 50% 75%
+until shots == 4 1
+tap H
+until ui == 1 1
+until time >= 3.1 3
+quit

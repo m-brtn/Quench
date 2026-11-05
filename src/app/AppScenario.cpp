@@ -2,6 +2,7 @@
 // engine, ImGui and the game see them exactly like real input, one frame later.
 
 #include "AppState.h"
+#include "ScenarioPoint.h"
 
 #include <quench/core/Log.h>
 #include <quench/core/Parse.h>
@@ -14,9 +15,22 @@
 namespace quench::app::detail {
 namespace {
 
+constexpr const char* kPointHelp = "window points, percent of the window like 50% 25%, or a point the game names";
+
 std::optional<double> number(const std::vector<std::string>& args, std::size_t index) {
     if (index >= args.size()) return std::nullopt;
     return parseDouble(args[index]);
+}
+
+// The point a pointer command starts with; logs an unknown @NAME itself.
+std::optional<ScenarioPoint> pointArgument(AppState& s, const ScenarioCommand& c) {
+    const glm::vec2 window(float(std::max(1, s.windowWidth)), float(std::max(1, s.windowHeight)));
+    std::optional<ScenarioPoint> point =
+        parseScenarioPoint(c.args, 0, window, [&s](std::string_view name) { return s.game->scenarioPoint(name); });
+    if (!point && !c.args.empty() && c.args[0].starts_with('@'))
+        log::error("scenario", "line {}: the game has no point named '{}' now (Game::scenarioPoint)", c.line,
+                   c.args[0].substr(1));
+    return point;
 }
 
 void push(AppState& s, SDL_Event& e) {
@@ -59,7 +73,41 @@ void pushMouseButton(AppState& s, Uint8 button, bool down) {
     push(s, e);
 }
 
+// Like SDL_SendTouch for the first finger of a touch device (SDL_HINT_TOUCH_MOUSE_EVENTS, on by default): a mouse
+// event with SDL_TOUCH_MOUSEID before the finger event, so ImGui and Input::mouseFromTouch() see a scripted touch
+// as they see one on a phone.
+void pushMouseFromTouch(AppState& s, Uint32 type, float x, float y) {
+    if (!SDL_GetHintBoolean(SDL_HINT_TOUCH_MOUSE_EVENTS, true)) return;
+    const float w = float(std::max(1, s.windowWidth)), h = float(std::max(1, s.windowHeight));
+    const float px = std::clamp(x * w, 0.0f, w - 1.0f), py = std::clamp(y * h, 0.0f, h - 1.0f);
+    SDL_Event e{};
+    if (type != SDL_EVENT_FINGER_UP) {
+        e.type = SDL_EVENT_MOUSE_MOTION;
+        e.motion.windowID = SDL_GetWindowID(s.window.get());
+        e.motion.which = SDL_TOUCH_MOUSEID;
+        e.motion.state = type == SDL_EVENT_FINGER_MOTION ? SDL_BUTTON_LMASK : 0;
+        e.motion.x = px;
+        e.motion.y = py;
+        e.motion.xrel = px - s.touchMouse.x;
+        e.motion.yrel = py - s.touchMouse.y;
+        push(s, e);
+        s.touchMouse = {px, py};
+    }
+    if (type == SDL_EVENT_FINGER_MOTION) return;
+    e = {};
+    e.type = type == SDL_EVENT_FINGER_DOWN ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+    e.button.windowID = SDL_GetWindowID(s.window.get());
+    e.button.which = SDL_TOUCH_MOUSEID;
+    e.button.button = SDL_BUTTON_LEFT;
+    e.button.down = type == SDL_EVENT_FINGER_DOWN;
+    e.button.clicks = 1;
+    e.button.x = s.touchMouse.x;
+    e.button.y = s.touchMouse.y;
+    push(s, e);
+}
+
 void pushFinger(AppState& s, Uint32 type, float x, float y, float dx, float dy) {
+    pushMouseFromTouch(s, type, x, y);
     SDL_Event e{};
     e.type = type;
     e.tfinger.touchID = 1;
@@ -245,6 +293,12 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
     if (name == "pixel_h") return double(s.pixelHeight);
     if (name == "gamepad") return s.input.gamepadConnected() ? 1.0 : 0.0;
     if (name == "fingers") return double(s.input.fingers().size());
+    if (name == "hdr") return s.output.hdr() ? 1.0 : 0.0;
+    if (name == "hdr_supported") return s.hdrSupported ? 1.0 : 0.0;
+    if (name == "hdr_headroom") return double(s.output.headroom);
+    if (name == "display_headroom") return double(s.displayHeadroom);
+    if (name == "display_headroom_potential") return double(s.displayPotentialHeadroom);
+    if (name == "capture_peak") return s.capturePeak;
     if (const auto it = s.perfValues.find(name); it != s.perfValues.end()) return it->second;
     if (name.starts_with("action:")) {
         const auto action = s.input.findAction(name.substr(7));
@@ -284,14 +338,17 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
         return Exec::Done;
     }
     if (op == "mouse" || op == "click") {
-        const auto x = number(c.args, 0), y = number(c.args, 1);
-        if (!x || !y) {
-            log::error("scenario", "line {}: {} X Y (window points)", c.line, op);
+        const std::optional<ScenarioPoint> point = pointArgument(s, c);
+        if (!point || c.args.size() > point->tokens + (op == "click" ? 1 : 0)) {
+            if (point || !first.starts_with('@'))
+                log::error("scenario", "line {}: {} X Y|@NAME{} ({})", c.line, op,
+                           op == "click" ? " [left|right|middle]" : "", kPointHelp);
             return Exec::Failed;
         }
-        pushMouseMotion(s, float(*x), float(*y));
+        const float x = point->position.x, y = point->position.y;
+        pushMouseMotion(s, x, y);
         if (op == "mouse") return Exec::Done;
-        const std::string button = c.args.size() > 2 ? c.args[2] : "left";
+        const std::string button = c.args.size() > point->tokens ? c.args[point->tokens] : "left";
         const Uint8 sdlButton = button == "right"    ? SDL_BUTTON_RIGHT
                                 : button == "middle" ? SDL_BUTTON_MIDDLE
                                                      : SDL_BUTTON_LEFT;
@@ -302,8 +359,8 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
         e.button.button = sdlButton;
         e.button.down = true;
         e.button.clicks = 1;
-        e.button.x = float(*x);
-        e.button.y = float(*y);
+        e.button.x = x;
+        e.button.y = y;
         push(s, e);
         return Exec::Busy;
     }
@@ -324,20 +381,24 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
         return Exec::Done;
     }
     if (op == "touch") {
-        // touch X Y [DX DY STEPS]: points; a tap without the drag arguments.
-        const auto x = number(c.args, 0), y = number(c.args, 1);
-        const auto dx = number(c.args, 2), dy = number(c.args, 3), steps = number(c.args, 4);
-        const bool drag = c.args.size() == 5 && dx && dy && steps && *steps >= 1.0;
-        if (!x || !y || !(c.args.size() == 2 || drag)) {
-            log::error("scenario", "line {}: touch X Y [DX DY STEPS] (window points)", c.line);
+        // touch X Y|@NAME [DX DY STEPS]: a tap without the drag arguments.
+        const std::optional<ScenarioPoint> point = pointArgument(s, c);
+        const float w = float(std::max(1, s.windowWidth)), h = float(std::max(1, s.windowHeight));
+        const std::size_t d = point ? point->tokens : 0;
+        const auto dx = d + 1 < c.args.size() ? parseScenarioCoordinate(c.args[d], w) : std::nullopt;
+        const auto dy = d + 1 < c.args.size() ? parseScenarioCoordinate(c.args[d + 1], h) : std::nullopt;
+        const auto steps = number(c.args, d + 2);
+        const bool drag = c.args.size() == d + 3 && dx && dy && steps && *steps >= 1.0;
+        if (!point || !(c.args.size() == d || drag)) {
+            if (point || !first.starts_with('@'))
+                log::error("scenario", "line {}: touch X Y|@NAME [DX DY STEPS] ({})", c.line, kPointHelp);
             return Exec::Failed;
         }
-        const float w = float(std::max(1, s.windowWidth)), h = float(std::max(1, s.windowHeight));
-        PendingInput p{.kind = PendingInput::Kind::TouchMove, .x = float(*x) / w, .y = float(*y) / h};
+        PendingInput p{.kind = PendingInput::Kind::TouchMove, .x = point->position.x / w, .y = point->position.y / h};
         if (drag) {
             p.steps = int(*steps);
-            p.dx = float(*dx) / w / float(p.steps);
-            p.dy = float(*dy) / h / float(p.steps);
+            p.dx = *dx / w / float(p.steps);
+            p.dy = *dy / h / float(p.steps);
         }
         pushFinger(s, SDL_EVENT_FINGER_DOWN, p.x, p.y, 0.0f, 0.0f);
         s.pendingInput = p;
@@ -351,6 +412,15 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
             return Exec::Failed;
         }
         SDL_SetWindowSize(s.window.get(), int(*w), int(*h));
+        return Exec::Done;
+    }
+    if (op == "hdr") {
+        const std::optional<HdrMode> mode = parseHdrMode(first);
+        if (!mode) {
+            log::error("scenario", "line {}: hdr off|on|auto", c.line);
+            return Exec::Failed;
+        }
+        s.app.setHdrMode(*mode);
         return Exec::Done;
     }
     if (op == "capture") {

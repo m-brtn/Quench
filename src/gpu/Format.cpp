@@ -86,4 +86,14 @@ const char* shaderFormatName(ShaderFormat format) {
     return "unknown";
 }
 
+const char* swapchainCompositionName(SwapchainComposition composition) {
+    switch (composition) {
+    case SwapchainComposition::Sdr: return "SDR";
+    case SwapchainComposition::SdrLinear: return "SDR linear";
+    case SwapchainComposition::HdrExtendedLinear: return "HDR extended linear";
+    case SwapchainComposition::Hdr10: return "HDR10 (PQ)";
+    }
+    return "unknown";
+}
+
 } // namespace quench::gpu

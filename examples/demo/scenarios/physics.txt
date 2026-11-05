@@ -1,0 +1,42 @@
+# Physics (ctest: demo_physics_metal, demo_physics_vulkan): dropping bodies by key and gamepad, reset, blasts by key
+# and by a click on the floor. The capture is taken at 2 s, with the blasted bodies in the air. Any window size: the
+# click goes to the section's named point `floor`, with the windows hidden (they cover the floor on a portrait phone).
+
+set dither 0
+wait 0.1
+expect bodies == 21
+tap B
+until bodies == 22 1
+tap N
+until bodies == 23 1
+gamepad attach
+until gamepad == 1 2
+gamepad button x tap
+until bodies == 24 1
+gamepad button y tap
+until bodies == 25 1
+gamepad detach
+until gamepad == 0 2
+tap R
+until bodies == 21 1
+# The reset stack stands: its top box (row 5 of 0.7 m boxes) is at about 3.15 m.
+wait 0.3
+expect highest > 3
+expect fastest < 0.5
+
+# Blasts: P at the center, then a click on the floor in front of the stack.
+tap P
+until blasts == 1 1
+wait 0.05
+expect fastest > 3
+tap H
+until ui == 0 1
+click @floor
+until blasts == 2 1
+expect clicks == 1
+tap H
+until ui == 1 1
+wait 0.3
+expect highest > 1
+until time >= 2.1 3
+quit

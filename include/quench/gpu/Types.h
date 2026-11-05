@@ -294,4 +294,27 @@ enum class PresentMode : std::uint8_t {
     Mailbox,   // no wait, no tearing; falls back to Vsync where unsupported
 };
 
+// How the system composites a window's swapchain. Each composition has its own swapchain format.
+enum class SwapchainComposition : std::uint8_t {
+    Sdr,               // Bgra8Unorm: display values (sRGB-encoded); always supported
+    SdrLinear,         // Bgra8UnormSrgb: linear values, encoded by the hardware
+    HdrExtendedLinear, // Rgba16Float: linear, BT.709 primaries; paper white at DisplayOutput::paperWhite, brighter
+                       // above
+    Hdr10,             // Rgb10a2Unorm: BT.2020 primaries, PQ (SMPTE ST 2084) encoded
+};
+
+const char* swapchainCompositionName(SwapchainComposition composition);
+
+// What the values of a frame mean on the display: the swapchain composition and, for HDR, the brightness range.
+struct DisplayOutput {
+    SwapchainComposition composition = SwapchainComposition::Sdr;
+    float headroom = 1.0f;   // the brightest value shown, in multiples of paper white (1: no HDR range)
+    float paperWhite = 1.0f; // the value of SDR white in HdrExtendedLinear (1 on Apple platforms)
+
+    bool hdr() const {
+        return composition == SwapchainComposition::HdrExtendedLinear || composition == SwapchainComposition::Hdr10;
+    }
+    friend bool operator==(const DisplayOutput&, const DisplayOutput&) = default;
+};
+
 } // namespace quench::gpu

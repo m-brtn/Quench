@@ -29,9 +29,11 @@ public:
 
     // Texture requests and geometry upload, in a copy pass of `commands`; before any render pass that draws ImGui.
     void prepare(gpu::CommandBuffer& commands, ImDrawData* drawData);
-    // Draws the prepared lists into an open render pass on a target of `format`, `width` x `height` pixels.
+    // Draws the prepared lists into an open render pass on a target of `format`, `width` x `height` pixels. `white`:
+    // the value of white in the target, for HDR targets the paper white of gpu::DisplayOutput (the UI stays at SDR
+    // brightness).
     void draw(gpu::RenderPass& pass, ImDrawData* drawData, gpu::TextureFormat format, std::uint32_t width,
-              std::uint32_t height);
+              std::uint32_t height, float white = 1.0f);
     // Destroys the textures ImGui asked for; before the ImGui context is destroyed.
     void shutdown();
 
@@ -40,7 +42,7 @@ private:
     const gpu::GraphicsPipeline* pipeline(gpu::TextureFormat format);
     void updateTexture(gpu::CopyPass& copy, ImTextureData& texture);
     void setupState(gpu::RenderPass& pass, const gpu::GraphicsPipeline& pipeline, ImDrawData* drawData,
-                    gpu::TextureFormat format, std::uint32_t width, std::uint32_t height);
+                    gpu::TextureFormat format, std::uint32_t width, std::uint32_t height, float white);
 
     struct Pipeline {
         gpu::TextureFormat format;

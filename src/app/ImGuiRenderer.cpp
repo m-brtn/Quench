@@ -185,7 +185,10 @@ void ImGuiRenderer::prepare(gpu::CommandBuffer& commands, ImDrawData* drawData) 
 }
 
 void ImGuiRenderer::setupState(gpu::RenderPass& pass, const gpu::GraphicsPipeline& pipeline, ImDrawData* drawData,
-                               gpu::TextureFormat format, std::uint32_t width, std::uint32_t height) {
+                               gpu::TextureFormat format, std::uint32_t width, std::uint32_t height, float white) {
+    // ImGui colors are sRGB-encoded; sRGB and floating-point (HDR) targets take linear values.
+    const bool linear = gpu::formatInfo(format).srgb || format == gpu::TextureFormat::Rgba16Float ||
+                        format == gpu::TextureFormat::Rgba32Float;
     pass.bindPipeline(pipeline);
     pass.setViewport({0.0f, 0.0f, float(width), float(height)});
     pass.bindVertexBuffer(0, {m_vertices});
@@ -195,18 +198,18 @@ void ImGuiRenderer::setupState(gpu::RenderPass& pass, const gpu::GraphicsPipelin
     const glm::vec2 scale(2.0f / size.x, -2.0f / size.y);
     const shader::ImGuiUniforms uniforms{
         .transform = {scale.x, scale.y, -1.0f - origin.x * scale.x, 1.0f - origin.y * scale.y},
-        .options = {gpu::formatInfo(format).srgb ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f},
+        .options = {linear ? 1.0f : 0.0f, white, 0.0f, 0.0f},
     };
     pass.pushUniforms(ShaderStage::Vertex, 0, uniforms);
 }
 
 void ImGuiRenderer::draw(gpu::RenderPass& pass, ImDrawData* drawData, gpu::TextureFormat format, std::uint32_t width,
-                         std::uint32_t height) {
+                         std::uint32_t height, float white) {
     if (!m_prepared || drawData->DisplaySize.x <= 0.0f || drawData->DisplaySize.y <= 0.0f || width == 0 || height == 0)
         return;
     const gpu::GraphicsPipeline* pipe = pipeline(format);
     if (!pipe) return;
-    setupState(pass, *pipe, drawData, format, width, height);
+    setupState(pass, *pipe, drawData, format, width, height, white);
 
     // Clip rectangles are in display coordinates; the target may be larger than the window (capture sizes).
     const ImVec2 origin = drawData->DisplayPos;
@@ -217,7 +220,7 @@ void ImGuiRenderer::draw(gpu::RenderPass& pass, ImDrawData* drawData, gpu::Textu
         for (const ImDrawCmd& cmd : list->CmdBuffer) {
             if (cmd.UserCallback) {
                 if (cmd.UserCallback == ImDrawCallback_ResetRenderState)
-                    setupState(pass, *pipe, drawData, format, width, height);
+                    setupState(pass, *pipe, drawData, format, width, height, white);
                 else
                     cmd.UserCallback(list, &cmd);
                 continue;

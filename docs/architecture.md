@@ -2,8 +2,9 @@
 
 Design of the engine. Stages 1 to 3 exist (CMake, `quench_core`, `quench_physics`, the shader build, headless tests;
 `quench_gpu` over SDL GPU, see "The layer as built"; `quench_app` and `quench_main`, see [App shell](app.md); the
-sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#layout)); everything else here describes
-the intended structure and the reasons for it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation:
+sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#layout)), and stage 5: `quench_render`
+(see "Rendering" and [Render module](render.md)) and the engine demo ([Engine demo](demo.md)); everything else here
+describes the intended structure and the reasons for it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation:
 [index](README.md).
 
 ## Planned layout
@@ -33,7 +34,9 @@ tools/imagecompare/   quench_image_compare: capture against golden image (mean d
                       threshold, difference image)
 tools/new_game.py     creates a game from templates/game
 tools/check_games.sh  builds every game against the local engine and checks that it starts and quits cleanly
+tools/package_demo.sh builds the engine demo in Release and packs it into dist/ (macOS zip, optionally iOS)
 examples/hello/       minimal sample game: lit mesh, ImGui, --quit-after, --capture, input and benchmark scenarios
+examples/demo/        the engine demo: a menu of sections, one per engine feature, each with a scripted check
 templates/game/       starting point for a new game (CMake, game class, shader, scenario test, AGENTS.md, devlog)
 tests/                CTest, headless, one test name per argument; header self-containment test
 tests/golden/         reference captures per backend and device (small PNGs of procedural content)
@@ -52,7 +55,7 @@ docs/releases/        release notes per version
 | `quench_audio` | mixer; device in a separate target | core, miniaudio | mixer yes |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
 | `quench_gpu` | GPU layer and backends | core, gpu_shaders, SDL3 | no |
-| `quench_render` | scene, frame, render modules | gpu, assets, anim | no |
+| `quench_render` | retained scene, standard frame, render modules | core, gpu, gpu_shaders, GLM (later assets, anim) | no |
 | `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log | core, gpu, GLM, ImGui, SDL3 (later render, audio) | no |
 | `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
 
@@ -121,6 +124,10 @@ Headers in `include/quench/gpu/` (`Device.h`, `CommandBuffer.h`, `Resources.h`, 
   created and destroyed on the main thread.
 - **Transfers**: `Device::upload` submits without waiting; `Device::download` blocks and is meant for captures, tests
   and tools.
+- **Swapchain composition** (stage 5): `gpu::SwapchainComposition` (`Sdr`, `SdrLinear`, `HdrExtendedLinear`,
+  `Hdr10`), queried per window (`supportsComposition`) and set with `setComposition`, SDR by default; the swapchain
+  format follows it. `gpu::DisplayOutput` (composition, headroom, paper white) is what a frame's values mean; the app
+  fills it, the renderer reads it.
 
 ## Rendering
 
@@ -138,6 +145,20 @@ Headers in `include/quench/gpu/` (`Device.h`, `CommandBuffer.h`, `Resources.h`, 
 - **Quality presets** chosen from `gpu::Caps` (TrailForge already has Low, Medium, High, Ultra in `RenderSettings.h`).
   Mobile and web need lower tiers than the Mac.
 
+### As built (stage 5)
+
+`quench_render` ([Render module](render.md)) has the retained scene (`render::Scene`: meshes, RGBA8 textures,
+materials, instances, lights, the environment, all by generation-checked handles; no ECS) and the standard frame
+(`render::Renderer`): sun shadow cascades, the HDR pass with reversed depth, the sky (atmosphere model or gradient),
+height fog, motion vectors with TAA or FXAA, bloom and tone mapping (ACES or AgX) for SDR or for HDR output (extended
+linear up to the display's headroom; the app shell picks the output, draws the UI at paper white and keeps captures
+SDR: [App shell](app.md#hdr-output)). Games add passes at five stages
+(`Shadow`, `Opaque`, `Transparent`, `PostHdr`, `Overlay`) and their own material shading as surface shaders that the
+engine lights. Fallbacks are chosen from the device's format support and `gpu::Caps` (TAA to FXAA, no shadows
+without a sampleable depth array, no depth clamp). The code is TrailForge's renderer and shaders (`b97883e`),
+generalized; not done in this stage: Ashfall's screen-space effects (ambient occlusion, bounce light, reflections,
+sun shafts), particles, terrain, quality presets, GPU timing per pass.
+
 ## Shaders
 
 The toolchain carried over from TrailForge: glslang (HLSL front end) -> SPIR-V -> SPIRV-Tools legalization ->
@@ -152,15 +173,17 @@ Done in stage 1 (`quench_add_shaders()` in `cmake/QuenchShaders.cmake`):
   the shader (samplers, storage textures, storage buffers, uniform buffers), read from the compiled SPIR-V by
   `quench_shaderc`; the games pass those counts by hand today.
 - `#include "x"` resolves next to the including file, then in the set's `INCLUDE_DIRS`, then in the engine shader
-  library (`shaders/`, empty until stage 5). `quench_shaderc` writes a depfile, so editing an included file
+  library (`shaders/`, so `#include "quench/Surface.hlsli"`). `quench_shaderc` writes a depfile, so editing an included file
   recompiles the shaders that use it (verified with Ninja). DXC gets the same directories with `-I`.
 - Cross builds (iOS) use a macOS `quench_shaderc` given by `QUENCH_HOST_SHADERC` (the `host-tools` preset builds it).
 - Storage textures and combined image samplers are refused with an error for now; no shader uses them yet.
 
+Done in stage 5: the engine shader library in `shaders/quench/` (lighting, shadows, sky, fog, tone curves, the surface
+shader interface) and uniform structs defined once in headers read by both C++ and HLSL (`quench/Shared.h`,
+`quench/SceneUniforms.h`; 16-byte members only). See [Render module](render.md#shader-library-and-shared-uniforms).
+
 Planned changes:
 
-- The engine shader library in `shaders/quench/`.
-- Uniform structs in shared headers read by both C++ and HLSL.
 - WGSL output for the web (from SPIR-V through Tint or naga) once SDL has a WebGPU backend.
 - Ray queries need Shader Model 6.5. Whether glslang's HLSL front end can compile them is unverified; the likely path
   is DXC (it emits SPIR-V and DXIL). For Metal, either SPIRV-Cross MSL output (ray query support unverified) or
@@ -175,8 +198,9 @@ app shell (2026-11-05, TrailForge `b97883e`); Ashfall's `Application::run` still
 
 A game implements `quench::app::Game` (`include/quench/app/App.h`: `init`, `fixedStep`, `update`, `ui`, `render`,
 `event`, `shutdown`, and three hooks for scenarios) and defines `quench::app::createGame()`, which fills `AppDesc` and
-returns the game. Until the retained scene exists (stage 5), `render` records the game's own passes into the frame's
-command buffer and target; the engine draws ImGui on top and presents. Details: [App shell](app.md).
+returns the game. In `render` a game draws its `render::Scene` with `render::Renderer::render` into the frame's
+target, or records its own passes into the frame's command buffer and target (as `examples/hello` does); the engine
+draws ImGui on top and presents. Details: [App shell](app.md).
 
 The fixed-step clock keeps TrailForge's behaviour: accumulator, frames longer than 0.25 s clamped, at most 12 steps
 per frame, interpolation between the last two ticks. Scripted and capture runs replace it with one tick per frame, so

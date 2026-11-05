@@ -13,12 +13,25 @@
 
 namespace quench::gpu::detail {
 
+// A claimed window and its swapchain parameters (SDL sets both at once).
+struct WindowEntry {
+    SDL_Window* window = nullptr;
+    PresentMode presentMode = PresentMode::Vsync;
+    SwapchainComposition composition = SwapchainComposition::Sdr;
+};
+
 struct DeviceImpl {
     SDL_GPUDevice* device = nullptr;
     Caps caps;
     SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_INVALID;
     std::atomic<std::int64_t> live{0};
-    std::vector<SDL_Window*> windows;
+    std::vector<WindowEntry> windows;
+
+    WindowEntry* find(SDL_Window* window) {
+        for (WindowEntry& w : windows)
+            if (w.window == window) return &w;
+        return nullptr;
+    }
 };
 
 // GPU execution time of the command buffer behind a signalled SDL Metal fence (SdlGpuTimingMetal.m); < 0 when
@@ -222,6 +235,16 @@ inline SDL_GPUPresentMode toSdl(PresentMode mode) {
     case PresentMode::Mailbox: return SDL_GPU_PRESENTMODE_MAILBOX;
     }
     return SDL_GPU_PRESENTMODE_VSYNC;
+}
+
+inline SDL_GPUSwapchainComposition toSdl(SwapchainComposition composition) {
+    switch (composition) {
+    case SwapchainComposition::Sdr: return SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
+    case SwapchainComposition::SdrLinear: return SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
+    case SwapchainComposition::HdrExtendedLinear: return SDL_GPU_SWAPCHAINCOMPOSITION_HDR_EXTENDED_LINEAR;
+    case SwapchainComposition::Hdr10: return SDL_GPU_SWAPCHAINCOMPOSITION_HDR10_ST2084;
+    }
+    return SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
 }
 
 inline SDL_GPUShaderStage toSdl(ShaderStage stage) {

@@ -70,14 +70,38 @@ change; each game's full gates only when the user asks (user decision, 2026-11-0
 - Done: version 0.2.0, release notes in [docs/releases/v0.2.0.md](releases/v0.2.0.md). TrailForge stays pinned to
   `d708783` until it moves to `v0.2.0`.
 
-## Stage 5: render modules and the retained scene
+## Stage 5: render modules and the retained scene (done in the engine 2026-11-05; not released, games not switched)
 
-- Retained scene: mesh, instance, material and light registration; material registration replaces the fixed `MatId`
+User decisions for this stage (2026-11-05): engine only (TrailForge and Ashfall are not switched to the modules; their
+code may be moved), verified with the engine's tests and the engine demo; no version change.
+
+- Done: `quench_render` ([Render module](render.md)): the retained scene (meshes, RGBA8 textures, materials,
+  instances, lights, environment, by generation-checked handles); material registration replaces the fixed `MatId`
   enums.
-- Standard frame modules: shadow maps, sky and atmosphere, fog, bloom, tonemap, anti-aliasing (TrailForge TAA), and
-  Ashfall's screen-space occlusion, bounce, reflections and sun shafts as optional modules.
-- Engine shader library extracted from the 10 identical and 16 diverged shared shader functions.
-- Every module moved with capture comparisons in the game it comes from.
+- Done: the standard frame: sun shadow cascades (standard depth), the HDR pass with reversed depth, sky and atmosphere
+  (TrailForge's daylight palette), height fog, motion vectors with TAA (TrailForge's) or FXAA, bloom, tone mapping
+  (ACES, AgX); game passes at five stages and game surface shaders lit by the engine; fallbacks by device support.
+- Done (added by the user to this stage, 2026-11-05): HDR display output with the tone mapping: the swapchain
+  composition in `quench::gpu`, `--hdr auto|on|off` and the app API, an HDR tone curve up to the display's headroom,
+  the UI at paper white, SDR captures. Checked on the Mac (Metal; Vulkan through MoltenVK) and in the iOS Simulator
+  through readbacks and capture peaks only: this Mac's display has no HDR range. On the iPhone: the device test app,
+  the demo's checks, the display headroom read every frame (current and potential), and the user's look. Also fixed
+  after a user report: the sun disc was darker than its glow at a low sun ([Render module](render.md#sky-and-sun)).
+- Done: scenario points in percent of the window or named by the game (`Game::scenarioPoint`), so the demo's checks
+  pass at any window size (the portrait iPhone included).
+- Done: the engine shader library (`shaders/quench/`) with the shared functions the frame needs (hashes, noise, BRDF
+  terms, shadows, sky, fog, tone curves, the fullscreen triangle) and uniform structs shared by C++ and HLSL. The other
+  shared functions of the games move when a module needs them.
+- Done: render tests (CPU cases and offscreen renders, on Metal and on Vulkan through MoltenVK), the engine demo with
+  one section per rendering feature (stage 10), its golden captures and `tools/package_demo.sh`.
+- Changed: "every module moved with capture comparisons in the game it comes from" became the engine's own captures
+  (the games are not switched). Switching TrailForge's renderer to `quench_render` is later work, when the user asks.
+- Not done, remaining: Ashfall's screen-space occlusion, bounce light, reflections and sun shafts (optional modules);
+  cut-out shadows of alpha-tested materials; normal maps; motion vectors for vertex-deformed surfaces; quality
+  presets; GPU timing per pass; HDR seen on a Mac HDR display (this Mac's display has no HDR range; on the iPhone the
+  user looked at the demo's HDR section, on and off, on 2026-11-05: "everything is fine"); PQ encoding for `Hdr10`
+  output; auto exposure; scripted gamepad input in the iOS Simulator (the virtual gamepad does not attach there, so
+  the gamepad lines of the demo's and hello's input scenarios fail in the Simulator only).
 
 ## Stage 6: assets
 
@@ -134,6 +158,21 @@ TODO for stage 9:
 - [ ] Measure ray-traced shadows against shadow maps on the iPhone at 120 Hz and pick the default per device.
 - [ ] MetalFX upscaling (spatial and temporal) as an option, and how it combines with the TAA of stage 5.
 
+## Stage 10: engine demo
+
+Requested by the user (2026-11-05). Started in stage 5 (user decision, 2026-11-05; it replaces the planned
+`examples/scene`): every stage adds its section, with a scripted check and golden captures, and ends with a packaged
+build of the demo in `dist/` (`tools/package_demo.sh`); stage 10 finishes and polishes it. Sections so far: materials
+and lights, shadows, sky and fog, post-processing, HDR output, physics, input ([Engine demo](demo.md)).
+
+- One app built with the engine (`examples/demo`, "Quench Demo") for the Mac and iOS: a menu of sections, each a
+  small interactive scene of primitives or procedural content (CC0 assets only where a feature needs real content,
+  such as an animated character) showing one area of the engine with ImGui controls: rendering (scene, materials,
+  lights, shadows, sky, fog, post-processing, anti-aliasing), physics, input (keyboard, mouse, gamepad, touch),
+  audio (3D sound, buses, music), assets (asynchronous loading, hot reload, streaming), animation (blending, state
+  machines, IK), ray tracing with its fallbacks, and the frame, CPU and GPU times.
+- Every section has a scripted check and a golden capture, so the demo is also a test of the engine.
+
 ## Other modules (when a game needs them)
 
 Navigation (Recast & Detour: navmesh building, paths, crowds), Tracy profiling, Flecs as an optional ECS module.
@@ -165,6 +204,7 @@ Priorities from the user's request of 2026-11-05.
 | IK and foot placement | P1 | 8 |
 | Retargeting | P1 | 8 |
 | Bone attachments | P1 | 8 |
+| Engine demo: interactive sections for every feature (added 2026-11-05) | after the stages | 10 (started in 5; each stage adds its section) |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under

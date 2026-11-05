@@ -3,7 +3,9 @@
 // The state behind quench::app::App, owned by the SDL main callbacks (Main.cpp). Members are destroyed in reverse
 // order: the game first, then ImGui, the GPU device, the window, the file system backend and the log sink.
 
+#include "DisplayHeadroom.h"
 #include "Options.h"
+#include "UiComposite.h"
 
 #include <quench/app/App.h>
 #include <quench/app/ImGuiRenderer.h>
@@ -81,6 +83,14 @@ struct AppState {
     int windowWidth = 0, windowHeight = 0;
     std::uint32_t pixelWidth = 0, pixelHeight = 0;
     gpu::TextureFormat swapchainFormat = gpu::TextureFormat::Invalid;
+    // HDR output: the mode, what the frames get, the window's display (DisplayHeadroom.h).
+    HdrMode hdrMode = HdrMode::Off;
+    gpu::DisplayOutput output;
+    bool outputDirty = true; // mode, display or headroom changed: updateOutput() before the next frame
+    bool hdrSupported = false;
+    float displayHeadroom = 1.0f;
+    float displayPotentialHeadroom = 1.0f;
+    HeadroomLog headroomLog;
     bool background = false;
     FixedStepClock clock;
     double time = 0.0;
@@ -93,12 +103,14 @@ struct AppState {
     double statsWindowMs = 0.0;
     int statsWindowFrames = 0;
     gpu::Texture frameTexture; // --frame-size
+    UiComposite uiComposite;   // HDR output
     std::array<gpu::Fence, 3> fences;
     std::size_t nextFence = 0;
 
     // Captures and quitting.
     std::string captureRequest;
     bool capturedFromOptions = false;
+    double capturePeak = -1.0; // brightest channel of the last capture, in multiples of paper white; < 0: none yet
     bool quitRequested = false;
     int exitCode = 0;
 
@@ -107,6 +119,7 @@ struct AppState {
     bool scenarioDone = false;
     std::uint64_t inputPushedFrame = UINT64_MAX;
     PendingInput pendingInput;
+    glm::vec2 touchMouse{0.0f};                      // the mouse position SDL would synthesize from the scripted finger
     std::vector<std::unique_ptr<char[]>> textInputs; // TEXT_INPUT payloads stay alive until dispatched
     std::optional<PerfRegion> perf;
     std::map<std::string, double, std::less<>> perfValues; // of the last finished region: perf_frame_avg, ...
@@ -124,9 +137,15 @@ std::optional<double> scenarioValue(AppState& state, std::string_view name);
 Scenario::Exec scenarioCommand(AppState& state, const ScenarioCommand& command);
 void releaseScenarioInput(AppState& state);
 
-// Capture.cpp: writes RGBA8 or BGRA8 pixels (tightly packed) as an opaque PNG. Relative paths go to the user
-// directory through quench::fs; absolute paths are opened directly (hosts and the iOS Simulator).
-Result<void> writePng(std::string_view path, std::span<const std::byte> pixels, std::uint32_t width,
-                      std::uint32_t height, gpu::TextureFormat format);
+// Capture.cpp: writes RGBA8 or BGRA8 pixels, or the Rgba16Float pixels of an HDR extended-linear frame (tightly
+// packed), as an opaque 8-bit sRGB PNG. HDR values are divided by paperWhite and clipped at 1: the PNG shows the
+// frame as an SDR display would at paper white, highlights clipped. Returns the brightest channel in multiples of
+// paper white (8-bit formats: at most 1). Relative paths go to the user directory through quench::fs; absolute paths
+// are opened directly (hosts and the iOS Simulator).
+Result<double> writePng(std::string_view path, std::span<const std::byte> pixels, std::uint32_t width,
+                        std::uint32_t height, gpu::TextureFormat format, float paperWhite = 1.0f);
+
+// App.cpp: applies the HDR mode and the window's display state to the swapchain and to `output`.
+void updateOutput(AppState& state);
 
 } // namespace quench::app::detail

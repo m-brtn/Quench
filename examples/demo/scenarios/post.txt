@@ -1,0 +1,40 @@
+# Post-processing (ctest: demo_post_metal, demo_post_vulkan): anti-aliasing modes, render scale, bloom, tone curves.
+# The capture is taken at 2 s with TAA, bloom and ACES. render_scale is the 3D width over the target width.
+
+set dither 0
+wait 0.2
+expect aa == 2
+expect bloom == 1
+# The spinning blades are drawn into the motion vectors.
+expect moved >= 3
+expect render_scale == 1
+set aa fxaa
+wait 0.05
+expect aa == 1
+expect moved == 0
+set aa none
+wait 0.05
+expect aa == 0
+set bloom 0
+wait 0.05
+expect bloom == 0
+set scale 0.5
+wait 0.05
+expect render_scale == 0.5
+set tone agx
+set dither 1
+set exposure 2
+wait 0.05
+expect exposure == 2
+
+set scale 1
+set tone aces
+set dither 0
+set exposure 1
+set aa taa
+set bloom 1
+wait 0.1
+expect aa == 2
+expect render_scale == 1
+until time >= 2.1 3
+quit

@@ -51,6 +51,26 @@ void App::setPresentMode(gpu::PresentMode mode) {
     if (m_state.device && m_state.window) m_state.device->setPresentMode(m_state.window.get(), mode);
 }
 
+void App::setHdrMode(HdrMode mode) {
+    m_state.hdrMode = mode;
+    m_state.outputDirty = true;
+}
+
+HdrMode App::hdrMode() const { return m_state.hdrMode; }
+const gpu::DisplayOutput& App::output() const { return m_state.output; }
+bool App::hdrSupported() const { return m_state.hdrSupported; }
+float App::displayHeadroom() const { return m_state.displayHeadroom; }
+float App::displayPotentialHeadroom() const { return m_state.displayPotentialHeadroom; }
+
+const char* hdrModeName(HdrMode mode) {
+    switch (mode) {
+    case HdrMode::Off: return "off";
+    case HdrMode::Auto: return "auto";
+    case HdrMode::On: return "on";
+    }
+    return "?";
+}
+
 void App::startTextInput() {
     if (m_state.window) SDL_StartTextInput(m_state.window.get());
 }
@@ -162,9 +182,22 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
         target = texture;
     }
 
-    Frame frame{commands, target, s.swapchainFormat, target.desc.width, target.desc.height};
+    // HDR: the game renders into the composite's frame texture, which goes into the target with ImGui on top.
+    gpu::TextureRef gameTarget = target;
+    if (s.output.hdr()) {
+        Result<gpu::TextureRef> frameTarget =
+            s.uiComposite.frame(*s.device, s.swapchainFormat, target.desc.width, target.desc.height);
+        if (!frameTarget) {
+            log::error("app", "HDR frame: {}", frameTarget.error());
+            return false;
+        }
+        gameTarget = *frameTarget;
+    }
+    Frame frame{commands, gameTarget, s.swapchainFormat, gameTarget.desc.width, gameTarget.desc.height, s.output};
     s.game->render(s.app, frame);
-    {
+    if (s.output.hdr()) {
+        s.uiComposite.composite(commands, *s.imguiRenderer, drawData, target, s.output.paperWhite);
+    } else {
         const gpu::ColorTarget color{.texture = target, .load = gpu::LoadOp::Load};
         gpu::RenderPass pass = commands.beginRenderPass(color);
         if (pass) s.imguiRenderer->draw(pass, drawData, s.swapchainFormat, target.desc.width, target.desc.height);
@@ -189,15 +222,21 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
     if (!capturePath.empty()) {
         gpu::TextureRef source = target;
         Result<std::vector<std::byte>> pixels = s.device->download({.texture = source});
-        Result<void> written =
-            pixels ? writePng(capturePath, *pixels, source.desc.width, source.desc.height, s.swapchainFormat)
-                   : Result<void>(Error{pixels.error()});
-        if (written)
-            log::info("app", "captured {} ({}x{}, frame {}, t={:.3f} s)", capturePath, source.desc.width,
-                      source.desc.height, s.frame, s.time);
-        else
+        Result<double> written = pixels ? writePng(capturePath, *pixels, source.desc.width, source.desc.height,
+                                                   s.swapchainFormat, s.output.paperWhite)
+                                        : Result<double>(Error{pixels.error()});
+        if (written) {
+            s.capturePeak = *written;
+            if (s.output.hdr())
+                log::info("app", "captured {} ({}x{}, frame {}, t={:.3f} s; HDR peak {:.2f} x paper white, clipped)",
+                          capturePath, source.desc.width, source.desc.height, s.frame, s.time, *written);
+            else
+                log::info("app", "captured {} ({}x{}, frame {}, t={:.3f} s)", capturePath, source.desc.width,
+                          source.desc.height, s.frame, s.time);
+        } else {
             log::error("app", "capture {}: {}", capturePath, written.error());
-        if (!written) s.app.quit(1);
+            s.app.quit(1);
+        }
     }
     return true;
 }
@@ -221,6 +260,69 @@ void updateStats(AppState& s, double realDt, double cpuMs, int ticks) {
 }
 
 } // namespace
+
+namespace {
+
+void trackDisplayHeadroom(AppState& s) {
+    const std::optional<DisplayHeadroom> platform = queryDisplayHeadroom(s.window.get());
+    if (!platform) return;
+    const DisplayHeadroom headroom = resolveDisplayHeadroom(platform, 1.0f);
+    if (headroom.current != s.displayHeadroom || headroom.potential != s.displayPotentialHeadroom) s.outputDirty = true;
+}
+
+void logDisplayHeadroom(AppState& s) {
+    if (!s.headroomLog.due(s.displayHeadroom, double(SDL_GetTicksNS()) * 1e-9)) return;
+    log::info("app", "display headroom {:.2f} (potential {:.2f}); output headroom {:.2f}", s.displayHeadroom,
+              s.displayPotentialHeadroom, s.output.headroom);
+}
+
+} // namespace
+
+void updateOutput(AppState& s) {
+    s.outputDirty = false;
+    SDL_Window* window = s.window.get();
+    // SDL sets both when the window's display changes or reports another HDR state
+    // (SDL_EVENT_WINDOW_HDR_STATE_CHANGED); SDR white is 1 on Apple platforms. Where the platform has a query, its
+    // headroom replaces SDL's and is read every frame (trackDisplayHeadroom).
+    const SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    const DisplayHeadroom headroom = resolveDisplayHeadroom(
+        queryDisplayHeadroom(window), SDL_GetFloatProperty(props, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f));
+    s.displayHeadroom = headroom.current;
+    s.displayPotentialHeadroom = headroom.potential;
+    const float sdrWhite = std::max(1e-3f, SDL_GetFloatProperty(props, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f));
+    s.hdrSupported = s.device->supportsComposition(window, gpu::SwapchainComposition::HdrExtendedLinear);
+
+    const bool wantHdr = s.hdrMode == HdrMode::On || (s.hdrMode == HdrMode::Auto && s.displayPotentialHeadroom > 1.0f);
+    gpu::SwapchainComposition composition = gpu::SwapchainComposition::Sdr;
+    if (wantHdr && !s.hdrSupported)
+        log::warning("app", "HDR output ({}): {} cannot composite this window in HDR extended linear: SDR",
+                     hdrModeName(s.hdrMode), s.device->caps().driver);
+    else if (wantHdr)
+        composition = gpu::SwapchainComposition::HdrExtendedLinear;
+    if (composition != s.device->composition(window)) {
+        composition = s.device->setComposition(window, composition);
+        s.swapchainFormat = s.device->swapchainFormat(window);
+        s.frameTexture.reset();
+        s.uiComposite.reset();
+    }
+
+    gpu::DisplayOutput output{.composition = composition};
+    if (output.hdr()) {
+        output.headroom = s.options.hdrHeadroom > 0.0f ? s.options.hdrHeadroom : s.displayHeadroom;
+        output.paperWhite = sdrWhite;
+    }
+    // A headroom change alone gets the rate-limited line of logDisplayHeadroom().
+    if (output.composition != s.output.composition || output.paperWhite != s.output.paperWhite || !s.gameStarted) {
+        log::info("app",
+                  "display output: {} ({}), headroom {:.2f}, paper white {:.2f}, swapchain {}; display "
+                  "headroom {:.2f} (potential {:.2f}), HDR {}supported",
+                  gpu::swapchainCompositionName(output.composition), hdrModeName(s.hdrMode), output.headroom,
+                  output.paperWhite, gpu::formatInfo(s.swapchainFormat).name, s.displayHeadroom,
+                  s.displayPotentialHeadroom, s.hdrSupported ? "" : "not ");
+        s.headroomLog.logged(s.displayHeadroom, double(SDL_GetTicksNS()) * 1e-9);
+    }
+    s.output = output;
+}
 
 LogSinkGuard::~LogSinkGuard() {
     if (id < 0) return;
@@ -317,6 +419,8 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     const gpu::Caps& caps = s.device->caps();
     log::info("app", "GPU: {} ({}), swapchain {}", caps.driver, caps.deviceName.empty() ? "?" : caps.deviceName,
               gpu::formatInfo(s.swapchainFormat).name);
+    s.hdrMode = s.options.hdr.value_or(s.desc.hdr);
+    updateOutput(s);
 
     IMGUI_CHECKVERSION();
     s.imgui.context = ImGui::CreateContext();
@@ -360,6 +464,9 @@ SDL_AppResult iterate(AppState& s) {
     }
 
     updateWindowSize(s);
+    if (!s.outputDirty) trackDisplayHeadroom(s);
+    if (s.outputDirty) updateOutput(s);
+    logDisplayHeadroom(s);
     updateGpuTime(s);
     const ImGuiIO& io = ImGui::GetIO();
     s.input.endEvents(io.WantCaptureKeyboard, io.WantCaptureMouse);
@@ -425,6 +532,8 @@ SDL_AppResult event(AppState& s, SDL_Event& e) {
         s.lastCounter = SDL_GetPerformanceCounter();
         log::info("app", "back in foreground");
         break;
+    case SDL_EVENT_WINDOW_HDR_STATE_CHANGED:
+    case SDL_EVENT_WINDOW_DISPLAY_CHANGED: s.outputDirty = true; break;
     default: break;
     }
     if (s.imgui.platform) ImGui_ImplSDL3_ProcessEvent(&e);
@@ -441,6 +550,7 @@ void quit(AppState& s, SDL_AppResult result) {
     releaseScenarioInput(s);
     for (gpu::Fence& fence : s.fences) fence.reset();
     s.frameTexture.reset();
+    s.uiComposite.reset();
     if (s.imguiRenderer) s.imguiRenderer->shutdown();
     s.imguiRenderer.reset();
     if (s.imgui.platform) ImGui_ImplSDL3_Shutdown();

@@ -1,0 +1,27 @@
+# HDR output (ctest: demo_hdr_metal, demo_hdr_vulkan): switching the output to HDR and back at run time (the app's
+# hdr command), the section's SDR-curve and peak controls. Expects a GPU backend with HDR extended linear (both Mac
+# backends). The capture is taken at 2 s in SDR: golden images are SDR.
+
+set dither 0
+wait 0.2
+expect hdr == 0
+expect hdr_headroom == 1
+expect sun_elevation == 14
+hdr on
+until hdr == 1 1
+expect hdr_supported == 1
+expect hdr_headroom >= 1
+set peak 4
+wait 0.05
+expect peak == 4
+set sdr_curve 1
+wait 0.05
+expect sdr_curve == 1
+set sdr_curve 0
+set peak 0
+hdr off
+until hdr == 0 1
+expect hdr_headroom == 1
+wait 0.1
+until time >= 2.1 3
+quit

@@ -3,6 +3,7 @@
 // The command line flags every game understands (docs/app.md). Arguments the engine does not know are passed to
 // createGame() in order.
 
+#include <quench/app/App.h> // HdrMode
 #include <quench/core/Result.h>
 #include <quench/gpu/Types.h>
 
@@ -26,6 +27,8 @@ struct Options {
     std::string gpuDriver;
     bool gpuDebug = false;
     std::optional<gpu::PresentMode> presentMode;
+    std::optional<HdrMode> hdr;
+    float hdrHeadroom = 0.0f; // > 0: the headroom of HDR output instead of the display's
     bool printVersion = false;
     bool printHelp = false;
     std::vector<std::string> gameArgs;
@@ -37,5 +40,6 @@ struct Options {
 // `args` without the program name. Accepts "--flag value" and "--flag=value".
 Result<Options> parseOptions(std::span<const std::string_view> args);
 const char* optionsHelp();
+std::optional<HdrMode> parseHdrMode(std::string_view text); // off, on, auto
 
 } // namespace quench::app::detail

@@ -10,6 +10,8 @@
 #include <quench/core/Result.h>
 #include <quench/gpu/Device.h>
 
+#include <glm/vec2.hpp>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -27,6 +29,13 @@ class App;
 class Input;
 struct ScenarioCommand;
 
+// HDR display output (gpu::SwapchainComposition::HdrExtendedLinear). Off: SDR. On: HDR wherever the GPU backend
+// can composite the window so, also on a display without HDR range. Auto: HDR while the window's display can show HDR
+// range (potential headroom above 1). Without backend support the output stays SDR (one log line).
+enum class HdrMode : std::uint8_t { Off, Auto, On };
+
+const char* hdrModeName(HdrMode mode);
+
 struct AppDesc {
     std::string name = "Quench";         // window title; the user directory is SDL_GetPrefPath(organization, name)
     std::string organization = "Quench"; // empty: the user directory is named after `name` alone
@@ -36,6 +45,7 @@ struct AppDesc {
     int height = 720;
     double fixedStep = 1.0 / 120.0; // simulation tick
     gpu::PresentMode presentMode = gpu::PresentMode::Vsync;
+    HdrMode hdr = HdrMode::Off; // --hdr overrides it
 };
 
 // The target of one frame. The game records its passes into `commands`; the engine draws ImGui on top and presents.
@@ -45,6 +55,8 @@ struct Frame {
     gpu::TextureFormat format = gpu::TextureFormat::Invalid;
     std::uint32_t width = 0; // pixels
     std::uint32_t height = 0;
+    // What the values written to `target` mean (SDR, or HDR extended linear with its headroom); as App::output().
+    gpu::DisplayOutput output{};
 };
 
 struct FrameStats {
@@ -102,6 +114,12 @@ public:
         (void)command;
         return ScenarioExec::Unknown;
     }
+    // Named pointer positions for `mouse @NAME`, `click @NAME` and `touch @NAME`, in window points (a UI item, a
+    // world point projected into the window), so a script does not depend on the window size; nullopt: unknown.
+    virtual std::optional<glm::vec2> scenarioPoint(std::string_view name) const {
+        (void)name;
+        return std::nullopt;
+    }
     // Game fields appended to the log line of a scenario perf region at perf_end, e.g. "draws=812 render=1920x1080".
     virtual std::string perfDetails(App& app) {
         (void)app;
@@ -152,6 +170,21 @@ public:
     // given (host paths in the iOS Simulator).
     void requestCapture(std::string path);
     void setPresentMode(gpu::PresentMode mode);
+
+    // HDR output. A new mode takes effect before the next frame; so do changes of the window's display (moved to
+    // another display, HDR switched on or off: SDL_EVENT_WINDOW_HDR_STATE_CHANGED) and of its headroom, which the
+    // engine reads every frame where the platform has a query for it (Apple: UIScreen, NSScreen).
+    void setHdrMode(HdrMode mode);
+    HdrMode hdrMode() const;
+    // The output of the coming frames: the swapchain composition, and in HDR the headroom (the display's current
+    // one, or --hdr-headroom) and the paper white value.
+    const gpu::DisplayOutput& output() const;
+    bool hdrSupported() const; // the GPU backend can composite this window in HDR (extended linear)
+    // HDR range of the window's display (1: none), also in SDR. Current: what it shows now, values above it are
+    // clipped; it changes with the brightness and while HDR content is on screen. Potential: the most it can show;
+    // HdrMode::Auto turns HDR on when it is above 1.
+    float displayHeadroom() const;
+    float displayPotentialHeadroom() const;
     void startTextInput();
     void stopTextInput();
     // Ends the app after this frame. A non-zero code makes the process fail.

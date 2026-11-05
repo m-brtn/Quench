@@ -1,0 +1,36 @@
+# Shadows (ctest: demo_shadows_metal, demo_shadows_vulkan): cascade count, map size and filter, the sun. The capture
+# is taken at 2 s with the defaults (3 cascades of 2048 px over 80 m, 12 taps).
+
+set dither 0
+wait 0.2
+expect cascades == 3
+expect shadow_draws > 0
+set cascades 0
+wait 0.05
+expect cascades == 0
+expect shadow_draws == 0
+set cascades 4
+set shadow_size 512
+set shadow_filter 0
+wait 0.05
+expect cascades == 4
+expect shadow_draws > 0
+set shadow_filter 1
+set shadow_distance 30
+wait 0.05
+expect cascades == 4
+# The sun below the horizon: no shadow passes.
+set sun_elevation -8
+wait 0.05
+expect shadow_draws == 0
+
+set cascades 3
+set shadow_size 2048
+set shadow_filter 2
+set shadow_distance 80
+set sun_elevation 32
+wait 0.1
+expect cascades == 3
+expect shadow_draws > 0
+until time >= 2.1 3
+quit

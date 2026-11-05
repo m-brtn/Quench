@@ -88,6 +88,13 @@ public:
     bool supportsPresentMode(SDL_Window* window, PresentMode mode) const;
     // Falls back to Vsync when the mode is unsupported; returns the mode in use.
     PresentMode setPresentMode(SDL_Window* window, PresentMode mode);
+    // Whether the backend can composite the window's swapchain so (Sdr: always). The display is not asked: an HDR
+    // composition on a display without HDR range shows SDR values.
+    bool supportsComposition(SDL_Window* window, SwapchainComposition composition) const;
+    // Falls back to Sdr when the composition is unsupported or cannot be set (logged); returns the one in use. The
+    // swapchain format changes with it. Waits for the GPU when it changes: call it between frames.
+    SwapchainComposition setComposition(SDL_Window* window, SwapchainComposition composition);
+    SwapchainComposition composition(SDL_Window* window) const;
     TextureFormat swapchainFormat(SDL_Window* window) const;
 
     bool isSignaled(const Fence& fence) const;

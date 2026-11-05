@@ -33,10 +33,22 @@ TrailForge builds on the engine's `quench_core` (`FixedStepClock`, JSON), `quenc
 through `quench_gpu`, and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and
 captures; pinned `d708783`, not yet moved to `v0.2.0`) with its own input layer fed through `Game::event` and its own
 physics clock; Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
-`tools/check_games.sh` builds both games against this checkout and starts them. There is
-no retained scene or render module (stage 5).** `docs/migration.md` describes what exists in the two games; `docs/app.md`
-and `docs/performance.md` describe what is built; the rest of `docs/` is design and plan beyond stage 3. Update this
-paragraph whenever that changes.
+`tools/check_games.sh` builds both games against this checkout and starts them. Stage 5 is done in the engine (not
+in a release yet, not used by either game): `quench_render` (the retained scene: meshes, textures, materials,
+instances and lights by handle; the standard frame of cascaded shadow maps, the HDR pass with reversed depth, sky and
+atmosphere, height fog, bloom, tone mapping and TAA, with fallbacks by device capability; game passes and surface
+shaders), HDR display output (the swapchain composition in `quench_gpu`, `--hdr auto|on|off` and the app API, an HDR
+tone curve up to the display's headroom, the UI at paper white, SDR captures; seen only through readbacks and capture
+peaks, as this Mac's display has no HDR range) and the engine shader library in `shaders/quench/`; `examples/demo`
+is the engine demo (a section per feature, each with a scripted check and golden captures) and
+`tools/package_demo.sh` packages it into `dist/`. Scenario points are in window points, percent of the window or
+names a game gives (`Game::scenarioPoint`), so the demo's scenarios work at any window size; the display headroom is
+read every frame from the screen on Apple platforms (current and potential). On the iPhone (2026-11-05, signed by
+the user's paid team) the device test app passed (94 passed, 1 skipped), every demo section check passed in
+portrait, the benchmark ran at 120 Hz, and the user looked at every section, HDR on and off included ("everything
+is fine").** `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`,
+`docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is built; the rest of `docs/` is design
+and plan beyond stage 5. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) with one HLSL shader source compiled at build
 time, Jolt Physics, Dear ImGui (diagnostics), GLM, miniaudio. Planned additions and their licences:
@@ -85,12 +97,16 @@ cmake --preset ios-sim-tests && cmake --build --preset ios-sim-tests && ctest --
 emcmake cmake --preset wasm-node && cmake --build --preset wasm-node && ctest --preset wasm-node -j8
 # The sample: flags with --help; the benchmark (docs/performance.md) in Release with vsync
 build/release/examples/hello/hello --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt
-# iPhone: an Xcode project with Automatic signing; install and launch with devicectl (docs/app.md, "iOS runs")
-cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id>
+# iPhone: an Xcode project with Automatic signing; install and launch with devicectl (docs/app.md, "iOS runs").
+# The user's paid team (Xcode's accounts) with plain bundle ids; a free Personal Team: 3 apps, 7-day profiles
+cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id> -DQUENCH_IOS_BUNDLE_ID_SUFFIX=
 xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_device_tests -configuration Release \
     -destination id=<device udid> -allowProvisioningUpdates build                  # also -scheme quench_hello
 # A new game from templates/game, built against this checkout and started once
 python3 tools/new_game.py "My Game" ../my-game
+# The engine demo (docs/demo.md), one section or the menu; its package for dist/ at the end of a stage
+build/release/examples/demo/quench-demo --section shadows
+tools/package_demo.sh                    # --ios also builds a development-signed .ipa (ios-xcode, not installed)
 ```
 
 Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...). A test
@@ -109,13 +125,16 @@ executables (no app lifecycle there) and runs in the iPhone test app, which runs
 The sample's checks are CTest tests too: `hello_metal` and `hello_vulkan` render it at 1280 x 720 and compare the
 capture (`build/<preset>/tests/captures/<test>.png`) with `tests/golden/<backend>/<device>/hello.png`;
 `hello_input` runs `examples/hello/scenarios/input.txt` (scripted keyboard, gamepad and touch input). Flags,
-scenario commands, captures and golden images: `docs/app.md`.
+scenario commands, captures and golden images: `docs/app.md`. The demo's checks are the same kind:
+`demo_<section>_metal` and `demo_<section>_vulkan` run `examples/demo/scenarios/<section>.txt` and compare the
+capture at its end with `tests/golden/<backend>/<device>/demo_<section>.png`; `demo_menu` checks the menu
+navigation (`docs/demo.md`). The renderer's own cases are `render.*` and `render_vulkan.*`.
 
 All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
 
-- **Every code change:** build `debug` and `release`, run `ctest` for both (it includes the sample's capture checks
-  against its golden images), `tools/format.sh --check`, and look at the capture in `build/debug/tests/captures/`
-  (do not assume).
+- **Every code change:** build `debug` and `release`, run `ctest` for both (it includes the capture checks of the
+  sample and the demo against their golden images), `tools/format.sh --check`, and look at the captures in
+  `build/debug/tests/captures/` (do not assume).
 - **Core, job system, assets or anything threaded:** also `ctest` under the `asan` preset (AddressSanitizer and
   UndefinedBehaviorSanitizer); job system and threading changes also under `tsan` (ThreadSanitizer).
 - **Headless modules (core, physics, assets, animation, navigation, audio mixer):** also the `wasm-node` web check.
@@ -135,6 +154,14 @@ All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
   the capture check in its `AGENTS.md`; captures compared before and after with `compare_captures.py`. Otherwise
   `tools/check_games.sh` is the games' gate, also before the commits. Problems inside a game are not fixed in engine
   work; only engine causes are.
+- **At the end of each stage:** the stage adds its section to the demo (`examples/demo`, with a scripted check and
+  golden captures for Metal and Vulkan through MoltenVK), and `tools/package_demo.sh` builds the demo into `dist/`
+  (user decision, 2026-11-05): Release, `dist/QuenchDemo-<version>-<shorthash>-macos.zip` with the app, `LICENSE`
+  and `THIRD_PARTY_LICENSES`; it runs the demo's checks, unzips the archive, starts the app once and saves a capture
+  next to it (look at it). `--ios` also builds a development-signed `.ipa` into
+  `dist/QuenchDemo-<version>-<shorthash>-ios.zip` (`ios-xcode`, signed by a paid team: `--team ID` or
+  `QUENCH_IOS_TEAM`; it refuses a free Personal Team and installs nothing). `dist/` is not committed; say in the
+  devlog which files it holds.
 
 ## Architecture rules
 
@@ -380,21 +407,29 @@ CMakeLists.txt         engine targets; CMakePresets.json: configure, build and t
 cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), QuenchShaders
                        (quench_add_shaders), EmbedShaders, QuenchTargets (warnings, include directories),
                        QuenchGame (quench_add_game) and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
-include/quench/        public headers per module: core/, physics/, gpu/, app/
+include/quench/        public headers per module: core/, physics/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
-                       src/gpu/sdlgpu/: the SDL GPU backend; src/app/Main.cpp: quench_main)
+                       src/gpu/sdlgpu/: the SDL GPU backend; src/app/Main.cpp: quench_main; src/render/: the
+                       scene, the frame modules and their shaders)
+shaders/quench/        the engine shader library (#include "quench/..."): BRDF, shadows, sky, fog, tone curves,
+                       surface shaders; SceneUniforms.h, the uniform structs shared by C++ and HLSL
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
+examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input), per
+                       section a scenario with a golden capture; smoke and benchmark scenarios
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
 tools/imagecompare/    quench_image_compare: capture against golden image
-tools/icon/            make_icon.py: draws the sample's icon
+tools/icon/            make_icon.py: draws the icons of the sample and the demo
 tools/new_game.py      creates a game from templates/game
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
+tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a development-signed .ipa)
 tools/format.sh        clang-format over the C and C++ sources (--check)
 tests/                 harness/, core/, physics/, gpu/ (shader tests; GPU device tests and their shaders), app/,
-                       header check, RunCapture.cmake (capture checks); golden/ (reference captures)
-docs/                  documentation (index docs/README.md): architecture, app shell, performance, platforms,
-                       dependencies, migration, roadmap, releases/
+                       render/ (scene and frame tests), header check, RunCapture.cmake (capture checks);
+                       golden/ (reference captures)
+docs/                  documentation (index docs/README.md): architecture, app shell, render module, engine demo,
+                       performance, platforms, dependencies, migration, roadmap, releases/
+dist/                  demo packages from tools/package_demo.sh (not committed)
 devlog/                daily development log (template in devlog/README.md)
 .clang-format          code format; .editorconfig for editors
 ```

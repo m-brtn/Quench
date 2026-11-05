@@ -1,0 +1,13 @@
+# An HDR frame in the capture (ctest: demo_hdr_on_metal, demo_hdr_on_vulkan, run with --hdr on --hdr-headroom 4): the
+# output is HDR extended linear with headroom 4 whatever the display reports. The capture at 2 s is the frame clipped
+# at paper white (golden demo_hdr_on); its brightest value, before clipping, is above paper white and at most the
+# headroom.
+
+set dither 0
+wait 0.2
+expect hdr == 1
+expect hdr_headroom == 4
+until capture_peak > 0 3
+expect capture_peak > 2
+expect capture_peak <= 4.01
+quit

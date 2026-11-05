@@ -74,3 +74,35 @@ QUENCH_TEST(window_present) {
     SDL_DestroyWindow(window);
 #endif
 }
+
+// Swapchain compositions: what the backend reports for a window, switching to each supported one (the swapchain
+// format follows, frames are presented) and the SDR fallback for an unsupported one.
+QUENCH_TEST(window_swapchain_compositions) {
+#if !QUENCH_TEST_WINDOWS
+    QUENCH_SKIP("windows need the app lifecycle on this platform");
+#else
+    QUENCH_GPU_DEVICE(device);
+    SDL_Window* window = SDL_CreateWindow("quench_gpu_device_tests", 160, 90, 0);
+    REQUIRE(window, "SDL_CreateWindow: %s", SDL_GetError());
+    const Result<void> claimed = device.claimWindow(window);
+    REQUIRE(claimed, "claimWindow: %s", claimed.error().c_str());
+    CHECK(device.composition(window) == SwapchainComposition::Sdr, "a claimed window starts in SDR");
+    CHECK(device.supportsComposition(window, SwapchainComposition::Sdr), "SDR is always supported");
+    const TextureFormat expected[] = {TextureFormat::Bgra8Unorm, TextureFormat::Bgra8UnormSrgb,
+                                      TextureFormat::Rgba16Float, TextureFormat::Rgb10a2Unorm};
+    for (const SwapchainComposition c : {SwapchainComposition::SdrLinear, SwapchainComposition::HdrExtendedLinear,
+                                         SwapchainComposition::Hdr10, SwapchainComposition::Sdr}) {
+        const bool supported = device.supportsComposition(window, c);
+        std::printf("  %s: %s\n", swapchainCompositionName(c), supported ? "supported" : "not supported");
+        const SwapchainComposition applied = device.setComposition(window, c);
+        CHECK(applied == (supported ? c : SwapchainComposition::Sdr) && device.composition(window) == applied,
+              "%s: applied %s", swapchainCompositionName(c), swapchainCompositionName(applied));
+        const TextureFormat format = device.swapchainFormat(window);
+        CHECK(format == expected[int(applied)], "%s: swapchain %s", swapchainCompositionName(applied),
+              formatInfo(format).name);
+        if (supported) drawFrames(device, window);
+    }
+    device.releaseWindow(window);
+    SDL_DestroyWindow(window);
+#endif
+}

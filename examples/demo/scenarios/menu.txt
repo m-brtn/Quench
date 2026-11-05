@@ -1,0 +1,43 @@
+# Menu navigation of the engine demo (ctest: demo_menu): keyboard, gamepad, mouse and touch switch sections, H hides
+# the windows. Any window size: the click and the touch go to the menu entries the demo names (`@menu:<section>`).
+
+wait 0.1
+expect section == 0
+expect sections == 7
+tap ]
+until section == 1 1
+tap PageDown
+until section == 2 1
+tap [
+until section == 1 1
+tap PageUp
+until section == 0 1
+tap 5
+until section == 4 1
+
+gamepad attach
+until gamepad == 1 2
+gamepad button rightshoulder tap
+until section == 5 1
+gamepad button rightshoulder tap
+until section == 6 1
+gamepad button rightshoulder tap
+until section == 0 1
+gamepad button leftshoulder tap
+until section == 6 1
+gamepad detach
+until gamepad == 0 2
+
+tap H
+until ui == 0 1
+tap H
+until ui == 1 1
+
+# Mouse and touch on the list: entry 2 (Shadows) and entry 4 (Post-processing).
+click @menu:shadows
+until section == 1 1
+touch @menu:post
+until section == 3 1
+section physics
+expect section == 5
+quit

@@ -292,7 +292,7 @@ Device::~Device() {
     if (!m_impl) return;
     DeviceImpl& impl = *m_impl;
     SDL_WaitForGPUIdle(impl.device);
-    for (SDL_Window* window : impl.windows) SDL_ReleaseWindowFromGPUDevice(impl.device, window);
+    for (const detail::WindowEntry& entry : impl.windows) SDL_ReleaseWindowFromGPUDevice(impl.device, entry.window);
     const std::int64_t live = impl.live.load();
     if (live != 0) log::error("gpu", "{} GPU resources outlive their device", live);
     QUENCH_ASSERT(live == 0, "GPU resources outlive their device (release them before the device)");
@@ -587,16 +587,16 @@ Result<std::vector<std::byte>> Device::download(const BufferRef& source, std::ui
 
 Result<void> Device::claimWindow(SDL_Window* window, PresentMode mode) {
     QUENCH_ASSERT(window, "claimWindow(nullptr)");
-    QUENCH_ASSERT(std::find(m_impl->windows.begin(), m_impl->windows.end(), window) == m_impl->windows.end(),
-                  "window claimed twice");
+    QUENCH_ASSERT(!m_impl->find(window), "window claimed twice");
     if (!SDL_ClaimWindowForGPUDevice(m_impl->device, window)) return sdlError("cannot claim the window for the GPU");
-    m_impl->windows.push_back(window);
+    m_impl->windows.push_back({window});
     setPresentMode(window, mode);
     return {};
 }
 
 void Device::releaseWindow(SDL_Window* window) {
-    auto it = std::find(m_impl->windows.begin(), m_impl->windows.end(), window);
+    auto it = std::find_if(m_impl->windows.begin(), m_impl->windows.end(),
+                           [window](const detail::WindowEntry& w) { return w.window == window; });
     QUENCH_ASSERT(it != m_impl->windows.end(), "releaseWindow on a window that was not claimed");
     if (it == m_impl->windows.end()) return;
     SDL_WaitForGPUIdle(m_impl->device);
@@ -609,10 +609,46 @@ bool Device::supportsPresentMode(SDL_Window* window, PresentMode mode) const {
 }
 
 PresentMode Device::setPresentMode(SDL_Window* window, PresentMode mode) {
+    detail::WindowEntry* entry = m_impl->find(window);
+    QUENCH_ASSERT(entry, "setPresentMode on a window that was not claimed");
+    if (!entry) return PresentMode::Vsync;
     if (!supportsPresentMode(window, mode)) mode = PresentMode::Vsync;
-    if (!SDL_SetGPUSwapchainParameters(m_impl->device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, sdl::toSdl(mode)))
+    if (!SDL_SetGPUSwapchainParameters(m_impl->device, window, sdl::toSdl(entry->composition), sdl::toSdl(mode))) {
         log::error("gpu", "SDL_SetGPUSwapchainParameters: {}", SDL_GetError());
+        return entry->presentMode;
+    }
+    entry->presentMode = mode;
     return mode;
+}
+
+bool Device::supportsComposition(SDL_Window* window, SwapchainComposition composition) const {
+    return SDL_WindowSupportsGPUSwapchainComposition(m_impl->device, window, sdl::toSdl(composition));
+}
+
+SwapchainComposition Device::setComposition(SDL_Window* window, SwapchainComposition composition) {
+    detail::WindowEntry* entry = m_impl->find(window);
+    QUENCH_ASSERT(entry, "setComposition on a window that was not claimed");
+    if (!entry) return SwapchainComposition::Sdr;
+    if (composition == entry->composition) return composition;
+    if (!supportsComposition(window, composition)) {
+        log::warning("gpu", "swapchain composition {} not supported by {} for this window: SDR",
+                     swapchainCompositionName(composition), m_impl->caps.driver);
+        composition = SwapchainComposition::Sdr;
+        if (composition == entry->composition) return composition;
+    }
+    SDL_WaitForGPUIdle(m_impl->device);
+    if (!SDL_SetGPUSwapchainParameters(m_impl->device, window, sdl::toSdl(composition),
+                                       sdl::toSdl(entry->presentMode))) {
+        log::error("gpu", "swapchain composition {}: {}", swapchainCompositionName(composition), SDL_GetError());
+        return entry->composition;
+    }
+    entry->composition = composition;
+    return composition;
+}
+
+SwapchainComposition Device::composition(SDL_Window* window) const {
+    const detail::WindowEntry* entry = m_impl->find(window);
+    return entry ? entry->composition : SwapchainComposition::Sdr;
 }
 
 TextureFormat Device::swapchainFormat(SDL_Window* window) const {

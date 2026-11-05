@@ -13,24 +13,30 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             core/ResultTests.cpp
             core/ThreadTests.cpp
             physics/PhysicsWorldTests.cpp
+            app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
             app/OptionsTests.cpp
+            app/ScenarioPointTests.cpp
             app/ScenarioTests.cpp
             app/SdlFileSystemTests.cpp
             app/SdlLogTests.cpp
             gpu/DeviceTests.cpp
             gpu/GpuTest.cpp
             gpu/RenderTests.cpp
-            gpu/WindowTests.cpp)
+            gpu/WindowTests.cpp
+            render/RenderMathTests.cpp
+            render/RendererTests.cpp)
     quench_configure_target(quench_device_tests)
-    target_include_directories(quench_device_tests PRIVATE harness)
-    target_link_libraries(quench_device_tests PRIVATE quench_physics)
+    target_include_directories(quench_device_tests PRIVATE harness gpu)
+    target_link_libraries(quench_device_tests PRIVATE quench_physics quench_render)
     target_compile_definitions(quench_device_tests PRIVATE
         QUENCH_TEST_SDL_MAIN=1
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
     quench_add_shaders(quench_device_tests NAME render SOURCE gpu/shaders/render.hlsl
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
                 rects_vs:vertex)
+    quench_add_shaders(quench_device_tests NAME render_test SOURCE render/shaders/custom.hlsl
+        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex)
     return()
 endif()
 
@@ -105,8 +111,10 @@ target_compile_definitions(quench_gpu_tests PRIVATE
 if(NOT QUENCH_HEADLESS)
     quench_add_test_executable(quench_app_tests PREFIX app
         SOURCES
+            app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
             app/OptionsTests.cpp
+            app/ScenarioPointTests.cpp
             app/ScenarioTests.cpp
             app/SdlFileSystemTests.cpp
             app/SdlLogTests.cpp
@@ -153,6 +161,23 @@ if(NOT QUENCH_HEADLESS)
                 ENVIRONMENT ${vulkan_environment}
                 FAIL_REGEX "Validation (Error|Warning)")
         endif()
+    endif()
+
+    # The render module: CPU cases and offscreen renders, on the default driver and on Vulkan through MoltenVK.
+    quench_add_test_executable(quench_render_tests PREFIX render
+        SOURCES
+            gpu/GpuTest.cpp
+            render/RenderMathTests.cpp
+            render/RendererTests.cpp
+        LIBS quench_render quench_gpu SDL3::SDL3-static
+        ENVIRONMENT ${gpu_environment})
+    target_include_directories(quench_render_tests PRIVATE gpu)
+    quench_add_shaders(quench_render_tests NAME render_test SOURCE render/shaders/custom.hlsl
+        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex)
+    if(QUENCH_TEST_VULKAN_LOADER)
+        quench_add_test_variant(quench_render_tests PREFIX render_vulkan
+            ENVIRONMENT ${vulkan_environment}
+            FAIL_REGEX "Validation (Error|Warning)")
     endif()
 
     # ---------------------------------------------------------------- examples (host builds)
@@ -202,13 +227,47 @@ if(NOT QUENCH_HEADLESS)
         add_test(NAME hello_bad_argument COMMAND quench_hello --no-such-option)
         add_test(NAME hello_bad_flag_value COMMAND quench_hello --quit-after soon)
         set_tests_properties(hello_bad_argument hello_bad_flag_value PROPERTIES WILL_FAIL TRUE)
+
+        if(TARGET quench_demo)
+            # The engine demo: per section a scripted check that ends in a golden capture (section:capture time).
+            set(demo_scenarios ${Quench_SOURCE_DIR}/examples/demo/scenarios)
+            foreach(entry materials:2 shadows:2 sky:2 post:2 hdr:2 physics:2 input:3)
+                string(REPLACE ":" ";" entry "${entry}")
+                list(GET entry 0 section)
+                list(GET entry 1 capture_at)
+                set(demo_args --window 960x540 --frame-size 960x540 --gpu-debug --section ${section}
+                    --script ${demo_scenarios}/${section}.txt --capture-at ${capture_at})
+                quench_add_capture_test(demo_${section}_metal IMAGE demo_${section} BACKEND metal APP quench_demo
+                    ARGS ${demo_args} ENVIRONMENT MTL_DEBUG_LAYER=1)
+                if(QUENCH_TEST_VULKAN_LOADER)
+                    quench_add_capture_test(demo_${section}_vulkan IMAGE demo_${section} BACKEND vulkan
+                        APP quench_demo ARGS ${demo_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment})
+                endif()
+            endforeach()
+            # An HDR extended-linear frame with a fixed headroom; the capture is the frame clipped at paper white.
+            set(demo_hdr_args --window 960x540 --frame-size 960x540 --gpu-debug --section hdr --hdr on --hdr-headroom 4
+                --script ${demo_scenarios}/hdr_on.txt --capture-at 2)
+            quench_add_capture_test(demo_hdr_on_metal IMAGE demo_hdr_on BACKEND metal APP quench_demo
+                ARGS ${demo_hdr_args} ENVIRONMENT MTL_DEBUG_LAYER=1)
+            if(QUENCH_TEST_VULKAN_LOADER)
+                quench_add_capture_test(demo_hdr_on_vulkan IMAGE demo_hdr_on BACKEND vulkan APP quench_demo
+                    ARGS ${demo_hdr_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment})
+            endif()
+            add_test(NAME demo_menu COMMAND quench_demo --window 960x540 --script ${demo_scenarios}/menu.txt)
+            set_tests_properties(demo_menu PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
+            add_test(NAME demo_version COMMAND quench_demo --version)
+            set_tests_properties(demo_version PROPERTIES PASS_REGULAR_EXPRESSION
+                                 "^Quench Demo ${PROJECT_VERSION}\n$")
+            add_test(NAME demo_bad_section COMMAND quench_demo --section nowhere)
+            set_tests_properties(demo_bad_section PROPERTIES WILL_FAIL TRUE)
+        endif()
     endif()
 endif()
 
 # Every public header compiles on its own and twice in a row (#pragma once).
 file(GLOB_RECURSE public_headers CONFIGURE_DEPENDS ${Quench_SOURCE_DIR}/include/quench/*.h)
 if(QUENCH_HEADLESS)
-    list(FILTER public_headers EXCLUDE REGEX "/quench/app/")
+    list(FILTER public_headers EXCLUDE REGEX "/quench/(app|render)/")
 endif()
 set(header_sources "")
 foreach(header IN LISTS public_headers)
@@ -222,5 +281,5 @@ add_library(quench_header_check OBJECT ${header_sources})
 quench_configure_target(quench_header_check)
 target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_gpu_shaders)
 if(NOT QUENCH_HEADLESS)
-    target_link_libraries(quench_header_check PRIVATE quench_app)
+    target_link_libraries(quench_header_check PRIVATE quench_app quench_render)
 endif()

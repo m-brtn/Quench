@@ -23,8 +23,8 @@ user (report of 2026-11-05). The headless modules also pass as single-threaded W
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
-| macOS | Metal | metallib | tests, hello (also Vulkan through MoltenVK) | TrailForge and Ashfall |
-| iOS | Metal | metallib (iOS SDK) | tests and hello in the Simulator and on the user's iPhone | TrailForge in the iOS Simulator; on the user's iPhone (user reports 2026-11-02 and 2026-11-04; on the engine's app shell 2026-11-05) |
+| macOS | Metal | metallib | tests, hello and the demo (also Vulkan through MoltenVK) | TrailForge and Ashfall |
+| iOS | Metal | metallib (iOS SDK) | tests, hello, the render module and the demo in the Simulator and on the user's iPhone (signed by the user's paid team) | TrailForge in the iOS Simulator; on the user's iPhone (user reports 2026-11-02 and 2026-11-04; on the engine's app shell 2026-11-05) |
 | Windows | D3D12 or Vulkan | DXIL or SPIR-V | nothing | TrailForge builds and passes headless tests in CI; never run on real hardware |
 | Linux | Vulkan | SPIR-V | nothing | TrailForge builds in CI and starts on Mesa lavapipe under Xvfb; never run on real hardware |
 | Android | Vulkan | SPIR-V | nothing | nothing |
@@ -67,6 +67,29 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   (`Caps::bcTextures` false, ASTC true), no depth clip mode (`Caps::depthClamp` false) and no indirect draws
   (`Caps::indirectDraw` false: Metal validation aborts on them). SDL GPU needs its video subsystem even for offscreen
   work; test executables without `SDL_main` call `SDL_SetMainReady()` first.
+
+## HDR output
+
+What the swapchain compositions do per platform and backend, as run on 2026-11-05 (how the app uses them:
+[App shell](app.md#hdr-output)). In SDL 3.4.18's sources the Metal backend supports extended linear on macOS 11+ and
+iOS and HDR10 (PQ) on macOS only; the Vulkan backend needs `VK_EXT_swapchain_colorspace`.
+
+| Where | SDR, SDR linear, HDR extended linear, HDR10 | Display headroom | HDR checked by |
+|---|---|---|---|
+| Mac, Metal (M4 Pro, LG UltraFine 5K) | all four supported (`gpu_device.window_swapchain_compositions` creates each and draws frames) | 1.00 (an SDR display) | readback and capture peak: demo HDR section at `--hdr-headroom 4`, peak 3.95 times paper white |
+| Mac, Vulkan through MoltenVK | all four supported (`gpu_vulkan.window_swapchain_compositions`, validation layer on) | 1.00 | the same demo check, peak 3.95 |
+| iOS Simulator (iPhone 18 Pro Max, iOS 27.0) | extended linear supported (the demo with `--hdr on`: `Rgba16Float` swapchain); the others not queried (the window tests are skipped there) | 1.00 | demo capture peak 2.56 at headroom 4 (portrait framing) |
+| iPhone 18 Pro Max (A20 Pro GPU, iOS 27) | extended linear supported (`gpu_device.window_swapchain_compositions` passed in the device test app; the demo with `--hdr on`: `Rgba16Float` swapchain) | read every frame ([App shell](app.md#hdr-output)): potential 8.00; current 1.20 at a start with no EDR content on screen, raised by iOS to 3.05 and then 3.16 within 1.7 s of HDR output, and steady at 3.16 for the next 19 s at an unchanged brightness; lowered from 2.90 to 1.20 about 17 s after EDR content left the screen (before the per-frame reading, SDL's value read once at startup was 1.20 or 8.00) | capture peak 1.20 at the display's 1.20, 3.02 at 8.00, 2.56 at `--hdr-headroom 4`; the user looked at the HDR section, on and off: "everything is fine" (2026-11-05) |
+
+- This Mac's display has no HDR range, so `--hdr auto` stays SDR here and HDR was never seen on a Mac screen: values
+  above paper white were checked only in readbacks (render tests) and in the logged capture peak. Looking at HDR on
+  an HDR-capable Mac display is a user check; on the iPhone the user has looked (2026-11-05).
+- Not run: the output update when a window moves to another display (`SDL_EVENT_WINDOW_DISPLAY_CHANGED`, needs a second
+  display), a headroom change from the brightness slider (on the iPhone only the rise after HDR output started was
+  seen), and the per-frame reading on a Mac display with HDR range. SDL alone does not refresh the headroom when only
+  the brightness changes; the app's own reading on Apple platforms does not depend on it.
+- HDR10 swapchains can be created on the Mac, but the renderer does not write PQ: such output gets SDR values with a
+  warning ([Render module](render.md#tone-mapping-and-hdr-output)).
 
 ## Windows and Linux
 

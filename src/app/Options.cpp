@@ -25,6 +25,13 @@ bool parseSize(std::string_view text, int& width, int& height) {
 
 } // namespace
 
+std::optional<HdrMode> parseHdrMode(std::string_view text) {
+    if (text == "off") return HdrMode::Off;
+    if (text == "on") return HdrMode::On;
+    if (text == "auto") return HdrMode::Auto;
+    return std::nullopt;
+}
+
 const char* optionsHelp() {
     return "Engine options:\n"
            "  --quit-after S       quit after S seconds of app time\n"
@@ -38,6 +45,10 @@ const char* optionsHelp() {
            "  --gpu-driver NAME    metal, vulkan or direct3d12\n"
            "  --gpu-debug          GPU validation (backend debug mode)\n"
            "  --present-mode MODE  vsync, immediate or mailbox\n"
+           "  --hdr MODE           HDR output: off (SDR), on (where the GPU backend supports it) or auto (while\n"
+           "                       the display has HDR range); default: the game's choice, normally off\n"
+           "  --hdr-headroom N     peak brightness of HDR output in multiples of paper white (N >= 1) instead of\n"
+           "                       the display's (repeatable HDR captures)\n"
            "  --version            print the version and exit\n"
            "  --help               print this help and exit\n"
            "With --script or --capture every frame advances the app time by one fixed step (deterministic runs),\n"
@@ -96,6 +107,19 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
                 options.presentMode = gpu::PresentMode::Mailbox;
             else
                 return Error{std::format("--present-mode: '{}' is not vsync, immediate or mailbox", *v)};
+        } else if (flag == "--hdr") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            const std::optional<HdrMode> mode = parseHdrMode(*v);
+            if (!mode) return Error{std::format("--hdr: '{}' is not off, on or auto", *v)};
+            options.hdr = *mode;
+        } else if (flag == "--hdr-headroom") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            const auto headroom = parseDouble(*v);
+            if (!headroom || *headroom < 1.0 || *headroom > 1000.0)
+                return Error{std::format("--hdr-headroom: '{}' is not a number from 1 to 1000", *v)};
+            options.hdrHeadroom = float(*headroom);
         } else if (flag == "--gpu-debug" && !inlineValue) {
             options.gpuDebug = true;
         } else if (flag == "--version" && !inlineValue) {

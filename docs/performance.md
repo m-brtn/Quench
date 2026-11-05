@@ -58,7 +58,110 @@ plane and an ImGui window.
 | Mac, Apple M4 Pro | 1920 x 1080 | 60 Hz | 0.5 ms | 1.0 ms | 1.2 ms | p95 within 1.1 display intervals |
 | iPhone 18 Pro Max, A20 Pro GPU | 1320 x 2868 (native) | 120 Hz | 0.3 ms | 0.5 ms | 1.6 ms | p95 within 1.1 display intervals |
 
+The engine demo (`examples/demo/scenarios/benchmark.txt`, [Engine demo](demo.md#benchmark); 5 s per section in real
+time) has a CPU budget per section from the runs of 2026-11-05 19:34 below, at about twice the largest median. Its
+Mac GPU budget comes from the runs of 20:32-20:34 below (after the second GPU app was closed): GPU p50 7.6 to 9.4 ms
+at 60 Hz, a value that follows the GPU clock, which follows the load (5.1 ms in a region paced at 120 Hz); the budget
+is 15 ms, 90% of the 60 Hz interval, because twice the measured value would allow a missed display interval. The
+iPhone budget comes from the run of 2026-11-05 20:28 below: CPU at about twice the largest median; GPU p50 at 7.5 ms,
+not twice the measured 6.1 ms, because twice would allow frames longer than the 8.33 ms of the 120 Hz display.
+
+| Device | Render size | Display | CPU p50 | CPU p99 | GPU p50 | Frames |
+|---|---|---|---|---|---|---|
+| Mac, Apple M4 Pro | 1920 x 1080 | 60 Hz | 2.0 ms | 3.5 ms | 15 ms | p95 within 1.1 display intervals |
+| iPhone 18 Pro Max, A20 Pro GPU | 1320 x 2868 (native) | 120 Hz | 2.0 ms | 3.0 ms | 7.5 ms | p95 within 1.1 display intervals |
+
+In the Mac runs of 20:32-20:34 the frame p95 was above 1.1 intervals (18.33 ms) in most sections, up to 18.85 ms,
+with frame p50 16.67 ms: presentation jitter outside the budget, not a missed interval in the p95; cause not checked.
+
 ## Measurements
+
+2026-11-05 19:34, the engine demo's benchmark, Release, vsync, Mac, Apple M4 Pro, LG UltraFine 5K at 60 Hz,
+`--frame-size 1920x1080`, three runs, medians of the runs (frame p95 and max: the largest of the three). During these
+runs a second app was rendering on the same GPU (an interactive `QuenchDemo.app` started from `dist/` at 18:32), so
+the GPU times are not the demo's alone: hello's GPU p50 read 0.6 to 2.2 ms in the same session against 0.545 ms in
+clean runs.
+
+| Section | Frames | Frame p50 | Frame p95 | Frame max | CPU p50 | CPU p99 | GPU p50 (shared GPU) |
+|---|---|---|---|---|---|---|---|
+| materials | 301 | 16.682 | 17.887 | 18.607 | 0.899 | 1.433 | 8.167 |
+| shadows | 300 | 16.669 | 17.669 | 32.709 | 0.857 | 1.737 | 7.799 |
+| sky | 300 | 16.664 | 17.868 | 21.320 | 0.885 | 1.399 | 7.108 |
+| post | 300 | 16.694 | 17.840 | 20.256 | 0.920 | 1.291 | 8.410 |
+| hdr (SDR) | 300 | 16.690 | 17.829 | 33.116 | 0.871 | 1.297 | 6.110 |
+| hdr (HDR output on) | 300 | 16.677 | 17.946 | 32.639 | 0.900 | 1.348 | 6.011 |
+| physics | 301 | 16.667 | 17.746 | 32.928 | 1.038 | 1.553 | 7.418 |
+
+All values in milliseconds. HDR output (an `Rgba16Float` frame and the UI composite pass; headroom 1 on this display)
+cost 0.03 ms of CPU p50 and 0.05 ms of CPU p99 over the same section in SDR.
+
+2026-11-05 20:28, the engine demo's benchmark on the iPhone 18 Pro Max (A20 Pro GPU, iOS 27), Release, vsync, native
+size 1320 x 2868 (portrait), 120 Hz, launched through `devicectl`, no validation layer, one complete run (9 passed,
+0 failed; no "entering background" in its log). HDR output on the phone ran at the headroom the display reported
+then (1.20).
+
+| Section | Frames | Frame p50 | Frame p95 | Frame max | CPU p50 | CPU p99 | GPU min | GPU p10 | GPU p50 | GPU p95 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| materials | 601 | 8.334 | 8.397 | 8.608 | 0.805 | 1.315 | 5.621 | 5.897 | 6.028 | 6.194 |
+| shadows | 601 | 8.331 | 8.411 | 8.610 | 0.836 | 1.271 | 5.810 | 5.872 | 5.984 | 6.163 |
+| sky | 601 | 8.332 | 8.403 | 8.559 | 0.759 | 1.125 | 4.533 | 5.894 | 6.058 | 6.179 |
+| post | 601 | 8.333 | 8.403 | 8.687 | 0.837 | 1.237 | 5.650 | 5.915 | 6.006 | 6.137 |
+| hdr (SDR) | 601 | 8.332 | 8.414 | 8.733 | 0.782 | 1.274 | 5.736 | 5.858 | 6.037 | 6.264 |
+| hdr (HDR output on) | 601 | 8.334 | 8.418 | 8.735 | 0.824 | 1.350 | 5.843 | 5.872 | 6.010 | 6.104 |
+| physics | 601 | 8.331 | 8.409 | 8.519 | 0.948 | 1.377 | 5.597 | 5.914 | 6.003 | 6.140 |
+
+All values in milliseconds. The GPU time is about the same in every section (full-screen passes at 3.8 million
+pixels dominate); 6.0 ms is 72% of the 120 Hz frame. An earlier run (20:26) gave the same numbers for its first four
+sections (CPU p50 0.788 to 0.838, CPU p99 up to 1.547, GPU p50 6.061 to 6.102) before it was killed by another
+agent's launch of the same app (devlog).
+
+hello A/B for stage 5, 2026-11-05 19:30, six interleaved pairs of v0.2.0 (`e731178`, built from `git archive` in
+`/tmp/qs5_base`) and the stage 5 working tree, same conditions and the same second app on the GPU: medians of the runs
+CPU p50 0.3225 and 0.335 ms (+3.9 %), CPU p99 0.538 and 0.5555 ms (+3.3 %); the per-run differences go both ways
+(run 4: 0.394 base, 0.388 new; run 5: 0.313 base, 0.338 new). hello does not use the render module; stage 5 changed
+its app-shell path only (the display output, ImGui's paper white).
+
+2026-11-05 20:32-20:34, the engine demo's benchmark again on the Mac (same settings as at 19:34), after the second
+app had been closed; the two booted iOS Simulators were still running, and a hello run right after read GPU min
+0.540, p10 0.550 but p50 0.934 ms (0.545 ms in clean runs), so the GPU was still not entirely free. Three runs,
+medians of the runs (frame p95 and max: the largest of the three); run 3 was paced at 120 Hz from the `hdr_on`
+region on (599 frames, GPU p50 5.19 and 5.11 ms there):
+
+| Section | Frames | Frame p50 | Frame p95 | Frame max | CPU p50 | CPU p99 | GPU p50 |
+|---|---|---|---|---|---|---|---|
+| materials | 301 | 16.682 | 18.701 | 19.017 | 0.948 | 1.369 | 9.395 |
+| shadows | 300 | 16.644 | 18.387 | 98.908 | 0.875 | 1.278 | 8.573 |
+| sky | 301 | 16.652 | 18.458 | 19.335 | 0.761 | 1.224 | 8.685 |
+| post | 300 | 16.655 | 18.093 | 22.202 | 0.822 | 1.285 | 8.019 |
+| hdr (SDR) | 299 | 16.669 | 18.851 | 1019.100 | 0.867 | 1.272 | 7.613 |
+| hdr (HDR output on) | 301 | 16.641 | 18.798 | 25.629 | 0.881 | 1.344 | 7.849 |
+| physics | 301 | 16.624 | 18.476 | 24.103 | 1.091 | 1.473 | 7.745 |
+
+All values in milliseconds. The 98.9 ms and 1019.1 ms maxima are single stalls in run 3 (294 and 266 frames in
+those regions); cause not checked.
+
+A second complete iPhone run of the demo's benchmark, 2026-11-05 20:26:59 (same settings as the 20:28 run above),
+agrees with it: 601 frames in every region, CPU p50 0.771 to 0.975, CPU p99 1.275 to 1.552, GPU p50 5.959 to
+6.064 ms. Two more runs were ended early by a second agent's launches of the same app on the phone (devlog); their
+complete regions (materials, shadows, sky) read the same.
+
+hello on the iPhone for stage 5, 2026-11-05 20:23 and 20:29-20:30, same settings as the 16:45 runs below. Two runs of
+the working tree at 20:22:57 and 20:23:20 (a first at 20:20 went to the background after 1.8 s, when a second agent
+launched another app on the phone, and is not used): CPU p50
+0.157 / 0.155, CPU p99 0.393 / 0.349, GPU p50 0.809 / 0.807 ms. Their CPU p99 is above the 16:45 runs (0.251 /
+0.215), so an interleaved A/B followed, v0.2.0 (`e731178`, built for the device from `git archive` in `/tmp/qs5_base`)
+against the working tree, two pairs, 1201 frames each:
+
+| Run | CPU p50 | CPU p99 | GPU p50 | GPU p95 |
+|---|---|---|---|---|
+| v0.2.0, 1 | 0.161 | 0.342 | 0.808 | 1.666 |
+| stage 5, 1 | 0.164 | 0.355 | 0.810 | 0.816 |
+| v0.2.0, 2 | 0.156 | 0.329 | 0.809 | 0.817 |
+| stage 5, 2 | 0.160 | 0.316 | 0.809 | 0.817 |
+
+All values in milliseconds. Medians of the runs: CPU p50 0.1585 and 0.162 (+2.2 %), CPU p99 0.3355 and 0.3355 (0 %),
+GPU p50 0.8085 and 0.8095. The higher CPU p99 against 16:45 is in v0.2.0 as well: a difference between sessions, not
+the change. Within the iPhone budgets.
 
 2026-11-05, version 0.1.0, Release, vsync. These two tables were measured with the deterministic region (1201 frames
 of one 1/120 s tick each); the real-time region is in the last table.

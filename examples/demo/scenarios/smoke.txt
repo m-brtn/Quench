@@ -1,0 +1,25 @@
+# Smoke run of a packaged demo (tools/package_demo.sh): every section once, then quit. The package script captures
+# the frame at 1.5 s (the HDR output section, in SDR).
+
+wait 0.2
+expect sections == 7
+section materials
+wait 0.25
+expect draws > 0
+section shadows
+wait 0.25
+expect shadow_draws > 0
+section sky
+wait 0.25
+section post
+wait 0.5
+expect aa == 2
+section hdr
+wait 0.25
+section physics
+wait 0.25
+expect bodies == 21
+section input
+wait 0.25
+until time >= 1.8 2
+quit

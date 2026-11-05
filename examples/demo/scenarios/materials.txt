@@ -1,0 +1,43 @@
+# Materials and lights (ctest: demo_materials_metal, demo_materials_vulkan): light switches, the game's render pass
+# and surface shader. Deterministic run (one 1/120 s step per frame); the capture is taken at 2 s, after the scene is
+# back to its start state. Dithering is off so the golden PNG stays small.
+
+set dither 0
+wait 0.2
+expect section == 0
+# Three point lights and the spot are local lights (the sun is not); each has a disc from the game pass.
+expect lights == 4
+expect marker_draws == 4
+expect checker == 1
+expect draws >= 10
+expect shadow_draws > 0
+set point_lights 1
+wait 0.05
+expect lights == 2
+expect marker_draws == 2
+set spot 0
+wait 0.05
+expect lights == 1
+expect marker_draws == 1
+set markers 0
+wait 0.05
+expect marker_draws == 0
+set checker 0
+wait 0.05
+expect checker == 0
+# A sun that is off casts no shadows.
+set sun 0
+wait 0.05
+expect shadow_draws == 0
+
+set point_lights 3
+set spot 1
+set markers 1
+set checker 1
+set sun 1
+wait 0.1
+expect lights == 4
+expect marker_draws == 4
+expect shadow_draws > 0
+until time >= 2.1 3
+quit

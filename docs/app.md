@@ -35,8 +35,11 @@ clock is reset on return, so no ticks pile up. A minimized desktop window also s
 
 `App` gives the device, the window, `Input`, sizes in points and pixels, the safe area (notches, rounded corners),
 time, frame and tick counters, frame statistics (`FrameStats`: frame time, CPU time until the submit without the wait
-for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`), and actions: `requestCapture`, `setPresentMode`,
-text input, `quit(exitCode)`.
+for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`), the display output (`output()`, `hdrMode()`,
+`hdrSupported()`, `displayHeadroom()`, `displayPotentialHeadroom()`), and actions: `requestCapture`,
+`setPresentMode`, `setHdrMode`, text input,
+`quit(exitCode)`. `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
+headroom); the renderer takes it as is ([HDR output](#hdr-output)).
 
 ## Input
 
@@ -81,6 +84,8 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--gpu-driver NAME` | `metal`, `vulkan` or `direct3d12` |
 | `--gpu-debug` | GPU validation (the backend's debug mode) |
 | `--present-mode MODE` | `vsync`, `immediate` or `mailbox`; falls back to vsync where the window does not support it |
+| `--hdr MODE` | HDR output: `off` (SDR), `on` (wherever the GPU backend can composite the window in HDR) or `auto` (while the display reports HDR range); default `AppDesc::hdr`, normally off ([HDR output](#hdr-output)) |
+| `--hdr-headroom N` | peak of HDR output in multiples of paper white (1 to 1000) instead of the display's, for repeatable HDR runs |
 | `--version` | print the version and exit |
 
 With `--script` or `--capture` the run is **deterministic**: every frame advances the app time by exactly one fixed
@@ -110,16 +115,26 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `quit` | end the scenario; the app exits with 1 if a check failed |
 | `down KEY`, `up KEY`, `tap KEY` | keys by SDL scancode name; a tap releases on the next frame |
 | `text STRING` | text input |
-| `mouse X Y`, `click X Y [left\|right\|middle]`, `wheel DY` | mouse in window points |
-| `touch X Y [DX DY STEPS]` | a tap, or a finger dragged by DX, DY over STEPS frames |
+| `mouse P`, `click P [left\|right\|middle]`, `wheel DY` | mouse at the point P (below) |
+| `touch P [DX DY STEPS]` | a tap at P, or a finger dragged by DX, DY (points or percent) over STEPS frames; like SDL on a device, the finger also sends mouse events with `SDL_TOUCH_MOUSEID` (unless `SDL_HINT_TOUCH_MOUSE_EVENTS` is off), so ImGui sees it and `Input::mouseFromTouch()` is set |
 | `gamepad attach\|detach` | a virtual gamepad (SDL's virtual joystick) |
 | `gamepad button NAME down\|up\|tap`, `gamepad axis NAME VALUE` | SDL names: `a`, `b`, `x`, `y`, `start`, `dpup`, ...; `leftx`, `lefty`, `rightx`, `righty` (-1..1), `lefttrigger`, `righttrigger` (0..1) |
 | `resize W H` | resize the window (points) |
 | `capture PATH` | capture the next frame |
+| `hdr off\|on\|auto` | `App::setHdrMode`; the output changes at the start of the next frame |
 | `perf_begin LABEL`, `perf_end` | measure the frames in between, in real time; `perf_end` logs a `perf:` line (with the game's `Game::perfDetails` at the end) and sets the `perf_*` values |
 
+A point P is `X Y` in window points (`480 420`), in percent of the window's width and height (`50% 75%`; the two
+forms can be mixed), or `@NAME`, a point the game names through `Game::scenarioPoint` (a UI item, a world point
+projected into the window; the demo has `@menu:<section>` and the physics section's `@floor`). Points are tied to
+one window size, so a script meant for every window (a portrait phone, a landscape Mac window) uses percent or names;
+an unknown name fails the command.
+
 Values: `time`, `frame`, `ticks`, `fps`, `frame_ms`, `cpu_ms`, `gpu_ms`, `window_w`, `window_h`, `pixel_w`, `pixel_h`,
-`gamepad` (1 when connected), `fingers`, `action:NAME` (an action's value), after `perf_end` `perf_frames`,
+`gamepad` (1 when connected), `fingers`, `action:NAME` (an action's value), `hdr` (1 while the output is HDR),
+`hdr_supported`, `hdr_headroom` (of the output; 1 in SDR), `display_headroom`, `display_headroom_potential`,
+`capture_peak` (of the last capture,
+in multiples of paper white; -1 before one), after `perf_end` `perf_frames`,
 `perf_frame_avg`, `perf_frame_p10`, `perf_frame_p50`, `perf_frame_p95`, `perf_frame_p99`, `perf_frame_max`,
 `perf_cpu_avg`, `perf_cpu_p50`, `perf_cpu_p95`, `perf_cpu_p99`, `perf_gpu_avg`, `perf_gpu_min`, `perf_gpu_p10`,
 `perf_gpu_p50`, `perf_gpu_p95` (milliseconds; -1 when
@@ -127,10 +142,51 @@ there were no samples, for example GPU time without `gpu::Caps::gpuTiming`); the
 to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N: ...`, and the run ends
 with `N passed, M failed`; tests match `FAIL line`.
 
+## HDR output
+
+The display output is SDR unless the game (`AppDesc::hdr`, `App::setHdrMode`) or `--hdr` asks for HDR. HDR is the
+swapchain composition `gpu::SwapchainComposition::HdrExtendedLinear` (EDR on Apple platforms): an `Rgba16Float`
+swapchain with linear BT.709 values, paper white at SDL's SDR white level (1.0 on Apple platforms), brighter values
+up to the display's headroom. `on` uses it wherever the GPU backend can composite the window so, also on a display
+without HDR range (values above paper white are then clipped by the display); `auto` only while the display can show
+HDR range (a potential headroom above 1). Where the backend cannot (`gpu::Device::supportsComposition`), the output
+stays SDR with one warning naming the driver.
+
+- **Headroom:** two values per display. The current headroom is what the display shows now: values above it are
+  clipped, and it changes with the brightness and while HDR content is on screen. The potential headroom is the most
+  it can show. The output's headroom, the peak of the HDR tone curve, is the current one, following Apple's
+  guidance ("Performing your own tone mapping", Metal documentation: the upper bound "may vary from moment to
+  moment"; read the current maximum while processing a frame and map all values between 0 and it); `auto` decides
+  by the potential one. On Apple platforms the app reads both every frame from the window's screen
+  (`src/app/DisplayHeadroomApple.m`: iOS 16+ `UIScreen.currentEDRHeadroom` / `potentialEDRHeadroom`, macOS
+  `NSScreen.maximumExtendedDynamicRangeColorComponentValue` /
+  `maximumPotentialExtendedDynamicRangeColorComponentValue`), because SDL's `SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT` is
+  re-read only on `SDL_EVENT_WINDOW_HDR_STATE_CHANGED` and `SDL_EVENT_WINDOW_DISPLAY_CHANGED`, and on iOS SDL 3.4.18
+  reads it once, when it adds the display (`SDL_uikitmodes.m`). Elsewhere SDL's property is used for both values, on
+  those events. `--hdr-headroom N` replaces the current headroom in the output. A change of the output's composition
+  or paper white is logged at once: `app: display output: HDR extended linear (on), headroom 4.00, paper white 1.00,
+  swapchain Rgba16Float; display headroom 1.00 (potential 1.00), HDR supported`; a change of the headroom alone
+  (a brightness ramp changes it over many frames) at most once a second, with the value it settles on. On the
+  iPhone 18 Pro Max the demo starts HDR at `display headroom 1.20 (potential 8.00)`, and 1.7 s later iOS has raised
+  it: `app: display headroom 3.16 (potential 8.00); output headroom 3.16`.
+- **The frame:** in HDR the game renders into an offscreen `Rgba16Float` frame (`Frame::format`), ImGui is drawn into
+  an 8-bit layer, and one full-screen pass composites the layer over the frame into the swapchain
+  (`src/app/UiComposite.*`): the UI is blended on display values as in SDR and shown at paper white, and frame values
+  above paper white stay, dimmed under the UI by its coverage. The SDR path is unchanged.
+- **Captures** stay SDR PNGs: an HDR frame is divided by paper white, clipped at 1 and encoded with gamma 2.2, so the
+  PNG shows what an SDR display would show of the HDR signal (everything above paper white is white). The capture log
+  line and the scenario value `capture_peak` give the brightest value before clipping, in multiples of paper white.
+  With `--hdr on --hdr-headroom 1` the capture matches the SDR one (renderer test: at most 2 levels apart), so golden
+  images stay SDR; the demo's `demo_hdr_on_*` tests check the peak of a headroom-4 frame. What HDR looks like above
+  paper white can only be judged on an HDR display, by eye.
+- **Per platform** (what was run: [Platforms](platforms.md)): Metal on macOS and iOS supports extended linear and, on
+  macOS only, `Hdr10` (PQ); SDL's Vulkan backend needs `VK_EXT_swapchain_colorspace`. The renderer writes no PQ, so
+  `Hdr10` output gets SDR values ([Render module](render.md#tone-mapping-and-hdr-output)).
+
 ## Captures and golden images
 
 A capture renders the frame into an offscreen texture (or uses the `--frame-size` target), draws ImGui, downloads it
-and writes an RGBA PNG with opaque alpha. Golden images live in `tests/golden/<backend>/<device>/<name>.png`, where
+and writes an RGBA PNG with opaque alpha (HDR frames: [HDR output](#hdr-output)). Golden images live in `tests/golden/<backend>/<device>/<name>.png`, where
 `<device>` is the Mac's CPU brand in lower case with dashes (`apple-m4-pro`; CMake cache `QUENCH_GOLDEN_DEVICE`).
 
 The capture tests (`hello_metal`, `hello_vulkan`) run `hello --window 640x360 --frame-size 1280x720 --capture-at 1
@@ -158,8 +214,9 @@ quench_add_shaders(<target> NAME <set> SOURCE <file.hlsl> ENTRIES <entry>:vertex
   `cmake/Info.ios.plist.in`, the icon compiled by `actool`, the assets at `assets/` in the bundle, signed with
   `QUENCH_IOS_SIGN_IDENTITY` (`-`, ad-hoc: enough for the Simulator).
 - **iOS with Xcode** (`ios-xcode`): an Xcode project with Automatic signing (`QUENCH_IOS_TEAM`); bundle ids get
-  `QUENCH_IOS_BUNDLE_ID_SUFFIX` (`.<login name>`), because bundle ids are global per Apple account and a free team
-  cannot register one another account uses.
+  `QUENCH_IOS_BUNDLE_ID_SUFFIX` (default `.<login name>`), because bundle ids are global across Apple accounts and a
+  free team cannot register one another account uses. A paid team signs any id with its wildcard profile, so
+  `-DQUENCH_IOS_BUNDLE_ID_SUFFIX=` (empty) gives the plain ids (`org.quench.hello`) ([iOS runs](#ios-runs)).
 - Info.plist: SDL's scene delegate, game controller keys, `CADisableMinimumFrameDurationOnPhone` (without it iOS caps
   phones at 60 Hz; with it the iPhone 18 Pro Max runs hello at 120 Hz). `ORIENTATIONS all` allows all four
   orientations on iPad; a fixed orientation sets `UIRequiresFullScreen`, deprecated since iOS 26 but still the only
@@ -180,23 +237,38 @@ xcrun simctl install booted build/ios-sim-release/examples/hello/hello.app
 xcrun simctl launch --console --terminate-running-process booted org.quench.hello --capture /tmp/hello.png --quit-after 3.5
 ```
 
-Device (an Apple ID signed in to Xcode; a free Personal Team works, its profiles last 7 days):
+Device: an Apple ID signed in to Xcode (Settings, Accounts) with a team. A paid Apple Developer Program team is
+recommended; the engine's device runs use one since 2026-11-05 (an Individual team). Xcode's Automatic signing then
+uses the team's wildcard profile ("iOS Team Provisioning Profile: *", valid for a year), so no App ID has to be
+registered. A free Personal Team also works, with two limits: its profiles last 7 days, and at most three apps with
+a free developer profile can be on a device at a time.
 
 ```sh
-cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id>
+cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id> -DQUENCH_IOS_BUNDLE_ID_SUFFIX=  # empty suffix: paid team only
 xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_hello -configuration Release \
-    -destination id=<device udid> -allowProvisioningUpdates build
+    -destination id=<device udid> -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
 DEVICECTL=/Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Resources/bin/devicectl
 $DEVICECTL device install app --device <udid> build/ios-xcode/examples/hello/Release-iphoneos/hello.app
 $DEVICECTL device process launch --device <udid> --console --terminate-existing \
-    --environment-variables '{"MTL_DEBUG_LAYER":"1"}' org.quench.hello.<login name> --gpu-debug --capture hello.png
-$DEVICECTL device copy from --device <udid> --domain-type appDataContainer \
-    --domain-identifier org.quench.hello.<login name> \
+    --environment-variables '{"MTL_DEBUG_LAYER":"1"}' org.quench.hello --gpu-debug --capture hello.png
+$DEVICECTL device copy from --device <udid> --domain-type appDataContainer --domain-identifier org.quench.hello \
     --source "Library/Application Support/Quench/Quench Hello/hello.png" --destination /tmp/hello.png
 ```
 
+The bundle ids are the `BUNDLE_ID` of each target plus `QUENCH_IOS_BUNDLE_ID_SUFFIX`: with the default suffix,
+`org.quench.hello.<login name>`. Team ids are listed in Xcode's accounts, or with
+`defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier` (`isFreeProvisioningTeam = 1` marks a Personal
+Team). `codesign -dvv <app>` shows the team an app was signed by (`TeamIdentifier`). Another suffix means other
+bundle ids: the apps installed under the old ids stay on the phone until they are uninstalled.
+
 CoreDevice's own `devicectl` is used because `xcrun devicectl` hung in `xcodebuild -runFirstLaunch` on the
-development Mac (seen on 2026-11-02). Scripts go the other way with `device copy to` into the same directory, then
+development Mac (seen on 2026-11-02). With a free Personal Team a fourth install fails with `CoreDeviceError 3002`
+("This device has reached the maximum number of installed apps using a free developer profile", listing the
+installed ones), and a launch of the app that was not installed then fails with `10002` ("is not installed").
+`10002` also comes from a locked phone ("Unable to launch ... because the device was not, or could not be,
+unlocked"): the error's reason tells them apart. Uninstall one of the engine's own apps first
+(`devicectl device uninstall app --device <udid> <bundle id>`; that deletes its data container); never a game that
+holds the user's data. Scripts go the other way with `device copy to` into the same directory, then
 `--script <relative path>`.
 
 **Device tests**: in the `ios-xcode` preset the tests build as one app, `quench_device_tests` (`QuenchTests.app`):
