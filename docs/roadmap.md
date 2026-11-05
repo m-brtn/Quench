@@ -53,8 +53,8 @@ agreed with the user covers stages 1 to 3. All documentation: [index](README.md)
 ## Stage 4: games on the engine (done for TrailForge 2026-11-05, version 0.2.0; Ashfall not now)
 
 TrailForge first, then Ashfall: replace their copies of stages 1 to 3 with the engine, following
-[Migration](migration.md). `tools/check_games.sh` (build against the local engine, start, quit cleanly) after each
-change; each game's full gates only when the user asks (user decision, 2026-11-05).
+[Migration](migration.md). The games are not built or tested in engine work unless the user asks (user decision,
+2026-11-05); then `tools/check_games.sh` (build against the local engine, start, quit cleanly) and each game's gates.
 
 - Done: `tools/check_games.sh`.
 - Done (TrailForge): `PhysicsWorld`, `FixedStepClock`, JSON and the shader build from the engine, pinned with

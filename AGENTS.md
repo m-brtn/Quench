@@ -142,15 +142,15 @@ All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
   temporary directory: it builds the new game against this checkout and starts it.
 - **Rendering or frame-time-sensitive code:** run the benchmark and compare with the numbers before the change (see
   "Verification").
-- **Engine code a game uses, after each change:** `tools/check_games.sh` builds every game against the local
-  engine and checks only that each one starts, renders and quits with exit code 0 (`[--preset NAME] [trailforge]
-  [ashfall]`; checkouts from `TRAILFORGE_DIR` and `ASHFALL_DIR`, default `../trailforge-public` and `../strategy`;
-  each game builds in its own `build/quench-check-<preset>`).
-- **Games' full gates only when the user asks for them** (user decision, 2026-11-05: they take up to an hour):
-  TrailForge: `debug` + `release`, `ctest`, `tools/scenarios/full_check.txt`; Ashfall: `debug` + `release`, `ctest`,
-  the capture check in its `AGENTS.md`; captures compared before and after with `compare_captures.py`. Otherwise
-  `tools/check_games.sh` is the games' gate, also before the commits. Problems inside a game are not fixed in engine
-  work; only engine causes are.
+- **The games are not built or tested in engine work** (user decision, 2026-11-05 21:34): neither
+  `tools/check_games.sh` nor the games' own gates run unless the user asks. The engine is verified by its own tests,
+  the samples and the demo. When asked: `tools/check_games.sh` builds every game against the local engine and checks
+  only that each one starts, renders and quits with exit code 0 (`[--preset NAME] [trailforge] [ashfall]`; checkouts
+  from `TRAILFORGE_DIR` and `ASHFALL_DIR`, default `../trailforge-public` and `../strategy`; each game builds in its
+  own `build/quench-check-<preset>`); the games' full gates are TrailForge: `debug` + `release`, `ctest`,
+  `tools/scenarios/full_check.txt`; Ashfall: `debug` + `release`, `ctest`, the capture check in its `AGENTS.md`;
+  captures compared before and after with `compare_captures.py`. Problems inside a game are not fixed in engine
+  work.
 - **At the end of each stage:** the stage adds its section to the demo (`examples/demo`, with a scripted check and
   golden captures for Metal and Vulkan through MoltenVK), and `tools/package_demo.sh` builds the demo into `dist/`
   (user decision, 2026-11-05): Release, `dist/QuenchDemo-<version>-<shorthash>-macos.zip` with the app, `LICENSE`
@@ -312,7 +312,9 @@ are built:
 - Games fetch this repository with FetchContent at a pinned commit (normally a release tag's commit). For local work
   they set `FETCHCONTENT_SOURCE_DIR_QUENCH=/Users/mbrtn/Projects/engine`. An engine change must not work only with
   the local override.
-- An engine change that breaks a game's build is fixed in the same session or not made.
+- Games stay on their pinned engine commit, so an engine change cannot break them until they move the pin. Breaking
+  API changes are listed under "Changes for games" in the release notes; a game is moved to a newer engine only when
+  the user asks, with its own gates.
 - Changes inside a game follow that game's `AGENTS.md` (its devlog, its gates, its commit rules). The migration
   procedure is in `docs/migration.md`.
 - Commit order: the engine first, then each game with its engine pin updated.
@@ -392,6 +394,11 @@ LFS only when unavoidable and keep it small.
 - Do not commit build output, captures or local files (`build/`, `dist/`, `*.bmp`, `*.png` outside `tests/golden/`
   and asset folders, `imgui.ini`, `compile_commands.json`).
 - Never commit secrets (API keys live only in the environment).
+- Never write personal identifiers into repository files, commit messages or tag and release texts: the user's name,
+  Apple ID emails, Apple team IDs, certificate IDs, device UDIDs or device names (user decision, 2026-11-05). They go
+  only into configure options and the environment (`-DQUENCH_IOS_TEAM=<team id>`, `QUENCH_IOS_TEAM`, `--team`);
+  docs and the devlog use placeholders (`<team id>`, `<udid>`, "the user's paid team", "the user's iPhone"), also
+  when they quote tool output (`codesign`, `devicectl`, Xcode's accounts, `tools/package_demo.sh`'s team line).
 - Push with a normal push. Rewrite history or force push only when the user explicitly asks.
 
 ## Layout
