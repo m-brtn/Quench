@@ -10,12 +10,12 @@ Android and the web are later targets; the portability rules in [AGENTS.md](../A
 
 ## Status
 
-The engine (stages 1 to 3, version 0.1.0) builds and passes its tests on macOS (arm64; also under the address,
-undefined-behaviour and thread sanitizers). Its GPU tests render offscreen and check the pixels read back on Metal
-(Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same Mac (with the Khronos
-validation layer; a test of the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18
-Pro Max; the test executables run through `simctl spawn`) and on the user's iPhone 18 Pro Max (A20 Pro GPU, iOS 27,
-Metal with the API validation layer; all cases in one signed app, `quench_device_tests`, launched through `devicectl`).
+The engine (version 0.2.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+and thread sanitizers). Its GPU tests render offscreen and check the pixels read back on Metal (Apple M4 Pro, with the
+Metal API validation layer), on Vulkan through MoltenVK on the same Mac (with the Khronos validation layer; a test of
+the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables
+run through `simctl spawn`) and on the user's iPhone 18 Pro Max (A20 Pro GPU, iOS 27, Metal with the API validation
+layer; all cases in one signed app, `quench_device_tests`, launched through `devicectl`; last run at version 0.1.0).
 The sample `hello` runs on the Mac (Metal, and Vulkan through MoltenVK, with capture checks against golden images), in
 the iOS Simulator and on the iPhone at 120 Hz; on the iPhone the picture, touch input and rotation were checked by the
 user (report of 2026-11-05). The headless modules also pass as single-threaded WebAssembly under Node.js (Emscripten
@@ -24,7 +24,7 @@ user (report of 2026-11-05). The headless modules also pass as single-threaded W
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
 | macOS | Metal | metallib | tests, hello (also Vulkan through MoltenVK) | TrailForge and Ashfall |
-| iOS | Metal | metallib (iOS SDK) | tests and hello in the Simulator and on the user's iPhone | TrailForge in the iOS Simulator; on the user's iPhone (user reports 2026-11-02 and 2026-11-04) |
+| iOS | Metal | metallib (iOS SDK) | tests and hello in the Simulator and on the user's iPhone | TrailForge in the iOS Simulator; on the user's iPhone (user reports 2026-11-02 and 2026-11-04; on the engine's app shell 2026-11-05) |
 | Windows | D3D12 or Vulkan | DXIL or SPIR-V | nothing | TrailForge builds and passes headless tests in CI; never run on real hardware |
 | Linux | Vulkan | SPIR-V | nothing | TrailForge builds in CI and starts on Mesa lavapipe under Xvfb; never run on real hardware |
 | Android | Vulkan | SPIR-V | nothing | nothing |

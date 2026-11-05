@@ -20,7 +20,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-05, version 0.1.0): stages 1 to 3 of `docs/roadmap.md` are in place: the CMake skeleton and
+**Current state (2026-11-05, version 0.2.0): stages 1 to 3 of `docs/roadmap.md` are in place: the CMake skeleton and
 presets, `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its
 standard library backend, worker thread priority), `quench_physics` (`PhysicsWorld` on Jolt), the shader build
 (`quench_shaderc`, `quench_add_shaders()`), `quench_gpu` (the GPU layer over SDL GPU), `quench_app` and `quench_main`
@@ -28,10 +28,11 @@ standard library backend, worker thread priority), `quench_physics` (`PhysicsWor
 `quench_add_game()` (macOS executables, iOS bundles). `examples/hello` is the sample (capture checks against
 `tests/golden/`, input and benchmark scenarios); `templates/game` and `tools/new_game.py` start a new game. Tests run
 on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator, on the user's iPhone (one signed test app) and,
-for the headless modules, as WebAssembly under Node.js. Stage 4 has started: TrailForge builds on the engine's
-`quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders through `quench_gpu`, and runs on
-`quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and captures; pinned `d708783`) with its
-own input layer fed through `Game::event` and its own physics clock; all of Ashfall still uses its own code;
+for the headless modules, as WebAssembly under Node.js. Stage 4 is done for TrailForge only (version 0.2.0):
+TrailForge builds on the engine's `quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders
+through `quench_gpu`, and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and
+captures; pinned `d708783`, not yet moved to `v0.2.0`) with its own input layer fed through `Game::event` and its own
+physics clock; Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them. There is
 no retained scene or render module (stage 5).** `docs/migration.md` describes what exists in the two games; `docs/app.md`
 and `docs/performance.md` describe what is built; the rest of `docs/` is design and plan beyond stage 3. Update this
