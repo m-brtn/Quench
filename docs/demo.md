@@ -77,8 +77,11 @@ that commit). The script builds `quench_demo` with the `release` preset (`--pres
 - **macOS**: assembles `QuenchDemo.app` (the executable, an Info.plist with the version and the binary's minimum
   macOS as `LSMinimumSystemVersion`, an icns made from `examples/demo/icon/icon.png`, `LICENSE` and
   `THIRD_PARTY_LICENSES` in `Contents/Resources`), checks that it links only system libraries, signs it ad hoc and
-  zips it with `LICENSE` and `THIRD_PARTY_LICENSES` next to it. It then unzips the archive into a temporary
-  directory and starts the app from `/` with `scenarios/smoke.txt` (every section once): exit code 0, the scenario
+  zips it with `LICENSE` and `THIRD_PARTY_LICENSES` next to it. The archives carry no extended attributes: `ditto`
+  would store them as AppleDouble `._` files, which a plain `unzip` turns into files inside the bundle that break its
+  signature; the script fails on any `._` entry. It then unzips the archive with a plain `unzip` into a temporary
+  directory, verifies the signature and starts the app from `/` with `scenarios/smoke.txt` (every section once):
+  exit code 0, the scenario
   passed, and a capture (`dist/<name>-macos-smoke.png`) to look at. The app is signed ad hoc and not notarized: a
   copy downloaded on another Mac is quarantined, and Gatekeeper opens it only after it is allowed in System Settings,
   Privacy & Security (not tried on another Mac yet).
@@ -87,7 +90,8 @@ that commit). The script builds `quench_demo` with the `release` preset (`--pres
   ID signed in to Xcode, which creates the development profile on its own) and packs the signed app as
   `QuenchDemo.ipa`, with the licences, into the zip. The team must be a paid one: the script refuses a free Personal
   Team (Xcode's account data marks it), whose profiles expire after 7 days, and checks that the app is signed by the
-  team (`codesign`, `TeamIdentifier`). It runs only on the devices in the profile, and the profile expires (the paid
+  team (`codesign`, `TeamIdentifier`), also after a plain `unzip` of the `.ipa`. It runs only on the devices in the
+  profile, and the profile expires (the paid
   team's wildcard profile made on 2026-11-05 lasts until 2027-11-05, with 5 devices). The script prints the team, the
   signature, the profile's name, expiry and device count. Nothing is installed on a device by the script.
 

@@ -37,6 +37,12 @@ done
 
 step() { printf '\n=== %s\n' "$*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
+# Without --norsrc --noextattr, ditto stores extended attributes (com.apple.provenance is on every file here) as
+# AppleDouble ._ files in the zip; a plain unzip turns them into files inside the bundle and breaks its signature.
+zip_dir() { ditto -c -k --norsrc --noextattr --noqtn --keepParent "$1" "$2"; }
+check_zip() {
+    if zipinfo -1 "$1" | grep -E '(^|/)\._'; then fail "AppleDouble ._ files in $1"; fi
+}
 
 VERSION="$(sed -n 's/^project(Quench VERSION \([0-9][0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
 [[ -n "$VERSION" ]] || fail "cannot read the version from CMakeLists.txt"
@@ -119,13 +125,14 @@ codesign --force --deep -s - "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 step "zip"
-ditto -c -k --keepParent "$STAGE" "$ZIP"
+zip_dir "$STAGE" "$ZIP"
+check_zip "$ZIP"
 ls -l "$ZIP"
 shasum -a 256 "$ZIP"
 
 step "smoke run from a fresh unzip"
 UNZIP="$(mktemp -d -t quench_demo_unzip)"
-ditto -x -k "$ZIP" "$UNZIP"
+unzip -q "$ZIP" -d "$UNZIP"
 UNZIPPED="$UNZIP/$NAME-macos"
 for f in QuenchDemo.app LICENSE THIRD_PARTY_LICENSES QuenchDemo.app/Contents/Resources/QuenchDemo.icns \
          QuenchDemo.app/Contents/Resources/LICENSE QuenchDemo.app/Contents/Resources/THIRD_PARTY_LICENSES; do
@@ -180,9 +187,15 @@ if [[ $IOS -eq 1 ]]; then
     rm -rf "$ISTAGE" "$IZIP"
     mkdir -p "$ISTAGE/Payload"
     ditto "$IOS_APP" "$ISTAGE/Payload/quench-demo.app"
-    (cd "$ISTAGE" && ditto -c -k --keepParent Payload QuenchDemo.ipa && rm -rf Payload)
+    (cd "$ISTAGE" && zip_dir Payload QuenchDemo.ipa && rm -rf Payload)
+    check_zip "$ISTAGE/QuenchDemo.ipa"
+    IUNZIP="$(mktemp -d -t quench_demo_ipa)"
+    unzip -q "$ISTAGE/QuenchDemo.ipa" -d "$IUNZIP"
+    codesign --verify --deep --strict "$IUNZIP/Payload/quench-demo.app"
+    rm -rf "$IUNZIP"
     cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_LICENSES" "$ISTAGE/"
-    ditto -c -k --keepParent "$ISTAGE" "$IZIP"
+    zip_dir "$ISTAGE" "$IZIP"
+    check_zip "$IZIP"
     ls -l "$IZIP"
     shasum -a 256 "$IZIP"
 fi
