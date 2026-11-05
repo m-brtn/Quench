@@ -99,7 +99,7 @@ Order: TrailForge first (the engine was written for it, it has the most tests an
 |---|---|---|---|
 | TrailForge | `PhysicsWorld` and `JoltRuntime` (`quench_physics`), `FixedStepClock` and JSON (`quench_core`), the shader build (`quench_add_shaders`, `quench_shaderc`; also `tools/texc` for JSON) | `502c35e` | 2026-11-05 |
 | TrailForge | the renderer on `quench::gpu`, ImGui drawn by `quench::app::ImGuiRenderer` (`quench_imgui`), GPU timing; its own window and loop stay | `3dfb9f4` (TrailForge `658fd77`) | 2026-11-05 |
-| TrailForge | the app shell: `quench_main` (SDL main callbacks), `quench_app` (window, GPU device, ImGui, the engine's flags, scenario runner, captures, perf regions); its input layer and its physics clock stay in the game | not pinned yet | 2026-11-05 |
+| TrailForge | the app shell: `quench_main` (SDL main callbacks), `quench_app` (window, GPU device, ImGui, the engine's flags, scenario runner, captures, perf regions); its input layer and its physics clock stay in the game | `d708783` (TrailForge `b97883e`) | 2026-11-05 |
 | Ashfall | nothing yet | | |
 
 What a game changes when it switches (TrailForge's switch as the example):

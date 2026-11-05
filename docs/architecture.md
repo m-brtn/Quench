@@ -171,7 +171,7 @@ Planned changes:
 The engine owns `main` and uses SDL main callbacks (`SDL_AppInit`, `SDL_AppIterate`, `SDL_AppEvent`, `SDL_AppQuit`).
 Browsers cannot run a blocking loop, and iOS and Android send the app to the background and can destroy the render
 surface at any time. TrailForge ran a blocking `while (m_running)` loop in `Application::run` until its move to the
-app shell (2026-11-05, not committed yet); Ashfall's `Application::run` still does.
+app shell (2026-11-05, TrailForge `b97883e`); Ashfall's `Application::run` still does.
 
 A game implements `quench::app::Game` (`include/quench/app/App.h`: `init`, `fixedStep`, `update`, `ui`, `render`,
 `event`, `shutdown`, and three hooks for scenarios) and defines `quench::app::createGame()`, which fills `AppDesc` and

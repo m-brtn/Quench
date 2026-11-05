@@ -30,7 +30,7 @@ standard library backend, worker thread priority), `quench_physics` (`PhysicsWor
 on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator, on the user's iPhone (one signed test app) and,
 for the headless modules, as WebAssembly under Node.js. Stage 4 has started: TrailForge builds on the engine's
 `quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders through `quench_gpu`, and runs on
-`quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and captures; not pinned yet) with its
+`quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and captures; pinned `d708783`) with its
 own input layer fed through `Game::event` and its own physics clock; all of Ashfall still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them. There is
 no retained scene or render module (stage 5).** `docs/migration.md` describes what exists in the two games; `docs/app.md`

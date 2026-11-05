@@ -61,11 +61,12 @@ change; each game's full gates at the end of the work.
   FetchContent (2026-11-05; progress table in [Migration](migration.md)).
 - Done (TrailForge): the renderer on `quench::gpu`, ImGui through the engine's `ImGuiRenderer`, first with
   TrailForge's own window and loop; pinned to engine `3dfb9f4` (TrailForge `658fd77`, 2026-11-05).
-- Done (TrailForge, not pinned yet): the app shell (`quench_main`, `quench_app`: SDL main callbacks, the engine's
-  flags, scenario runner, captures, perf regions). TrailForge's input stays a game layer fed through `Game::event`,
-  and its physics keeps its own clock inside `Game::update` (2026-11-05).
-- Next: the engine and TrailForge committed with the pin, an iPhone run, TrailForge's physics through
-  `Game::fixedStep`; then Ashfall, and the input layer generalized from both games.
+- Done (TrailForge): the app shell (`quench_main`, `quench_app`: SDL main callbacks, the engine's flags, scenario
+  runner, captures, perf regions), run on the iPhone; pinned to engine `d708783` (TrailForge `b97883e`, 2026-11-05).
+  TrailForge's input stays a game layer fed through `Game::event`, and its physics keeps its own clock inside
+  `Game::update`.
+- Next: TrailForge's physics through `Game::fixedStep`; then Ashfall, and the input layer generalized from both
+  games.
 
 ## Stage 5: render modules and the retained scene
 
