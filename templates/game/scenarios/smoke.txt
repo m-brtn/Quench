@@ -1,0 +1,27 @@
+# Smoke check (ctest `smoke`): the game starts, reads its settings, the keyboard and a touch drag move the player, and
+# the app quits cleanly. App time advances 1/120 s per frame in scripted runs.
+#   template_game --script scenarios/smoke.txt
+
+wait 0.2
+expect speed == 4
+
+# D for 0.5 s at 4 m/s: about 2 m to the right.
+mark x
+down D
+wait 0.5
+up D
+expect d_x > 1.9
+expect d_x < 2.1
+
+# W moves away from the camera (-z).
+mark z
+down W
+wait 0.25
+up W
+expect d_z < -0.9
+
+# A finger dragged 120 points to the right over 30 frames: the virtual stick ramps up to full deflection.
+mark x
+touch 400 300 120 0 30
+expect d_x > 0.3
+quit

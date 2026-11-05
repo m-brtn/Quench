@@ -1,8 +1,10 @@
 # Architecture
 
-Design of the engine. Stages 1 and 2 exist (CMake, `quench_core`, `quench_physics`, the shader build, headless tests;
-`quench_gpu` over SDL GPU and the SDL backends of `quench_app`, see "The layer as built"; the current layout is in
-[AGENTS.md](../AGENTS.md#layout)); everything else here describes the intended structure and the reasons for it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
+Design of the engine. Stages 1 to 3 exist (CMake, `quench_core`, `quench_physics`, the shader build, headless tests;
+`quench_gpu` over SDL GPU, see "The layer as built"; `quench_app` and `quench_main`, see [App shell](app.md); the
+sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#layout)); everything else here describes
+the intended structure and the reasons for it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation:
+[index](README.md).
 
 ## Planned layout
 
@@ -27,10 +29,12 @@ src/<module>/              sources and internal headers, per module:
 shaders/quench/       engine shader library (.hlsli), included by game shaders
 tools/shaderc/        quench_shaderc: HLSL -> SPIR-V -> MSL (later WGSL), build-time host tool
 tools/cook/           quench_cook: asset pipeline (glTF, PNG, JPEG, KTX2 -> cooked formats)
-tools/render/         compare_captures.py (pixel statistics between two capture sets)
+tools/imagecompare/   quench_image_compare: capture against golden image (mean difference, share of pixels over a
+                      threshold, difference image)
+tools/new_game.py     creates a game from templates/game
 tools/check_games.sh  builds every game against the local engine and checks that it starts and quits cleanly
-examples/hello/       minimal sample game: lit mesh, ImGui, --quit-after, --capture, benchmark scenario
-templates/game/       starting point for a new game (CMake, game class, shader, test, AGENTS.md, devlog)
+examples/hello/       minimal sample game: lit mesh, ImGui, --quit-after, --capture, input and benchmark scenarios
+templates/game/       starting point for a new game (CMake, game class, shader, scenario test, AGENTS.md, devlog)
 tests/                CTest, headless, one test name per argument; header self-containment test
 tests/golden/         reference captures per backend and device (small PNGs of procedural content)
 docs/releases/        release notes per version
@@ -49,11 +53,11 @@ docs/releases/        release notes per version
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
 | `quench_gpu` | GPU layer and backends | core, gpu_shaders, SDL3 | no |
 | `quench_render` | scene, frame, render modules | gpu, assets, anim | no |
-| `quench_app` | main callbacks, window, input, UI, game interface | render, audio, SDL3, ImGui | no |
+| `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log | core, gpu, GLM, ImGui, SDL3 (later render, audio) | no |
+| `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
 
-Today `quench_app` holds only the SDL backends of `quench::fs` (`makeSdlFileSystem`) and of the log
-(`addSdlLogSink`) and depends on core and SDL3; stage 3 adds the rest. The `QUENCH_HEADLESS` option (the `headless`
-preset, forced on for Emscripten) builds only the headless targets and does not fetch SDL.
+The `QUENCH_HEADLESS` option (the `headless` preset, forced on for Emscripten) builds only the headless targets and
+does not fetch SDL.
 
 Headless targets build and test without SDL video or a GPU. This is what lets the games keep their headless test
 presets and what makes the Node.js web check possible.
@@ -166,26 +170,16 @@ Planned changes:
 
 The engine owns `main` and uses SDL main callbacks (`SDL_AppInit`, `SDL_AppIterate`, `SDL_AppEvent`, `SDL_AppQuit`).
 Browsers cannot run a blocking loop, and iOS and Android send the app to the background and can destroy the render
-surface at any time. Today TrailForge runs a blocking `while (m_running)` loop in `Application::run`.
+surface at any time. TrailForge runs a blocking `while (m_running)` loop in `Application::run`; the engine replaces it.
 
-A game implements an interface along these lines (sketch, not final):
-
-```cpp
-namespace quench {
-class Game {
-public:
-    virtual ~Game() = default;
-    virtual bool init(Engine& engine) = 0;
-    virtual void fixedStep(double dt) = 0;        // simulation tick (1/120 s by default)
-    virtual void update(double frameDt) = 0;      // per frame, before rendering
-    virtual void render(FrameContext& frame) = 0; // fill the retained scene, add game passes
-    virtual void event(const Event& e) {}
-};
-}
-```
+A game implements `quench::app::Game` (`include/quench/app/App.h`: `init`, `fixedStep`, `update`, `ui`, `render`,
+`event`, `shutdown`, and two hooks for scenarios) and defines `quench::app::createGame()`, which fills `AppDesc` and
+returns the game. Until the retained scene exists (stage 5), `render` records the game's own passes into the frame's
+command buffer and target; the engine draws ImGui on top and presents. Details: [App shell](app.md).
 
 The fixed-step clock keeps TrailForge's behaviour: accumulator, frames longer than 0.25 s clamped, at most 12 steps
-per frame, interpolation between the last two ticks.
+per frame, interpolation between the last two ticks. Scripted and capture runs replace it with one tick per frame, so
+they are deterministic.
 
 ## Files
 

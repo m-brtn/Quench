@@ -20,15 +20,18 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-05): stages 1 and 2 of `docs/roadmap.md` are in place: the CMake skeleton and presets,
-`quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
-library backend, worker thread priority), `quench_physics` (`PhysicsWorld` on Jolt), the shader build
-(`quench_shaderc`, `quench_add_shaders()`), `quench_gpu` (the GPU layer over SDL GPU) and `quench_app` (so far only
-the SDL backends of `quench::fs` and the log). Headless tests also run as WebAssembly under Node.js; GPU tests render
-offscreen and read the pixels back on Metal (Mac and iOS Simulator) and on Vulkan through MoltenVK. Nothing has run on
-the iPhone yet. There is no main loop, renderer or sample app, so the capture and benchmark gates cannot run.**
-`docs/migration.md` describes what exists in the two games; the rest of `docs/` is design and plan beyond stage 2.
-Update this paragraph whenever that changes.
+**Current state (2026-11-05, version 0.1.0): stages 1 to 3 of `docs/roadmap.md` are in place: the CMake skeleton and
+presets, `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its
+standard library backend, worker thread priority), `quench_physics` (`PhysicsWorld` on Jolt), the shader build
+(`quench_shaderc`, `quench_add_shaders()`), `quench_gpu` (the GPU layer over SDL GPU), `quench_app` and `quench_main`
+(SDL main callbacks, the game interface, input actions, ImGui, common flags, scenarios, captures) and
+`quench_add_game()` (macOS executables, iOS bundles). `examples/hello` is the sample (capture checks against
+`tests/golden/`, input and benchmark scenarios); `templates/game` and `tools/new_game.py` start a new game. Tests run
+on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator, on the user's iPhone (one signed test app) and,
+for the headless modules, as WebAssembly under Node.js. Neither game uses the engine yet (stage 4), and there is no
+retained scene or render module (stage 5).** `docs/migration.md` describes what exists in the two games; `docs/app.md`
+and `docs/performance.md` describe what is built; the rest of `docs/` is design and plan beyond stage 3. Update this
+paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) with one HLSL shader source compiled at build
 time, Jolt Physics, Dear ImGui (diagnostics), GLM, miniaudio. Planned additions and their licences:
@@ -45,8 +48,9 @@ on the Mac"). Status, constraints and open questions per platform: `docs/platfor
 
 How each backend is verified:
 
-- **Metal**: on the Mac and on the iPhone. Agents cannot see the device screen: ask the user to run device checks and
-  record their report as a user report in the devlog.
+- **Metal**: on the Mac and on the iPhone. Agents can install and launch apps on the iPhone through `devicectl` (ask
+  the user first; the phone must be unlocked) and read their console and the files they write, but cannot see the
+  device screen: ask the user to check what is on it and record their report as a user report in the devlog.
 - **Vulkan**: on the Mac only through MoltenVK, a translation layer over Metal (Homebrew's `vulkan-loader`,
   `molten-vk` and `vulkan-validationlayers`; the `gpu_vulkan.*` CTest variant). It checks the SPIR-V path and the
   Khronos validation layer's core checks, not real Vulkan drivers: say so whenever Vulkan results are mentioned.
@@ -74,6 +78,14 @@ cmake --preset ios-sim-tests && cmake --build --preset ios-sim-tests && ctest --
 # Web check: headless tests as WebAssembly under Node.js, single-threaded (needs host-tools and Homebrew's
 # emscripten; the preset points EMSDK_PYTHON at Homebrew's python3, Xcode's is too old)
 emcmake cmake --preset wasm-node && cmake --build --preset wasm-node && ctest --preset wasm-node -j8
+# The sample: flags with --help; the benchmark (docs/performance.md) in Release with vsync
+build/release/examples/hello/hello --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt
+# iPhone: an Xcode project with Automatic signing; install and launch with devicectl (docs/app.md, "iOS runs")
+cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id>
+xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_device_tests -configuration Release \
+    -destination id=<device udid> -allowProvisioningUpdates build                  # also -scheme quench_hello
+# A new game from templates/game, built against this checkout and started once
+python3 tools/new_game.py "My Game" ../my-game
 ```
 
 Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...). A test
@@ -86,19 +98,27 @@ every case runs twice: `gpu_device.*` on the default driver (Metal, with the Met
 `MTL_DEBUG_LAYER=1`) and `gpu_vulkan.*` on Vulkan through MoltenVK (registered when Homebrew's `vulkan-loader` is
 found; with `vulkan-validationlayers` installed, a validation error or warning in the output fails the case). With
 the driver named in `QUENCH_TEST_GPU_DRIVER` (set by CTest) a missing device fails the case instead of
-skipping it. `gpu_device.window_present` opens a small window for a moment; it is skipped on iOS, where windows need
-the app lifecycle.
+skipping it. `gpu_device.window_present` opens a small window for a moment; it is skipped in the iOS Simulator test
+executables (no app lifecycle there) and runs in the iPhone test app, which runs every case as `SDL_main`.
+
+The sample's checks are CTest tests too: `hello_metal` and `hello_vulkan` render it at 1280 x 720 and compare the
+capture (`build/<preset>/tests/captures/<test>.png`) with `tests/golden/<backend>/<device>/hello.png`;
+`hello_input` runs `examples/hello/scenarios/input.txt` (scripted keyboard, gamepad and touch input). Flags,
+scenario commands, captures and golden images: `docs/app.md`.
 
 All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
 
-- **Every code change:** build `debug` and `release`, run `ctest` for both, `tools/format.sh --check`, and (once the
-  sample exists, stage 3) run the sample's capture check against its golden images, looking at the image (do not
-  assume).
+- **Every code change:** build `debug` and `release`, run `ctest` for both (it includes the sample's capture checks
+  against its golden images), `tools/format.sh --check`, and look at the capture in `build/debug/tests/captures/`
+  (do not assume).
 - **Core, job system, assets or anything threaded:** also `ctest` under the `asan` preset (AddressSanitizer and
   UndefinedBehaviorSanitizer); job system and threading changes also under `tsan` (ThreadSanitizer).
 - **Headless modules (core, physics, assets, animation, navigation, audio mixer):** also the `wasm-node` web check.
-- **Platform, GPU or app code:** also build for iOS and run `ios-sim-tests`; ask the user to run on the iPhone when
-  the change can behave differently on the device.
+- **Platform, GPU or app code:** also build for iOS and run `ios-sim-tests`; when the change can behave differently
+  on the device, run the device test app and the sample on the iPhone (`ios-xcode`, `devicectl`) after asking the
+  user, and ask the user to check what is on the screen.
+- **`cmake/QuenchGame.cmake`, the template or anything a game's build uses:** also `tools/new_game.py` into a
+  temporary directory: it builds the new game against this checkout and starts it.
 - **Rendering or frame-time-sensitive code:** run the benchmark and compare with the numbers before the change (see
   "Verification").
 - **Engine code a game uses, after each change:** `tools/check_games.sh` (planned) builds every game against the local
@@ -226,17 +246,20 @@ are built:
 
 ## Verification
 
-- **Golden captures.** Reference images of the sample and of the visual tests live in `tests/golden/`: small PNGs of
-  procedural content only, stored in git directly. They are compared with `tools/render/compare_captures.py` (to be
-  moved from TrailForge) against thresholds set per image (mean absolute difference, share of pixels differing by more
-  than 8 levels). A golden image changes only with an intentional rendering change, in the same commit, after looking
-  at both images, with the before and after numbers in the devlog. References are per backend and device (Metal on
-  the Mac first). Captures of the same binary differ slightly between runs: identity claims need a same-process A/B.
-- **Performance.** A benchmark scenario in the sample (fixed camera path, fixed frame count) reports CPU frame time
-  (median and 99th percentile) and GPU time per pass. Budgets per device (Mac M4 Pro, iPhone 18 Pro Max) are set when
-  the sample exists and kept in `docs/performance.md`. A change that makes the median or the 99th percentile more than
-  5% worse is explained in the devlog or not made. Timings drift between runs: compare before and after in the same
-  session. iPhone numbers come from the user's runs.
+- **Golden captures.** Reference images of the sample and of the visual tests live in
+  `tests/golden/<backend>/<device>/`: small PNGs of procedural content only, stored in git directly. They are compared
+  with `quench_image_compare` (`tools/imagecompare`: mean absolute difference at most 0.5, at most 0.1% of the pixels
+  differing by more than 16 levels; the tool takes other thresholds as flags). A golden image changes only with an
+  intentional rendering change, in the same commit, after looking at both images, with the before and after numbers
+  in the devlog. References are per backend and device (Metal and Vulkan through MoltenVK on the Mac today). Two
+  Metal runs of the same binary have been identical so far; TrailForge's captures differ slightly between runs, so
+  identity claims about a game need a same-process A/B.
+- **Performance.** The sample's benchmark scenario (`examples/hello/scenarios/benchmark.txt`, deterministic, fixed
+  frame count) reports frame, CPU and GPU time (average and percentiles; GPU time per frame, per pass later). Budgets
+  per device and how to compare runs: `docs/performance.md`. A change that makes the CPU median or 99th percentile
+  more than 5% worse is explained in the devlog or not made. Timings drift between runs: compare before and after in
+  the same session. iPhone numbers come from runs on the user's iPhone (launched through `devicectl` after asking the
+  user, or by the user).
 - **Sanitizers.** Presets `asan` (AddressSanitizer and UndefinedBehaviorSanitizer) and `tsan` (ThreadSanitizer) run
   the headless tests on the Mac; when they are required is in "Build and test".
 
@@ -346,15 +369,21 @@ LICENSE                MIT licence of the engine; THIRD_PARTY_LICENSES: licences
 CMakeLists.txt         engine targets; CMakePresets.json: configure, build and test presets
 cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), QuenchShaders
                        (quench_add_shaders), EmbedShaders, QuenchTargets (warnings, include directories),
-                       patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
+                       QuenchGame (quench_add_game) and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
 include/quench/        public headers per module: core/, physics/, gpu/, app/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
-                       src/gpu/sdlgpu/: the SDL GPU backend)
+                       src/gpu/sdlgpu/: the SDL GPU backend; src/app/Main.cpp: quench_main)
+examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
+templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
+tools/imagecompare/    quench_image_compare: capture against golden image
+tools/icon/            make_icon.py: draws the sample's icon
+tools/new_game.py      creates a game from templates/game
 tools/format.sh        clang-format over the C and C++ sources (--check)
 tests/                 harness/, core/, physics/, gpu/ (shader tests; GPU device tests and their shaders), app/,
-                       header check
-docs/                  documentation (index docs/README.md): architecture, platforms, dependencies, migration, roadmap
+                       header check, RunCapture.cmake (capture checks); golden/ (reference captures)
+docs/                  documentation (index docs/README.md): architecture, app shell, performance, platforms,
+                       dependencies, migration, roadmap, releases/
 devlog/                daily development log (template in devlog/README.md)
 .clang-format          code format; .editorconfig for editors
 ```

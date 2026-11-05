@@ -1,0 +1,47 @@
+# Input check of the hello example (ctest: hello_input). Keyboard, gamepad and touch input goes through real SDL
+# events to the game's actions. Deterministic run: one fixed step (1/120 s) per frame.
+
+wait 0.1
+expect paused == 0
+tap Space
+until paused == 1 1
+tap Space
+until paused == 0 1
+
+# Keys: with the idle spin paused, holding D or A turns at 2 rad/s.
+tap Space
+until paused == 1 1
+mark yaw
+down D
+wait 0.5
+up D
+expect d_yaw > 0.95
+expect d_yaw < 1.1
+mark yaw
+down Left
+wait 0.5
+up Left
+expect d_yaw < -0.95
+
+# Gamepad: the left stick turns (full deflection after the dead zone), A (south) toggles the pause.
+gamepad attach
+until gamepad == 1 2
+mark yaw
+gamepad axis leftx 1
+wait 0.5
+gamepad axis leftx 0
+expect d_yaw > 0.95
+gamepad button a tap
+until paused == 0 1
+gamepad detach
+until gamepad == 0 2
+
+# Touch: dragging 200 points to the right turns by 2 rad.
+tap Space
+until paused == 1 1
+mark yaw
+touch 300 180 200 0 10
+wait 0.1
+expect d_yaw > 1.99
+expect d_yaw < 2.01
+quit

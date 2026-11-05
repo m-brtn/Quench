@@ -96,7 +96,7 @@ Result<std::unique_ptr<fs::Backend>> makeSdlFileSystem(const SdlFileSystemDesc& 
 
     std::string userRoot = desc.userDir;
     if (userRoot.empty()) {
-        if (desc.org.empty() || desc.app.empty()) return Error{"the user directory needs an org and an app name"};
+        if (desc.app.empty()) return Error{"the user directory needs an app name"};
         char* pref = SDL_GetPrefPath(desc.org.c_str(), desc.app.c_str());
         if (!pref) return sdlError("no user directory");
         userRoot = pref;

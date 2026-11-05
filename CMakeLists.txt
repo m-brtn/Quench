@@ -5,7 +5,7 @@ if(NOT DEFINED PROJECT_NAME AND CMAKE_HOST_APPLE AND NOT CMAKE_SYSTEM_NAME STREQ
    AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Minimum macOS version" FORCE)
 endif()
-project(Quench VERSION 0.0.0 LANGUAGES C CXX)
+project(Quench VERSION 0.1.0 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJC)
 endif()
@@ -20,6 +20,7 @@ if(PROJECT_IS_TOP_LEVEL)
 endif()
 
 option(QUENCH_BUILD_TESTS "Build the engine tests" ${PROJECT_IS_TOP_LEVEL})
+option(QUENCH_BUILD_EXAMPLES "Build the examples (examples/)" ${PROJECT_IS_TOP_LEVEL})
 # Inside a game the engine is built without -Werror: a warning added by a newer compiler must not break the game.
 option(QUENCH_WERROR "Treat warnings in engine targets as errors" ${PROJECT_IS_TOP_LEVEL})
 set(QUENCH_ASSERTS AUTO CACHE STRING "QUENCH_ASSERT: AUTO (on unless NDEBUG), ON or OFF")
@@ -31,22 +32,20 @@ if(EMSCRIPTEN)
     set(QUENCH_HEADLESS ON CACHE BOOL "" FORCE)
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
-    # iOS test executables run only through simctl (the ios-sim-tests preset).
-    set(QUENCH_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-endif()
-
 include(cmake/QuenchTargets.cmake)
 include(cmake/Dependencies.cmake)
 include(cmake/QuenchShaders.cmake)
+include(cmake/QuenchGame.cmake)
 
 # ------------------------------------------------------------------ core
-# Headless: no SDL, no GPU. Result, assertions, logging, fixed-step clock, JSON, file system, thread priority.
+# Headless: no SDL, no GPU. Result, assertions, logging, fixed-step clock, JSON, file system, number parsing, thread
+# priority.
 add_library(quench_core STATIC
     src/core/Assert.cpp
     src/core/FileSystem.cpp
     src/core/Json.cpp
     src/core/Log.cpp
+    src/core/Parse.cpp
     src/core/Thread.cpp)
 quench_configure_target(quench_core)
 if(QUENCH_ASSERTS STREQUAL "ON")
@@ -69,7 +68,9 @@ endif()
 # ------------------------------------------------------------------ gpu
 # Headless: the table type of embedded shaders (quench_add_shaders).
 add_library(quench_gpu_shaders INTERFACE)
-target_include_directories(quench_gpu_shaders INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# shaders/: the engine shader library, also read by C++ for the shared uniform structs (shaders/quench/Shared.h).
+target_include_directories(quench_gpu_shaders INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include
+                                                        ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 target_compile_features(quench_gpu_shaders INTERFACE cxx_std_20)
 
 if(NOT QUENCH_HEADLESS)
@@ -91,15 +92,33 @@ if(NOT QUENCH_HEADLESS)
         QUENCH_SHADERS_DXIL=$<BOOL:${QUENCH_SHADER_DXC}>)
 
     # ------------------------------------------------------------------ app
-    # The SDL backends of the core services (files, log). Stage 3 adds the main callbacks and the game interface.
+    # The app shell: the game interface, window, lifecycle, input, ImGui, scenarios, captures, and the SDL backends of
+    # the core services (files, log). main() itself is in quench_main, linked by quench_add_game().
     add_library(quench_app STATIC
+        src/app/App.cpp
+        src/app/AppScenario.cpp
+        src/app/Capture.cpp
+        src/app/ImGuiRenderer.cpp
+        src/app/Input.cpp
+        src/app/Options.cpp
+        src/app/Scenario.cpp
         src/app/SdlFileSystem.cpp
         src/app/SdlLog.cpp)
     quench_configure_target(quench_app)
-    target_link_libraries(quench_app PUBLIC quench_core SDL3::SDL3-static)
+    target_link_libraries(quench_app PUBLIC quench_core quench_gpu quench_glm quench_imgui SDL3::SDL3-static)
+    target_compile_definitions(quench_app PRIVATE QUENCH_VERSION="${PROJECT_VERSION}")
+    quench_add_shaders(quench_app NAME imgui SOURCE src/app/shaders/imgui.hlsl ENTRIES imgui_vs:vertex imgui_fs:fragment)
+
+    # SDL main callbacks (src/app/Main.cpp): an object library, so the symbols land in the game executable.
+    add_library(quench_main OBJECT src/app/Main.cpp)
+    quench_configure_target(quench_main)
+    target_link_libraries(quench_main PUBLIC quench_app)
 endif()
 
-# ------------------------------------------------------------------ tests
+# ------------------------------------------------------------------ examples and tests
+if(QUENCH_BUILD_EXAMPLES AND NOT QUENCH_HEADLESS)
+    add_subdirectory(examples)
+endif()
 if(QUENCH_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

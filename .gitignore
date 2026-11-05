@@ -4,6 +4,8 @@ dist/
 *.bmp
 *.png
 !tests/golden/**/*.png
+!examples/*/icon/*.png
+!templates/*/icon/*.png
 imgui.ini
 .DS_Store
 compile_commands.json

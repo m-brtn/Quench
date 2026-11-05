@@ -1,6 +1,43 @@
+# A device build (iOS on an iPhone or iPad) cannot run executables from CTest: the cases that do not need the build
+# tree go into one app, quench_device_tests, installed and launched with devicectl (docs/platforms.md).
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
+    quench_add_game(quench_device_tests NAME "Quench Tests" OUTPUT_NAME QuenchTests BUNDLE_ID org.quench.device-tests
+        ORIENTATIONS all CUSTOM_MAIN
+        SOURCES
+            harness/TestMain.cpp
+            core/AssertTests.cpp
+            core/FileSystemTests.cpp
+            core/FixedStepClockTests.cpp
+            core/JsonTests.cpp
+            core/LogTests.cpp
+            core/ResultTests.cpp
+            core/ThreadTests.cpp
+            physics/PhysicsWorldTests.cpp
+            app/InputTests.cpp
+            app/OptionsTests.cpp
+            app/ScenarioTests.cpp
+            app/SdlFileSystemTests.cpp
+            app/SdlLogTests.cpp
+            gpu/DeviceTests.cpp
+            gpu/GpuTest.cpp
+            gpu/RenderTests.cpp
+            gpu/WindowTests.cpp)
+    quench_configure_target(quench_device_tests)
+    target_include_directories(quench_device_tests PRIVATE harness)
+    target_link_libraries(quench_device_tests PRIVATE quench_physics)
+    target_compile_definitions(quench_device_tests PRIVATE
+        QUENCH_TEST_SDL_MAIN=1
+        QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
+    quench_add_shaders(quench_device_tests NAME render SOURCE gpu/shaders/render.hlsl
+        ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
+                rects_vs:vertex)
+    return()
+endif()
+
 add_library(quench_test_harness STATIC harness/TestMain.cpp)
 quench_configure_target(quench_test_harness)
 target_include_directories(quench_test_harness PUBLIC harness)
+target_compile_definitions(quench_test_harness PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
 # quench_add_test_executable(<name> PREFIX <ctest prefix> SOURCES <file>... LIBS <target>... [ENVIRONMENT <NAME=value>...])
 function(quench_add_test_executable name)
@@ -49,7 +86,6 @@ quench_add_test_executable(quench_core_tests PREFIX core
         core/ResultTests.cpp
         core/ThreadTests.cpp
     LIBS quench_core)
-target_compile_definitions(quench_core_tests PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
 quench_add_test_executable(quench_physics_tests PREFIX physics
     SOURCES physics/PhysicsWorldTests.cpp
@@ -69,10 +105,12 @@ target_compile_definitions(quench_gpu_tests PRIVATE
 if(NOT QUENCH_HEADLESS)
     quench_add_test_executable(quench_app_tests PREFIX app
         SOURCES
+            app/InputTests.cpp
+            app/OptionsTests.cpp
+            app/ScenarioTests.cpp
             app/SdlFileSystemTests.cpp
             app/SdlLogTests.cpp
         LIBS quench_app)
-    target_compile_definitions(quench_app_tests PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
     # Device tests on the driver SDL picks: Metal on Apple platforms, with the Metal API validation layer.
     set(gpu_environment "")
@@ -116,10 +154,62 @@ if(NOT QUENCH_HEADLESS)
                 FAIL_REGEX "Validation (Error|Warning)")
         endif()
     endif()
+
+    # ---------------------------------------------------------------- examples (host builds)
+    if(TARGET quench_hello AND NOT CMAKE_CROSSCOMPILING)
+        add_executable(quench_image_compare ${Quench_SOURCE_DIR}/tools/imagecompare/ImageCompare.cpp)
+        quench_configure_target(quench_image_compare)
+        target_link_libraries(quench_image_compare PRIVATE SDL3::SDL3-static)
+
+        # Golden images: tests/golden/<backend>/<device>/<name>.png; the device folder is named after the GPU.
+        if(APPLE)
+            execute_process(COMMAND sysctl -n machdep.cpu.brand_string OUTPUT_VARIABLE golden_device
+                            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        endif()
+        string(TOLOWER "${golden_device}" golden_device)
+        string(REGEX REPLACE "[^a-z0-9]+" "-" golden_device "${golden_device}")
+        set(QUENCH_GOLDEN_DEVICE "${golden_device}" CACHE STRING
+            "Device folder of the golden images (tests/golden/<backend>/<device>)")
+
+        set(hello_args --window 640x360 --frame-size 1280x720 --capture-at 1 --quit-after 1 --gpu-debug)
+        set(capture_dir ${CMAKE_CURRENT_BINARY_DIR}/captures)
+        # quench_add_capture_test(<test> IMAGE <golden name> BACKEND <backend> APP <target> ARGS <arg>...
+        #                         [ENVIRONMENT <NAME=value>...])
+        function(quench_add_capture_test name)
+            cmake_parse_arguments(PARSE_ARGV 1 arg "" "IMAGE;BACKEND;APP" "ARGS;ENVIRONMENT")
+            list(JOIN arg_ARGS "|" args)
+            list(JOIN arg_ENVIRONMENT "|" environment)
+            add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:${arg_APP}> "-DARGS=${args}"
+                     "-DENVIRONMENT=${environment}" -DCAPTURE=${capture_dir}/${name}.png
+                     -DGOLDEN=${Quench_SOURCE_DIR}/tests/golden/${arg_BACKEND}/${QUENCH_GOLDEN_DEVICE}/${arg_IMAGE}.png
+                     -DCOMPARE=$<TARGET_FILE:quench_image_compare> -P ${CMAKE_CURRENT_SOURCE_DIR}/RunCapture.cmake)
+            set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "QUENCH_SKIP"
+                                 FAIL_REGULAR_EXPRESSION "Validation (Error|Warning)")
+        endfunction()
+
+        quench_add_capture_test(hello_metal IMAGE hello BACKEND metal APP quench_hello ARGS ${hello_args}
+            ENVIRONMENT MTL_DEBUG_LAYER=1)
+        if(QUENCH_TEST_VULKAN_LOADER)
+            quench_add_capture_test(hello_vulkan IMAGE hello BACKEND vulkan APP quench_hello ARGS ${hello_args} --gpu-driver vulkan
+                ENVIRONMENT ${vulkan_environment})
+        endif()
+
+        add_test(NAME hello_input COMMAND quench_hello --window 640x360 --script
+                 ${Quench_SOURCE_DIR}/examples/hello/scenarios/input.txt)
+        set_tests_properties(hello_input PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
+        add_test(NAME hello_version COMMAND quench_hello --version)
+        set_tests_properties(hello_version PROPERTIES PASS_REGULAR_EXPRESSION "^Quench Hello ${PROJECT_VERSION}\n$")
+        add_test(NAME hello_bad_argument COMMAND quench_hello --no-such-option)
+        add_test(NAME hello_bad_flag_value COMMAND quench_hello --quit-after soon)
+        set_tests_properties(hello_bad_argument hello_bad_flag_value PROPERTIES WILL_FAIL TRUE)
+    endif()
 endif()
 
 # Every public header compiles on its own and twice in a row (#pragma once).
 file(GLOB_RECURSE public_headers CONFIGURE_DEPENDS ${Quench_SOURCE_DIR}/include/quench/*.h)
+if(QUENCH_HEADLESS)
+    list(FILTER public_headers EXCLUDE REGEX "/quench/app/")
+endif()
 set(header_sources "")
 foreach(header IN LISTS public_headers)
     file(RELATIVE_PATH rel ${Quench_SOURCE_DIR}/include ${header})

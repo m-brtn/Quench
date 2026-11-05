@@ -34,11 +34,12 @@ struct BackendScope {
 
 QUENCH_TEST(sdl_fs_assets) {
     const std::filesystem::path assets = freshDir(baseDir() / "sdl_fs_assets");
-    std::filesystem::create_directories(assets / "dir");
-    std::ofstream(assets / "dir/a.txt") << "asset";
+    std::error_code ec;
+    std::filesystem::create_directories(assets / "dir", ec);
+    if (!(std::ofstream(assets / "dir/a.txt") << "asset")) QUENCH_SKIP("the executable's directory is read-only");
 
     Result<std::unique_ptr<fs::Backend>> backend = app::makeSdlFileSystem(
-        {.assetDir = "sdl_fs_assets", .userDir = std::string(QUENCH_TEST_TMP_DIR) + "/sdl_fs_assets_user"});
+        {.assetDir = "sdl_fs_assets", .userDir = std::string(quench::test::tmpDir()) + "/sdl_fs_assets_user"});
     REQUIRE(backend, "%s", backend.error().c_str());
     BackendScope scope;
     fs::setBackend(std::move(backend).value());
@@ -55,7 +56,7 @@ QUENCH_TEST(sdl_fs_assets) {
 }
 
 QUENCH_TEST(sdl_fs_user_files) {
-    const std::filesystem::path user = freshDir(std::filesystem::path(QUENCH_TEST_TMP_DIR) / "sdl_fs_user");
+    const std::filesystem::path user = freshDir(std::filesystem::path(quench::test::tmpDir()) / "sdl_fs_user");
     Result<std::unique_ptr<fs::Backend>> backend = app::makeSdlFileSystem({.userDir = user.string()});
     REQUIRE(backend, "%s", backend.error().c_str());
     BackendScope scope;
@@ -78,6 +79,6 @@ QUENCH_TEST(sdl_fs_user_files) {
 }
 
 QUENCH_TEST(sdl_fs_rejects_bad_setup) {
-    CHECK(!app::makeSdlFileSystem({.assetDir = "../assets", .userDir = QUENCH_TEST_TMP_DIR}), "'..' asset dir");
-    CHECK(!app::makeSdlFileSystem({}), "no user directory and no org/app");
+    CHECK(!app::makeSdlFileSystem({.assetDir = "../assets", .userDir = quench::test::tmpDir()}), "'..' asset dir");
+    CHECK(!app::makeSdlFileSystem({.org = "Quench"}), "no user directory and no app name");
 }

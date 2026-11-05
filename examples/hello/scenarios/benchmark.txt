@@ -1,0 +1,12 @@
+# Frame-time benchmark of the hello example (docs/performance.md), at a fixed frame size and the default vsync:
+#   hello --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt
+# The perf line in the log has the frame, CPU and GPU times; app time advances 1/120 s per frame, so the region is
+# 1200 frames. GPU time is the cost to compare: frame time follows the display, and on macOS a window is paced to the
+# display even with --present-mode immediate, which also inflates the measured GPU time (docs/performance.md).
+
+wait 2
+perf_begin hello
+wait 10
+perf_end
+expect perf_frames >= 1199
+quit

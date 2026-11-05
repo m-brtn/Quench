@@ -6,10 +6,14 @@ checked on 2026-11-04 in the libraries' repositories. All documentation: [index]
 
 ## Carried over from the games
 
-All are fetched as GitHub archives of a fixed commit with a SHA256 hash. Pinned in the engine so far (stages 1 and 2),
-with TrailForge's commits, hashes and options: Jolt Physics and SDL3 (`cmake/Dependencies.cmake`; SDL only when
-`QUENCH_HEADLESS` is off) and the shader toolchain (`cmake/ShaderToolchain.cmake`). The others are added with the stage that uses them; until then their SHA256 values
-are in TrailForge's `cmake/Dependencies.cmake` and `tools/texc/CMakeLists.txt`.
+All are fetched as GitHub archives of a fixed commit with a SHA256 hash. Pinned in the engine so far (stages 1 to 3),
+with TrailForge's commits and hashes: Jolt Physics, SDL3, GLM and Dear ImGui (`cmake/Dependencies.cmake`; SDL and
+ImGui only when `QUENCH_HEADLESS` is off) and the shader toolchain (`cmake/ShaderToolchain.cmake`). The others are
+added with the stage that uses them; until then their SHA256 values are in TrailForge's `cmake/Dependencies.cmake` and
+`tools/texc/CMakeLists.txt`. The engine builds ImGui with its SDL3 platform backend only and draws it through
+`quench::gpu` (`src/app/ImGuiRenderer.cpp`), so ImGui's SDL GPU renderer backend and TrailForge's iOS patch for it are
+not needed. GLM is configured with `GLM_FORCE_DEPTH_ZERO_TO_ONE` and `GLM_FORCE_RADIANS`; it is offered under the
+Happy Bunny License or MIT, and the engine uses it under MIT.
 
 | Library | Version | Commit | Licence | Used by | Purpose |
 |---|---|---|---|---|---|

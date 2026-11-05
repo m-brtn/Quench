@@ -36,6 +36,20 @@ FetchContent_Declare(JoltPhysics
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(JoltPhysics)
 
+# ---------------------------------------------------------------- GLM
+# 1.0.3, header-only (SOURCE_SUBDIR points to a folder without CMakeLists.txt, so only the sources are fetched).
+FetchContent_Declare(glm
+    URL https://github.com/g-truc/glm/archive/8d1fd52e5ab5590e2c81768ace50c72bae28f2ed.tar.gz
+    URL_HASH SHA256=36eefbae41503e6822e8d9e1b4cc85c6a6621f17676f6258aaf0a64c2de0a09c
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR header-only-no-cmake)
+FetchContent_MakeAvailable(glm)
+add_library(quench_glm INTERFACE)
+target_include_directories(quench_glm SYSTEM INTERFACE ${glm_SOURCE_DIR})
+target_compile_definitions(quench_glm INTERFACE
+    GLM_FORCE_DEPTH_ZERO_TO_ONE # clip-space z in [0, 1] (Metal, Vulkan, Direct3D)
+    GLM_FORCE_RADIANS)
+
 if(QUENCH_HEADLESS)
     return()
 endif()
@@ -59,3 +73,23 @@ FetchContent_Declare(SDL3
     SYSTEM
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(SDL3)
+
+# ---------------------------------------------------------------- Dear ImGui
+# v1.92.9b. No CMake of its own: quench_imgui is built here with the SDL3 platform backend only. The engine draws ImGui
+# through quench::gpu (src/app/ImGuiRenderer.cpp), so ImGui's SDL GPU renderer backend, and TrailForge's iOS patch for
+# it, are not used.
+FetchContent_Declare(imgui
+    URL https://github.com/ocornut/imgui/archive/f1cc2ae15e53a861a874c3034aae6798fde194ab.tar.gz
+    URL_HASH SHA256=f30be7f3e2136615b1848a9afb72f6dfd8a60820ddf1c1a85997bf3b722e7cfc
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(imgui)
+add_library(quench_imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp)
+target_include_directories(quench_imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(quench_imgui PUBLIC SDL3::SDL3-static)
+target_compile_features(quench_imgui PUBLIC cxx_std_20)

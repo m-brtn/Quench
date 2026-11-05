@@ -19,6 +19,10 @@ void fail(const char* file, int line, const char* condition, const char* format,
 // Marks the running case as skipped (CTest reports it as "Skipped", exit code kSkipExitCode).
 void skip(const char* reason);
 
+// Scratch directory for files a case writes: QUENCH_TEST_TMP_DIR of the build tree, or a directory in the system
+// temporary directory where the build tree is not reachable (the device test app).
+const char* tmpDir();
+
 inline constexpr int kSkipExitCode = 77;
 
 } // namespace quench::test

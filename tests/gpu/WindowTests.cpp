@@ -8,7 +8,14 @@
 using namespace quench;
 using namespace quench::gpu;
 
-#if QUENCH_PLATFORM_MACOS || QUENCH_PLATFORM_WINDOWS || QUENCH_PLATFORM_LINUX
+// On iOS a window needs the app lifecycle: the device test app has it (SDL_main), executables spawned by simctl do not.
+#if QUENCH_PLATFORM_MACOS || QUENCH_PLATFORM_WINDOWS || QUENCH_PLATFORM_LINUX || defined(QUENCH_TEST_SDL_MAIN)
+#define QUENCH_TEST_WINDOWS 1
+#else
+#define QUENCH_TEST_WINDOWS 0
+#endif
+
+#if QUENCH_TEST_WINDOWS
 namespace {
 
 void drawFrames(Device& device, SDL_Window* window) {
@@ -52,7 +59,7 @@ void drawFrames(Device& device, SDL_Window* window) {
 // A real window: claim it, draw into its swapchain texture for a few frames, present, release. Opens a small window
 // for a moment.
 QUENCH_TEST(window_present) {
-#if !(QUENCH_PLATFORM_MACOS || QUENCH_PLATFORM_WINDOWS || QUENCH_PLATFORM_LINUX)
+#if !QUENCH_TEST_WINDOWS
     QUENCH_SKIP("windows need the app lifecycle on this platform");
 #else
     QUENCH_GPU_DEVICE(device);

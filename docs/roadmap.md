@@ -23,7 +23,7 @@ agreed with the user covers stages 1 to 3. All documentation: [index](README.md)
   single-threaded (`PhysicsWorld` uses Jolt's `JobSystemSingleThreaded` there).
 - Moved: a separate `headless` preset is only useful once non-headless targets exist; it came with stage 2.
 
-## Stage 2: GPU layer (done 2026-11-05, except the iPhone run)
+## Stage 2: GPU layer (done 2026-11-05; the iPhone run came with stage 3)
 
 - Done: `quench::gpu` over SDL GPU: device, buffers, textures, samplers, pipelines, command recording, uploads,
   downloads (render target captures), mipmap generation, blits, fences, presentation to a window, `gpu::Caps`.
@@ -35,15 +35,20 @@ agreed with the user covers stages 1 to 3. All documentation: [index](README.md)
 - Moved to stage 3: the run on the iPhone. A test executable needs a signed app bundle to run on the device, and the
   iOS bundle CMake comes with stage 3; the sample app is checked there.
 
-## Stage 3: app shell
+## Stage 3: app shell (done 2026-11-05, version 0.1.0)
 
-- SDL main callbacks, window, the game interface, common flags (`--quit-after`, `--capture`, `--capture-at`),
-  scenario runner, ImGui, input actions (keyboard, mouse, gamepad, touch), iOS bundle and app icon CMake
-  (`quench_add_game()`).
-- The GPU tests and the sample on the iPhone (moved from stage 2).
-- `examples/hello`: a lit mesh with a capture check against `tests/golden/`, and a benchmark scenario; first budgets
-  in `docs/performance.md`. `templates/game` and a script that creates a new game from it.
-- Version 0.1.0 and the first release notes.
+- Done: SDL main callbacks (`quench_main`), window and lifecycle, the game interface, common flags (`--quit-after`,
+  `--capture`, `--capture-at`, `--script`, `--window`, `--frame-size`, `--gpu-driver`, `--gpu-debug`,
+  `--present-mode`), deterministic scripted runs, scenario runner with scripted input and `perf_begin` / `perf_end`,
+  ImGui on `quench::gpu`, input actions (keyboard, mouse, gamepad, touch), iOS bundle and app icon CMake
+  (`quench_add_game()`, Ninja and Xcode). Reference: [App shell](app.md).
+- Done: the GPU tests and the sample on the iPhone (moved from stage 2): `quench_device_tests` and hello, built with
+  the `ios-xcode` preset and run through `devicectl`; what is on the screen was checked by the user.
+- Done: `examples/hello`: a lit mesh with ImGui, capture checks against `tests/golden/` (Metal, and Vulkan through
+  MoltenVK), an input scenario and a benchmark scenario; first budgets in [Performance](performance.md).
+- Done: `templates/game` and `tools/new_game.py`, which creates a game from it, pins the engine and checks that it
+  builds and starts.
+- Done: version 0.1.0, release notes in [docs/releases/v0.1.0.md](releases/v0.1.0.md).
 
 ## Stage 4: games on the engine
 

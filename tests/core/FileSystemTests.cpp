@@ -12,7 +12,7 @@ namespace {
 
 // A clean directory per test case (CTest may run cases in parallel), with assets/ and user/ under it.
 std::filesystem::path testDir(const char* name) {
-    const std::filesystem::path dir = std::filesystem::path(QUENCH_TEST_TMP_DIR) / name;
+    const std::filesystem::path dir = std::filesystem::path(quench::test::tmpDir()) / name;
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir / "assets" / "models");
     return dir;

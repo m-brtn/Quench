@@ -12,8 +12,8 @@
 namespace quench::app {
 
 struct SdlFileSystemDesc {
-    std::string org;      // for SDL_GetPrefPath
-    std::string app;      // for SDL_GetPrefPath
+    std::string org;      // for SDL_GetPrefPath; may be empty (no organization folder)
+    std::string app;      // for SDL_GetPrefPath; required unless userDir is set
     std::string assetDir; // directory of the assets below SDL_GetBasePath(); empty: the base path itself
     std::string userDir;  // empty: SDL_GetPrefPath(org, app), created if missing; else this directory (tests, tools)
 };

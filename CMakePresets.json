@@ -102,6 +102,13 @@
       "displayName": "iOS device Release (arm64, iOS 26+, run build/host-tools first)",
       "inherits": "ios-base",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_OSX_SYSROOT": "iphoneos" }
+    },
+    {
+      "name": "ios-xcode",
+      "displayName": "iOS device, Xcode project with Automatic signing: hello and the device test app (-DQUENCH_IOS_TEAM=<team>; run build/host-tools first)",
+      "inherits": "ios-base",
+      "generator": "Xcode",
+      "cacheVariables": { "CMAKE_OSX_SYSROOT": "iphoneos", "QUENCH_BUILD_TESTS": "ON" }
     }
   ],
   "buildPresets": [
@@ -114,7 +121,13 @@
     { "name": "wasm-node", "configurePreset": "wasm-node" },
     { "name": "ios-sim-release", "configurePreset": "ios-sim-release" },
     { "name": "ios-sim-tests", "configurePreset": "ios-sim-tests" },
-    { "name": "ios-device-release", "configurePreset": "ios-device-release" }
+    { "name": "ios-device-release", "configurePreset": "ios-device-release" },
+    {
+      "name": "ios-xcode",
+      "configurePreset": "ios-xcode",
+      "configuration": "Release",
+      "nativeToolOptions": ["-allowProvisioningUpdates"]
+    }
   ],
   "testPresets": [
     { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
