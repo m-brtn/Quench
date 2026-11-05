@@ -56,6 +56,11 @@ TrailForge first, then Ashfall: replace their copies of stages 1 to 3 with the e
 [Migration](migration.md). `tools/check_games.sh` (build against the local engine, start, quit cleanly) after each
 change; each game's full gates at the end of the work.
 
+- Done: `tools/check_games.sh`.
+- Done (TrailForge): `PhysicsWorld`, `FixedStepClock`, JSON and the shader build from the engine, pinned with
+  FetchContent (2026-11-05; progress table in [Migration](migration.md)).
+- Next: TrailForge's app shell (`quench_app`, `quench_main`, `quench_gpu`), then Ashfall.
+
 ## Stage 5: render modules and the retained scene
 
 - Retained scene: mesh, instance, material and light registration; material registration replaces the fixed `MatId`

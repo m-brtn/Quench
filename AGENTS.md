@@ -28,8 +28,10 @@ standard library backend, worker thread priority), `quench_physics` (`PhysicsWor
 `quench_add_game()` (macOS executables, iOS bundles). `examples/hello` is the sample (capture checks against
 `tests/golden/`, input and benchmark scenarios); `templates/game` and `tools/new_game.py` start a new game. Tests run
 on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator, on the user's iPhone (one signed test app) and,
-for the headless modules, as WebAssembly under Node.js. Neither game uses the engine yet (stage 4), and there is no
-retained scene or render module (stage 5).** `docs/migration.md` describes what exists in the two games; `docs/app.md`
+for the headless modules, as WebAssembly under Node.js. Stage 4 has started: TrailForge builds on the engine's
+`quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, the rest of TrailForge and all of Ashfall
+still use their own copies; `tools/check_games.sh` builds both games against this checkout and starts them. There is
+no retained scene or render module (stage 5).** `docs/migration.md` describes what exists in the two games; `docs/app.md`
 and `docs/performance.md` describe what is built; the rest of `docs/` is design and plan beyond stage 3. Update this
 paragraph whenever that changes.
 
@@ -121,8 +123,10 @@ All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
   temporary directory: it builds the new game against this checkout and starts it.
 - **Rendering or frame-time-sensitive code:** run the benchmark and compare with the numbers before the change (see
   "Verification").
-- **Engine code a game uses, after each change:** `tools/check_games.sh` (planned) builds every game against the local
-  engine and checks only that each one starts, renders and quits with exit code 0.
+- **Engine code a game uses, after each change:** `tools/check_games.sh` builds every game against the local
+  engine and checks only that each one starts, renders and quits with exit code 0 (`[--preset NAME] [trailforge]
+  [ashfall]`; checkouts from `TRAILFORGE_DIR` and `ASHFALL_DIR`, default `../trailforge-public` and `../strategy`;
+  each game builds in its own `build/quench-check-<preset>`).
 - **At the end of the work, before the commits:** the games' full gates once (TrailForge: `debug` + `release`,
   `ctest`, `tools/scenarios/full_check.txt`; Ashfall: `debug` + `release`, `ctest`, the capture check in its
   `AGENTS.md`) and their captures compared before and after with `compare_captures.py`.
@@ -379,6 +383,7 @@ tools/shaderc/         quench_shaderc, the build-time shader compiler
 tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the sample's icon
 tools/new_game.py      creates a game from templates/game
+tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
 tools/format.sh        clang-format over the C and C++ sources (--check)
 tests/                 harness/, core/, physics/, gpu/ (shader tests; GPU device tests and their shaders), app/,
                        header check, RunCapture.cmake (capture checks); golden/ (reference captures)

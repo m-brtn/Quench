@@ -92,3 +92,25 @@ Ashfall:
 5. Commit the engine first, then the game with the engine pin updated, and only when the user asks.
 
 Order: TrailForge first (the engine was written for it, it has the most tests and the iOS build), then Ashfall.
+
+## Progress
+
+| Game | Moved to the engine | Engine pin | Date |
+|---|---|---|---|
+| TrailForge | `PhysicsWorld` and `JoltRuntime` (`quench_physics`), `FixedStepClock` and JSON (`quench_core`), the shader build (`quench_add_shaders`, `quench_shaderc`; also `tools/texc` for JSON) | `502c35e` | 2026-11-05 |
+| Ashfall | nothing yet | | |
+
+What a game changes when it switches (TrailForge's switch as the example):
+
+- CMake: `cmake_minimum_required(VERSION 3.28)` and `set(CMAKE_CXX_SCAN_FOR_MODULES OFF)`; the engine's
+  `FetchContent_Declare` comes after the game's own declarations of shared dependencies (SDL3, Jolt, ImGui, GLM):
+  the first declaration wins, so both use the game's sources (the pins must match). `QUENCH_HEADLESS`
+  follows the game's own headless option.
+- iOS: the presets pass `QUENCH_HOST_SHADERC` (the macOS `quench_shaderc` from a host build) instead of the game's
+  own shader compiler; the host preset builds the target `quench_shaderc`.
+- Shaders: `quench_add_shaders(<target> NAME <name> SOURCE <hlsl> ENTRIES ...)` replaces the game's embed step;
+  entry guards become `QUENCH_ENTRY_<name>` and `QUENCH_STAGE_VERTEX` / `QUENCH_STAGE_FRAGMENT`; the game includes
+  `<name>_shaders.h` and looks blobs up with `quench::shaders::<name>.find(entry)`.
+- JSON: `quench::json::parse` returns `quench::Result<Value>` instead of taking an error string; a namespace alias
+  (`namespace json = quench::json;` inside the game's namespace) keeps the call sites short.
+- Physics: `quench::PhysicsWorld`, `quench::JoltRuntime`, `quench::PhysicsLayers::kStatic` / `kMoving`.
