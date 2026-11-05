@@ -10,11 +10,14 @@ Android and the web are later targets; the portability rules in [AGENTS.md](../A
 
 ## Status
 
-The engine itself (stage 1, headless only) builds and passes its tests on macOS (arm64; also under the address,
-undefined-behaviour and thread sanitizers) and as single-threaded WebAssembly under Node.js (Emscripten 6.0.13; the
-cases that need threads are skipped there). Its libraries build for the iOS Simulator and iOS devices; nothing of it
-has run on iOS, in a browser or on a GPU yet. Its shaders are compiled to SPIR-V and macOS / iOS metallibs, but not
-loaded by any GPU. The table shows what the games have run, which is what the engine code starts from.
+The engine itself (stages 1 and 2) builds and passes its tests on macOS (arm64; also under the address,
+undefined-behaviour and thread sanitizers). Its GPU tests render offscreen and check the pixels read back on Metal
+(Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same Mac (with the Khronos
+validation layer; a test of the SPIR-V path, not of a real Vulkan driver), and in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables run
+through `simctl spawn`, without a window). The headless modules also pass as single-threaded WebAssembly under Node.js
+(Emscripten 6.0.13; the cases that need threads are skipped there). The libraries build for iOS devices, but nothing
+of the engine has run on the iPhone or in a browser yet. The table shows what the games have run, which is what the
+engine code starts from.
 
 | Platform | SDL GPU backend | Shader format | Run so far (games) |
 |---|---|---|---|
@@ -43,6 +46,10 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   lines "level models unavailable" and "BC7 textures are not supported by this GPU"). Check those log lines on the
   device before relying on BC7 there.
 - ASTC is supported by every iPhone GPU that runs iOS 26.
+- The iOS Simulator's Metal device (engine GPU tests, 2026-11-05) reports GPU family Apple2 only, no BC textures
+  (`Caps::bcTextures` false, ASTC true), no depth clip mode (`Caps::depthClamp` false) and no indirect draws
+  (`Caps::indirectDraw` false: Metal validation aborts on them). SDL GPU needs its video subsystem even for offscreen
+  work; test executables without `SDL_main` call `SDL_SetMainReady()` first.
 
 ## Windows and Linux
 

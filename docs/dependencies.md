@@ -6,9 +6,9 @@ checked on 2026-11-04 in the libraries' repositories. All documentation: [index]
 
 ## Carried over from the games
 
-All are fetched as GitHub archives of a fixed commit with a SHA256 hash. Pinned in the engine so far (stage 1), with
-TrailForge's commits, hashes and options: Jolt Physics (`cmake/Dependencies.cmake`) and the shader toolchain
-(`cmake/ShaderToolchain.cmake`). The others are added with the stage that uses them; until then their SHA256 values
+All are fetched as GitHub archives of a fixed commit with a SHA256 hash. Pinned in the engine so far (stages 1 and 2),
+with TrailForge's commits, hashes and options: Jolt Physics and SDL3 (`cmake/Dependencies.cmake`; SDL only when
+`QUENCH_HEADLESS` is off) and the shader toolchain (`cmake/ShaderToolchain.cmake`). The others are added with the stage that uses them; until then their SHA256 values
 are in TrailForge's `cmake/Dependencies.cmake` and `tools/texc/CMakeLists.txt`.
 
 | Library | Version | Commit | Licence | Used by | Purpose |
@@ -23,7 +23,9 @@ are in TrailForge's `cmake/Dependencies.cmake` and `tools/texc/CMakeLists.txt`.
 
 Patches applied by TrailForge (`cmake/patches/`): `SdlIosSimulator.cmake` (in the iOS Simulator only: skips SDL
 GPU's Metal GPU family check and its `setDepthClipMode` calls) and `ImguiIos.cmake` (ImGui's SDL GPU backend uses MSL
-source on iOS instead of the macOS metallibs). Ashfall has no iOS build and no
+source on iOS instead of the macOS metallibs). The engine carries `SdlIosSimulator.cmake` since stage 2 (the same two
+changes, ported from TrailForge `0188a3a`); compiled for the Simulator it leaves SDL's `SDLToMetal_DepthClipMode`
+unused, which SDL's build reports as one warning. Ashfall has no iOS build and no
 patches. Ashfall plays audio through an SDL3 audio stream with sounds synthesized at startup, without miniaudio.
 
 Build-time shader toolchain (host tools, not shipped in the binary):
@@ -38,6 +40,8 @@ Build-time shader toolchain (host tools, not shipped in the binary):
 | `xcrun metal` | Xcode | Apple | MSL -> metallib |
 | Emscripten | 6.0.13 (Homebrew, not pinned) | MIT or NCSA; Apache-2.0 (with LLVM exception) parts | the `wasm-node` web check; needs Python 3.10+ |
 | Node.js | 26.13.0 (Homebrew, installed with Emscripten) | MIT | runs the WebAssembly tests |
+| Vulkan loader, MoltenVK | 1.4.363.0, 1.4.2 (Homebrew `vulkan-loader`, `molten-vk`, not pinned) | Apache-2.0 | the `gpu_vulkan` tests on the Mac |
+| Khronos validation layer | 1.4.363.0 (Homebrew `vulkan-validationlayers`, not pinned) | Apache-2.0 | validation in the `gpu_vulkan` tests |
 
 TrailForge's texture and model compiler (`tools/texc`, host tool) also uses stb
 (`003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5`) and bc7enc_rdo (`b9438627eef73a1157e84201b6fa6eb2ffd6d9f0`).
@@ -79,7 +83,19 @@ its command line tool), miniaudio (audio device and capture), Dear ImGui (diagno
   programs with `-sSTACK_SIZE=1048576`, the value Jolt uses for its own WebAssembly programs.
 - **enkiTS**: `ProfilerCallbacks::threadStart` runs on each worker at start; the engine sets Apple QoS there.
 - **SDL GPU**: no ray tracing, no GPU timestamps, no native handles (see
-  [Architecture](architecture.md#graphics-layer)).
+  [Architecture](architecture.md#graphics-layer)). Checked in the 3.4.18 source: device creation needs SDL's video
+  subsystem for every driver; parameter checks (mipmap generation, texture format support) run only in its debug
+  mode; the Vulkan backend requests `depthClamp` but not `depthBiasClamp`, so the bias clamp is zeroed there; the
+  `SDL_GPU_DRIVER` hint overrides the driver name a program asks for.
+- **SDL on macOS with Vulkan**: SDL looks the Vulkan loader up by bare names, which `dlopen` does not search for in
+  Homebrew's `/opt/homebrew/lib`; the tests set `SDL_VULKAN_LIBRARY` to the loader `find_library` found. In its
+  debug mode SDL enables `VK_LAYER_KHRONOS_validation` when the loader lists it and fails to create the device if the
+  layer then does not load; Homebrew's layer manifest names its library without a path, so the tests also set
+  `DYLD_FALLBACK_LIBRARY_PATH`. SDL registers no debug messenger: the layer prints its messages to stdout, and the
+  `gpu_vulkan` tests fail on "Validation Error" or "Validation Warning" in the output.
+- **SDL revision**: the archive has no `REVISION.txt`, and SDL's configure would take `git describe` of the enclosing
+  repository as its revision (`SDL_GetRevision()`); `cmake/Dependencies.cmake` sets `SDL_REVISION` to
+  `SDL-3.4.18-829a65d7`.
 - **glslang** (pinned commit): its configure step warns that `ENABLE_HLSL` is deprecated and that the HLSL front end
   will be removed in a future major release (KhronosGroup/glslang#4210). The pin keeps working. Before moving the
   glslang pin, check that the HLSL front end is still there; if it is gone, the SPIR-V path needs another HLSL

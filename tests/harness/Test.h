@@ -40,3 +40,12 @@ inline constexpr int kSkipExitCode = 77;
     do {                                                                                                               \
         if (!(condition)) ::quench::test::fail(__FILE__, __LINE__, #condition, __VA_ARGS__);                           \
     } while (0)
+
+// REQUIRE(condition, "printf format", args...): records a failure and ends the case.
+#define REQUIRE(condition, ...)                                                                                        \
+    do {                                                                                                               \
+        if (!(condition)) {                                                                                            \
+            ::quench::test::fail(__FILE__, __LINE__, #condition, __VA_ARGS__);                                         \
+            return;                                                                                                    \
+        }                                                                                                              \
+    } while (0)

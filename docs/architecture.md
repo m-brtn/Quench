@@ -1,8 +1,8 @@
 # Architecture
 
-Design of the engine. Stage 1 exists (CMake, `quench_core`, `quench_physics`, the shader build, headless tests; the
-current layout is in [AGENTS.md](../AGENTS.md#layout)); everything else here describes the intended structure and the
-reasons for it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
+Design of the engine. Stages 1 and 2 exist (CMake, `quench_core`, `quench_physics`, the shader build, headless tests;
+`quench_gpu` over SDL GPU and the SDL backends of `quench_app`, see "The layer as built"; the current layout is in
+[AGENTS.md](../AGENTS.md#layout)); everything else here describes the intended structure and the reasons for it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
 
 ## Planned layout
 
@@ -46,9 +46,14 @@ docs/releases/        release notes per version
 | `quench_anim` | animation runtime and state machines | core, ozz | yes |
 | `quench_nav` | navmesh and crowds | core, Recast & Detour | yes |
 | `quench_audio` | mixer; device in a separate target | core, miniaudio | mixer yes |
-| `quench_gpu` | GPU layer and backends | core, SDL3 | no |
+| `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
+| `quench_gpu` | GPU layer and backends | core, gpu_shaders, SDL3 | no |
 | `quench_render` | scene, frame, render modules | gpu, assets, anim | no |
 | `quench_app` | main callbacks, window, input, UI, game interface | render, audio, SDL3, ImGui | no |
+
+Today `quench_app` holds only the SDL backends of `quench::fs` (`makeSdlFileSystem`) and of the log
+(`addSdlLogSink`) and depends on core and SDL3; stage 3 adds the rest. The `QUENCH_HEADLESS` option (the `headless`
+preset, forced on for Emscripten) builds only the headless targets and does not fetch SDL.
 
 Headless targets build and test without SDL video or a GPU. This is what lets the games keep their headless test
 presets and what makes the Node.js web check possible.
@@ -83,6 +88,36 @@ the available hardware. Further backends wait for a named need.
 Verification bonus: on the Mac, SDL GPU also runs on Metal, so the same frame can be rendered through both backends on
 one machine and compared pixel by pixel.
 
+### The layer as built (stage 2)
+
+Headers in `include/quench/gpu/` (`Device.h`, `CommandBuffer.h`, `Resources.h`, `Types.h`), the SDL GPU backend in
+`src/gpu/sdlgpu/`. There is one backend, so there is no virtual dispatch yet; the native Metal backend will bring it.
+
+- **Close to the SDL GPU model**: device, command buffers, render and copy passes, transfer buffers, uniforms pushed
+  per stage and slot. The games' renderers are written against SDL GPU, so porting them is mechanical. No SDL type
+  appears in the public headers except a forward-declared `SDL_Window` for presentation.
+- **Resources**: `Texture`, `Buffer`, `Sampler`, `TransferBuffer`, `GraphicsPipeline` and `Fence` own their backend
+  object, are move-only and release it on destruction; SDL defers the destruction until the GPU is done with the
+  object. `TextureRef`, `BufferRef` and `SamplerRef` are non-owning views for bindings, pass targets and the swapchain
+  texture. The device counts live resources and asserts on destruction that none outlive it.
+- **Pipelines** are created from `ShaderBlob`s. The device picks the shader format once (metallib, MSL source, DXIL,
+  SPIR-V, in this order among the formats the shader build embeds and the driver accepts) and creates and releases
+  the shader objects itself.
+- **Errors**: misuse is a `QUENCH_ASSERT` (pipeline and pass must agree on formats and sample count, one pass open at
+  a time, uniform blocks are multiples of 16 bytes, mipmap generation needs Sampled and ColorTarget usage, indirect
+  draws need `Caps::indirectDraw`); SDL checks some of these only in its own debug mode. Failures the caller can
+  handle return `Result` errors: creation, an unsupported format, usage or sample count, submission.
+- **Reversed depth by default**: `DepthState::compare` is `GreaterOrEqual` and `DepthTarget::clearDepth` is 0.
+- **`gpu::Caps`**: driver, device name, shader format, and the differences found so far: `gpuTiming` (Metal only:
+  `SdlGpuTimingMetal.m` reads SDL's internal fence, as TrailForge does), `depthClamp` (not in the iOS Simulator, where
+  the SDL patch skips the depth clip mode), `depthBiasClamp` (not on SDL's Vulkan backend, which does not enable the
+  device feature), `indirectDraw` (not in the iOS Simulator: its Metal device is GPU family Apple2), `bcTextures`,
+  `astcTextures`; per format `supportsFormat` and `supportsSampleCount`.
+- **SDL video**: SDL GPU needs SDL's video subsystem for every driver. The device holds a reference to it, so it is
+  created and destroyed on the main thread.
+- **Transfers**: `Device::upload` submits without waiting; `Device::download` blocks and is meant for captures, tests
+  and tools.
+
 ## Rendering
 
 - **Standard frame.** Shadows, main HDR pass, sky, post-processing chain (bloom, tonemap, anti-aliasing), assembled
@@ -94,9 +129,9 @@ one machine and compared pixel by pixel.
   `setModels`); Ashfall submits a list of `DrawItem`s per frame.
 - **Effect slots with fallbacks.** Shadows (shadow maps or ray traced), reflections (SSR or ray traced), ambient
   occlusion (GTAO or ray traced), indirect light (Ashfall's screen-space bounce or ray traced). The game picks; the
-  engine falls back by `GpuCaps`. Temporal accumulation (TrailForge TAA, Ashfall's AO history) is reused for
+  engine falls back by `gpu::Caps`. Temporal accumulation (TrailForge TAA, Ashfall's AO history) is reused for
   denoising.
-- **Quality presets** chosen from `GpuCaps` (TrailForge already has Low, Medium, High, Ultra in `RenderSettings.h`).
+- **Quality presets** chosen from `gpu::Caps` (TrailForge already has Low, Medium, High, Ultra in `RenderSettings.h`).
   Mobile and web need lower tiers than the Mac.
 
 ## Shaders

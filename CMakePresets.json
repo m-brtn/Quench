@@ -21,6 +21,12 @@
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     },
     {
+      "name": "headless",
+      "displayName": "Debug, headless modules only (no SDL, no GPU, no window)",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "QUENCH_HEADLESS": "ON" }
+    },
+    {
       "name": "asan",
       "displayName": "Debug with AddressSanitizer and UndefinedBehaviorSanitizer",
       "inherits": "base",
@@ -47,7 +53,7 @@
       "displayName": "macOS host tools for cross builds (quench_shaderc only)",
       "inherits": "base",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "QUENCH_BUILD_TESTS": "OFF" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "QUENCH_BUILD_TESTS": "OFF", "QUENCH_HEADLESS": "ON" }
     },
     {
       "name": "wasm-node",
@@ -81,6 +87,17 @@
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_OSX_SYSROOT": "iphonesimulator" }
     },
     {
+      "name": "ios-sim-tests",
+      "displayName": "iOS Simulator Debug with tests, run on the booted simulator through simctl (run build/host-tools first)",
+      "inherits": "ios-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_OSX_SYSROOT": "iphonesimulator",
+        "QUENCH_BUILD_TESTS": "ON",
+        "CMAKE_CROSSCOMPILING_EMULATOR": "xcrun;simctl;spawn;booted"
+      }
+    },
+    {
       "name": "ios-device-release",
       "displayName": "iOS device Release (arm64, iOS 26+, run build/host-tools first)",
       "inherits": "ios-base",
@@ -90,18 +107,22 @@
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
     { "name": "release", "configurePreset": "release" },
+    { "name": "headless", "configurePreset": "headless" },
     { "name": "asan", "configurePreset": "asan" },
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "host-tools", "configurePreset": "host-tools", "targets": ["quench_shaderc"] },
     { "name": "wasm-node", "configurePreset": "wasm-node" },
     { "name": "ios-sim-release", "configurePreset": "ios-sim-release" },
+    { "name": "ios-sim-tests", "configurePreset": "ios-sim-tests" },
     { "name": "ios-device-release", "configurePreset": "ios-device-release" }
   ],
   "testPresets": [
     { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
     { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
+    { "name": "headless", "configurePreset": "headless", "output": { "outputOnFailure": true } },
     { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
     { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true } },
-    { "name": "wasm-node", "configurePreset": "wasm-node", "output": { "outputOnFailure": true } }
+    { "name": "wasm-node", "configurePreset": "wasm-node", "output": { "outputOnFailure": true } },
+    { "name": "ios-sim-tests", "configurePreset": "ios-sim-tests", "output": { "outputOnFailure": true } }
   ]
 }

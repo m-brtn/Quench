@@ -21,20 +21,26 @@ agreed with the user covers stages 1 to 3. All documentation: [index](README.md)
 - Done: CTest with headless tests, one CTest test per case.
 - Done: the `wasm-node` preset: the headless targets and their tests built with Emscripten and run under Node.js,
   single-threaded (`PhysicsWorld` uses Jolt's `JobSystemSingleThreaded` there).
-- Moved: a separate `headless` preset is only useful once non-headless targets exist; it comes with stage 2.
+- Moved: a separate `headless` preset is only useful once non-headless targets exist; it came with stage 2.
 
-## Stage 2: GPU layer
+## Stage 2: GPU layer (done 2026-11-05, except the iPhone run)
 
-- `quench::gpu` over SDL GPU: device, buffers, textures, samplers, pipelines, command recording, uploads, mipmap
-  generation, render target captures, `GpuCaps`.
-- GPU timing behind the layer (the `GpuTimingMetal.m` hack stays isolated until the native Metal backend replaces it).
-- Verified on the Mac (Metal), in the iOS Simulator and on the iPhone; Vulkan through MoltenVK on the Mac.
+- Done: `quench::gpu` over SDL GPU: device, buffers, textures, samplers, pipelines, command recording, uploads,
+  downloads (render target captures), mipmap generation, blits, fences, presentation to a window, `gpu::Caps`.
+- Done: GPU timing behind the layer (`SdlGpuTimingMetal.m`, isolated until the native Metal backend replaces it).
+- Done: `quench_app` with the SDL backends of `quench::fs` (SDL_IOStream) and of the log (SDL_Log); the `headless`
+  preset (`QUENCH_HEADLESS`: no SDL).
+- Done: GPU tests on the Mac (Metal), in the iOS Simulator (the `ios-sim-tests` preset) and on Vulkan through MoltenVK
+  on the Mac, with the Metal API validation layer and the Khronos validation layer.
+- Moved to stage 3: the run on the iPhone. A test executable needs a signed app bundle to run on the device, and the
+  iOS bundle CMake comes with stage 3; the sample app is checked there.
 
 ## Stage 3: app shell
 
 - SDL main callbacks, window, the game interface, common flags (`--quit-after`, `--capture`, `--capture-at`),
   scenario runner, ImGui, input actions (keyboard, mouse, gamepad, touch), iOS bundle and app icon CMake
   (`quench_add_game()`).
+- The GPU tests and the sample on the iPhone (moved from stage 2).
 - `examples/hello`: a lit mesh with a capture check against `tests/golden/`, and a benchmark scenario; first budgets
   in `docs/performance.md`. `templates/game` and a script that creates a new game from it.
 - Version 0.1.0 and the first release notes.

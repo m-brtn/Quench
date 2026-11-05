@@ -196,5 +196,5 @@ extern const ShaderTable ${arg_NAME};
         VERBATIM)
     target_sources(${target} PRIVATE ${gen_dir}/${arg_NAME}_shaders.cpp ${header})
     target_include_directories(${target} PRIVATE ${gen_dir})
-    target_link_libraries(${target} PRIVATE quench_gpu)
+    target_link_libraries(${target} PRIVATE quench_gpu_shaders)
 endfunction()

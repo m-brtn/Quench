@@ -20,12 +20,15 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-05): stage 1 of `docs/roadmap.md` is in place: the CMake skeleton and presets, `quench_core`
-(`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard library backend,
-worker thread priority), `quench_physics` (`PhysicsWorld` on Jolt), the shader build (`quench_shaderc`,
-`quench_add_shaders()`) and headless tests, also run as WebAssembly under Node.js. There is no window, GPU layer,
-renderer or sample app yet, so the capture and benchmark gates cannot run.** `docs/migration.md` describes what exists in the two games; the rest of `docs/` is
-design and plan beyond stage 1. Update this paragraph whenever that changes.
+**Current state (2026-11-05): stages 1 and 2 of `docs/roadmap.md` are in place: the CMake skeleton and presets,
+`quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
+library backend, worker thread priority), `quench_physics` (`PhysicsWorld` on Jolt), the shader build
+(`quench_shaderc`, `quench_add_shaders()`), `quench_gpu` (the GPU layer over SDL GPU) and `quench_app` (so far only
+the SDL backends of `quench::fs` and the log). Headless tests also run as WebAssembly under Node.js; GPU tests render
+offscreen and read the pixels back on Metal (Mac and iOS Simulator) and on Vulkan through MoltenVK. Nothing has run on
+the iPhone yet. There is no main loop, renderer or sample app, so the capture and benchmark gates cannot run.**
+`docs/migration.md` describes what exists in the two games; the rest of `docs/` is design and plan beyond stage 2.
+Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) with one HLSL shader source compiled at build
 time, Jolt Physics, Dear ImGui (diagnostics), GLM, miniaudio. Planned additions and their licences:
@@ -44,8 +47,9 @@ How each backend is verified:
 
 - **Metal**: on the Mac and on the iPhone. Agents cannot see the device screen: ask the user to run device checks and
   record their report as a user report in the devlog.
-- **Vulkan**: on the Mac only through MoltenVK, a translation layer over Metal. It checks the SPIR-V path and the
-  validation layers, not real Vulkan drivers: say so whenever Vulkan results are mentioned.
+- **Vulkan**: on the Mac only through MoltenVK, a translation layer over Metal (Homebrew's `vulkan-loader`,
+  `molten-vk` and `vulkan-validationlayers`; the `gpu_vulkan.*` CTest variant). It checks the SPIR-V path and the
+  Khronos validation layer's core checks, not real Vulkan drivers: say so whenever Vulkan results are mentioned.
 - **Web**: the pinned SDL (3.4.18) has no WebGPU backend in SDL GPU (only an experimental pull request,
   libsdl-org/SDL#16020). Until one is usable, web compatibility is verified only for headless modules, built with
   Emscripten and run as CTest under Node.js on the Mac (the `wasm-node` preset, single-threaded, with stack overflow
@@ -59,10 +63,14 @@ startup). The first configure of every preset downloads the pinned dependencies.
 
 ```sh
 cmake --preset debug && cmake --build --preset debug && ctest --preset debug -j8   # also release, asan, tsan
+cmake --preset headless && cmake --build --preset headless && ctest --preset headless -j8   # no SDL, no GPU
 tools/format.sh --check            # tools/format.sh without arguments formats in place
-# iOS: libraries only for now; the shaders are compiled by a macOS quench_shaderc from the host-tools preset
+# iOS: the shaders are compiled by a macOS quench_shaderc from the host-tools preset
 cmake --preset host-tools && cmake --build --preset host-tools
-cmake --preset ios-sim-release && cmake --build --preset ios-sim-release        # or ios-device-release
+cmake --preset ios-sim-release && cmake --build --preset ios-sim-release        # or ios-device-release (libraries)
+# Tests in the iOS Simulator, run through `xcrun simctl spawn booted` (build and ctest need a booted Simulator)
+xcrun simctl boot "iPhone 18 Pro Max"
+cmake --preset ios-sim-tests && cmake --build --preset ios-sim-tests && ctest --preset ios-sim-tests -j4
 # Web check: headless tests as WebAssembly under Node.js, single-threaded (needs host-tools and Homebrew's
 # emscripten; the preset points EMSDK_PYTHON at Homebrew's python3, Xcode's is too old)
 emcmake cmake --preset wasm-node && cmake --build --preset wasm-node && ctest --preset wasm-node -j8
@@ -73,6 +81,14 @@ executable runs one case by name (`build/debug/tests/quench_core_tests json_roun
 arguments, and lists them with `--list`. A case that cannot run in a build (threads in the single-threaded web build)
 calls `QUENCH_SKIP` and is reported as skipped, not passed.
 
+GPU tests (`quench_gpu_device_tests`) render small offscreen targets and check the pixels they read back. On the Mac
+every case runs twice: `gpu_device.*` on the default driver (Metal, with the Metal API validation layer,
+`MTL_DEBUG_LAYER=1`) and `gpu_vulkan.*` on Vulkan through MoltenVK (registered when Homebrew's `vulkan-loader` is
+found; with `vulkan-validationlayers` installed, a validation error or warning in the output fails the case). With
+the driver named in `QUENCH_TEST_GPU_DRIVER` (set by CTest) a missing device fails the case instead of
+skipping it. `gpu_device.window_present` opens a small window for a moment; it is skipped on iOS, where windows need
+the app lifecycle.
+
 All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
 
 - **Every code change:** build `debug` and `release`, run `ctest` for both, `tools/format.sh --check`, and (once the
@@ -81,8 +97,8 @@ All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
 - **Core, job system, assets or anything threaded:** also `ctest` under the `asan` preset (AddressSanitizer and
   UndefinedBehaviorSanitizer); job system and threading changes also under `tsan` (ThreadSanitizer).
 - **Headless modules (core, physics, assets, animation, navigation, audio mixer):** also the `wasm-node` web check.
-- **Platform, GPU or app code:** also build for iOS; ask the user to run on the iPhone when the change can behave
-  differently on the device.
+- **Platform, GPU or app code:** also build for iOS and run `ios-sim-tests`; ask the user to run on the iPhone when
+  the change can behave differently on the device.
 - **Rendering or frame-time-sensitive code:** run the benchmark and compare with the numbers before the change (see
   "Verification").
 - **Engine code a game uses, after each change:** `tools/check_games.sh` (planned) builds every game against the local
@@ -114,7 +130,7 @@ Details and rationale: `docs/architecture.md`.
   from modules a game enables; games add their own passes and material shading through engine APIs. The scene is
   retained in the engine: meshes, instances, materials and lights are registered, not resubmitted as per-frame draw
   lists, so that ray tracing can build acceleration structures. Effects are slots with fallbacks chosen by device
-  capabilities (`GpuCaps`), never by platform `#ifdef` (for example shadow maps or ray-traced shadows, SSR or
+  capabilities (`gpu::Caps`), never by platform `#ifdef` (for example shadow maps or ray-traced shadows, SSR or
   ray-traced reflections).
 - **Shaders.** HLSL compiled at build time to SPIR-V, MSL / metallib and DXIL (WGSL later). Shared shader code comes
   from the engine shader library by `#include`. Uniform structs are defined once, in headers read by both C++ and
@@ -329,12 +345,15 @@ README.md              short overview
 LICENSE                MIT licence of the engine; THIRD_PARTY_LICENSES: licences of the libraries it ships
 CMakeLists.txt         engine targets; CMakePresets.json: configure, build and test presets
 cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), QuenchShaders
-                       (quench_add_shaders), EmbedShaders, QuenchTargets (warnings, include directories)
-include/quench/        public headers per module: core/, physics/, gpu/
-src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*)
+                       (quench_add_shaders), EmbedShaders, QuenchTargets (warnings, include directories),
+                       patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
+include/quench/        public headers per module: core/, physics/, gpu/, app/
+src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
+                       src/gpu/sdlgpu/: the SDL GPU backend)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
 tools/format.sh        clang-format over the C and C++ sources (--check)
-tests/                 headless tests: harness/, core/, physics/, gpu/ (with test shaders), header check
+tests/                 harness/, core/, physics/, gpu/ (shader tests; GPU device tests and their shaders), app/,
+                       header check
 docs/                  documentation (index docs/README.md): architecture, platforms, dependencies, migration, roadmap
 devlog/                daily development log (template in devlog/README.md)
 .clang-format          code format; .editorconfig for editors

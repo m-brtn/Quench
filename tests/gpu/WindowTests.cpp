@@ -1,0 +1,69 @@
+#include "GpuTest.h"
+
+#include "core/Platform.h"
+#include "render_shaders.h"
+
+#include <SDL3/SDL.h>
+
+using namespace quench;
+using namespace quench::gpu;
+
+#if QUENCH_PLATFORM_MACOS || QUENCH_PLATFORM_WINDOWS || QUENCH_PLATFORM_LINUX
+namespace {
+
+void drawFrames(Device& device, SDL_Window* window) {
+    const TextureFormat format = device.swapchainFormat(window);
+    REQUIRE(format != TextureFormat::Invalid, "no swapchain format");
+    std::printf("  swapchain %s\n", formatInfo(format).name);
+    CHECK(device.setPresentMode(window, PresentMode::Vsync) == PresentMode::Vsync, "Vsync refused");
+
+    const ColorTargetDesc color{.format = format};
+    Result<GraphicsPipeline> pipeline = device.createPipeline({.vertexShader = shaders::render.find("fullscreen_vs"),
+                                                               .fragmentShader = shaders::render.find("uniform_fs"),
+                                                               .colorTargets = {&color, 1}});
+    REQUIRE(pipeline, "%s", pipeline.error().c_str());
+
+    int width = 0, height = 0;
+    SDL_GetWindowSizeInPixels(window, &width, &height);
+    int presented = 0;
+    for (int frame = 0; frame < 3; ++frame) {
+        SDL_PumpEvents();
+        CommandBuffer commands = device.acquireCommandBuffer();
+        REQUIRE(commands, "no command buffer");
+        const TextureRef swapchain = commands.acquireSwapchainTexture(window);
+        if (swapchain) {
+            CHECK(int(swapchain.desc.width) == width && int(swapchain.desc.height) == height,
+                  "swapchain %u x %u, window %d x %d", swapchain.desc.width, swapchain.desc.height, width, height);
+            RenderPass pass = commands.beginRenderPass(ColorTarget{.texture = swapchain});
+            pass.bindPipeline(*pipeline);
+            pass.pushUniforms(ShaderStage::Fragment, 0, Color{0.1f, 0.3f * float(frame), 0.6f, 1.0f});
+            pass.draw(3);
+            ++presented;
+        }
+        const Result<void> submitted = commands.submit();
+        CHECK(submitted, "submit: %s", submitted.error().c_str());
+    }
+    CHECK(presented == 3, "%d of 3 frames had a swapchain texture", presented);
+}
+
+} // namespace
+#endif
+
+// A real window: claim it, draw into its swapchain texture for a few frames, present, release. Opens a small window
+// for a moment.
+QUENCH_TEST(window_present) {
+#if !(QUENCH_PLATFORM_MACOS || QUENCH_PLATFORM_WINDOWS || QUENCH_PLATFORM_LINUX)
+    QUENCH_SKIP("windows need the app lifecycle on this platform");
+#else
+    QUENCH_GPU_DEVICE(device);
+    SDL_Window* window = SDL_CreateWindow("quench_gpu_device_tests", 160, 90, 0);
+    REQUIRE(window, "SDL_CreateWindow: %s", SDL_GetError());
+    const Result<void> claimed = device.claimWindow(window);
+    CHECK(claimed, "claimWindow: %s", claimed.error().c_str());
+    if (claimed) {
+        drawFrames(device, window);
+        device.releaseWindow(window);
+    }
+    SDL_DestroyWindow(window);
+#endif
+}

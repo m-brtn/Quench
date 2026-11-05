@@ -1,6 +1,7 @@
 # `cmake -P` script run after a test executable is built: writes one add_test() per case it lists (`EXE --list`) into
 # OUTPUT, which CTest includes. Parameters: EXE, PREFIX, OUTPUT, WORKING_DIRECTORY, SKIP_RETURN_CODE and optionally
-# EMULATOR (CMAKE_CROSSCOMPILING_EMULATOR, Node.js for WebAssembly builds).
+# EMULATOR (CMAKE_CROSSCOMPILING_EMULATOR, Node.js for WebAssembly builds), ENVIRONMENT (NAME=value entries
+# separated by '|') and FAIL_REGEX (output that fails a case).
 cmake_minimum_required(VERSION 3.28)
 execute_process(COMMAND ${EMULATOR} ${EXE} --list OUTPUT_VARIABLE _out RESULT_VARIABLE _res)
 if(NOT _res EQUAL 0)
@@ -11,6 +12,14 @@ foreach(_part IN LISTS EMULATOR)
     string(APPEND _command "[=[${_part}]=] ")
 endforeach()
 string(APPEND _command "[=[${EXE}]=]")
+set(_properties "")
+if(ENVIRONMENT)
+    string(REPLACE "|" ";" _env "${ENVIRONMENT}")
+    string(APPEND _properties " ENVIRONMENT [=[${_env}]=]")
+endif()
+if(FAIL_REGEX)
+    string(APPEND _properties " FAIL_REGULAR_EXPRESSION [=[${FAIL_REGEX}]=]")
+endif()
 string(REPLACE "\n" ";" _names "${_out}")
 set(_content "")
 foreach(_name IN LISTS _names)
@@ -19,6 +28,6 @@ foreach(_name IN LISTS _names)
     endif()
     string(APPEND _content "add_test([=[${PREFIX}.${_name}]=] ${_command} [=[${_name}]=])\n")
     string(APPEND _content "set_tests_properties([=[${PREFIX}.${_name}]=] PROPERTIES WORKING_DIRECTORY "
-                           "[=[${WORKING_DIRECTORY}]=] SKIP_RETURN_CODE ${SKIP_RETURN_CODE})\n")
+                           "[=[${WORKING_DIRECTORY}]=] SKIP_RETURN_CODE ${SKIP_RETURN_CODE}${_properties})\n")
 endforeach()
 file(WRITE "${OUTPUT}" "${_content}")

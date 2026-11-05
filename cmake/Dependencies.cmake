@@ -35,3 +35,27 @@ FetchContent_Declare(JoltPhysics
     SYSTEM
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(JoltPhysics)
+
+if(QUENCH_HEADLESS)
+    return()
+endif()
+
+# ---------------------------------------------------------------- SDL 3
+# release-3.4.18
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+# The archive has no REVISION.txt, and git describe would find the enclosing repository instead.
+set(SDL_REVISION "SDL-3.4.18-829a65d7" CACHE STRING "" FORCE)
+FetchContent_Declare(SDL3
+    URL https://github.com/libsdl-org/SDL/archive/829a65d769d935c4852f8159e964312c0957260a.tar.gz
+    URL_HASH SHA256=48e15cf1a6928453d77afa955d1fdfbbca9169e2bc3d76d111acb9b8bb076d66
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    # iOS Simulator only (TARGET_OS_SIMULATOR): accept the Simulator's Metal device in SDL GPU.
+    PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlIosSimulator.cmake
+    SYSTEM
+    EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(SDL3)
