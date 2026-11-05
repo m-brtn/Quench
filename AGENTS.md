@@ -20,14 +20,15 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-05, version 0.3.0; stage 6 not released yet): stages 1 to 3 and 5 of `docs/roadmap.md` are
-in place, stage 4 for TrailForge only, stage 6 except shader hot reload: the CMake skeleton and presets,
+**Current state (2026-11-05, version 0.4.0): stages 1 to 3 and 5 of `docs/roadmap.md` are in place, stage 4 for
+TrailForge only, stage 6 except shader hot reload: the CMake skeleton and presets,
 `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
 library backend, worker thread priority, the job system `quench::JobSystem` on enkiTS), `quench_physics`
 (`PhysicsWorld` on Jolt, its jobs on the engine's job system), `quench_assets` (asset IDs, the `AssetManager` cache
 with reference counts, placeholders, budgets, loads on jobs, a per-frame upload budget, hot reload on the Mac,
 streaming by distance; KTX2 textures and cooked `.qmodel` models), `quench_cook` (the host tool: glTF, GLB, PNG, JPEG,
-KTX2 to BC7 or RGBA8 KTX2 with mips and meshoptimizer models; `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`) and the engine shader library in
+KTX2 to BC7 or RGBA8 KTX2 with mips and meshoptimizer models; `quench_cook_assets()`), the shader build
+(`quench_shaderc`, `quench_add_shaders()`) and the engine shader library in
 `shaders/quench/` (uniform structs shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain
 compositions for HDR), `quench_app` and `quench_main` (SDL main callbacks, the game interface, input actions, ImGui,
 common flags, scenarios with points in window points, percent or names a game gives (`Game::scenarioPoint`), HDR
@@ -40,18 +41,20 @@ capability; game passes and surface shaders; `SceneAssets` puts asset textures a
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (a section per feature, each with a scripted
 check and golden captures; `tools/package_demo.sh` packages it into `dist/`); `templates/game` and
 `tools/new_game.py` start a new game. Tests run on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator,
-on the user's iPhone (one signed test app; signed by the user's paid team) and, for the headless modules, as
-WebAssembly under Node.js. HDR output was looked at on the iPhone (the user, 2026-11-05: "everything is fine"), never
-on a Mac display (this Mac's has no HDR range). TrailForge builds on the engine's `quench_core` (`FixedStepClock`,
+on the user's iPhone (one signed test app; signed by the user's paid team; not yet with the stage 6 code) and, for
+the headless modules, as WebAssembly under Node.js. HDR output was looked at on the iPhone (the user, 2026-11-05:
+"everything is fine"), never on a Mac display (this Mac's has no HDR range). TrailForge builds on the engine's
+`quench_core` (`FixedStepClock`,
 JSON), `quench_physics` and shader build, renders its own passes through `quench_gpu` (not through `quench_render`),
 and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and captures; pinned
 `d708783`, not yet moved to a release) with its own input layer fed through `Game::event` and its own physics clock;
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system or
-the asset system yet. No shader hot reload, ASTC or Basis Universal textures, audio or animation yet (stage 6
-remaining work, stages 7 and 8).** `docs/migration.md` describes what exists in the two games; `docs/app.md`,
-`docs/render.md`, `docs/assets.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is
-built; the rest of `docs/` is design and plan beyond stage 6. Update this paragraph whenever that changes.
+the asset system yet. No shader hot reload, ASTC or Basis Universal textures, normal maps in the standard surface,
+asset hot reload on a device, audio or animation yet (stage 6 remaining work, stages 7 and 8).**
+`docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
+`docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is built; the rest of `docs/` is design
+and plan beyond stage 6. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) with one HLSL shader source compiled at build
 time, Jolt Physics, Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer and bc7enc_rdo's

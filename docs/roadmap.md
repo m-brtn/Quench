@@ -105,7 +105,7 @@ code may be moved), verified with the engine's tests and the engine demo; no ver
   the gamepad lines of the demo's and hello's input scenarios fail in the Simulator only).
 - Done: version 0.3.0, release notes in [docs/releases/v0.3.0.md](releases/v0.3.0.md).
 
-## Stage 6: assets (mostly done 2026-11-05; shader hot reload remaining; no version change yet)
+## Stage 6: assets (done 2026-11-05 except shader hot reload, version 0.4.0; games not switched)
 
 User decisions for this stage (2026-11-05): engine only (the games are not switched, built or tested), verified with
 the engine's tests and the demo's new "Assets" section. Described in [Jobs, assets and the cook](assets.md).
@@ -132,7 +132,9 @@ the engine's tests and the demo's new "Assets" section. Described in [Jobs, asse
   around a focus point with hysteresis, nearest first.
 - Not done, remaining: shader hot reload; ASTC and Basis Universal for Android and the web; normal and emissive
   textures in the standard surface; an asset server for hot reload on the iPhone; the demo's "Assets" section on the
-  iPhone (not run there: running on the device needs the user's approval).
+  iPhone (not run there: running on the device needs the user's approval). Shader hot reload stays open as P1 (see
+  the table below); the release went ahead without it (decided without the user, 2026-11-05, as recommended).
+- Done: version 0.4.0, release notes in [docs/releases/v0.4.0.md](releases/v0.4.0.md).
 
 ## Stage 7: audio
 
