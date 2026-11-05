@@ -34,7 +34,8 @@ double App::time() const { return m_state.time; }
 std::uint64_t App::frame() const { return m_state.frame; }
 std::uint64_t App::ticks() const { return m_state.ticks; }
 double App::alpha() const { return m_state.clock.alpha(); }
-bool App::deterministic() const { return m_state.options.deterministic(); }
+bool App::deterministic() const { return m_state.options.deterministic() && !m_state.perf; }
+bool App::scripted() const { return !m_state.options.script.empty(); }
 const FrameStats& App::stats() const { return m_state.stats; }
 
 WindowRect App::safeArea() const {
@@ -263,7 +264,7 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
         return SDL_APP_FAILURE;
     }
     s.game = std::move(*game);
-    if (!s.game) return fail("createGame returned no game");
+    if (!s.game) return SDL_APP_SUCCESS;
 
     SDL_SetAppMetadata(s.desc.name.c_str(), s.desc.version.c_str(), nullptr);
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) return fail(std::format("SDL_Init: {}", SDL_GetError()));
@@ -367,7 +368,8 @@ SDL_AppResult iterate(AppState& s) {
     if (s.pendingInput.kind == PendingInput::Kind::None && s.inputPushedFrame != s.frame) s.textInputs.clear();
 
     const double step = s.clock.step();
-    const double frameDt = s.options.deterministic() ? step : realDt;
+    const bool fixedFrame = s.app.deterministic();
+    const double frameDt = fixedFrame ? step : realDt;
     const int ticks = s.clock.advance(frameDt);
     for (int i = 0; i < ticks; ++i) {
         s.game->fixedStep(s.app, step);
@@ -392,6 +394,10 @@ SDL_AppResult iterate(AppState& s) {
 
     const double cpuMs = double(submitCounter - now) * 1000.0 / frequency - waitMs;
     updateStats(s, realDt, cpuMs, ticks);
+    if (fixedFrame) {
+        const double spent = double(SDL_GetPerformanceCounter() - now) / frequency;
+        if (spent < step) SDL_DelayPrecise(Uint64((step - spent) * 1e9));
+    }
 
     if (s.options.quitAfter >= 0.0 && s.time + 1e-9 >= s.options.quitAfter && !s.quitRequested) {
         log::info("app", "quit after {:.3f} s: {} frames, {} ticks", s.time, s.frame + 1, s.ticks);

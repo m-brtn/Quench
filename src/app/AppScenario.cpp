@@ -29,7 +29,7 @@ Scenario::Exec pushKey(AppState& s, SDL_Scancode scancode, bool down) {
     e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
     e.key.windowID = SDL_GetWindowID(s.window.get());
     e.key.scancode = scancode;
-    e.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
+    e.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, true);
     e.key.down = down;
     push(s, e);
     return Scenario::Exec::Done;
@@ -195,6 +195,7 @@ void finishPerf(AppState& s) {
     v.clear();
     v["perf_frames"] = double(r.frameMs.size());
     v["perf_frame_avg"] = average(r.frameMs);
+    v["perf_frame_p10"] = percentile(r.frameMs, 0.10);
     v["perf_frame_p50"] = percentile(r.frameMs, 0.50);
     v["perf_frame_p95"] = percentile(r.frameMs, 0.95);
     v["perf_frame_p99"] = percentile(r.frameMs, 0.99);
@@ -204,14 +205,20 @@ void finishPerf(AppState& s) {
     v["perf_cpu_p95"] = percentile(r.cpuMs, 0.95);
     v["perf_cpu_p99"] = percentile(r.cpuMs, 0.99);
     v["perf_gpu_avg"] = average(r.gpuMs);
+    // The fastest GPU frames are the least disturbed by other work on the machine.
+    v["perf_gpu_min"] = r.gpuMs.empty() ? -1.0 : *std::min_element(r.gpuMs.begin(), r.gpuMs.end());
+    v["perf_gpu_p10"] = percentile(r.gpuMs, 0.10);
     v["perf_gpu_p50"] = percentile(r.gpuMs, 0.50);
     v["perf_gpu_p95"] = percentile(r.gpuMs, 0.95);
+    const std::string details = s.game->perfDetails(s.app);
     log::info("perf",
-              "{}: {} frames; frame ms avg {:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f} max {:.3f}; cpu ms avg {:.3f} "
-              "p50 {:.3f} p95 {:.3f} p99 {:.3f}; gpu ms avg {:.3f} p50 {:.3f} p95 {:.3f} ({} samples)",
-              r.label, r.frameMs.size(), v["perf_frame_avg"], v["perf_frame_p50"], v["perf_frame_p95"],
-              v["perf_frame_p99"], v["perf_frame_max"], v["perf_cpu_avg"], v["perf_cpu_p50"], v["perf_cpu_p95"],
-              v["perf_cpu_p99"], v["perf_gpu_avg"], v["perf_gpu_p50"], v["perf_gpu_p95"], r.gpuMs.size());
+              "{}: {} frames; frame ms avg {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f} max {:.3f}; cpu ms avg "
+              "{:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f}; gpu ms avg {:.3f} min {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} "
+              "({} samples){}{}",
+              r.label, r.frameMs.size(), v["perf_frame_avg"], v["perf_frame_p10"], v["perf_frame_p50"],
+              v["perf_frame_p95"], v["perf_frame_p99"], v["perf_frame_max"], v["perf_cpu_avg"], v["perf_cpu_p50"],
+              v["perf_cpu_p95"], v["perf_cpu_p99"], v["perf_gpu_avg"], v["perf_gpu_min"], v["perf_gpu_p10"],
+              v["perf_gpu_p50"], v["perf_gpu_p95"], r.gpuMs.size(), details.empty() ? "" : "; ", details);
     s.perf.reset();
 }
 

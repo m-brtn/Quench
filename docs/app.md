@@ -16,11 +16,12 @@ Result<std::unique_ptr<quench::app::Game>> quench::app::createGame(AppDesc& desc
 
 It runs before SDL is initialized, with the arguments the engine did not consume. The game fills `AppDesc` (name,
 organization, version, asset directory, window size, fixed step, present mode) and returns its `Game`, or an error
-for an argument it does not know (the process then exits with 1). `quench_add_game()` defines `QUENCH_GAME_NAME` and
+for an argument it does not know (the process then exits with 1). A null `Game` without an error ends the program
+with 0, for game flags that only print (TrailForge's `--paths`). `quench_add_game()` defines `QUENCH_GAME_NAME` and
 `QUENCH_GAME_VERSION` for the game's sources.
 
 `Game` (`include/quench/app/App.h`) has `init`, `fixedStep`, `update`, `ui`, `render`, `event`, `shutdown`, and
-`scenarioValue` / `scenarioCommand` for scripts. Per frame:
+`scenarioValue` / `scenarioCommand` / `perfDetails` for scripts. Per frame:
 
 1. SDL events: ImGui, then `Input`, then `Game::event`.
 2. Input actions are updated; a running scenario executes its commands.
@@ -83,9 +84,13 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--version` | print the version and exit |
 
 With `--script` or `--capture` the run is **deterministic**: every frame advances the app time by exactly one fixed
-step and runs one tick, whatever the display rate. Frames still come as fast as the present mode allows, so app time
-runs slower or faster than real time. Games should hide timings in deterministic runs (`App::deterministic()`), so
-captures compare across runs.
+step and runs one tick, whatever the display rate. Such a frame never takes less than the step in real time (the
+engine waits for the rest), so background work such as streaming keeps its pace against app time; when frames take
+longer (60 Hz vsync), app time runs slower than real time. A scenario's `perf_begin` .. `perf_end` region runs in
+real time instead, with as many ticks per frame as in normal play, so it measures the real frame cost
+(`App::deterministic()` is false there). Games should hide timings in deterministic runs, so captures compare across
+runs. `App::scripted()` tells a game that a scenario runs, for example to start from default settings and keep the
+user's files untouched.
 
 The user directory is `SDL_GetPrefPath(organization, name)`: `~/Library/Application Support/<organization>/<name>/` on
 macOS, `Library/Application Support/<organization>/<name>/` in the app's data container on iOS.
@@ -111,12 +116,13 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `gamepad button NAME down\|up\|tap`, `gamepad axis NAME VALUE` | SDL names: `a`, `b`, `x`, `y`, `start`, `dpup`, ...; `leftx`, `lefty`, `rightx`, `righty` (-1..1), `lefttrigger`, `righttrigger` (0..1) |
 | `resize W H` | resize the window (points) |
 | `capture PATH` | capture the next frame |
-| `perf_begin LABEL`, `perf_end` | measure the frames in between; `perf_end` logs a `perf:` line and sets the `perf_*` values |
+| `perf_begin LABEL`, `perf_end` | measure the frames in between, in real time; `perf_end` logs a `perf:` line (with the game's `Game::perfDetails` at the end) and sets the `perf_*` values |
 
 Values: `time`, `frame`, `ticks`, `fps`, `frame_ms`, `cpu_ms`, `gpu_ms`, `window_w`, `window_h`, `pixel_w`, `pixel_h`,
 `gamepad` (1 when connected), `fingers`, `action:NAME` (an action's value), after `perf_end` `perf_frames`,
-`perf_frame_avg`, `perf_frame_p50`, `perf_frame_p95`, `perf_frame_p99`, `perf_frame_max`, `perf_cpu_avg`,
-`perf_cpu_p50`, `perf_cpu_p95`, `perf_cpu_p99`, `perf_gpu_avg`, `perf_gpu_p50`, `perf_gpu_p95` (milliseconds; -1 when
+`perf_frame_avg`, `perf_frame_p10`, `perf_frame_p50`, `perf_frame_p95`, `perf_frame_p99`, `perf_frame_max`,
+`perf_cpu_avg`, `perf_cpu_p50`, `perf_cpu_p95`, `perf_cpu_p99`, `perf_gpu_avg`, `perf_gpu_min`, `perf_gpu_p10`,
+`perf_gpu_p50`, `perf_gpu_p95` (milliseconds; -1 when
 there were no samples, for example GPU time without `gpu::Caps::gpuTiming`); then the game's (`Game::scenarioValue`). Unknown commands are offered
 to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N: ...`, and the run ends
 with `N passed, M failed`; tests match `FAIL line`.

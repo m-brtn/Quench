@@ -98,7 +98,8 @@ Order: TrailForge first (the engine was written for it, it has the most tests an
 | Game | Moved to the engine | Engine pin | Date |
 |---|---|---|---|
 | TrailForge | `PhysicsWorld` and `JoltRuntime` (`quench_physics`), `FixedStepClock` and JSON (`quench_core`), the shader build (`quench_add_shaders`, `quench_shaderc`; also `tools/texc` for JSON) | `502c35e` | 2026-11-05 |
-| TrailForge | the renderer on `quench::gpu`, ImGui drawn by `quench::app::ImGuiRenderer` (`quench_imgui`), GPU timing; its own window and loop stay | not pinned yet | 2026-11-05 |
+| TrailForge | the renderer on `quench::gpu`, ImGui drawn by `quench::app::ImGuiRenderer` (`quench_imgui`), GPU timing; its own window and loop stay | `3dfb9f4` (TrailForge `658fd77`) | 2026-11-05 |
+| TrailForge | the app shell: `quench_main` (SDL main callbacks), `quench_app` (window, GPU device, ImGui, the engine's flags, scenario runner, captures, perf regions); its input layer and its physics clock stay in the game | not pinned yet | 2026-11-05 |
 | Ashfall | nothing yet | | |
 
 What a game changes when it switches (TrailForge's switch as the example):
@@ -127,3 +128,48 @@ What a game changes when it switches (TrailForge's switch as the example):
   before the pass, `draw()` inside it) instead of ImGui's SDL GPU backend; image ids from
   `quench::app::imguiTexture()`. Link order `quench_app quench_gpu quench_imgui` (otherwise ld warns about a duplicate
   library).
+
+Moving to the app shell (`quench_main`, `quench_app`; TrailForge's switch as the example, [App shell](app.md) for the
+interface):
+
+- Entry point: the game's `main` and loop go; it links `quench_main` (a game with its own executable and bundle CMake
+  keeps them, as TrailForge does, instead of `quench_add_game()`) and defines `createGame()` next to a small `Game`
+  adapter over its application class. `createGame()` fills `AppDesc` and parses the game's own flags from the
+  arguments the engine did not consume: an unknown flag returns an error (exit code 1). With `--help` the engine
+  prints its options and passes `--help` on, so the game prints its own. A flag that only prints (TrailForge's
+  `--paths`) prints and returns a null game without an error: the program ends with 0 before SDL starts. The
+  engine's flags replace the game's flags of the same purpose (`--quit-after`, `--capture`, `--script`, ...).
+- User directory: `SDL_GetPrefPath(AppDesc::organization, AppDesc::name)`. A game with existing players' files sets
+  the organization and name it used before; TrailForge sets an empty organization, so its files stay in
+  `SDL_GetPrefPath(nullptr, "TrailForge")`.
+- Window and ImGui: the engine creates the window from `AppDesc` (name as title, size in points) and sets up ImGui
+  before `Game::init`. A game restores its own window and style in `init` through `App::window()` and ImGui
+  (TrailForge: title with its version, 1440 x 900 points times the display's content scale unless `--window` set a
+  size, centered, its icon; ImGui reset to `StyleColorsDark` with sizes and fonts scaled by the content scale).
+- Exceptions must not cross the SDL callbacks: the adapter catches them. In `init` it returns the error (the app ends
+  with a failure exit code), in the per-frame calls it ends the app with `App::quit(1)`, in the scenario hooks it
+  fails the command or returns no value.
+- Renderer: it is created with the engine's device (`App::device()`) and swapchain format and records into
+  `Frame::commands` and `Frame::target` in `Game::render`; the engine owns the swapchain, ImGui, captures, the
+  present mode and GPU timing, so the game's own code for them goes. Every GPU resource is released in
+  `Game::shutdown` at the latest (the engine destroys the device after it).
+- Input: a game with its own input layer keeps it for now and feeds it from `Game::event` (TrailForge's
+  `tf::Input`); `quench::app::Input` actions replace it later, generalized together with Ashfall.
+- Scenarios: the engine runs its own commands and values and offers the rest to `Game::scenarioCommand` and
+  `Game::scenarioValue`. Where a game command or value has an engine name with another meaning, the game's scripts
+  change (TrailForge: `log` -> `telemetry`, `click ITEM` -> `click_item`, `wheel` -> `wheel_center`, `ticks` ->
+  `sim_ticks`, gamepad names to SDL's: `south` -> `a`, `lb` -> `leftshoulder`, `lt` -> `lefttrigger`). The engine
+  runs scenario commands at the start of a frame, after polling events: input it pushes reaches the game in the next
+  frame, and after a `down`, `up` or `tap` the next command runs one frame earlier relative to the game than in a
+  runner that ran before polling (TrailForge's). Checks right after input may need `until` instead of `wait` and
+  `expect`, and the game's reference captures need a new set.
+- A game command that queues SDL events itself returns `ScenarioExec::Busy` until its last event has been through a
+  whole frame (`update` saw it); otherwise the next command runs before the game has seen the input.
+- `App::scripted()` lets scenario runs start where the scripts expect (TrailForge starts them in gameplay, without
+  the intro); `Game::perfDetails()` adds game fields to the `perf:` line.
+- iOS: with main callbacks the frames follow SDL's display link, which iOS caps at 60 Hz on phones unless the
+  Info.plist has `CADisableMinimumFrameDurationOnPhone` (`quench_add_game()`'s Info.plist has it; a game with its own
+  adds it). The process now ends after `SDL_AppQuit`; with a classic `main` it stayed alive on iOS.
+- Intermediate step: a game whose simulation depends on its own clock (pause, step once, audio per tick) may keep that
+  clock inside `Game::update` and use the engine's only for the frame time; moving the ticks to `Game::fixedStep` is a
+  separate step. TrailForge does this today.

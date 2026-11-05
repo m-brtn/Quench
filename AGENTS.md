@@ -29,8 +29,9 @@ standard library backend, worker thread priority), `quench_physics` (`PhysicsWor
 `tests/golden/`, input and benchmark scenarios); `templates/game` and `tools/new_game.py` start a new game. Tests run
 on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator, on the user's iPhone (one signed test app) and,
 for the headless modules, as WebAssembly under Node.js. Stage 4 has started: TrailForge builds on the engine's
-`quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, and renders through `quench_gpu` and the
-engine's `ImGuiRenderer` with its own window and loop; its app shell and all of Ashfall still use their own code;
+`quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders through `quench_gpu`, and runs on
+`quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and captures; not pinned yet) with its
+own input layer fed through `Game::event` and its own physics clock; all of Ashfall still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them. There is
 no retained scene or render module (stage 5).** `docs/migration.md` describes what exists in the two games; `docs/app.md`
 and `docs/performance.md` describe what is built; the rest of `docs/` is design and plan beyond stage 3. Update this
@@ -259,8 +260,9 @@ are built:
   in the devlog. References are per backend and device (Metal and Vulkan through MoltenVK on the Mac today). Two
   Metal runs of the same binary have been identical so far; TrailForge's captures differ slightly between runs, so
   identity claims about a game need a same-process A/B.
-- **Performance.** The sample's benchmark scenario (`examples/hello/scenarios/benchmark.txt`, deterministic, fixed
-  frame count) reports frame, CPU and GPU time (average and percentiles; GPU time per frame, per pass later). Budgets
+- **Performance.** The sample's benchmark scenario (`examples/hello/scenarios/benchmark.txt`, a 10 s region in real
+  time, so the frame count follows the display) reports frame, CPU and GPU time (average and percentiles; GPU time per
+  frame, per pass later). Budgets
   per device and how to compare runs: `docs/performance.md`. A change that makes the CPU median or 99th percentile
   more than 5% worse is explained in the devlog or not made. Timings drift between runs: compare before and after in
   the same session. iPhone numbers come from runs on the user's iPhone (launched through `devicectl` after asking the

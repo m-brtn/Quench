@@ -30,7 +30,7 @@ struct Options {
     bool printHelp = false;
     std::vector<std::string> gameArgs;
 
-    // Scenario and capture runs step the app time by exactly one fixed step per frame.
+    // Scenario and capture runs step the app time by exactly one fixed step per frame (outside perf regions).
     bool deterministic() const { return !script.empty() || !capture.empty(); }
 };
 

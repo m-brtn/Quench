@@ -102,10 +102,16 @@ public:
         (void)command;
         return ScenarioExec::Unknown;
     }
+    // Game fields appended to the log line of a scenario perf region at perf_end, e.g. "draws=812 render=1920x1080".
+    virtual std::string perfDetails(App& app) {
+        (void)app;
+        return {};
+    }
 };
 
 // Defined by the game, once per executable. Called before SDL is initialized, with the command line arguments the
 // engine did not consume; the game fills `desc` and returns itself, or an error for an argument it does not know.
+// A null game without an error ends the program successfully (for a game flag that only prints, like --paths).
 Result<std::unique_ptr<Game>> createGame(AppDesc& desc, std::span<const std::string_view> args);
 
 namespace detail {
@@ -133,9 +139,11 @@ public:
     std::uint64_t ticks() const; // simulation ticks since the start
     double alpha() const;        // fraction of a tick since the last one, for interpolation
     // Scenario and capture runs (--script, --capture): every frame advances the app time by exactly one fixed step
-    // and runs one tick, so results do not depend on the display rate. Frames still come as fast as the present mode
-    // allows, so app time may run slower (or faster) than real time.
+    // and runs one tick, so results do not depend on the display rate. Such frames are never shorter than the step in
+    // real time (background work such as streaming keeps its pace), but may be longer: app time then runs slower than
+    // real time. False inside a scenario's perf_begin .. perf_end region, which runs in real time like normal play.
     bool deterministic() const;
+    bool scripted() const; // a --script scenario runs (games may start from defaults and keep user files untouched)
     const FrameStats& stats() const;
     // The part of the window not covered by notches, rounded corners or system bars, in points.
     WindowRect safeArea() const;

@@ -40,7 +40,8 @@ const char* optionsHelp() {
            "  --present-mode MODE  vsync, immediate or mailbox\n"
            "  --version            print the version and exit\n"
            "  --help               print this help and exit\n"
-           "With --script or --capture every frame advances the app time by one fixed step (deterministic runs).\n";
+           "With --script or --capture every frame advances the app time by one fixed step (deterministic runs),\n"
+           "never faster than real time; a scenario's perf_begin .. perf_end region runs in real time.\n";
 }
 
 Result<Options> parseOptions(std::span<const std::string_view> args) {

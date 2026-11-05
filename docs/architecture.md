@@ -170,16 +170,17 @@ Planned changes:
 
 The engine owns `main` and uses SDL main callbacks (`SDL_AppInit`, `SDL_AppIterate`, `SDL_AppEvent`, `SDL_AppQuit`).
 Browsers cannot run a blocking loop, and iOS and Android send the app to the background and can destroy the render
-surface at any time. TrailForge runs a blocking `while (m_running)` loop in `Application::run`; the engine replaces it.
+surface at any time. TrailForge ran a blocking `while (m_running)` loop in `Application::run` until its move to the
+app shell (2026-11-05, not committed yet); Ashfall's `Application::run` still does.
 
 A game implements `quench::app::Game` (`include/quench/app/App.h`: `init`, `fixedStep`, `update`, `ui`, `render`,
-`event`, `shutdown`, and two hooks for scenarios) and defines `quench::app::createGame()`, which fills `AppDesc` and
+`event`, `shutdown`, and three hooks for scenarios) and defines `quench::app::createGame()`, which fills `AppDesc` and
 returns the game. Until the retained scene exists (stage 5), `render` records the game's own passes into the frame's
 command buffer and target; the engine draws ImGui on top and presents. Details: [App shell](app.md).
 
 The fixed-step clock keeps TrailForge's behaviour: accumulator, frames longer than 0.25 s clamped, at most 12 steps
 per frame, interpolation between the last two ticks. Scripted and capture runs replace it with one tick per frame, so
-they are deterministic.
+they are deterministic, except inside a scenario's `perf_begin` .. `perf_end` region, which runs in real time.
 
 ## Files
 
