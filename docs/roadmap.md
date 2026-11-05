@@ -54,7 +54,7 @@ agreed with the user covers stages 1 to 3. All documentation: [index](README.md)
 
 TrailForge first, then Ashfall: replace their copies of stages 1 to 3 with the engine, following
 [Migration](migration.md). `tools/check_games.sh` (build against the local engine, start, quit cleanly) after each
-change; each game's full gates at the end of the work.
+change; each game's full gates only when the user asks (user decision, 2026-11-05).
 
 - Done: `tools/check_games.sh`.
 - Done (TrailForge): `PhysicsWorld`, `FixedStepClock`, JSON and the shader build from the engine, pinned with
@@ -65,8 +65,8 @@ change; each game's full gates at the end of the work.
   runner, captures, perf regions), run on the iPhone; pinned to engine `d708783` (TrailForge `b97883e`, 2026-11-05).
   TrailForge's input stays a game layer fed through `Game::event`, and its physics keeps its own clock inside
   `Game::update`.
-- Next: TrailForge's physics through `Game::fixedStep`; then Ashfall, and the input layer generalized from both
-  games.
+- Not now (user decisions, 2026-11-05): TrailForge's physics through `Game::fixedStep` (game work), Ashfall, and
+  the input layer generalized from both games.
 
 ## Stage 5: render modules and the retained scene
 
