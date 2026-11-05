@@ -87,17 +87,52 @@ change; each game's full gates only when the user asks (user decision, 2026-11-0
   Basis Universal later) with mipmaps. Replaces TrailForge's `texc` / `modelc` and Ashfall's Python converters.
 - Hot reload on the Mac (assets and shaders); streaming by distance generalized from `TerrainTiles`.
 
-## Stage 7: animation
+## Stage 7: audio
+
+Requested as P0 by the user (2026-11-05), after stage 6 so that sound files load through the asset system and decode
+on the job system. Generalized from the games' own mixers (both games keep theirs until the user asks to switch them).
+
+- `quench_audio`: a headless mixer (voices, buses with volume, sample rate conversion, streamed music, sources whose
+  samples the game generates), tested in CTest and under Node.js; 3D sound (listener, distance attenuation, panning,
+  Doppler).
+- Device output through miniaudio; the iOS audio session (category, interruptions, route changes).
+- Capture of the mix to a WAV file for scripted checks (`--audio-capture`), and a no-audio mode.
+
+## Stage 8: animation
 
 - ozz runtime, GPU skinning, data-driven state machines, blending, animation events.
 - Then partial and additive blending, IK and foot placement, bone attachments, retargeting.
 
-## Stage 8: native Metal backend and ray tracing
+## Stage 9: native Metal backend and ray tracing
 
 - Metal backend of `quench::gpu` (pixel comparison against the SDL GPU backend on the same Mac), GPU timestamps.
 - Acceleration structures from the retained scene; ray-traced shadows first, then reflections, ambient occlusion and
   indirect light, each as a fallback slot. MetalFX upscaling.
 - Shader path for ray queries decided by a test first ([Architecture](architecture.md#shaders)).
+
+Where ray tracing runs (discussed with the user, 2026-11-05):
+
+- At first only on the Metal backend: the Mac (M4 Pro) and the iPhone (A20 Pro) are the hardware it can be verified
+  on. SDL GPU has no ray tracing and does not expose native handles (libsdl-org/SDL#11147, #12094).
+- Every ray-traced effect is a slot with a fallback chosen by `gpu::Caps`, never by platform: shadow maps for shadows,
+  screen-space reflections, screen-space or no ambient occlusion and indirect light. The SDL GPU backends (Vulkan
+  through MoltenVK today; D3D12, Vulkan on Windows, Linux and Android, the web later) run the same game with the
+  fallbacks.
+- Later, only for a named need and verified on real hardware: a native D3D12 backend (DXR) on Windows, or a native
+  Vulkan backend with the ray tracing extensions on Windows, Linux and the Android devices that have them. WebGPU has
+  no ray tracing. Acceleration structures come from the retained scene and the shaders are HLSL (compiled to MSL,
+  SPIR-V and DXIL), so games do not change when a backend gains ray tracing.
+
+TODO for stage 9:
+
+- [ ] Check in MoltenVK's source whether it exposes any Vulkan ray tracing extension (`VK_KHR_acceleration_structure`,
+  `VK_KHR_ray_query`, `VK_KHR_ray_tracing_pipeline`). Said "no" from memory on 2026-11-05; not verified.
+- [ ] Test the ray query shader path before writing ray tracing shaders: HLSL through glslang's HLSL front end to
+  SPIR-V, then SPIRV-Cross to MSL; DXC if glslang cannot. Also the DXIL output.
+- [ ] Design the `quench::gpu` surface for acceleration structures (one bottom level per registered mesh, a top level
+  per frame from the scene's instances, refit or rebuild) in [Architecture](architecture.md), with the fallback slots.
+- [ ] Measure ray-traced shadows against shadow maps on the iPhone at 120 Hz and pick the default per device.
+- [ ] MetalFX upscaling (spatial and temporal) as an option, and how it combines with the TAA of stage 5.
 
 ## Other modules (when a game needs them)
 
@@ -121,14 +156,15 @@ Priorities from the user's request of 2026-11-05.
 | Mipmaps and compression | P1 | 2 (GPU mipmaps), 6 (cooked) |
 | Hot reload | P1 | 6 |
 | Streaming by distance | P1 | 6 |
-| Skeletal animation and GPU skinning (ozz) | P0 | 7 |
-| Animation state machine | P0 | 7 |
-| Blending | P0 | 7 |
-| Animation events | P0 | 7 |
-| Partial and additive blending | P1 | 7 |
-| IK and foot placement | P1 | 7 |
-| Retargeting | P1 | 7 |
-| Bone attachments | P1 | 7 |
+| Audio: mixer, buses, music, 3D sound, device output (added 2026-11-05) | P0 | 7 |
+| Skeletal animation and GPU skinning (ozz) | P0 | 8 |
+| Animation state machine | P0 | 8 |
+| Blending | P0 | 8 |
+| Animation events | P0 | 8 |
+| Partial and additive blending | P1 | 8 |
+| IK and foot placement | P1 | 8 |
+| Retargeting | P1 | 8 |
+| Bone attachments | P1 | 8 |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under
