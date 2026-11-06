@@ -370,16 +370,55 @@ scaler.
 - [x] Full test tier, `tools/package_demo.sh` (macOS), release notes [docs/releases/v0.9.0.md](releases/v0.9.0.md);
   after the iPhone 17 runs again with `--ios` (2026-11-06 19:07, the macOS zip and the development-signed `.ipa`).
 
+## Stage 12: area lights and anisotropic GGX (done 2026-11-06 except the checks by eye, no version yet)
+
+Requested by the user on 2026-11-06 (19:20): a futuristic tunnel with lamps of different colors and shapes (strips
+in the floor, squares in the ceiling, panels, tubes, spots), metal and wet materials, rubber, embossed plastic and
+brushed aluminium. User decisions: real area lights (not emissive geometry with point lights) and an anisotropic
+BRDF; own procedural content only. No release (the version stays 0.9.0); "Changes for games" in
+[docs/releases/next.md](releases/next.md).
+
+- [x] Area lights in `quench_render`: `LightType::Rect`, `Disk` and `Tube` (`LightDesc::size`, `tangent`,
+  `twoSided`), at most 8 of a frame's 16 lights; their shapes drawn in the scene with the light's radiance on their
+  emitting faces ([Render module](render.md#area-lights)). Raster shading by linearly transformed cosines (LTC):
+  the fitted GGX table and the polygon, disk and line integrals of selfshadow/ltc_code (BSD-2-Clause,
+  [Dependencies](dependencies.md)), diffuse and specular, against a CPU integral -2.3 % (rect), -1.2 % (disk),
+  -4.7 % (tube, no end caps) on all three backends.
+- [x] Soft ray-traced shadows of area lights (one ray per pixel per light toward a point of the shape, through the
+  temporal denoiser), in the same 4 channels as the lamp shadows; ray hits shade area lights by the same LTC.
+- [x] The path tracer samples area lights by a point of their shape and by the BRDF's rays that hit the shape,
+  weighted by multiple importance sampling; within 2.4 % of the integral after 1024 samples.
+- [x] Fallback without ray tracing (`gpu::Caps`): the LTC shading without shadows; reflections of the sky.
+- [x] Anisotropic GGX (`MaterialDesc::anisotropy`, `anisotropyRotation`, along the vertex tangent) in the raster,
+  the ray hits and the path tracer, with the anisotropic visible-normal sampling in the path tracer; a highlight of
+  6 x 6 pixels stretches to 58 x 6 at anisotropy 0.8 ([Render module](render.md#anisotropic-ggx)).
+- [x] `RenderStats::areaLights`, the scenario value `area_lights`.
+- [x] Demo section 12, "Tunnel" ([Engine demo](demo.md#sections)): eight area lights and two spots, metal panels,
+  wet asphalt with a puddle, rubber, embossed plastic and brushed aluminium from textures written at build time
+  (`tools/assets/make_demo_tunnel.py`); its options in its panel and the Graphics panel; scenarios and golden
+  captures (native with ray tracing, the fallback on Metal and on Vulkan through MoltenVK; the path tracer without a
+  golden image); benchmark regions; three check mode items (32 in all).
+- [x] Costs on the M4 Pro and the iPhone 17, the phone defaults chosen from them (60 Hz on every phone; with ray
+  tracing two lamp shadows, no traced reflections, half size with MetalFX spatial; held 40 s at nominal), and the
+  cost of the new shader paths in frames that do not use them (5 to 8 % of the M4 Pro's unpaced frame rate;
+  [Performance](performance.md#the-tunnel)).
+- [ ] Surface shader variants without the area light and anisotropy paths, for frames and materials that do not
+  use them (the 5 to 8 % above); custom surface shaders would compile them too.
+- [ ] Look at the tunnel in motion and on the iPhone's screen (the lamps' shading and shadows, the brushed
+  aluminium, the puddle): by the user (the demo's check mode).
+- [ ] The tunnel on the iPhone 18 Pro Max.
+
 ## What is next
 
-The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, and stage 11 with 0.9.0. What
-stays open, in the order it is useful (nothing of it is scheduled; the user decides):
+The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, stage 11 with 0.9.0, and stage
+12 (area lights, anisotropy, the tunnel) after it, not yet released. What stays open, in the order it is useful (nothing of it is scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (29 items:
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (32 items:
    the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
    input devices, loading and streaming, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
    and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
-   the frame rate and the layout on the phone; [Engine demo](demo.md#check-mode-on-the-iphone)), on the iPhone 18
+   the tunnel's lamps, brushed aluminium and puddle, the frame rate and the layout on the phone;
+   [Engine demo](demo.md#check-mode-on-the-iphone)), on the iPhone 18
    Pro Max the device test app on both backends with the 0.9.0 code and the stage 11 ray tracing runs (done on the
    iPhone 17), Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes,
    background).
@@ -395,7 +434,8 @@ stays open, in the order it is useful (nothing of it is scheduled; the user deci
    device (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
    dual quaternion skinning and blend shapes (stage 8); the `accel` timing split into `blas` / `tlas`, normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
-   devices without ray tracing, a denser or cascaded probe grid (stage 11).
+   devices without ray tracing, a denser or cascaded probe grid (stage 11); surface shader variants without the
+   area light and anisotropy paths, shadows of area lights without ray tracing, normal maps in ray hits (stage 12).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. An
@@ -437,7 +477,8 @@ Priorities from the user's request of 2026-11-05.
 | Retargeting | P1 | 8 (not done) |
 | Bone attachments | P1 | 8 (done) |
 | Engine demo: interactive sections for every feature (added 2026-11-05) | after the stages | 10 (done; started in 5; not yet run on the iPhone in its finished form) |
-| Full ray tracing: reflections, indirect light, local light shadows, denoising, a path tracer (added 2026-11-06) | after the stages | 11 (done; not yet run on the iPhone or looked at in motion) |
+| Full ray tracing: reflections, indirect light, local light shadows, denoising, a path tracer (added 2026-11-06) | after the stages | 11 (done; run on the iPhone 17, not yet looked at in motion) |
+| Area lights, anisotropic GGX, a demo tunnel with lamps of every shape and metal, wet, rubber and plastic materials (added 2026-11-06) | after stage 11 | 12 (done; run on the iPhone 17, not yet looked at in motion or on the phone's screen) |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under

@@ -9,7 +9,8 @@ shader hot reload: the job system, `quench_assets` and `quench_cook` (see "Threa
 [Audio](audio.md)), and stage 9: the native Metal backend, GPU timestamps per pass, acceleration structures,
 ray-traced sun shadows and ambient occlusion, MetalFX upscaling (see "Native Metal backend" and "Ray tracing"), and
 stage 11: ray-traced local light shadows, reflections and indirect light, a probe grid, the engine's temporal
-denoiser, MetalFX's denoising upscaler and a reference path tracer (see "Ray tracing");
+denoiser, MetalFX's denoising upscaler and a reference path tracer (see "Ray tracing"), and stage 12: area lights
+and anisotropic GGX (see "Rendering");
 everything else here
 describes the intended structure and the reasons for it. The binding rules
 are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
@@ -286,7 +287,8 @@ are noted below.
   creates their pipelines only where `Caps::rayTracing` holds, so the other backends never load them.
 - **Fallback slots** in `render::RenderSettings` and `render::ActiveEffects`: `SunShadows::ShadowMaps | RayTraced`
   (shadow maps are the fallback and stay the default until the user has looked at the traced ones on the iPhone),
-  `AmbientOcclusion::None | RayTraced`, and since stage 11 `localLightShadows` (unshadowed without rays),
+  `AmbientOcclusion::None | RayTraced`, and since stage 11 `localLightShadows` (unshadowed without rays; since
+  stage 12 also the area lights' soft shadows),
   `Reflections::Sky | RayTraced`, `IndirectLight::Sky | Probes | RayTraced` (the sky's ambient values without rays),
   `RayDenoiser::Spatial | Temporal` and `pathTracer`. Without the capability the renderer takes the fallback and logs
   why, as for TAA and depth clamp ([Render module](render.md#fallbacks)). The screen-space fallbacks the design
@@ -305,8 +307,8 @@ are noted below.
 - **Verification**: the golden-capture rule: the demo's ray tracing section has its own golden for the native
   backend, and the fallback's goldens for Metal through SDL GPU and Vulkan through MoltenVK; readback tests compare
   ray-traced shadows with shadow maps, the probe grid and the traced indirect light with the sky's light in a
-  furnace, the path tracer with a uniform sky, the denoisers with many-ray references. Performance of the stage 11
-  effects on the iPhone is open.
+  furnace, the path tracer with a uniform sky, the denoisers with many-ray references. The stage 11 effects were
+  measured on the iPhone 17 ([Performance](performance.md)), not yet on the iPhone 18 Pro Max.
 
 ## Rendering
 
@@ -338,6 +340,19 @@ without a sampleable depth array, no depth clamp). The code is TrailForge's rend
 generalized; not done in this stage: Ashfall's screen-space effects (ambient occlusion, bounce light, reflections,
 sun shafts), particles, terrain, quality presets, GPU timing per pass (added in stage 9 where the backend has it:
 see "GPU timestamps per pass").
+
+### Area lights and anisotropy (stage 12)
+
+Area lights (rect, disk, tube) are scene lights like the others, with a size and a radiance, and the scene draws
+their shapes itself, so what is seen and what lights cannot disagree ([Render module](render.md#area-lights)). The
+light itself is analytic in the raster: linearly transformed cosines (Heitz et al. 2016) give the diffuse and
+specular integral over the shape with no noise, on every backend; ray tracing adds only the visibility (soft shadows
+in the `localLightShadows` slot, unshadowed without it), and the path tracer samples the shapes with MIS as its
+reference. The fitted LTC tables are third-party data (`selfshadow/ltc_code`, BSD-2-Clause) baked into a source file
+by a script, not fitted at build time. Anisotropic GGX is a material parameter (strength and rotation) along the
+MikkTSpace tangent, the same lobe in the raster, the ray hits and the path tracer; the sky's reflection and the LTC
+take it approximately (a bent normal, the mean roughness). Both kept the isotropic, area-free paths as they were
+(branches on the material and on the frame's area light count), so no existing golden image changed.
 
 ## Shaders
 

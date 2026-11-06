@@ -143,6 +143,116 @@ crowd (51 skinned characters, `--benchmark-all` on 2026-11-06, below) stays with
 
 ## Measurements
 
+### The tunnel
+
+Stage 12 (area lights and anisotropic GGX, the demo's tunnel section), 2026-11-06 20:30-20:54, Release, the code of
+`9b024a4` (the tunnel's phone defaults of `0704ce5` for the iPhone's 60 Hz runs). Its iPhone numbers are
+[below](#the-tunnel-on-the-iphone).
+
+**The tunnel on the M4 Pro.** `raytracing_benchmark.txt` on the native backend at 1920 x 1080, on the screen,
+`--present-mode immediate`, one run (20:48-20:51). The display ran at 120 Hz in this session and paced the window
+also without display sync (481 frames in 4 s), so the region without rays comes from the same scenario part run
+offscreen (unpaced, 1359 frames in 4 s); the other regions were slower than the display's interval (GPU-bound, the
+clock at its full rate) and their offscreen frame times agree within 2%. GPU busy time per range, medians, ms:
+
+| Region | Render size | Frames / 4 s | Frame p50 | CPU p50 | game | rays | denoise | probes | reflections | hdr | taa | upscale | path |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| the lamps unshadowed (the fallback's frame; offscreen) | 1920 x 1080 | 1359 | 2.93 | 0.714 | 3.053 | | | | | 2.338 | 0.367 | | |
+| four traced lamp shadows | 1920 x 1080 | 477 | 8.40 | 1.237 | 8.586 | 3.503 | 1.939 | | | 2.285 | 0.318 | | |
+| + traced reflections | 1920 x 1080 | 275 | 14.59 | 1.610 | 14.790 | 3.505 | 1.945 | | 6.030 | 2.299 | 0.318 | | |
+| + the probe grid (everything traced) | 1920 x 1080 | 213 | 18.84 | 1.723 | 19.109 | 3.508 | 1.943 | 1.179 | 7.752 | 3.675 | 0.318 | | |
+| the desktop default: everything, MetalFX temporal at 0.67 | 1286 x 724 | 369 | 10.80 | 1.297 | 10.876 | 1.651 | 0.886 | 1.177 | 3.694 | 1.749 | | 1.287 | |
+| path tracer | 1920 x 1080 | 139 | 28.43 | 1.173 | 29.051 | | | | | | | | 28.109 |
+
+Eight area lights and two spots cost 2.3 ms in the main pass at 1080p (the ray tracing section's shadow-map frame:
+1.1 ms). Four traced lamp shadows add 5.5 ms (rays 3.5, their filter 1.9). Traced reflections add 6.2 ms, seven
+times their cost in the ray tracing section (0.86 ms): almost every pixel of the tunnel is metal or wet below the
+roughness cutoff, and every hit is shaded with the area lights. The probe grid adds 4.3 ms (1.2 for the probes, the
+rest where the main pass and the reflection hits sample it). The desktop default runs at 92 frames per second
+(10.9 ms). The path tracer takes 28.1 ms per sample at 1080p (the ray tracing section in the same run: 12.4 ms): at every
+hit it samples one lamp at random, an area light at a point of its shape weighted against the BRDF rays that hit
+the shape (MIS), and the glossy metal walls carry the paths on.
+
+**The cost in frames without area lights.** The area light code and the anisotropic lobe are in the standard
+surface shader whether a frame uses them or not (branches on uniforms), and they cost there. Offscreen A/B against
+`1ae3117` (the code before stage 12, built in a separate worktree), unpaced, 1920 x 1080, frames in 4 s on the
+native backend (two runs each; the runs of a build agree within 0.5%):
+
+| Section | before (`1ae3117`) | stage 12 (`613f442`) | the area light loop apart (`9b024a4`) | experiment: no anisotropy | experiment: no anisotropy, no area lights |
+|---|---|---|---|---|---|
+| materials | 2376 | 2170 (-8.7%) | 2196 (-7.6%) | 2288 | 2335 |
+| sky | 2913 | 2722 (-6.6%) | 2755 (-5.4%) | 2860 | 2911 |
+| post | 3040 | 2838 (-6.6%) | 2870 (-5.6%) | 2968 | 3028 |
+
+The experiments compiled the paths out (anisotropy fixed at 0, the area light block never taken); they were not
+kept. About half of the remaining cost is the anisotropic lobe, the rest the area light block; with neither, the
+frame is back to before within 0.4% (sky, post) and 1.7% (materials). The same holds on SDL GPU: the demo
+benchmark offscreen, two runs each, alternated, 6 to 8% fewer frames in every section (before `9b024a4`). At 1080p
+this is 0.08 to 0.14 ms per frame on the M4 Pro; with vsync the frame times are the display's in both builds. Surface
+shader variants without these paths would take it back; they are not built (custom surface shaders would have to
+compile the variants too).
+
+**The CPU (the 5% rule).** The demo benchmark's CPU times on SDL GPU, same offscreen A/B (11 sections, the sum of
+the sections' values; per section the runs of one build differ by up to 2 times): CPU p50 5.20 ms before, 5.25 ms
+after (+1.0%); CPU p99 10.90 and 11.22 ms (+2.9%). On the screen with vsync (one pair at 60 Hz, 20:33-20:35) the
+sums read 11.06 and 14.47 ms, but runs of the old build alone ranged from 10.56 to 13.34 ms that day (60 and 120 Hz):
+on the screen the CPU clock follows the light load and the CPU times do not resolve 5%. The hello benchmark on the
+screen at 120 Hz (one run each): CPU p50 0.298 ms before, 0.234 ms after; p99 0.654 and 0.400 ms. The frame's added
+CPU work is the area light count in the light list, one more texture per pass and 16 more bytes per material.
+
+### The tunnel on the iPhone
+
+iPhone 17 (A19 GPU, iOS 27.0.1), 2026-11-06 20:30-20:54: Release (`ios-xcode`), the native size 1206 x 2622 in
+portrait, 120 Hz, `--audio-device null`, launched through `devicectl`, no validation layer. Nobody looked at the
+screen; the captures were copied from the device and looked at.
+
+**The cost of each option** (`scenarios/tunnel_phone.txt`, 20:30-20:35, the native backend, one run; a first run at
+20:28 went to the background after two regions, unexplained, and its two regions agree within 4%): 4 s regions after
+a cool-down to nominal, at the display's rate. As in [stage 11](#stage-11-on-the-iphone), frames slower than the
+display's 8.33 ms run the GPU at its full clock (their busy times are costs); at 481 frames the clock follows the
+load. GPU busy time per range, medians, ms:
+
+| Region | Render size | Thermal | Frames / 4 s | Frame p50 / p99 | CPU p50 | game | rays | denoise | reflections | probes | hdr | taa | upscale |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| the lamps unshadowed, MetalFX spatial at 0.5 | 603 x 1311 | nominal | 481 | 8.32 / 9.17 | 1.298 | 5.687 | | | | | 2.786 | 0.516 | 1.295 |
+| two lamp shadows | 603 x 1311 | nominal | 481 | 8.33 / 8.57 | 1.833 | 7.714 | 1.191 | 2.050 | | | 2.265 | 0.344 | 1.080 |
+| four lamp shadows | 603 x 1311 | nominal | 418 | 8.35 / 17.78 | 1.734 | 9.679 | 2.124 | 2.303 | | | 2.441 | 0.386 | 1.157 |
+| two lamp shadows + reflections | 603 x 1311 | nominal | 274 | 13.86 / 22.32 | 1.881 | 14.903 | 1.469 | 2.469 | 5.285 | | 2.462 | 0.397 | 1.175 |
+| four lamp shadows + reflections | 603 x 1311 | nominal | 253 | 16.67 / 22.31 | 1.885 | 16.136 | 2.309 | 2.514 | 5.449 | | 2.512 | 0.406 | 1.232 |
+| everything traced (+ probe grid) | 603 x 1311 | nominal | 174 | 24.98 / 25.12 | 1.992 | 23.354 | 2.302 | 2.518 | 7.493 | 3.517 | 4.330 | 0.419 | 1.197 |
+| two lamp shadows + reflections, MetalFX temporal at 0.67 | 808 x 1757 | fair | 141 | 26.10 / 32.37 | 0.247 | 28.674 | 2.580 | 4.476 | 10.255 | | 4.914 | | 4.686 |
+| the lamps unshadowed at full size, bilinear | 1206 x 2622 | fair | 284 | 13.16 / 18.48 | 0.920 | 14.333 | | | | | 10.838 | 2.024 | |
+
+On SDL GPU (`scenarios/tunnel_phone_fallback.txt`, 20:53, the fallback frame at the full size, no timings per
+pass): 660 frames in 8 s at the display's rate (frame p50 11.92 ms, p99 20.57 ms, CPU p50 0.838 ms, thermal
+nominal).
+
+Traced reflections cost about 5.3 ms at half size (7.5 ms with the probe grid, whose light the hits sample), more
+than the two lamp shadows' rays and filter (3.2 ms); the probe grid 3.5 ms as in the ray tracing section. Two thirds
+of the size with MetalFX temporal costs about twice half size with spatial (28.7 against 14.9 ms with the same
+effects; the former in the fair state, where every range grows). The fallback frame at the full size does not fit 120 Hz on either backend (14.3 ms native in the fair state,
+frames of about 12 ms on SDL GPU at nominal): its main pass with eight area lights over 3.2 million pixels took
+10.8 ms (fair).
+
+**The phone defaults** (`TunnelSection.cpp`, since `0704ce5`): every phone runs the section at 60 Hz; phones that
+trace use two lamp shadows, no traced reflections, no probe grid, half size with MetalFX spatial. Held at 60 Hz for
+40 s from nominal, after a cool-down (two 20 s regions; GPU p50 is the span):
+
+| Run | Thermal | Frames / 20 s | Frame p50 / p99 | CPU p50 / p99 | GPU p50 | game | rays | denoise | reflections | hdr | upscale |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| native, the defaults, 0-20 s | nominal | 1158 | 16.669 / 16.775 | 2.012 / 2.272 | 7.994 | 7.934 | 1.210 | 2.061 | | 2.252 | 1.058 |
+| native, the defaults, 20-40 s | nominal | 1200 | 16.669 / 16.756 | 1.683 / 1.901 | 15.273 | 15.164 | 2.282 | 3.964 | | 4.555 | 1.852 |
+| native, the defaults with traced reflections, 0-20 s | nominal | 1159 | 16.669 / 16.768 | 1.868 / 2.240 | 12.739 | 12.678 | 1.210 | 2.058 | 4.570 | 2.162 | 1.064 |
+| native, the defaults with traced reflections, 20-40 s | nominal -> fair | 1200 | 16.666 / 16.779 | 1.857 / 2.180 | 15.336 | 15.236 | 1.484 | 2.508 | 5.492 | 2.871 | 1.326 |
+| SDL GPU, the fallback at the full size, 0-20 s | nominal -> fair | 1200 | 16.669 / 16.749 | 1.013 / 1.184 | 12.056 | | | | | | |
+
+The first region of each run has one long frame (708 and 725 ms), the PNG encoding of the capture just before it.
+Every frame made its 16.7 ms interval. In the second region of the defaults the GPU lowered its clock to fill the
+interval (every range about 1.9 times longer at the same work, the state nominal): time at that clock, not a cost.
+With traced reflections the first 20 s ran at 12.7 ms and the phone turned fair within 40 s; without them 7.9 ms and
+nominal throughout, which is why the default leaves them out (the panel turns them on). The SDL GPU run came right
+after 8 s at the display's rate. The iPhone 18 Pro Max (A20 Pro) has not run the tunnel.
+
 ### Stage 11 on the iPhone
 
 iPhone 17 (A19 GPU, iOS 27.0.1), 2026-11-06 18:42-18:56: Release (`ios-xcode`), the native size 1206 x 2622 in

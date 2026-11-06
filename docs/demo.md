@@ -46,6 +46,7 @@ first visit. Leaving a section removes its render passes; its scene stays.
 | 9 | `audio` | The mixer and 3D sound ([Audio](audio.md)): a head with ears at the listener, facing the way the camera looks; an orange emitter circling it at ear height (a motor loop), a blue fly-by passing at speed (a siren, with Doppler), a green box that plays a tone the demo computes (a generator); streamed music A and B with a crossfade; all sounds procedural | emitters on and off, orbit and fly-by speed, tone frequency and position, attenuation model, minimum and maximum distance, Doppler scale; music off, A or B; per bus volume, mute and a peak meter; pause effects; a ping, a burst of 40 pings (voice stealing), a click or tap on the ground plays a ping there; voices, stolen and rejected sounds, underruns, clipped samples, mix time and the output device |
 | 10 | `animation` | Skeletal animation ([Animation](animation.md)) of a procedural mannequin: the hero walks a circle by root motion with a speed blend of idle, walk and run, jumps, waves (a layer masked to the right arm), leans (an additive layer), turns its head toward the camera (look-at), holds a torch on its left hand (an attachment) and plays a step sound at each footstep event (a louder one at the jump's landing); two characters stand with foot placement on a ramp and across a 0.2 m step (rays into a Jolt world); a crowd walks in rings | speed, lean, jump (J, gamepad A), wave (K, gamepad X), restart; foot IK, look-at and footstep sound on and off; ramp angle (0 to 30 degrees), crowd size (0 to 512); the hero's state and transition, characters, joints, clip samples, ground rays, events, skinned instances and vertices, the update time and threads, the skinning GPU time |
 | 11 | `raytracing` | Ray tracing where `gpu::Caps` allow it ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)), on the native Metal backend (`--gpu-backend metal`): soft ray-traced sun shadows through a fence's diamond holes (cut-out), tinted amber by a spinning glass torus (translucent) and cast by the animation section's mannequin walking a circle (skinned, refitted every frame), ambient occlusion under a crate and a column; since stage 11 ([Ray-traced lighting](render.md#ray-traced-lighting)) a framed mirror and five gold spheres from roughness 0.02 to 0.48 (traced reflections), a red and green corner with a white block (light bounced by the probe grid), a lamp in the corner and a spot behind the fence (lamp shadows, the spot throws the fence's holes forward), a warm emissive panel that lights the ground through the probes; MetalFX temporal upscaling with the engine's temporal denoiser at render scale 0.67 where the device has MetalFX (MetalFX denoising costs about three times as much on the M4 Pro and is a choice in the panel); on phones and tablets that trace (`App::mobile()`) render scale 0.5 with MetalFX spatial upscaling, no probe grid and 60 frames per second ([Performance](performance.md#stage-11-on-the-iphone)); MetalFX spatial upscaling, the engine's denoisers, and the path tracer as a reference (it stops the sun, the torus and the walk). On SDL GPU (Metal or Vulkan through MoltenVK) the same scene with the fallbacks and a line saying why | sun shadows (shadow maps or ray traced), shadow rays, softness, ambient occlusion with its rays and radius, lamp shadows, reflections, indirect light (sky, probes, rays), the denoiser, upscaling (bilinear, MetalFX spatial, temporal, denoising) and render scale, the path tracer, each with the fallback it got; turn the sun, walk, sun elevation, 60 Hz (on by default on phones and tablets; while the section is current); the top level's instances, builds, refits and compactions (or the shadow draws), the hit textures, probes and path samples, and outside deterministic runs the GPU time of the rays, denoising, probes, reflections, indirect light, the path tracer, the shadow maps, MetalFX and the frame |
+| 12 | `tunnel` | Area lights and anisotropic GGX ([Area lights](render.md#area-lights), stage 12): a 27 m tunnel at night lit only by its lamps, eight area lights (two cyan strips in the floor, two warm squares in the ceiling, a magenta panel on a wall, an orange and a violet neon tube, a round blue portal at the end) and two spots (one sweeps around a sphere); metal wall panels with color, normal and metallic-roughness maps, wet asphalt with a near-mirror puddle, a rubber mat and wheel stops, embossed plastic crates, brushed aluminium (anisotropic: kick plates, ribs, the sphere). The textures are procedural, written at build time. Where `gpu::Caps` allow it (the native Metal backend) four lamps cast soft traced shadows, reflections are traced and the probe grid lights the rest, at render scale 0.67 with MetalFX temporal; on phones and tablets that trace half size with MetalFX spatial, two lamp shadows, no traced reflections and the sky's light; every phone at 60 frames per second ([Performance](performance.md#the-tunnel-on-the-iphone)); the path tracer as a reference. On SDL GPU the lamps light and shine (LTC) without shadows and reflect only the night sky | ray traced or path traced, lamp shadows, traced reflections, each lamp group on or off, the aluminium's anisotropy (0 to 1), the puddle, the spot's sweep, 60 Hz; the lamps and area lights in the frame and outside deterministic runs the GPU time of the shading, the rays, the denoiser, the reflections, the path tracer and the frame |
 
 Every section's panel has the same parts in this order: the controls, the section's numbers ("Stats"), the
 "Frame and fallbacks" header (the scene's counts, the 3D resolution, draws, culled instances, lights, shadow draws,
@@ -78,6 +79,7 @@ What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks
 | Audio | audio | buses, 3D sound, Doppler, a generator, streamed music with a crossfade, voice stealing, meters |
 | Animation | animation | blending, state machine, layers, IK, foot placement, attachments, events, root motion, a crowd on the job system, GPU skinning |
 | Ray tracing, MetalFX | raytracing | ray-traced sun and lamp shadows, occlusion, reflections, the probe grid and per-pixel indirect light, the spatial and temporal denoisers, MetalFX spatial, temporal and denoising, the path tracer, each with its fallback and the reason |
+| Area lights, anisotropic GGX, normal and metallic-roughness maps | tunnel | rect, disk and tube lights with their drawn shapes (LTC on every backend), their soft traced shadows, the path tracer's area light sampling, brushed aluminium, cooked texture maps made at build time |
 | The job system | the Performance panel | threads and pending jobs, a job test (256 items on the pool, its time and the items per thread) (added); physics, animation and loads run on it |
 | Frame, CPU and GPU times | the Performance panel | fps, frame, CPU and GPU time, a frame-time graph (added), the GPU time per pass on the native Metal backend; hidden in deterministic runs (captures) |
 | Memory and GPU resources | the Performance panel | the process's memory and the live GPU resources, the section's load and switch times (added) |
@@ -95,12 +97,13 @@ light ([Roadmap](roadmap.md)).
 
 Sizes follow the display's scale (the engine's ImGui style), times the UI scale of the settings.
 
-- **Wide** (a desktop window, a tablet): the menu at the top left (the sections numbered 1 to 11, the mode buttons
+- **Wide** (a desktop window, a tablet): the menu at the top left (the sections numbered 1 to 12, the mode buttons
   Tour, Checks and Benchmark, About, Settings, Graphics, Hide, the Performance and Log panels, and a hint of the keys
   under them: "Sections: keys 1-9, 0 = 10", "Previous, next: PgUp PgDn LB RB", "Menu: Tab, D-pad; back: Esc, B",
   "Hide: H, Start; Graphics: G"); the section's window at the top right, or under the menu where the window is too
   narrow for both; the description as a caption at the bottom; the windows of the modes at the bottom in its place.
-  Both windows collapse with their title's arrow. The Graphics window opens between the menu and the section's
+  Both windows collapse with their title's arrow; the menu grows down to the caption and scrolls below it (at the
+  tests' 960 x 540, by one line). The Graphics window opens between the menu and the section's
   window (over the middle where there is no room), closed by default, with a close button in its title.
 - **Compact** (a safe area under 40 x 26 em: phones in either orientation, small windows): a bar at the top (Menu,
   previous, the section's title, next, Controls) and one sheet at a time: the menu on the left; the section's panel
@@ -124,7 +127,7 @@ Sizes follow the display's scale (the engine's ImGui style), times the UI scale 
 | Zoom | the wheel; + and - | the triggers | pinch |
 | Act on the scene (blast, ping, fire) | a click | the section's button | a tap |
 | Next, previous section | `]` `[`, Page Down, Page Up | the shoulder buttons | the arrows of the bar (compact) |
-| A section | keys 1 to 9 for sections 1 to 9, 0 for section 10 (11 by next or previous); a click on the menu | | a tap on the menu |
+| A section | keys 1 to 9 for sections 1 to 9, 0 for section 10 (11 and 12 by next or previous); a click on the menu | | a tap on the menu |
 | Menu by keys and buttons | Tab, then the arrows and Enter; Escape goes back | the D-pad, then A; B goes back | |
 | Hide the windows | H | Start | Hide in the menu |
 | The Graphics panel | G (again: close); Graphics in the menu | | Graphics in the menu sheet (compact) |
@@ -176,7 +179,7 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
 
 - **Tour** (`--tour [SECONDS]`, default 8; the Tour button takes the Tour time of the settings): every section in turn for
   SECONDS each, round and round, from the current one. Any key, click, touch, button or stick stops it.
-- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 29
+- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 32
   items, one at a time: it switches to the item's section, sets it up (a camera, a setting) and says what to look at
   or listen to. OK, Problem or Skip, with a note, marks the item and goes to the next; the arrows go back and
   forward, End stops. Every mark is written to `checks.json` in the user directory at once, with the backend and the
@@ -187,7 +190,8 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
   music's crossfade, the buses and the pings (audio, by ear), feet that do not slide, footsteps in sync, layers and
   look-at, foot placement and the crowd (animation), noise, MetalFX ghosting and the fallback, and since stage 11
   the reflections, the bounced light, the lamp shadows, MetalFX denoising in motion and the path tracer against the
-  real-time frame (raytracing), the frame rate and the layout on the device.
+  real-time frame (raytracing), since stage 12 the area lights and their shadows, the brushed aluminium and the
+  puddle (tunnel), the frame rate and the layout on the device.
 - **Benchmark** (`--benchmark-all [SECONDS]`, default 5; the Benchmark button: 5 s): every section measured in turn
   as `scenarios/benchmark.txt` measures it: a warm-up of a second (or SECONDS, if shorter) and until the section's
   assets are in (at most 6 s), then a perf region of SECONDS in real time (`App::beginPerf` .. `endPerf`). One report
@@ -199,7 +203,7 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
 
 | Flag | |
 |---|---|
-| `--section ID` | start in a section: `materials`, `shadows`, `sky`, `post`, `hdr`, `physics`, `input`, `assets`, `audio`, `animation`, `raytracing` (default: the last one, from the settings); an unknown id fails |
+| `--section ID` | start in a section: `materials`, `shadows`, `sky`, `post`, `hdr`, `physics`, `input`, `assets`, `audio`, `animation`, `raytracing`, `tunnel` (default: the last one, from the settings); an unknown id fails |
 | `--tour [SECONDS]` | the tour, SECONDS per section (0.1 to 600) |
 | `--checks` | the check mode |
 | `--benchmark-all [SECONDS]` | the benchmark of every section (0.1 to 120 s each), then quit |
@@ -305,6 +309,15 @@ its own asset manager on the app's job system (one `SceneAssets` per manager, [J
 cook](assets.md#textures-and-models-in-a-scene)) and its own `AnimationSystem`; it restarts on `set restart 1`,
 which makes its capture independent of when the loads finished.
 
+The tunnel's textures are not in git either: `tools/assets/make_demo_tunnel.py` (Python standard library,
+procedural, own content) writes ten PNG files into the build tree at build time (about 7 s): the wall panels'
+color, normal and metallic-roughness maps (512 x 512, 2 x 2 panels of 1.5 m with seams, rivets, a vent and a raised
+plate), the asphalt's (stones in a dark binder, wet patches darker and smoother), the puddle (an outline in alpha),
+the embossed plastic's and the rubber mat's normal maps (diamonds, coins) and the brushed aluminium's
+metallic-roughness streaks. `quench_cook_assets(quench_demo_tunnel ... TEXTURES ... DATA_TEXTURES ...)` cooks them
+into KTX2 (colors in sRGB, the maps linear). The section has its own asset manager and `SceneAssets`, as the
+animation section does.
+
 The licences About shows are the engine's `LICENSE` and `THIRD_PARTY_LICENSES`, copied into `assets/` by
 `quench_cook_assets(quench_demo_licences ... FILES ...)`; the commit it shows comes from `BuildInfo.cmake`, which
 writes `demo_build_info.h` at build time only when the commit changes ("unknown" without git; uncommitted changes
@@ -318,11 +331,12 @@ per GPU backend, `--window 960x540 --gpu-debug --hdr-headroom 4`, runs every che
 | Batch | Scenario | Backend |
 |---|---|---|
 | `demo_batch_metal` | `batch_metal.txt`: `batch.txt`, then `cycle.txt` | SDL GPU's Metal driver, with the Metal API validation layer |
-| `demo_batch_metal_native` | `batch_native.txt`: `batch.txt` with `raytracing.txt` in place of `raytracing_fallback.txt`, then `cycle.txt` | the native Metal backend, with the validation layer; compared with the Metal golden images |
+| `demo_batch_metal_native` | `batch_native.txt`: `batch.txt` with `raytracing.txt`, `tunnel.txt` and `tunnel_path.txt` in place of `raytracing_fallback.txt` and `tunnel_fallback.txt`, then `cycle.txt` | the native Metal backend, with the validation layer; compared with the Metal golden images except ray tracing's own |
 | `demo_batch_vulkan` | `batch.txt` | Vulkan through MoltenVK with the Khronos validation layer (an error or warning fails the batch) |
 
 `batch.txt` includes, in this order: materials, shadows, sky, post, hdr, hdr_on, physics, input, assets, audio,
-animation, raytracing_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone, audio_flyby, audio_music.
+animation, raytracing_fallback, tunnel_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone,
+audio_flyby, audio_music.
 Every part selects its section first (and resets it where it needs the defaults), so it does not depend on the parts
 before it, and its `time` starts at 0. A test per part and backend, `demo_<part>_<backend>`, checks the part's line
 in the batch's log (`part <file>: N passed, 0 failed`) and compares its capture with
@@ -345,6 +359,9 @@ elements stay where they are what is checked. The menu and the layouts have capt
 | `animation` | below | `demo_animation.png` at 2.4 s: the scene |
 | `raytracing` (native batch) | the section's defaults run: ray-traced sun shadows and occlusion, 2 lamp shadows, reflections, the probe grid (2048 probes), the temporal denoiser, MetalFX temporal at scale 0.67 in TAA's place (no cascades, no shadow draws, at least 19 instances in the top level, the character skinned, a material texture in the hit arrays, no fallbacks); MetalFX denoising runs when asked; shadow maps come back when asked; MetalFX temporal at scale 0.5 resolves in TAA's place, spatial runs; per-pixel indirect light runs; the path tracer adds samples in TAA's place; bilinear at scale 1 again | `demo_raytracing_native.png` at 2.5 s (every traced effect at full size with the engine's temporal denoiser, the sun and the character moving): the scene |
 | `raytracing_fallback` (Metal, Vulkan) | every request falls back (cascades, no occlusion, no top level, unshadowed lamps, the sky's reflections and light, no probes, bilinear for MetalFX denoising and spatial at scale 0.5, the real-time frame for the path tracer), and the renderer lists the fallbacks (at least 5, then 6) | `demo_raytracing.png` at 2.5 s: the scene |
+| `tunnel` (native batch) | the section's defaults run: 10 lamps, 8 of them area lights, 4 lamp shadows, reflections, the probe grid, MetalFX temporal at 0.67, no shadow draws (no sun), at least 46 instances in the top level, no fallbacks; lamp groups off and on change the counts; the anisotropy changes; the path tracer adds samples; bilinear at scale 1 again | `demo_tunnel_native.png` at 2.5 s (every traced effect at full size, the spot sweeping): the scene |
+| `tunnel_path` (native batch) | the path tracer runs to 256 samples with the spot still, then stops | `demo_tunnel_path_native.png`, without a golden image (1.3 MB of noise); look at it beside `demo_tunnel_native.png` |
+| `tunnel_fallback` (Metal, Vulkan) | the 8 area lights light without shadows, the sky's reflections and light, no top level, bilinear at scale 1, the path tracer falls back (at least 3 fallbacks); the tubes and the portal off and on | `demo_tunnel.png` at 2.5 s: the scene |
 | `ui` | the wide layout with its windows | `demo_ui.png`: the materials section with the menu, its panel and the caption |
 | `compact_portrait`, `compact_landscape` | `compact.txt` in a phone-sized frame (400 x 720 and 720 x 320 points): the compact layout, the bar's arrows, the menu sheet, About and its licences, the controls sheet | `demo_compact_portrait.png`, `demo_compact_landscape.png`: the controls sheet over the materials section |
 | `menu` | switching sections by keys, gamepad, a click and a tap on the list; the menu by Tab, the arrows and Enter and by the D-pad, A and B; hiding the windows | none |
@@ -367,7 +384,7 @@ Outside the batches, with runs of their own because they need flags or files of 
 | CTest test | What it runs |
 |---|---|
 | `demo_tour` | `--tour 0.1` with `scenarios/tour.txt`: a full round back to the first section, every section initialized, a key stops it, `mode tour` starts it again from the current section |
-| `demo_checks`, `demo_settings`, `demo_benchmark` | `tests/DemoUserFiles.cmake` runs the demo on a fresh `--user-dir` and reads the file it wrote: the check mode's marks by command and by the buttons, read back by a second run, a corrupt `checks.json` starts empty (`checks*.txt`); settings saved, read back, a corrupt file gives the defaults and is written again, `--no-settings` leaves it (`settings_*.txt`); `mode benchmark 0.1` writes a report with 11 sections (`benchmark_all.txt`) |
+| `demo_checks`, `demo_settings`, `demo_benchmark` | `tests/DemoUserFiles.cmake` runs the demo on a fresh `--user-dir` and reads the file it wrote: the check mode's marks by command and by the buttons, read back by a second run, a corrupt `checks.json` starts empty (`checks*.txt`); settings saved, read back, a corrupt file gives the defaults and is written again, `--no-settings` leaves it (`settings_*.txt`); `mode benchmark 0.1` writes a report with 12 sections (`benchmark_all.txt`) |
 | `demo_version`, `demo_bad_section`, `demo_bad_flag` | `--version` prints "Quench Demo <version>"; an unknown `--section` fails; `--tour` with `--checks` fails |
 
 The batches write no WAV file: `demo_audio_wav_match`, which compared the WAV files of the Metal and the Vulkan audio
@@ -475,17 +492,22 @@ to settle (since stage 11; 5 s before), at render scale 1 with TAA unless named:
 of shadows and occlusion: lamp shadows, reflections, the probe grid, per-pixel indirect light; everything traced
 with the temporal denoiser (`all_traced`), with the spatial one, with MetalFX temporal at 0.67, with MetalFX
 denoising at 0.67 and 0.5; MetalFX temporal at 1, 0.67 and 0.5, spatial and bilinear at 0.5 over shadows and
-occlusion; and the path tracer. Run it with `--onscreen --gpu-backend metal` (on SDL GPU every region measures the
-fallbacks); the perf lines carry the GPU time per timed range ([Performance](performance.md#measurements)). For the
+occlusion; and the path tracer. Since stage 12 it goes on to the tunnel at full size: the lamps unshadowed
+(`tunnel_lit`), with four traced shadows, with reflections, with the probe grid (`tunnel_all_traced`), the section's
+default at 0.67 with MetalFX temporal, and the path tracer. Run it with `--onscreen --gpu-backend metal` (on SDL GPU
+every region measures the fallbacks); the perf lines carry the GPU time per timed range
+([Performance](performance.md#measurements)). For the
 cost of each effect add `--present-mode immediate`: with vsync the GPU's clock follows the load, and light regions
 read slower per range than they are (the stage 11 costs in [Performance](performance.md) come from such a run).
 
 On a phone the same costs come from `scenarios/raytracing_phone.txt` (each effect at the device's size, then the
 render scales and upscalers with everything and with less, 4 s each; every group of regions waits for the nominal
 thermal state first, at 20 frames per second on the cheapest frame), and `scenarios/raytracing_phone_sustained.txt`
-holds the section's phone defaults for a minute at the display's rate and for a minute at 60 Hz. Copy the file into
-the app's user directory and launch it with `devicectl` ([App shell](app.md#ios-runs)); the perf lines carry the
-thermal state of each region.
+holds the section's phone defaults for a minute at the display's rate and for a minute at 60 Hz. For the tunnel,
+`scenarios/tunnel_phone.txt` measures each option at half size (and the lamps at 0.67 and full size), then holds the
+section's phone defaults at 60 Hz for 40 s and captures them and the path tracer; `tunnel_phone_fallback.txt` runs
+the fallback frame on SDL GPU. Copy the file into the app's user directory and launch it with `devicectl`
+([App shell](app.md#ios-runs)); the perf lines carry the thermal state of each region.
 
 ## Packaged builds: `tools/package_demo.sh`
 

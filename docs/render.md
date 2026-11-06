@@ -2,9 +2,11 @@
 
 `quench_render` (stage 5 of the [Roadmap](roadmap.md)): a retained scene and the standard frame drawn from it. Public
 headers in `include/quench/render/`, sources in `src/render/`, the shader library in `shaders/quench/`. Verified on
-the Mac with Metal and with Vulkan through MoltenVK, and in the iOS Simulator; on the user's iPhone the stage 10 code
-ran the device tests and the demo's benchmarks (2026-11-06), the stage 11 effects not yet. The engine demo
-(`examples/demo`, [Engine demo](demo.md)) shows every part of it.
+the Mac with Metal and with Vulkan through MoltenVK, and in the iOS Simulator; on the user's iPhones the stage 10
+code ran the device tests and the demo's benchmarks (2026-11-06), the stage 11 effects and the stage 12 area lights
+(the demo's tunnel) ran on the iPhone 17 only, measured and captured, not looked at on its screen
+([Performance](performance.md#the-tunnel-on-the-iphone)). The engine demo (`examples/demo`, [Engine demo](demo.md))
+shows every part of it.
 
 The code comes from TrailForge (`b97883e`: `src/render/Renderer.*`, `shaders/scene.hlsl`, `TimeOfDay.*`), generalized:
 no terrain, vehicles, trees or other game layers, and no fixed material enum. Where TrailForge and Ashfall (`2d5db57`,
@@ -53,13 +55,15 @@ renderer->render(scene, {.view = camera, .fovY = fov, .nearPlane = 0.1f, .time =
 - **Instances** carry a transform, a color, a `vec4` for the surface shader, visibility and shadow casting. The
   previous transform is kept for motion vectors; `setTransform(..., teleport = true)` drops it (a respawn).
 - **Lights**: the first directional light is the sun (cascaded shadows, the sun disc in the sky). Further directional,
-  point and spot lights light surfaces without shadows; per frame the 16 nearest to the camera are used. A light with
-  zero color or intensity is off.
+  point, spot and area lights (rect, disk, tube; [Area lights](#area-lights)) light surfaces without shadows; per
+  frame the 16 nearest to the camera are used, at most 8 of them area lights. A light with zero color or intensity
+  is off.
 - **Environment**: sky colors, atmosphere model or gradient, sun disc, ambient, height fog, exposure.
   `render::daylightFor(towardSun)` gives a sun color and an environment for any sun elevation (night, twilight,
   sunrise, day: TrailForge's time-of-day palette).
 - **Units**: meters, linear HDR. A directional light's `color * intensity` is the irradiance on a surface facing it;
-  a point or spot light's is the irradiance at 1 m (inverse square with a smooth window to zero at `range`).
+  a point or spot light's is the irradiance at 1 m (inverse square with a smooth window to zero at `range`); an area
+  light's is the radiance of its surface, the value an emissive material of the same look would have.
 
 The scene is retained so that later backends can build from it (ray tracing: acceleration structures from the meshes
 and instances, stage 9). One `render()` per scene and frame: motion vectors are measured from the scene's previous
@@ -160,6 +164,56 @@ only in cascades with translucent casters, and opaque-only frames shade as befor
 same). The fallback (`TranslucentShadows::Dithered`, also selectable) dithers the opacity into the depth map with a
 4 x 4 ordered pattern and lets the shadow filter smooth it: grey and grainy, overlapping casters shadow like the most
 opaque one (their patterns coincide); the same test measures 0.504 at opacity 0.5.
+
+### Area lights
+
+Stage 12. `LightType::Rect`, `Disk` and `Tube`: `position` is the center, `direction` the normal of a rect or disk
+(the way it shines), `tangent` the direction of a rect's width or a tube's axis; `LightDesc::size` is a rect's width
+and height, a disk's radius (x) or a tube's length and radius. `twoSided` makes a rect or disk shine from both faces;
+a tube shines all around. `color * intensity` is the radiance of the surface, `range` the distance from the shape
+where the light fades to zero.
+
+- **The shape is drawn.** The scene keeps a mesh, a material and an instance per area light (outside the scene's
+  counts and handles) and moves them with `setLight`: an emissive surface of the light's radiance, so what is seen
+  matches what lights, in the raster and in the path tracer. The back of a one-sided rect or disk is black and
+  occludes; a tube is an open cylinder. The shapes cast no shadows of their own light (visibility rays skip them).
+- **Raster: linearly transformed cosines** (Heitz et al. 2016) for the diffuse and the GGX specular light, with the
+  fitted 64 x 64 tables of `selfshadow/ltc_code` (BSD-2-Clause, [Dependencies](dependencies.md#added-in-stage-12);
+  turned into `src/render/LtcTable.inc` by `tools/make_ltc_table.py`), a 2-layer `Rgba32Float` texture read with
+  manual bilinear loads (fragment sampler 12 of the surfaces, 6 of the ray hits). A rect is integrated as a polygon
+  clipped to the horizon, a disk as an ellipse (Heitz and Hill 2017), a tube as a line integral times its diameter
+  (no end caps). `quench/AreaLights.hlsli` holds the integrals; `quenchDirectLight`'s callers in `Surface.hlsli`
+  (the standard surface and custom ones built on it) get them without changes. This runs on every backend.
+- **Ray-traced shadows**: area lights with `castsShadows` are among the `localLightShadows` (at most 4, the nearest
+  first): one ray per pixel and light toward a uniform point of the shape (a second point when the first is behind
+  the surface or on the dark side), so the penumbra widens away from the caster; the temporal denoiser filters it like
+  the other local lights. The visibility multiplies the LTC light (the light's mean visibility over its area, not
+  weighted by where on the shape the light comes from). Without ray tracing they are unshadowed.
+- **Path tracer**: next-event estimation picks one of the lights at random and an area light's point uniformly over
+  its area (a tube over its facing half), and BRDF samples that hit a shape count with multiple importance sampling
+  (power heuristic), so small bright lamps and large dim panels both converge.
+- **Ray hits** (reflections, indirect light, the probe grid) light their hits with the area lights' LTC; rays do not
+  see the shapes' emission (in the real-time frame the LTC covers it).
+- **Tests** (all three backends, the traced ones on the native backend): `renderer_area_lights_match_their_integrals`
+  against a CPU integral of the BRDF over each light's surface: rect -2.3 %, disk -1.2 %, tube -4.7 % (no end caps);
+  a rect facing the camera shows 0.498 for its radiance 0.5. `renderer_path_tracer_area_lights` (1024 samples): rect
+  +0.4 %, disk -2.4 %, tube +0.6 %. `renderer_ray_traced_area_light_shadows` (a 1 m box under a 1 m square): lit
+  0.000 in the umbra, 0.326 in the penumbra, 0.961 in the open. `renderer_area_light_shapes_follow_their_lights`:
+  the shapes move, turn, change sides and type and go with their light.
+
+### Anisotropic GGX
+
+Stage 12. `MaterialDesc::anisotropy` (0..1) and `anisotropyRotation` (radians), the model of
+`KHR_materials_anisotropy`: the roughness along the direction is `mix(alpha, 1, anisotropy^2)`, across it `alpha`
+(Burley's anisotropic GGX with the height-correlated Smith term). The direction is the vertex tangent (+u) turned by
+the rotation toward the bitangent, so it needs vertex tangents (MikkTSpace from `quench_cook` or
+`computeTangents`); `MaterialUniforms::shading` carries the strength and the rotation's cosine and sine. The same
+lobe in the raster (`quenchDirectLight`, `QuenchSurface::anisotropy` and `anisotropyDirection`), in the ray hits
+and in the path tracer, which samples the anisotropic visible normals. The sky's reflection, the traced reflections
+and the area lights' LTC use a bent normal and the mean roughness instead (approximations). Test
+`renderer_anisotropic_highlight_stretches`: a point light's highlight on brushed metal (roughness 0.3, anisotropy
+0.8) is 6 x 6 pixels isotropic, 58 x 6 along the tangent and 6 x 57 turned by 90 degrees; the path tracer 58 x 6 and
+6 x 58.
 
 ### Ray-traced shadows and ambient occlusion
 
@@ -338,7 +392,7 @@ maps"), so a game can show them (the demo's "Frame and fallbacks" panel); it is 
 | HDR target | `Rgba16Float` | `Rg11b10Ufloat` |
 | Ray-traced sun shadows | `gpu::Caps::rayTracing`, the ray query shaders, a sampleable depth | shadow cascades |
 | Ray-traced ambient occlusion | the same | none |
-| Ray-traced local light shadows | the same | unshadowed |
+| Ray-traced local light shadows (also area lights) | the same | unshadowed |
 | Ray-traced reflections | the same and the hit shaders | the sky's reflection |
 | Probe grid, per-pixel indirect light | the same and the hit shaders | `skyAmbient` and `groundAmbient` |
 | Path tracer | the same and the hit shaders | the real-time frame |
@@ -392,8 +446,10 @@ scene.addMaterial({.surface = checker, .params = {...}});
 
 - `QuenchSurfaceInput`: world position, normal (flipped on back faces), view direction, uv, color, the instance's
   `custom` vector, pixel position, front face, tangent (world space; w the bitangent sign, turned around by a
-  mirroring transform). `quenchNormalFromMap(i, texel)` turns a normal map texel into a world normal. `QuenchSurface`: albedo, opacity, roughness, metallic, shading normal,
-  emissive, occlusion.
+  mirroring transform). `quenchNormalFromMap(i, texel)` turns a normal map texel into a world normal. `QuenchSurface`:
+  albedo, opacity, roughness, metallic, shading normal, emissive, occlusion, anisotropy and its direction (stage 12;
+  a surface that fills `QuenchSurface` itself instead of starting from `quenchStandardSurface` sets `anisotropy` to
+  0).
 - The material is `quenchMaterial` (`MaterialUniforms`: base color, emissive, roughness, metallic, cutoff, the texture
   mask, `params[4]`); its textures are `quenchTexture0..3` with `quenchSampler0..3`; `quenchHasTexture(n)` tells
   which are set (unset ones sample white).
@@ -442,8 +498,9 @@ level's instances and the bottom levels built and refitted this frame (`rayInsta
 and (stage 11) the bottom levels compacted this frame (`rayCompactions`), whether the top level was refitted
 (`rayTopRefit`), the GPU memory of the acceleration structures, tables, hit texture arrays and probe atlases
 (`rayMemoryBytes`), the material textures in the hit arrays (`hitTextures`), the probes traced (`probes`) and the
-path tracer's samples (`pathSamples`).
-The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`, `moved`,
+path tracer's samples (`pathSamples`), and (stage 12) the area lights among the frame's lights (`areaLights`).
+The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`,
+`area_lights`, `moved`,
 `render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`,
 `ray_compactions`, `ray_top_refit`, `ray_memory_mb`, `hit_textures`, `probes`, `path_samples`).
 
@@ -492,6 +549,11 @@ pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; the
   neighbours' visibility hides it). The temporal denoiser has no variance estimate and no disocclusion boost: newly
   visible areas are noisy for a few frames. Local lights have no shadow maps, so without ray tracing they are
   unshadowed. The path tracer has no textures' normal maps, no refraction, and its translucency is a coin flip.
+- Area lights: a tube's LTC has no end caps (-4.7 % against the integral for a 1.2 m tube of 5 cm); the traced
+  shadow is the light's mean visibility, not weighted over the shape; anisotropic surfaces take the LTC with a bent
+  normal and the mean roughness; rays do not see the shapes' emission in the real-time frame; at most 8 area lights
+  per frame. The path tracer's light samples use the Karis G term and its BRDF samples the exact Smith G1 (-2.4 %
+  on the disk test).
 - MetalFX's denoising scaler was measured and compared with references in tests and in demo captures on the Mac;
   in motion it has not been looked at by a person yet.
 - MetalFX's temporal scaler cost about 2.1 ms of GPU time at a 1080p output in the demo (vsync, GPU clocks not
@@ -511,8 +573,9 @@ pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; the
 - Skinning: four joints per vertex, linear blend (no dual quaternions), no blend shapes; every drawn skinned
   instance is skinned every frame (no caching of unchanged poses, no skinning LOD); the output buffers grow with the
   skinned vertices drawn (two copies).
-- No MSAA, no image-based lighting from a cubemap (the sky model is the environment), shadows of local lights only
-  by rays (at most 4), at most 16 local lights per frame and no clustered or tiled light lists.
+- No MSAA, no image-based lighting from a cubemap (the sky model is the environment), shadows of local and area
+  lights only by rays (at most 4), at most 16 local lights per frame (8 of them area lights) and no clustered or
+  tiled light lists.
 - One render per scene and frame (several views of one scene need a scene per view).
 - Not in this stage, listed in the roadmap: Ashfall's screen-space effects (ambient occlusion, bounce light,
   reflections, sun shafts) as fallbacks for devices without ray tracing, particles, terrain, decals, quality presets. GPU timing per pass exists only on the

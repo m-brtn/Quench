@@ -22,9 +22,10 @@ skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`
 
 **Current state (2026-11-06, version 0.9.0): stages 1 to 3, 5, 7, 9 and 10 of `docs/roadmap.md` are in place, stage
 4 for TrailForge only, stage 6 except shader hot reload, stage 8 except retargeting, stage 11 (full ray tracing)
-except its runs on the iPhone 18 Pro Max; the plan the user left (stages 6 to 10) and stage 11 have been worked
-through, apart from the remaining work listed at the end of this paragraph, the stage 11 runs on the iPhone 18 Pro
-Max and the checks by eye and ear:
+except its runs on the iPhone 18 Pro Max, stage 12 (area lights and anisotropic GGX, after 0.9.0, not released) except
+its checks by eye; the plan the user left (stages 6 to 10) and stages 11 and 12 have been worked through, apart from
+the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the iPhone 18 Pro Max and the
+checks by eye and ear:
 the CMake
 skeleton and presets,
 `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
@@ -54,7 +55,9 @@ and TAA or FXAA, with fallbacks by device capability; where `gpu::Caps` allow it
 occlusion and MetalFX upscaling, and since stage 11 ray-traced shadows of up to 4 local lights, reflections,
 indirect light by a probe grid (DDGI-like) or per-pixel rays, the engine's temporal denoiser (the default; a spatial
 one), MetalFX's denoising upscaler and a reference path tracer, falling back to shadow maps, no occlusion,
-unshadowed local lights, the sky's reflection and ambient light and bilinear scaling; game passes and surface
+unshadowed local lights, the sky's reflection and ambient light and bilinear scaling; since stage 12 area lights
+(rect, disk, tube: LTC shading, soft traced shadows, in the path tracer; unshadowed as the fallback) and anisotropic
+GGX; game passes and surface
 shaders (with a G-buffer entry for the rays); GPU skinning by compute; `SceneAssets` puts asset textures and models
 into the scene),
 `quench_audio` (headless: a float stereo 48 kHz mixer, buses with volume, mute, pause and meters, sounds as an asset
@@ -86,7 +89,9 @@ GPU backend works there). The stage 11 effects (0.9.0) ran on the Mac and on the
 tests on both backends, 0 failed; the cost of each effect, about 3 times the M4 Pro's; the demo's ray tracing
 section defaults on phones chosen from them: half size with MetalFX spatial, no probe grid, 60 Hz), not on the
 iPhone 18 Pro Max, and nobody has looked at the new effects in motion. The default stays SDL GPU and shadow maps,
-every stage 11 effect off, until the user has looked at them on the iPhone. The demo's compact layout and touch controls were
+every stage 11 effect off, until the user has looked at them on the iPhone. The stage 12 area lights (the demo's
+tunnel) ran on the Mac and on the iPhone 17 (2026-11-06: costs and captures; the tunnel's phone defaults at 60 Hz),
+not on the iPhone 18 Pro Max, and nobody has looked at them in motion or on a phone's screen. The demo's compact layout and touch controls were
 looked at in the iOS Simulator only. The checks waiting for a person (on the iPhone, by ear, in motion) are the demo's check mode
 (`docs/demo.md`, "Check mode on the iPhone"). TrailForge builds on the engine's
 `quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders its own passes through
@@ -100,11 +105,12 @@ asset hot reload on a device (stage 6 remaining work), browser audio, HRTF, reve
 work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
 work), the native backend as the default, the `accel` timing split into `blas` / `tlas`, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
-ray tracing (stage 9 and 11 remaining work) yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
+ray tracing (stage 9 and 11 remaining work), surface shader variants without the area light and anisotropy paths
+or shadows of area lights without ray tracing (stage 12 remaining work) yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is
 built, `docs/architecture.md` the design with the native backend and ray tracing as built; the rest of `docs/` is
-design and plan beyond stage 11. Update this paragraph whenever that changes.
+design and plan beyond stage 12. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,
@@ -522,27 +528,31 @@ src/                   sources and internal headers per module (src/core/Platfor
                        platforms); src/gpu/shaders/: the backends' own shaders (blit); src/app/Main.cpp: quench_main;
                        src/render/: the scene, SceneAssets, the frame modules and their shaders, GPU skinning,
                        RayTracing: acceleration structures, hit data, the probe grid and the traced effects;
-                       TemporalFilter: the temporal denoiser; PathTracer: the reference path tracer)
-shaders/quench/        the engine shader library (#include "quench/..."): BRDF, shadows, sky, fog, tone curves,
-                       surface shaders, the probe grid; SceneUniforms.h, the uniform structs shared by C++ and HLSL
+                       TemporalFilter: the temporal denoiser; PathTracer: the reference path tracer; LtcTable.inc:
+                       the area lights' fitted table)
+shaders/quench/        the engine shader library (#include "quench/..."): BRDF (also anisotropic), shadows, sky, fog,
+                       tone curves, surface shaders, the probe grid, area lights (AreaLights.hlsli: LTC);
+                       SceneUniforms.h, the uniform structs shared by C++ and HLSL
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
 examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input,
-                       assets, audio, animation, ray tracing), one file each in sections/ behind Demo.h's Section
+                       assets, audio, animation, ray tracing, the tunnel), one file each in sections/ behind Demo.h's Section
                        interface; the app around them (DemoGame.h: the layouts in Ui.cpp, the camera in Camera.cpp,
                        the tour, check and benchmark modes in Modes.cpp and Checks.cpp, the settings); per section a
                        scenario with a golden capture, scenarios for the menu, the modes, the settings and the
                        switch cycle; smoke and benchmark scenarios (raytracing_benchmark.txt: ray tracing,
-                       denoising and MetalFX options); assets_src/ (procedural sources cooked at build time) and assets/ (files
+                       denoising and MetalFX options and the tunnel; raytracing_phone*.txt, tunnel_phone*.txt: the
+                       same on a phone); assets_src/ (procedural sources cooked at build time) and assets/ (files
                        used as they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
 tools/cook/            quench_cook, the build-time asset cooker (glTF, GLB, PNG, JPEG, KTX2 -> KTX2, .qmodel;
                        glTF, GLB -> .qskel skeletons, .qanim clip sets; WAV, FLAC, MP3 checked or converted to WAV)
 tools/assets/          make_demo_assets.py: writes the demo's procedural source assets; make_demo_sounds.py: the
-                       demo's procedural sounds; make_demo_character.py: the demo's animated mannequin as glTF
-                       (the last two run at build time)
+                       demo's procedural sounds; make_demo_character.py: the demo's animated mannequin as glTF;
+                       make_demo_tunnel.py: the tunnel's textures (the last three run at build time)
 tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the icons of the sample and the demo
+tools/make_ltc_table.py writes src/render/LtcTable.inc from selfshadow/ltc_code's fit (checks its SHA256)
 tools/new_game.py      creates a game from templates/game
 tools/check.sh         the gates: quick (a small change), full, release, single steps
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
