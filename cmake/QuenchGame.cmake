@@ -162,9 +162,10 @@ function(quench_add_game target)
             list(APPEND _resources ${_xcassets})
         endif()
         if(_asset_dirs)
-            # One folder reference named assets/ (Xcode copies it to the bundle root and signs it): the plain and the
-            # cooked assets are merged into it first, and the folder is touched when a file in it changed
-            # (StageAssets.cmake); Xcode copies it again when the folder changed (docs/app.md, "iOS runs").
+            # The plain and the cooked assets are merged into one folder (StageAssets.cmake), which a script phase
+            # after the target's other phases copies into the bundle's assets/ (Xcode signs the bundle after it).
+            # Not a folder reference: Xcode looks at one before the build that changes it, so it copied a re-cooked
+            # file one build late (docs/app.md, "iOS runs").
             set(_stage ${_gen}/assets)
             file(MAKE_DIRECTORY ${_stage})
             string(REPLACE ";" "|" _sources "${_asset_dirs}")
@@ -176,7 +177,10 @@ function(quench_add_game target)
                 add_dependencies(${target}_assets ${arg_COOKED_ASSETS})
             endif()
             add_dependencies(${target} ${target}_assets)
-            list(APPEND _resources ${_stage})
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -DXCODE_BUNDLE=ON -DSOURCES=${_stage}
+                        -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/StageAssets.cmake
+                COMMENT "Copying the assets of ${target} into its bundle" VERBATIM)
         endif()
         if(_resources)
             target_sources(${target} PRIVATE ${_resources})

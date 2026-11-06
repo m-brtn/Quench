@@ -89,8 +89,8 @@ What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks
 | User files through `quench::fs` | Settings, the check mode, the benchmark | `settings.json`, `checks.json`, `benchmark.json`, screenshots (added) |
 | Scenarios, captures, perf regions | the checks | every section's check; the benchmark of every section on the same perf regions (added) |
 
-Not shown, because the engine does not have it yet: shader hot reload, normal maps, ASTC or Basis Universal
-textures, asset hot reload on a device, HRTF, reverb, retargeting, blend spaces, ray-traced reflections and indirect
+Not shown, because the engine does not have it yet: shader hot reload, normal maps, Basis Universal textures,
+asset hot reload on a device, HRTF, reverb, retargeting, blend spaces, ray-traced reflections and indirect
 light ([Roadmap](roadmap.md)).
 
 ## Layouts
@@ -549,8 +549,8 @@ demo's tests (`ctest -L demo`: the batches and the runs with files of their own;
   Privacy & Security (not tried on another Mac yet).
 - **iOS** (`--ios [--team ID]`): builds `quench_demo` with the `ios-xcode` preset (Automatic signing with the team:
   `--team`, else `QUENCH_IOS_TEAM` from the environment, else the one `build/ios-xcode` is configured with; an Apple
-  ID signed in to Xcode, which creates the development profile on its own), after `quench_demo_assets` on its own
-  (see [Assets](assets.md)), checks that the app's `assets/` matches the staged folder (`diff -r`), and packs the
+  ID signed in to Xcode, which creates the development profile on its own), checks that the app's `assets/` matches
+  the staged folder (`diff -r`; see [Assets](assets.md)), and packs the
   signed app as `QuenchDemo.ipa`, with the licences, into the zip. The team must be a paid one: the script refuses a free Personal
   Team (Xcode's account data marks it), whose profiles expire after 7 days, and checks that the app is signed by the
   team (`codesign`, `TeamIdentifier`), also after a plain `unzip` of the `.ipa`. It runs only on the devices in the

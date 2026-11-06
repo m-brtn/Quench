@@ -39,7 +39,7 @@ constexpr const char* kUsage =
     "a skeleton holds the joints of the file's skins; animation cooks every animation of the file as a clip, with\n"
     "the settings (loop, events, root motion) of <input stem>.anim.json when it exists\n"
     "options:\n"
-    "  --format bc7|rgba8   texture format (default bc7)\n"
+    "  --format F           texture format: bc7 (default), astc (ASTC 4x4) or rgba8\n"
     "  --linear             texture: linear data, not sRGB color (normals, masks)\n"
     "  --no-mips            texture: level 0 only\n"
     "  --max-size N         halve textures until both sides are at most N\n"
@@ -138,10 +138,12 @@ std::optional<Options> parseArgs(int argc, char** argv, std::string& error) {
             const std::optional<std::string_view> v = value();
             if (v == "bc7")
                 o.texture.format = o.model.textureFormat = cook::TextureFormat::Bc7;
+            else if (v == "astc")
+                o.texture.format = o.model.textureFormat = cook::TextureFormat::Astc4x4;
             else if (v == "rgba8")
                 o.texture.format = o.model.textureFormat = cook::TextureFormat::Rgba8;
             else
-                return bad("--format: bc7 or rgba8");
+                return bad("--format: bc7, astc or rgba8");
         } else if (arg == "--linear") {
             o.texture.srgb = false;
         } else if (arg == "--no-mips") {

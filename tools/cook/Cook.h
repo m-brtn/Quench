@@ -1,7 +1,7 @@
 #pragma once
 
 // quench_cook (tools/cook): converts source assets into the formats the engine loads at run time. Textures (PNG, JPEG,
-// KTX2) become KTX2 files with their mip chain in BC7 or RGBA8; glTF and GLB models become .qmodel files
+// KTX2) become KTX2 files with their mip chain in BC7, ASTC 4x4 or RGBA8; glTF and GLB models become .qmodel files
 // (include/quench/assets/Model.h) with meshoptimizer-optimized meshes, levels of detail, and their textures cooked
 // next to them; their skins and animations become .qskel skeletons and .qanim clip sets
 // (include/quench/animation/). The output depends only on the input files and the options (no time stamps, no
@@ -21,7 +21,8 @@
 
 namespace quench::cook {
 
-enum class TextureFormat : std::uint8_t { Bc7, Rgba8 };
+// BC7 for desktops, ASTC 4x4 for phones (both 8 bits per texel), RGBA8 uncompressed.
+enum class TextureFormat : std::uint8_t { Bc7, Rgba8, Astc4x4 };
 
 struct TextureOptions {
     TextureFormat format = TextureFormat::Bc7;
@@ -39,8 +40,9 @@ struct Image {
 
 // PNG or JPEG (stb_image), converted to RGBA8.
 Result<Image> decodeImage(std::span<const std::uint8_t> bytes);
-// Mips (filtered in linear light for sRGB images), then BC7 or RGBA8. BC7 needs both sides of level 0 to be multiples
-// of 4 (Metal's rule for block-compressed textures); other sizes are written as RGBA8 with a note in `notes`.
+// Mips (filtered in linear light for sRGB images), then BC7, ASTC 4x4 or RGBA8. The block formats need both sides of
+// level 0 to be multiples of 4 (Metal's rule for block-compressed textures); other sizes are written as RGBA8 with a
+// note in `notes`.
 Result<assets::TextureImage> cookImage(const Image& image, const TextureOptions& options, JobSystem& jobs,
                                        std::vector<std::string>* notes = nullptr);
 // A source file: PNG or JPEG, or KTX2 (RGBA8 is cooked like an image, BC7 and ASTC are passed through).
@@ -49,6 +51,11 @@ Result<assets::TextureImage> cookTexture(std::span<const std::uint8_t> source, c
 // BC7 blocks of one RGBA8 image (bc7enc), block rows spread over the job system. Sides need not be multiples of 4:
 // edge blocks repeat the last row and column.
 std::vector<std::uint8_t> encodeBc7(const Image& image, bool perceptual, JobSystem& jobs);
+// ASTC 4x4 blocks of one RGBA8 image (astc-encoder, its medium preset; the LDR sRGB profile for color), block rows
+// spread over the job system. Edge blocks repeat the last row and column.
+Result<std::vector<std::uint8_t>> encodeAstc(const Image& image, bool srgb, JobSystem& jobs);
+// One level of an ASTC 4x4 texture back to RGBA8 (astc-encoder's decoder: for tests and checks, not the runtime).
+Result<Image> decodeAstc(const assets::TextureImage& texture, std::uint32_t level);
 
 struct ModelOptions {
     TextureFormat textureFormat = TextureFormat::Bc7;

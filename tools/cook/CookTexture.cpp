@@ -1,15 +1,18 @@
 #include "Cook.h"
 
+#include <astcenc.h>
 #include <bc7enc.h>
 #include <stb_image.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <climits>
 #include <cmath>
 #include <cstring>
 #include <format>
 #include <mutex>
+#include <optional>
 
 namespace quench::cook {
 namespace {
@@ -77,6 +80,76 @@ void note(std::vector<std::string>* notes, std::string text) {
     if (notes) notes->push_back(std::move(text));
 }
 
+constexpr astcenc_swizzle kRgba{ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A};
+
+// astc-encoder contexts of one configuration: a context compresses one image at a time, so each job takes one of its
+// own and gives it back. Each is allocated from the configuration, not from a parent context: in 5.7.1
+// astcenc_context_alloc converts the quality limit of a parent's configuration, which is already converted, again.
+class AstcContexts {
+public:
+    explicit AstcContexts(bool srgb) {
+        m_status = astcenc_config_init(srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR, 4, 4, 1, ASTCENC_PRE_MEDIUM, 0,
+                                       &m_config);
+    }
+    ~AstcContexts() {
+        for (astcenc_context* context : m_all) astcenc_context_free(context);
+    }
+    AstcContexts(const AstcContexts&) = delete;
+    AstcContexts& operator=(const AstcContexts&) = delete;
+
+    astcenc_context* take(astcenc_error& status) {
+        std::lock_guard lock(m_mutex);
+        status = m_status;
+        if (!m_free.empty()) {
+            astcenc_context* context = m_free.back();
+            m_free.pop_back();
+            return context;
+        }
+        astcenc_context* context = nullptr;
+        if (status == ASTCENC_SUCCESS) status = astcenc_context_alloc(&m_config, 1, &context, nullptr);
+        if (status != ASTCENC_SUCCESS) return nullptr;
+        m_all.push_back(context);
+        return context;
+    }
+    void give(astcenc_context* context) {
+        std::lock_guard lock(m_mutex);
+        m_free.push_back(context);
+    }
+
+private:
+    astcenc_config m_config{};
+    astcenc_error m_status = ASTCENC_SUCCESS;
+    std::mutex m_mutex;
+    std::vector<astcenc_context*> m_all, m_free;
+};
+
+// Strips of whole block rows, each compressed on its own: ASTC blocks do not depend on each other, so the output is
+// the same for any split.
+Result<std::vector<std::uint8_t>> encodeAstcWith(AstcContexts& contexts, const Image& image, JobSystem& jobs) {
+    const std::uint32_t blocksX = (image.width + 3) / 4, blocksY = (image.height + 3) / 4;
+    std::vector<std::uint8_t> out(std::size_t(blocksX) * blocksY * 16);
+    std::atomic<int> failure{ASTCENC_SUCCESS};
+    const Job job = jobs.parallelFor(blocksY, 1, [&](std::uint32_t begin, std::uint32_t end) {
+        astcenc_error status = ASTCENC_SUCCESS;
+        astcenc_context* context = contexts.take(status);
+        if (context) {
+            const std::uint32_t y0 = begin * 4, y1 = std::min(end * 4, image.height);
+            void* slice = const_cast<std::uint8_t*>(&image.rgba[std::size_t(y0) * image.width * 4]);
+            astcenc_image strip{image.width, y1 - y0, 1, ASTCENC_TYPE_U8, &slice};
+            status = astcenc_compress_image(context, &strip, &kRgba, &out[std::size_t(begin) * blocksX * 16],
+                                            std::size_t(end - begin) * blocksX * 16, 0);
+            astcenc_compress_reset(context);
+            contexts.give(context);
+        }
+        if (status != ASTCENC_SUCCESS) failure = int(status);
+    });
+    jobs.wait(job);
+    if (failure != ASTCENC_SUCCESS)
+        return Error{
+            std::format("cook: ASTC encoding failed ({})", astcenc_get_error_string(astcenc_error(failure.load())))};
+    return out;
+}
+
 } // namespace
 
 Result<Image> decodeImage(std::span<const std::uint8_t> bytes) {
@@ -121,6 +194,36 @@ std::vector<std::uint8_t> encodeBc7(const Image& image, bool perceptual, JobSyst
     return out;
 }
 
+Result<std::vector<std::uint8_t>> encodeAstc(const Image& image, bool srgb, JobSystem& jobs) {
+    if (image.width == 0 || image.height == 0 || image.rgba.size() != std::size_t(image.width) * image.height * 4)
+        return Error{"cook: empty or inconsistent image"};
+    AstcContexts contexts(srgb);
+    return encodeAstcWith(contexts, image, jobs);
+}
+
+Result<Image> decodeAstc(const TextureImage& texture, std::uint32_t level) {
+    const bool srgb = texture.format == PixelFormat::Astc4x4Srgb;
+    if (!srgb && texture.format != PixelFormat::Astc4x4) return Error{"cook: not an ASTC 4x4 texture"};
+    if (level >= texture.mipLevels) return Error{std::format("cook: no level {}", level)};
+    astcenc_config config{};
+    astcenc_error status = astcenc_config_init(srgb ? ASTCENC_PRF_LDR_SRGB : ASTCENC_PRF_LDR, 4, 4, 1,
+                                               ASTCENC_PRE_FASTEST, ASTCENC_FLG_DECOMPRESS_ONLY, &config);
+    astcenc_context* context = nullptr;
+    if (status == ASTCENC_SUCCESS) status = astcenc_context_alloc(&config, 1, &context, nullptr);
+    if (status != ASTCENC_SUCCESS)
+        return Error{std::format("cook: ASTC decoder: {}", astcenc_get_error_string(status))};
+    Image image{std::max(texture.width >> level, 1u), std::max(texture.height >> level, 1u), {}};
+    image.rgba.resize(std::size_t(image.width) * image.height * 4);
+    void* slice = image.rgba.data();
+    astcenc_image out{image.width, image.height, 1, ASTCENC_TYPE_U8, &slice};
+    const std::span<const std::uint8_t> blocks = texture.level(level);
+    status = astcenc_decompress_image(context, blocks.data(), blocks.size(), &out, &kRgba, 0);
+    astcenc_context_free(context);
+    if (status != ASTCENC_SUCCESS)
+        return Error{std::format("cook: ASTC decoding: {}", astcenc_get_error_string(status))};
+    return image;
+}
+
 Result<TextureImage> cookImage(const Image& image, const TextureOptions& options, JobSystem& jobs,
                                std::vector<std::string>* notes) {
     if (image.width == 0 || image.height == 0 || image.rgba.size() != std::size_t(image.width) * image.height * 4)
@@ -143,10 +246,10 @@ Result<TextureImage> cookImage(const Image& image, const TextureOptions& options
         }
 
     TextureFormat format = options.format;
-    if (format == TextureFormat::Bc7 && (levels[0].width % 4 != 0 || levels[0].height % 4 != 0)) {
+    if (format != TextureFormat::Rgba8 && (levels[0].width % 4 != 0 || levels[0].height % 4 != 0)) {
+        note(notes, std::format("{} x {} is not a multiple of 4: RGBA8 instead of {}", levels[0].width,
+                                levels[0].height, format == TextureFormat::Bc7 ? "BC7" : "ASTC 4x4"));
         format = TextureFormat::Rgba8;
-        note(notes,
-             std::format("{} x {} is not a multiple of 4: RGBA8 instead of BC7", levels[0].width, levels[0].height));
     }
     TextureImage out;
     out.width = levels[0].width;
@@ -154,12 +257,20 @@ Result<TextureImage> cookImage(const Image& image, const TextureOptions& options
     out.mipLevels = std::uint32_t(levels.size());
     if (format == TextureFormat::Bc7)
         out.format = options.srgb ? PixelFormat::Bc7Srgb : PixelFormat::Bc7;
+    else if (format == TextureFormat::Astc4x4)
+        out.format = options.srgb ? PixelFormat::Astc4x4Srgb : PixelFormat::Astc4x4;
     else
         out.format = options.srgb ? PixelFormat::Rgba8Srgb : PixelFormat::Rgba8;
+    std::optional<AstcContexts> astc;
+    if (format == TextureFormat::Astc4x4) astc.emplace(options.srgb);
     for (const Image& level : levels) {
         if (format == TextureFormat::Bc7) {
             const std::vector<std::uint8_t> blocks = encodeBc7(level, options.srgb, jobs);
             out.data.insert(out.data.end(), blocks.begin(), blocks.end());
+        } else if (format == TextureFormat::Astc4x4) {
+            Result<std::vector<std::uint8_t>> blocks = encodeAstcWith(*astc, level, jobs);
+            if (!blocks) return Error{blocks.error()};
+            out.data.insert(out.data.end(), blocks->begin(), blocks->end());
         } else {
             out.data.insert(out.data.end(), level.rgba.begin(), level.rgba.end());
         }

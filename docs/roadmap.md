@@ -135,7 +135,12 @@ the engine's tests and the demo's new "Assets" section. Described in [Jobs, asse
   directory reloads in place), checked by replacing files while the demo ran and by rebuilding `quench_demo_assets`.
 - Done: streaming by distance (`StreamingGrid`, generalized from TrailForge's `TerrainTiles`): cells load and unload
   around a focus point with hysteresis, nearest first.
-- Not done, remaining: shader hot reload; ASTC and Basis Universal for Android and the web; normal and emissive
+- Done (2026-11-07, after 0.9.0): ASTC 4x4 textures for iOS. The cook encodes them through astc-encoder
+  (`--format astc`), `quench_cook_assets(TEXTURE_FORMAT auto)` cooks ASTC in iOS builds and BC7 elsewhere, and the
+  runtime samples them where `gpu::Caps::astcTextures` is set (otherwise an error and the placeholder). Checked by
+  PSNR in the cook's tests, `render.scene_assets_texture_states` on the Mac's three backends and the Simulator's
+  two, and the demo's Assets section in the Simulator and on the iPhone 17 on both backends.
+- Not done, remaining: shader hot reload; Basis Universal for Android and the web; normal and emissive
   textures in the standard surface; an asset server for hot reload on the iPhone; the demo's "Assets" section on the
   iPhone (not run there: running on the device needs the user's approval). Shader hot reload stays open as P1 (see
   the table below); the release went ahead without it (decided without the user, 2026-11-05, as recommended).
@@ -444,8 +449,8 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** shader hot reload, ASTC or Basis Universal textures and asset hot reload on a
-   device (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
+3. **Remaining work of the stages:** shader hot reload, Basis Universal textures and asset hot reload on a device
+   (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
    dual quaternion skinning and blend shapes (stage 8); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray

@@ -87,8 +87,10 @@ quench::render::ModelInstanceId placed = sceneAssets.addModel(crate, transform);
 `SceneAssets` (`include/quench/render/SceneAssets.h`) loads cooked files into a `render::Scene`:
 
 - `TextureAsset`: a KTX2 file (below). Where the device cannot sample BC7 (`gpu::Caps`), BC7 is decoded to RGBA8 on
-  the CPU during the load (`decodedOnCpu()`). `SceneAssetsSettings::textureSkipLevels` leaves out the largest mip
-  levels.
+  the CPU during the load (`decodedOnCpu()`). ASTC 4x4 is sampled where `gpu::Caps::astcTextures` is set (the Mac's
+  three backends, the iOS Simulator and the iPhone); elsewhere the load fails with an error and the texture stays the
+  placeholder (the runtime has no ASTC decoder). `SceneAssetsSettings::textureSkipLevels` leaves out the largest
+  mip levels.
 - `ModelAsset`: a `.qmodel` file: one scene mesh and material per part, its textures loaded as `TextureAsset`s.
   `SceneAssetsSettings::modelLod` picks the cooked level of detail to upload. `addModel` places a model (any number
   of times); the placed instances follow its state, and are rebuilt after a reload. Skinned parts (stage 8) become
@@ -112,7 +114,7 @@ synchronous loads.
 ## Cooked formats
 
 - **Textures**: KTX 2.0 files of one 2D image with its mip chain, without supercompression, in RGBA8, BC7 (both
-  with or without sRGB) or ASTC 4x4 (read, not written yet), at most 32768 x 32768 and 16 levels. `readKtx2`,
+  with or without sRGB) or ASTC 4x4 (LDR, with or without sRGB), at most 32768 x 32768 and 16 levels. `readKtx2`,
   `writeKtx2` and `decodeBc7` are in `include/quench/assets/Texture.h`; the reader checks every size and offset
   against the file before it allocates, so a corrupt file is an error, not a crash or a huge allocation.
 - **Models**: `.qmodel` (`include/quench/assets/Model.h`): the meshes of a glTF scene with the node transforms
@@ -141,7 +143,8 @@ synchronous loads.
 The cook (`tools/cook/`) turns source files into cooked files. It is a host tool: games do not link it.
 
 ```sh
-quench_cook texture tiles/stone.png assets/tiles/stone.ktx2 [--format bc7|rgba8] [--linear] [--no-mips] [--max-size N]
+quench_cook texture tiles/stone.png assets/tiles/stone.ktx2 [--format bc7|astc|rgba8] [--linear] [--no-mips]
+            [--max-size N]
 quench_cook model models/crate.gltf assets/models/crate.qmodel --asset-root assets [--lods N] [--lod-ratio R]
             [--lod-error E] [--scale S]
 quench_cook sound sounds/hit.flac assets/sounds/hit.flac            # checked, copied as it is
@@ -152,9 +155,13 @@ quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skele
 ```
 
 - **Textures**: PNG and JPEG (stb_image) or KTX2 (block formats are passed through; RGBA8 is cooked again with the
-  file's transfer function). Mips are box-filtered (sRGB images in linear light). BC7 through bc7enc_rdo, block rows
-  spread over the job system; level 0 needs both sides to be multiples of 4 (Metal's rule), otherwise the texture is
-  written as RGBA8 with a note. `--linear` for data (normals, metallic-roughness).
+  file's transfer function). Mips are box-filtered (sRGB images in linear light). BC7 (desktops) through bc7enc_rdo,
+  ASTC 4x4 (phones) through astc-encoder 5.7.1 (its medium preset, the LDR sRGB or linear profile), both at 8 bits
+  per texel with block rows spread over the job system; level 0 needs both sides to be multiples of 4 (Metal's
+  rule), otherwise the texture is written as RGBA8 with a note. `--linear` for data (normals, metallic-roughness).
+  ASTC is the closer of the two to the source: 57.1 and 56.3 dB PSNR against BC7's 43.6 and 44.4 dB on the test
+  gradients (sRGB, linear), 54.9 and 54.1 dB against 50.3 and 51.2 dB on the demo's crate planks
+  (`cook.cook_astc_matches_the_source`). The cook times of the two were not compared.
 - **Models**: glTF and GLB (fastgltf; external buffers and images, data URIs, embedded images; the extensions
   `KHR_mesh_quantization` and `KHR_materials_emissive_strength`; files with `KHR_texture_transform` or
   `KHR_materials_unlit` are accepted, the extension is ignored with a note). Primitives of the default scene are merged per material with their node transforms; smooth
@@ -197,19 +204,20 @@ quench_cook_assets(my_game_cooked SOURCE_DIR assets_src
     ANIMATIONS characters/hero.gltf characters/hero_extra.glb  # .qanim, settings from <stem>.anim.json
     [SKELETON characters/hero.gltf]        # the skeleton the ANIMATIONS are for (default: their own)
     [FILES credits.txt levels/one.json]    # copied as they are
-    [OUTPUT_DIR dir] [TEXTURE_FORMAT bc7|rgba8] [TEXTURE_MAX_SIZE n] [MODEL_OPTIONS --lods 2 ...])
+    [OUTPUT_DIR dir] [TEXTURE_FORMAT auto|bc7|astc|rgba8] [TEXTURE_MAX_SIZE n] [MODEL_OPTIONS --lods 2 ...])
 quench_add_game(my_game ... ASSETS assets COOKED_ASSETS my_game_cooked)
 ```
 
 `quench_cook_assets` (`cmake/QuenchCook.cmake`) adds a target that cooks each file into the same relative path (with
-`.ktx2`, `.qmodel`, `.qskel` or `.qanim`; sounds keep their name and format). `FILES` are copied unchanged
+`.ktx2`, `.qmodel`, `.qskel` or `.qanim`; sounds keep their name and format). `TEXTURE_FORMAT auto` (the default) cooks
+ASTC 4x4 in iOS builds and BC7 elsewhere, also the textures of models. `FILES` are copied unchanged
 (texts, settings, licences; paths relative to `SOURCE_DIR`, no `..`), so a game can ship files from outside its
 `ASSETS` directory: the demo reads the engine's `LICENSE` and `THIRD_PARTY_LICENSES` that way. A call with `FILES`
 only needs no `quench_cook` (it works in cross builds without `host-tools`). `quench_add_game(... COOKED_ASSETS ...)`
 merges the cooked directories with `ASSETS` into the game's `assets/`: next to the executable on macOS, into the
-bundle on iOS (Ninja), and through a staging directory in Xcode projects. Once (2026-11-06, not reproduced since) an
-Xcode build left files merged into the staging directory in the same build out of the app; `tools/package_demo.sh`
-builds `quench_demo_assets` first and compares the two. On macOS the copy is `copy_directory_if_different`:
+bundle on iOS (Ninja), and in Xcode projects through a staging directory that a script phase copies into the bundle
+(a folder reference reached the bundle one build late, 2026-11-07; [App](app.md#ios-runs));
+`tools/package_demo.sh` compares the two. On macOS the copy is `copy_directory_if_different`:
 rebuilding the game's `<game>_assets` target while the game runs with `--hot-reload` cooks what changed and the game
 reloads exactly those files.
 
@@ -243,9 +251,11 @@ failures; Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_a
 
 - **Shader hot reload** is not built (stage 6 remaining work); only asset files reload. Hot reload works where the
   asset directory is a directory of the file system (the Mac); on the iPhone it needs an asset server (later).
-- **Texture formats**: the cook writes BC7 and RGBA8 only. ASTC (written by no cook yet) and Basis Universal
-  transcoding are needed for Android and the web; until then a device without BC sampling gets BC7 decoded to RGBA8
-  on the CPU (four times the memory).
+- **Texture formats**: the cook writes BC7, ASTC 4x4 (iOS builds) and RGBA8. Basis Universal transcoding is needed
+  for Android and the web; until then a device without BC sampling gets BC7 decoded to RGBA8 on the CPU (four times
+  the memory), and a device without ASTC sampling gets placeholders for ASTC files (no device the engine has run on
+  lacks it, so that path is checked only where the test sees no ASTC support, which has not happened). ASTC is cooked
+  at 4x4 only (8 bits per texel, as BC7), LDR only; HDR images and larger blocks are not offered.
 - **Materials**: normal and emissive textures are cooked, named in the model and read by the standard surface
   (`SceneAssets` puts them into a material's textures 2 and 3; [Render module](render.md)); ray hits do not read
   normal maps. Occlusion textures, `KHR_texture_transform` and unlit materials are dropped with a note; morph

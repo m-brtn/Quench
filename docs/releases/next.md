@@ -35,8 +35,21 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   range); unpaced offscreen A/B runs of GPU costs need no window now.
 - The demo's switch cycle checks the memory to below 64 MB of growth (was 32): the footprint moves within about
   60 MB from round to round on the native backend.
+- ASTC 4x4 textures (stage 6 remaining work): `quench_cook texture --format astc` encodes them through astc-encoder
+  5.7.1 (Apache-2.0, in the cook only), `quench_cook_assets(TEXTURE_FORMAT auto)` cooks ASTC in iOS builds and BC7
+  elsewhere, and `SceneAssets` samples them where `gpu::Caps::astcTextures` is set
+  ([Assets](../assets.md#cooked-formats)). PSNR 54 to 57 dB on the cook's test images (BC7: 44 to 51 dB); the
+  demo's Assets section ran with them in the iOS Simulator and on the iPhone 17.
 
 ## Fixes
+
+- **Xcode builds put changed assets into the app one build late:** the merged `assets/` folder was a folder
+  reference, which Xcode checks before the build that changes it: the demo's textures cooked again as ASTC were in
+  the merged folder after a build and in the app only after the next. A script phase after the target's other
+  phases now copies the changed files into the bundle and signs it again when it copied something (with Xcode's
+  identity and entitlements); a texture changed and changed back reached the app in the build that cooked it, with
+  a valid signature ([App shell](../app.md#ios-runs)). `tools/package_demo.sh` no longer builds the merged folder
+  in an `xcodebuild` of its own first.
 
 - **Memory growth on SDL GPU's Vulkan driver:** a fence released after it signalled could keep its command buffer,
   and every texture and buffer it used, in flight for good (a reference counting issue in SDL's Vulkan driver), so
@@ -95,5 +108,16 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   Apple platforms and then `; wait ms p50 <ms> p95 <ms> (<present mode>, display <n> Hz)` everywhere: a parser of
   the line that expects `; gpu ms` right after `p99 <ms>` needs to allow both. New values `perf_wait_p50`,
   `perf_wait_p95`, `perf_present_mode`, `perf_display_hz`; **`gpu::Device::presentMode(window)`** is new.
-- No new dependency library: the LTC data is code and a table in `quench_render` (BSD-2-Clause, with the paper
-  reference its licence asks for).
+- No new dependency library in the programs: the LTC data is code and a table in `quench_render` (BSD-2-Clause,
+  with the paper reference its licence asks for). The cook adds astc-encoder (fetched at every host configure with
+  the cook's other libraries, a 35 MB archive).
+- **iOS builds cook ASTC 4x4 instead of BC7:** `quench_cook_assets()` without `TEXTURE_FORMAT` (or with `auto`)
+  now cooks ASTC 4x4 for iOS (`CMAKE_SYSTEM_NAME` iOS) and BC7 elsewhere, as before; `TEXTURE_FORMAT bc7` keeps
+  BC7 everywhere. Every iPhone that runs iOS 26 samples ASTC. A game that reads a texture's format
+  (`TextureAsset::format()`) on iOS sees `Astc4x4Srgb` or `Astc4x4` there; a game that ships ASTC files to a device
+  without ASTC sampling gets the placeholder and an error (BC7 is still decoded on the CPU there).
+- **`cook::TextureFormat`** (the cook library, `tools/cook/Cook.h`) has `Astc4x4` after `Rgba8`; the cook's
+  `--format` takes `astc`.
+- **Xcode projects** (`quench_add_game` with the Xcode generator): the merged assets are no longer a folder
+  reference in the target's resources but are copied by a `CMake PostBuild Rules` script phase; a game's own script
+  that expects the folder in `Copy Bundle Resources` needs to change. The `<target>_assets` target stays.

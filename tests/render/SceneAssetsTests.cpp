@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -79,6 +80,23 @@ std::vector<std::uint8_t> solidBc7Ktx2(std::uint32_t r7, std::uint32_t g7, std::
     put(1, 1);
     assets::TextureImage image;
     image.format = assets::PixelFormat::Bc7Srgb;
+    image.width = image.height = size;
+    image.mipLevels = 1;
+    for (std::uint32_t i = 0; i < (size / 4) * (size / 4); ++i)
+        image.data.insert(image.data.end(), block.begin(), block.end());
+    Result<std::vector<std::uint8_t>> file = assets::writeKtx2(image);
+    CHECK(file, "writeKtx2: %s", file ? "" : file.error().c_str());
+    return file ? *file : std::vector<std::uint8_t>{};
+}
+
+// An ASTC 4x4 sRGB KTX2 file of one color: void-extent (constant color) blocks, the 8-bit color in the high byte of
+// each UNORM16 channel.
+std::vector<std::uint8_t> solidAstcKtx2(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint32_t size) {
+    std::array<std::uint8_t, 16> block{0xFC, 0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    const std::uint8_t channels[] = {r, g, b, 255};
+    for (int c = 0; c < 4; ++c) block[std::size_t(8 + 2 * c)] = block[std::size_t(9 + 2 * c)] = channels[c];
+    assets::TextureImage image;
+    image.format = assets::PixelFormat::Astc4x4Srgb;
     image.width = image.height = size;
     image.mipLevels = 1;
     for (std::uint32_t i = 0; i < (size / 4) * (size / 4); ++i)
@@ -150,6 +168,7 @@ bool gray(Rgba8 c) { return std::max({c.r, c.g, c.b}) - std::min({c.r, c.g, c.b}
 bool green(Rgba8 c) { return c.g > 2 * c.r && c.g > 2 * c.b && c.g > 40; }
 bool red(Rgba8 c) { return c.r > 2 * c.g && c.r > 2 * c.b && c.r > 40; }
 bool magenta(Rgba8 c) { return c.r > 2 * c.g && c.b > 2 * c.g && c.r > 40; }
+bool blue(Rgba8 c) { return c.b > 2 * c.r && c.b > 2 * c.g && c.b > 40; }
 
 struct Fixture {
     gpu::Device& device;
@@ -185,6 +204,7 @@ QUENCH_TEST(scene_assets_texture_states) {
     useDir("scene_assets_texture_states");
     writeFile("tex/green.ktx2", solidKtx2(20, 200, 20, 16));
     writeFile("tex/red_bc7.ktx2", solidBc7Ktx2(110, 8, 8, 8));
+    writeFile("tex/blue_astc.ktx2", solidAstcKtx2(20, 20, 200, 8));
     {
         Result<Renderer> renderer = Renderer::create(device, plainSettings());
         REQUIRE(renderer, "%s", renderer.error().c_str());
@@ -200,17 +220,17 @@ QUENCH_TEST(scene_assets_texture_states) {
         JobSystem jobs(JobSystemDesc{.workerThreads = 1});
         assets::AssetManager manager(jobs);
         SceneAssets sceneAssets(f.scene, manager);
-        const char* paths[] = {"tex/green.ktx2", "tex/red_bc7.ktx2", "tex/missing.ktx2"};
+        const char* paths[] = {"tex/green.ktx2", "tex/red_bc7.ktx2", "tex/missing.ktx2", "tex/blue_astc.ktx2"};
         std::vector<assets::AssetRef<TextureAsset>> textures;
         Result<MeshId> plane = f.scene.addMesh(planeMesh(glm::vec2(1.0f)).desc("plane"));
         REQUIRE(plane, "%s", plane.error().c_str());
-        std::array<glm::ivec2, 3> centers{};
-        for (int i = 0; i < 3; ++i) {
+        std::array<glm::ivec2, 4> centers{};
+        for (int i = 0; i < 4; ++i) {
             textures.push_back(sceneAssets.loadTexture(paths[i]));
             REQUIRE(textures.back()->texture(), "%s: no texture handle while loading", paths[i]);
             MaterialDesc material{.baseColor = glm::vec4(0.6f, 0.6f, 0.6f, 1.0f), .roughness = 1.0f};
             material.textures[0] = textures.back()->texture();
-            const glm::vec3 center(float(i - 1) * 2.5f, 0.0f, 0.0f);
+            const glm::vec3 center = i < 3 ? glm::vec3(float(i - 1) * 2.5f, 0.0f, 0.0f) : glm::vec3(0.0f, 0.0f, 2.5f);
             f.scene.addInstance({.mesh = *plane,
                                  .material = f.scene.addMaterial(material),
                                  .transform = glm::translate(glm::mat4(1.0f), center)});
@@ -219,7 +239,7 @@ QUENCH_TEST(scene_assets_texture_states) {
 
         // While loading every texture samples white.
         Frame frame = f.render();
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < 4; ++i)
             CHECK(textures[std::size_t(i)].state() == assets::AssetState::Loading &&
                       gray(frame.at(centers[std::size_t(i)])),
                   "%s while loading: %s, %d %d %d", paths[i], stateName(textures[std::size_t(i)].state()),
@@ -242,6 +262,17 @@ QUENCH_TEST(scene_assets_texture_states) {
         const int checker = frame.count(centers[2], 3, magenta);
         CHECK(textures[2].state() == assets::AssetState::Failed && checker >= 25,
               "missing texture: %s, %d of 49 pixels magenta", stateName(textures[2].state()), checker);
+        // ASTC: sampled where the device can, else an error and the placeholder (no decoder at run time).
+        const Rgba8 a = frame.at(centers[3]);
+        if (sceneAssets.astcTextures())
+            CHECK(textures[3].ready() && blue(a) && textures[3]->format() == assets::PixelFormat::Astc4x4Srgb &&
+                      !textures[3]->decodedOnCpu(),
+                  "ASTC texture: %s, %s, %d %d %d", stateName(textures[3].state()),
+                  textures[3].ready() ? assets::pixelFormatInfo(textures[3]->format()).name : "-", a.r, a.g, a.b);
+        else
+            CHECK(textures[3].state() == assets::AssetState::Failed && frame.count(centers[3], 3, magenta) >= 25,
+                  "ASTC texture without ASTC sampling: %s", stateName(textures[3].state()));
+        std::printf("ASTC %s: %d %d %d\n", sceneAssets.astcTextures() ? "sampled" : "not supported", a.r, a.g, a.b);
         textures.clear();
     }
     fs::setBackend(nullptr);

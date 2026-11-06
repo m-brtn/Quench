@@ -398,10 +398,12 @@ quench_shaderc runs on the build machine only and links these; their licence tex
   (cmake/BuildDxc.cmake); it compiles only the shader entries that use ray queries. Both licence files are kept
   next to the built dxc in the tool cache.
 
-quench_cook, the asset cooker (cmake/CookToolchain.cmake pins the first two; fastgltf pins and hash-checks the
-simdjson and simdutf files it downloads), links:
+quench_cook, the asset cooker (cmake/CookToolchain.cmake pins fastgltf, stb and astc-encoder; fastgltf pins and
+hash-checks the simdjson and simdutf files it downloads), links:
 
 - fastgltf v1.0.0 (commit 0b800b4a584704f9e9add67c79c4c8732e552787): MIT
+- astc-encoder 5.7.1 (commit 0affb51aaf0e0de3a8b038fa32487d59754a1eed), its library sources only: Apache-2.0
+  (its LICENSE.txt; no NOTICE file). It writes the ASTC 4x4 textures; the programs read them without it.
 - simdjson 5.1.0 and simdutf 9.3.3 (bundled by fastgltf): Apache-2.0 or MIT, at the user's choice
 - stb_image (stb commit 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5): MIT or public domain
 - bc7enc.cpp of bc7enc_rdo (above): MIT or public domain

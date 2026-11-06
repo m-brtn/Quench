@@ -182,9 +182,7 @@ if [[ $IOS -eq 1 ]]; then
     cmake --preset host-tools >/dev/null
     cmake --build --preset host-tools
     cmake --preset ios-xcode -DQUENCH_IOS_TEAM="$TEAM" >/dev/null
-    # The assets merged in a build of their own (once needed, not reproduced since; docs/app.md), compared after.
-    xcodebuild -project "$XBUILD/Quench.xcodeproj" -target quench_demo_assets -configuration Release \
-        -sdk iphoneos -quiet build
+    # The bundle's assets/ is compared with the merged folder after the build (docs/app.md, "iOS runs").
     xcodebuild -project "$XBUILD/Quench.xcodeproj" -scheme quench_demo -configuration Release \
         -destination generic/platform=iOS -allowProvisioningUpdates -quiet build
     IOS_APP="$XBUILD/examples/demo/Release-iphoneos/quench-demo.app"

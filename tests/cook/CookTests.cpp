@@ -1,6 +1,6 @@
-// quench_cook's library: textures (mips, BC7, the RGBA8 fallback, KTX2 pass-through), models (the demo's glTF and
-// GLB sources), skeletons, clips and skinned models (a small glTF written by the test), and that the output does not
-// depend on the number of threads.
+// quench_cook's library: textures (mips, BC7, ASTC 4x4, the RGBA8 fallback, KTX2 pass-through), models (the demo's
+// glTF and GLB sources), skeletons, clips and skinned models (a small glTF written by the test), and that the output
+// does not depend on the number of threads.
 
 #include "Test.h"
 
@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
@@ -58,6 +59,17 @@ std::vector<std::uint8_t> modelBytes(const assets::ModelData& model) {
     return bytes ? *bytes : std::vector<std::uint8_t>{};
 }
 
+// Peak signal to noise ratio of two RGBA8 images over all four channels, in dB (99 when they are the same).
+double psnr(std::span<const std::uint8_t> a, std::span<const std::uint8_t> b) {
+    if (a.size() != b.size() || a.empty()) return 0.0;
+    double sum = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double d = double(a[i]) - double(b[i]);
+        sum += d * d;
+    }
+    return sum == 0.0 ? 99.0 : 10.0 * std::log10(255.0 * 255.0 / (sum / double(a.size())));
+}
+
 } // namespace
 
 QUENCH_TEST(cook_bc7_matches_the_source) {
@@ -82,6 +94,47 @@ QUENCH_TEST(cook_bc7_matches_the_source) {
     }
     const double mean = sum / double(level0.size());
     CHECK(mean < 2.0 && largest < 32, "BC7 error: mean %.3f, largest %d", mean, largest);
+}
+
+QUENCH_TEST(cook_astc_matches_the_source) {
+    JobSystem jobs;
+    Result<Image> planks = decodeImage(readFile(kDemoSources / "models/crate_planks.png"));
+    REQUIRE(planks, "%s", planks ? "" : planks.error().c_str());
+    const std::pair<const char*, Image> images[] = {{"gradients", testImage(64, 32)}, {"planks", *planks}};
+    for (const auto& [name, image] : images)
+        for (const bool srgb : {true, false}) {
+            Result<assets::TextureImage> astc =
+                cookImage(image, {.format = TextureFormat::Astc4x4, .srgb = srgb}, jobs);
+            Result<assets::TextureImage> bc7 = cookImage(image, {.format = TextureFormat::Bc7, .srgb = srgb}, jobs);
+            REQUIRE(astc && bc7, "%s: cook failed", name);
+            CHECK(astc->format == (srgb ? assets::PixelFormat::Astc4x4Srgb : assets::PixelFormat::Astc4x4) &&
+                      astc->width == image.width && astc->mipLevels == bc7->mipLevels &&
+                      astc->data.size() == bc7->data.size(),
+                  "%s: %s %ux%u, %u levels, %zu bytes", name, assets::pixelFormatInfo(astc->format).name, astc->width,
+                  astc->height, astc->mipLevels, astc->data.size());
+            Result<Image> decoded = decodeAstc(*astc, 0);
+            Result<assets::TextureImage> bc7Decoded = assets::decodeBc7(*bc7);
+            REQUIRE(decoded && bc7Decoded, "%s: decode failed", name);
+            const double astcDb = psnr(decoded->rgba, image.rgba), bc7Db = psnr(bc7Decoded->level(0), image.rgba);
+            std::printf("%s %s: PSNR ASTC 4x4 %.2f dB, BC7 %.2f dB\n", name, srgb ? "sRGB" : "linear", astcDb, bc7Db);
+            CHECK(astcDb >= 40.0, "%s %s: ASTC PSNR %.2f dB", name, srgb ? "sRGB" : "linear", astcDb);
+            // The smallest level is one block of the source's average.
+            Result<Image> last = decodeAstc(*astc, astc->mipLevels - 1);
+            REQUIRE(last && last->width == 1 && last->height == 1, "%s: last level", name);
+        }
+
+    // A KTX2 file of ASTC blocks reads back the same and is passed through by the cook.
+    Result<assets::TextureImage> astc = cookImage(testImage(16, 16), {.format = TextureFormat::Astc4x4}, jobs);
+    REQUIRE(astc, "%s", astc.error().c_str());
+    Result<std::vector<std::uint8_t>> file = assets::writeKtx2(*astc);
+    REQUIRE(file, "%s", file.error().c_str());
+    Result<assets::TextureImage> read = assets::readKtx2(*file);
+    REQUIRE(read, "%s", read.error().c_str());
+    CHECK(read->format == assets::PixelFormat::Astc4x4Srgb && read->mipLevels == 5 && read->data == astc->data,
+          "KTX2: %s, %u levels", assets::pixelFormatInfo(read->format).name, read->mipLevels);
+    Result<assets::TextureImage> passed = cookTexture(*file, {.format = TextureFormat::Bc7}, jobs);
+    CHECK(passed && passed->data == astc->data, "an ASTC KTX2 file is passed through");
+    CHECK(!encodeAstc(Image{4, 4, {}}, true, jobs), "an empty image is an error");
 }
 
 QUENCH_TEST(cook_mips_filter_in_linear_light) {
@@ -113,6 +166,12 @@ QUENCH_TEST(cook_rgba8_when_not_a_multiple_of_4) {
     CHECK(cooked->levelWidth(1) == 3 && cooked->levelHeight(1) == 2 && cooked->levelWidth(2) == 1 &&
               cooked->levelHeight(2) == 1,
           "level 1 %ux%u", cooked->levelWidth(1), cooked->levelHeight(1));
+    notes.clear();
+    cooked = cookImage(testImage(6, 8), {.format = TextureFormat::Astc4x4}, jobs, &notes);
+    REQUIRE(cooked, "%s", cooked.error().c_str());
+    CHECK(cooked->format == assets::PixelFormat::Rgba8Srgb && notes.size() == 1 &&
+              notes[0].find("ASTC") != std::string::npos,
+          "ASTC: %s, %zu notes", assets::pixelFormatInfo(cooked->format).name, notes.size());
 
     Result<assets::TextureImage> small = cookImage(testImage(64, 64), {.maxSize = 16}, jobs);
     REQUIRE(small, "%s", small.error().c_str());
@@ -229,6 +288,12 @@ QUENCH_TEST(cook_output_independent_of_threads) {
     Result<std::vector<std::uint8_t>> fileA = assets::writeKtx2(*a), fileB = assets::writeKtx2(*b);
     REQUIRE(fileA && fileB, "writeKtx2 failed");
     CHECK(*fileA == *fileB, "texture: %zu and %zu bytes differ", fileA->size(), fileB->size());
+    for (const bool srgb : {true, false}) {
+        Result<assets::TextureImage> c = cookImage(image, {.format = TextureFormat::Astc4x4, .srgb = srgb}, one);
+        Result<assets::TextureImage> d = cookImage(image, {.format = TextureFormat::Astc4x4, .srgb = srgb}, many);
+        REQUIRE(c && d, "ASTC cook failed");
+        CHECK(c->data == d->data, "ASTC %s: the blocks differ", srgb ? "sRGB" : "linear");
+    }
 
     for (const char* name : {"models/pillar.glb", "models/ball.gltf"}) {
         Result<CookedModel> x = cookModel(kDemoSources / name, "models/m", {}, one);

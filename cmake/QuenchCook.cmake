@@ -1,7 +1,7 @@
 # Build-time asset cooking for the engine and for games: quench_cook_assets().
 #
 # The host tool `quench_cook` (tools/cook, cmake/CookToolchain.cmake) converts source assets into the formats the
-# runtime loads: KTX2 textures with mips (BC7 or RGBA8), .qmodel models (meshes with levels of detail, materials, skins,
+# runtime loads: KTX2 textures with mips (BC7, ASTC 4x4 or RGBA8), .qmodel models (meshes with levels of detail, materials, skins,
 # their textures cooked next to them), .qskel skeletons and .qanim clip sets. Cross builds (iOS) cannot run a tool
 # built for the target: they take a macOS `quench_cook` through QUENCH_HOST_COOK (the `host-tools` preset builds it).
 # The web build cooks nothing.
@@ -14,7 +14,10 @@ endif()
 # quench_cook_assets(<name> SOURCE_DIR <dir> [OUTPUT_DIR <dir>]
 #                    [TEXTURES <file>...] [DATA_TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...]
 #                    [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>] [FILES <file>...]
-#                    [TEXTURE_FORMAT bc7|rgba8] [TEXTURE_MAX_SIZE <n>] [MODEL_OPTIONS <quench_cook option>...])
+#                    [TEXTURE_FORMAT auto|bc7|astc|rgba8] [TEXTURE_MAX_SIZE <n>]
+#                    [MODEL_OPTIONS <quench_cook option>...])
+#
+# TEXTURE_FORMAT auto (the default) is ASTC 4x4 for iOS builds and BC7 elsewhere; astc is ASTC 4x4.
 #
 # Files are named relative to SOURCE_DIR and keep that path under OUTPUT_DIR (default
 # ${CMAKE_CURRENT_BINARY_DIR}/quench_cooked/<name>)
@@ -54,11 +57,15 @@ function(quench_cook_assets name)
     else()
         set(output_dir ${CMAKE_CURRENT_BINARY_DIR}/quench_cooked/${name})
     endif()
-    if(NOT arg_TEXTURE_FORMAT)
-        set(arg_TEXTURE_FORMAT bc7)
+    if(NOT arg_TEXTURE_FORMAT OR arg_TEXTURE_FORMAT STREQUAL "auto")
+        if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+            set(arg_TEXTURE_FORMAT astc)
+        else()
+            set(arg_TEXTURE_FORMAT bc7)
+        endif()
     endif()
-    if(NOT arg_TEXTURE_FORMAT MATCHES "^(bc7|rgba8)$")
-        message(FATAL_ERROR "quench_cook_assets: TEXTURE_FORMAT must be bc7 or rgba8")
+    if(NOT arg_TEXTURE_FORMAT MATCHES "^(bc7|astc|rgba8)$")
+        message(FATAL_ERROR "quench_cook_assets: TEXTURE_FORMAT must be auto, bc7, astc or rgba8")
     endif()
     set(common --format ${arg_TEXTURE_FORMAT})
     if(arg_TEXTURE_MAX_SIZE)

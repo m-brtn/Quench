@@ -196,13 +196,36 @@ The paper's reference is in the header comments of both files, in `THIRD_PARTY_L
 grazing angles their elements go down to 1e-10, below half precision. Neither game uses them, so no game pin is
 affected.
 
+## Added for stage 6's remaining work
+
+ASTC 4x4 textures for iOS ([Assets](assets.md#cooked-formats)), 2026-11-07. One library, in
+`cmake/CookToolchain.cmake` with the cooker's others, listed in `THIRD_PARTY_LICENSES` with the build-time tools
+(it is not linked into any program: devices sample ASTC themselves).
+
+| Library | Version | Commit | Licence | Linked into | Purpose |
+|---|---|---|---|---|---|
+| astc-encoder | 5.7.1 | `0affb51aaf0e0de3a8b038fa32487d59754a1eed`, SHA256 `2dab18a2d89609d45b83b0395b5b0865358edcf65dba440ff7ebb2c74909a682` | Apache-2.0 (`LICENSE.txt`; every compiled file carries the SPDX line; no NOTICE file) | `quench_cook` only | ASTC 4x4 encoding (the medium preset, LDR sRGB or linear); decoding in the cook's tests |
+
+How it is built: its CMake builds one library per instruction set and its command line tool, so the engine fetches
+the archive without it (`SOURCE_SUBDIR no-cmake`) and compiles its 22 library sources into `quench_cook_lib`, without
+warnings (`-w`, third-party code) and with `-ffp-contract=off` (upstream's default "invariance" setting: the same
+output for any build type). The instruction set comes from the compiler's own macros (NEON on arm64, SSE2 or better
+on x86-64). Its `ThirdParty/` (image readers for its command line tool) is not compiled. The archive is 35 MB (test
+images); the cook downloads it with its other libraries at every host configure. Neither game uses it.
+
+Checked in the 5.7.1 source and in the tests: `astcenc_compress_image` takes a strip of block rows, so the cook
+compresses rows in parallel on the job system with one context per worker (`astcenc_compress_reset` between
+images); the output is the same without workers and with 3 (`cook.cook_output_independent_of_threads`). A context
+allocated with a parent context (`astcenc_context_alloc`'s `parent` argument) converts the parent's already
+converted quality limit again, so the cook allocates each one from the configuration instead.
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.
 
 | Library | Latest release | Licence | Planned use |
 |---|---|---|---|
-| KTX-Software (libktx) | 4.4.2 (2025-10-04) | Apache-2.0, with exceptions (see below) | Basis Universal transcoding, ASTC encoding (stage 6 writes and reads KTX2 itself, BC7 and RGBA8 only) |
+| KTX-Software (libktx) | 4.4.2 (2025-10-04) | Apache-2.0, with exceptions (see below) | Basis Universal transcoding (the engine writes and reads KTX2 itself, BC7, ASTC 4x4 and RGBA8; ASTC through astc-encoder, above) |
 | Basis Universal | 2_50 (2026-08-03) | Apache-2.0 | supercompressed textures for Android and the web (bundled in libktx) |
 | Recast & Detour | 1.6.0 (2023-05-21) | zlib | navmesh building, path queries, crowds |
 | Tracy | 0.14.1 (2026-08-22) | BSD-3-Clause | CPU and GPU profiler (development builds) |

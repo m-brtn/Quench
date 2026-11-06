@@ -3,8 +3,8 @@
 #
 # fastgltf reads glTF and GLB; it downloads its two single-file dependencies, simdjson 5.1.0 and simdutf 9.3.3, from
 # their GitHub releases with SHA256 checks (fastgltf's cmake/dependencies.cmake). stb_image decodes PNG and JPEG,
-# bc7enc.cpp (bc7enc_rdo, declared in cmake/Dependencies.cmake) encodes BC7, meshoptimizer optimizes and simplifies
-# meshes. None of them is linked into a game.
+# bc7enc.cpp (bc7enc_rdo, declared in cmake/Dependencies.cmake) encodes BC7, astc-encoder encodes (and, for the
+# tests, decodes) ASTC, meshoptimizer optimizes and simplifies meshes. None of them is linked into a game.
 include(FetchContent)
 
 # ---------------------------------------------------------------- fastgltf v1.0.0
@@ -36,6 +36,24 @@ FetchContent_Declare(stb
     SOURCE_SUBDIR no-cmake)
 FetchContent_MakeAvailable(stb)
 
+# ---------------------------------------------------------------- astc-encoder 5.7.1
+# Its library sources only (not its CMake, which builds one library per instruction set and the command line tool).
+# The instruction set comes from the compiler's own macros (NEON on arm64, SSE2 or better on x86-64);
+# -ffp-contract=off is upstream's default "invariance" setting: the same output for any build type.
+FetchContent_Declare(astcenc
+    URL https://github.com/ARM-software/astc-encoder/archive/0affb51aaf0e0de3a8b038fa32487d59754a1eed.tar.gz
+    URL_HASH SHA256=2dab18a2d89609d45b83b0395b5b0865358edcf65dba440ff7ebb2c74909a682
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(astcenc)
+set(_astcenc_sources "")
+foreach(_name averages_and_directions block_sizes color_quantize color_unquantize compress_symbolic compute_variance
+              decompress_symbolic diagnostic_trace entry find_best_partitioning ideal_endpoints_and_weights image
+              integer_sequence mathlib mathlib_softfloat partition_tables percentile_tables
+              pick_best_endpoint_format quantization symbolic_physical weight_align weight_quant_xfer_tables)
+    list(APPEND _astcenc_sources ${astcenc_SOURCE_DIR}/Source/astcenc_${_name}.cpp)
+endforeach()
+
 # Built only where something needs it (a quench_cook_assets() call, the cook tests, the host-tools preset).
 add_library(quench_cook_lib STATIC EXCLUDE_FROM_ALL
     ${Quench_SOURCE_DIR}/tools/cook/CookAnimation.cpp
@@ -43,12 +61,15 @@ add_library(quench_cook_lib STATIC EXCLUDE_FROM_ALL
     ${Quench_SOURCE_DIR}/tools/cook/Gltf.cpp
     ${Quench_SOURCE_DIR}/tools/cook/CookTexture.cpp
     ${Quench_SOURCE_DIR}/tools/cook/ThirdParty.cpp
-    ${bc7enc_SOURCE_DIR}/bc7enc.cpp)
+    ${bc7enc_SOURCE_DIR}/bc7enc.cpp
+    ${_astcenc_sources})
 quench_configure_target(quench_cook_lib)
 set_source_files_properties(${Quench_SOURCE_DIR}/tools/cook/ThirdParty.cpp ${bc7enc_SOURCE_DIR}/bc7enc.cpp
     PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(${_astcenc_sources} PROPERTIES COMPILE_OPTIONS "-w;-ffp-contract=off")
 target_include_directories(quench_cook_lib PUBLIC ${Quench_SOURCE_DIR}/tools/cook)
-target_include_directories(quench_cook_lib SYSTEM PRIVATE ${stb_SOURCE_DIR} ${bc7enc_SOURCE_DIR})
+target_include_directories(quench_cook_lib SYSTEM PRIVATE ${stb_SOURCE_DIR} ${bc7enc_SOURCE_DIR}
+                                                          ${astcenc_SOURCE_DIR}/Source)
 target_link_libraries(quench_cook_lib PUBLIC quench_assets quench_animation quench_core
                                       PRIVATE fastgltf::fastgltf quench_meshoptimizer quench_glm)
 

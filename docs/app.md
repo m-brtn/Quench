@@ -363,8 +363,6 @@ a free developer profile can be on a device at a time.
 
 ```sh
 cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id> -DQUENCH_IOS_BUNDLE_ID_SUFFIX=  # empty suffix: paid team only
-# A game with assets (the demo): its merged assets first, see below
-xcodebuild -project build/ios-xcode/Quench.xcodeproj -target quench_demo_assets -configuration Release -sdk iphoneos build
 xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_hello -configuration Release \
     -destination id=<device udid> -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
 DEVICECTL=/Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Resources/bin/devicectl
@@ -376,18 +374,20 @@ $DEVICECTL device copy from --device <udid> --domain-type appDataContainer --dom
 ```
 
 In the Xcode build a game's plain and cooked assets are merged into one folder (`<target>_assets`,
-`cmake/StageAssets.cmake`), which Xcode copies into the bundle as a folder reference and signs with it. Until
-2026-11-06 a re-cooked file in a subfolder never reached the bundle: the merge rewrote the file but not the folder,
-and Xcode looks at the folder (the demo ran on the iPhone with a mannequin of the old model format, which it
-rejected). Checked on 2026-11-06 after stage 12 (Xcode 27.2, CMake 4.4.4, the demo, `-target` and `-scheme` builds
-without signing): a changed plain asset and a new file in a cooked subfolder reached the bundle in the build that
-merged them, and a build without changes cooks, compiles and copies nothing (1.4 s, the targets' own script
-phases). A build in which CMake regenerates the project (a changed `CMakeLists.txt`) still runs the old commands,
-so its app can be stale (a shader entry added in CMake was missing from it on 2026-11-06, and the app crashed at
-its first pipeline); the next build runs the new ones. After a CMake change, run `cmake --preset ios-xcode` before
-`xcodebuild` (`tools/package_demo.sh` does) or build twice.
-`tools/package_demo.sh` still builds `<target>_assets` first, in its own `xcodebuild`, and compares the bundle's
-`assets/` with the merged folder.
+`cmake/StageAssets.cmake`), and a script phase after the app target's other phases (`CMake PostBuild Rules`, on
+every build) copies the files that changed into the bundle's `assets/`, at the path Xcode passes to the phase
+(`TARGET_BUILD_DIR`), and signs the bundle again when it copied something, with Xcode's identity and entitlements
+(Xcode signs only when a file it copied or linked changed, so changed assets alone broke the signature: "a sealed
+resource is missing or invalid"). Until 2026-11-07 the merged folder was a folder reference that Xcode copied
+itself, and Xcode looks at such a folder before the build that changes it: on 2026-11-07 the demo's textures,
+cooked again as ASTC, were in the merged folder after a build but reached the bundle only in the next one (Xcode
+27.2, CMake 4.4.4). Checked on 2026-11-07 with the script phase: a texture source changed and changed back reached
+the bundle as the cooked file in the build that cooked it, twice, with a valid signature
+(`codesign --verify --deep --strict`) and the entitlements in it. A build in which CMake regenerates the project (a
+changed `CMakeLists.txt`) still runs the old commands, so its app can be stale (a shader entry added in CMake was
+missing from it on 2026-11-06, and the app crashed at its first pipeline); the next build runs the new ones. After a
+CMake change, run `cmake --preset ios-xcode` before `xcodebuild` (`tools/package_demo.sh` does) or build twice.
+`tools/package_demo.sh` compares the bundle's `assets/` with the merged folder after its build.
 
 The bundle ids are the `BUNDLE_ID` of each target plus `QUENCH_IOS_BUNDLE_ID_SUFFIX`: with the default suffix,
 `org.quench.hello.<login name>`. Team ids are listed in Xcode's accounts, or with

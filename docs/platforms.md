@@ -122,8 +122,14 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   work; test executables without `SDL_main` call `SDL_SetMainReady()` first.
 - Stage 6 in the Simulator (2026-11-05): without BC textures, cooked BC7 textures are decoded to RGBA8 on the CPU at
   load (`render.scene_assets_texture_states` checks the format and the pixels there); the cooked demo assets are made
-  by the `host-tools` `quench_cook` and bundled by the iOS presets. On the iPhone (2026-11-06) they are sampled as
+  by the `host-tools` `quench_cook` and bundled by the iOS presets. On the iPhone (2026-11-06) they were sampled as
   BC7 (see above; the demo logs "BC7 sampled, ASTC sampled" there).
+- ASTC 4x4 (2026-11-07): iOS builds cook their textures as ASTC 4x4 (`quench_cook_assets(TEXTURE_FORMAT auto)`), so
+  the Simulator samples them instead of decoding BC7 on the CPU. `render.scene_assets_texture_states` samples an
+  ASTC texture on every backend that reports `astcTextures` (the Mac's three, the Simulator's two). The demo's
+  Assets section with its 21 ASTC textures passed in the Simulator (17 checks, the capture looked at) and on the
+  iPhone 17 on both backends (17 checks each, the two captures identical, one looked at: textured tiles and models,
+  the broken and the missing model magenta). Not on the iPhone 18 Pro Max.
 
 ## HDR output
 

@@ -76,7 +76,8 @@ Result<void> TextureAsset::decode(fs::Bytes bytes) {
         m_pendingDecoded = true;
     } else if ((format == assets::PixelFormat::Astc4x4 || format == assets::PixelFormat::Astc4x4Srgb) &&
                !m_astcTextures) {
-        return Error{"the device cannot sample ASTC 4x4, and there is no ASTC decoder yet"};
+        return Error{
+            "the device cannot sample ASTC 4x4 and the runtime has no ASTC decoder (cook BC7 or RGBA8 for it)"};
     }
     m_pending = std::move(*image);
     return {};
