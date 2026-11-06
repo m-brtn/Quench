@@ -21,6 +21,7 @@ extern "C" void quench_app_prohibit_activation(void); // ActivationApple.m
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <format>
@@ -77,6 +78,21 @@ void App::setPresentMode(gpu::PresentMode mode) {
     if (m_state.device && m_state.window && !m_state.offscreen)
         m_state.device->setPresentMode(m_state.window.get(), mode);
 }
+
+void App::setMaxFrameRate(double hz) {
+    hz = std::isfinite(hz) ? std::clamp(hz, 0.0, 1000.0) : 0.0;
+    if (hz == m_state.maxFrameRate) return;
+    m_state.maxFrameRate = hz;
+    // Desktops: SDL's main loop waits between the callbacks. iOS calls them from a display link on every refresh, which
+    // the hint does not change: iterate() lets the early ones pass without a frame.
+    if (!m_state.offscreen) SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, std::format("{}", hz).c_str());
+    if (hz > 0.0)
+        log::info("app", "max frame rate {} Hz", hz);
+    else
+        log::info("app", "max frame rate: the display's");
+}
+
+double App::maxFrameRate() const { return m_state.maxFrameRate; }
 
 void App::setHdrMode(HdrMode mode) {
     m_state.hdrMode = mode;
@@ -691,6 +707,7 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     if (Result<void> started = s.game->init(s.app); !started)
         return fail(std::format("game init: {}", started.error()));
     s.gameStarted = true;
+    if (s.options.maxFrameRate) s.app.setMaxFrameRate(*s.options.maxFrameRate);
     s.lastCounter = SDL_GetPerformanceCounter();
     return SDL_APP_CONTINUE;
 }
@@ -699,6 +716,10 @@ SDL_AppResult iterate(AppState& s) {
     const Uint64 now = SDL_GetPerformanceCounter();
     const double frequency = double(SDL_GetPerformanceFrequency());
     const double realDt = double(now - s.lastCounter) / frequency;
+    // Under a frame rate limit a refresh that comes early passes without a frame (iOS calls on every refresh of its
+    // display link: App::setMaxFrameRate). Three quarters of the interval, so that a refresh a little early by jitter
+    // still renders: 60 Hz on a 120 Hz display renders every second refresh.
+    if (s.maxFrameRate > 0.0 && !s.offscreen && realDt < 0.75 / s.maxFrameRate) return SDL_APP_CONTINUE;
     s.lastCounter = now;
 
     const bool minimized =

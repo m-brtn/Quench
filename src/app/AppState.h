@@ -129,6 +129,7 @@ struct AppState {
     std::uint64_t frame = 0;
     std::uint64_t ticks = 0;
     Uint64 lastCounter = 0;
+    double maxFrameRate = 0.0; // App::setMaxFrameRate; 0: the display's rate
 
     // Statistics.
     FrameStats stats;

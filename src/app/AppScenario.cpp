@@ -403,6 +403,7 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
     }
     if (name == "gpu_resources") return double(s.device->liveResources());
     if (name == "thermal_state") return double(s.stats.thermal);
+    if (name == "max_frame_rate") return s.maxFrameRate;
     if (const auto it = s.perfValues.find(name); it != s.perfValues.end()) return it->second;
     if (name.starts_with("audio_")) {
         if (const auto it = s.audioValues.find(name); it != s.audioValues.end()) return it->second;
@@ -572,6 +573,15 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
         return Exec::Done;
     }
     if (op == "audio_measure") return audioMeasure(s, c);
+    if (op == "max_frame_rate") {
+        const auto hz = number(c.args, 0);
+        if (c.args.size() != 1 || !hz || *hz < 0.0 || *hz > 1000.0) {
+            log::error("scenario", "line {}: max_frame_rate HZ (0 to 1000; 0: the display's rate)", c.line);
+            return Exec::Failed;
+        }
+        s.app.setMaxFrameRate(*hz);
+        return Exec::Done;
+    }
 
     switch (s.game->scenarioCommand(s.app, c)) {
     case ScenarioExec::Done: return Exec::Done;

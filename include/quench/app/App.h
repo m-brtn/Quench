@@ -227,6 +227,11 @@ public:
     // given (host paths in the iOS Simulator).
     void requestCapture(std::string path);
     void setPresentMode(gpu::PresentMode mode);
+    // At most `hz` frames per second on the screen (0: the display's rate; --max-frame-rate overrides it at the
+    // start). Frames are paced to whole display refreshes: 60 on a 120 Hz display renders every second refresh (the GPU
+    // works half as often, which lowers heat and battery use). Offscreen frames are not limited.
+    void setMaxFrameRate(double hz);
+    double maxFrameRate() const;
 
     // HDR output. A new mode takes effect before the next frame; so do changes of the window's display (moved to
     // another display, HDR switched on or off: SDL_EVENT_WINDOW_HDR_STATE_CHANGED) and of its headroom, which the

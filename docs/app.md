@@ -109,6 +109,7 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--gpu-debug` | GPU validation (the backend's debug mode) |
 | `--gpu-pass-timing` | record the GPU time per pass in every frame (`gpu::Caps::gpuPassTiming`: the native Metal backend); without it only while the game asks (`App::requestPassTiming`) or a scenario's perf region runs, since recording costs CPU time ([Performance](performance.md#gpu-time-per-pass)) |
 | `--present-mode MODE` | `vsync`, `immediate` or `mailbox`; falls back to vsync where the window does not support it |
+| `--max-frame-rate HZ` | at most HZ frames per second on the screen, in whole display refreshes (60 on a 120 Hz display: every second one; `App::setMaxFrameRate`). iOS calls the app on every refresh of its display link and the app lets the early ones pass; desktops pace SDL's main loop (`SDL_HINT_MAIN_CALLBACK_RATE`). Offscreen frames are not limited. 0: the display's rate (the default) |
 | `--hdr MODE` | HDR output: `off` (SDR), `on` (wherever the GPU backend can composite the window in HDR) or `auto` (while the display reports HDR range); default `AppDesc::hdr`, normally off ([HDR output](#hdr-output)) |
 | `--hdr-headroom N` | peak of HDR output in multiples of paper white (1 to 1000) instead of the display's, for repeatable HDR runs |
 | `--orientation NAME` | `portrait`, `landscape` or `any`: the screen orientations of the window on phones and tablets (`SDL_HINT_ORIENTATIONS`, within those of the app's Info.plist, `quench_add_game(... ORIENTATIONS)`; default: all of those); desktops ignore it |
@@ -190,6 +191,7 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `capture PATH` | capture the next frame; the script goes on once the file is written |
 | `hdr off\|on\|auto` | `App::setHdrMode`; the output changes at the start of the next frame |
 | `perf_begin LABEL`, `perf_end` | measure the frames in between, in real time; `perf_end` logs a `perf:` line (with the game's `Game::perfDetails` at the end) and sets the `perf_*` values |
+| `max_frame_rate HZ` | `App::setMaxFrameRate` (0: the display's rate); value `max_frame_rate` |
 | `audio_measure S [MIN_HZ MAX_HZ]` | measure the newest S seconds (at most 4) of the mix: RMS per channel and of both, peak, and the strongest frequency between MIN_HZ and MAX_HZ (default 20 to 20000; a Hann-windowed FFT with interpolation between bins); logs a line and sets the `audio_rms*`, `audio_peak`, `audio_freq*` and `audio_measured` values. A script with this command keeps the last 4 s of the mix for it |
 
 A point P is `X Y` in window points (`480 420`), in percent of the window's width and height (`50% 75%`; the two

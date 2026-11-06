@@ -1,0 +1,157 @@
+# Ray tracing costs on a phone (docs/performance.md, "Stage 11 on the iPhone"), the ray tracing section on the native
+# Metal backend at the device's size:
+#   copy this file into the app's user directory, launch with --gpu-backend metal --script raytracing_phone.txt
+# A phone lowers its clocks within a minute of full load, and a region measured hot does not compare with one
+# measured cool: every group of regions (at most about 20 s of load) starts only once the system's thermal state is
+# nominal again. Meanwhile the section runs its cheapest frame (shadow maps at half size) at 24 frames per second.
+# The perf lines carry the thermal state of each region ("thermal nominal", "thermal nominal -> fair").
+
+section raytracing
+until rt_ready == 1 5
+set denoiser temporal
+set shadow_rays 2
+set shadow_softness 1
+
+# Cool down: the cheapest frame, few of them.
+set sun_shadows maps
+set ao none
+set local_shadows 0
+set reflections sky
+set indirect sky
+set upscaling bilinear
+set scale 0.5
+max_frame_rate 20
+until thermal_state <= 0 300
+max_frame_rate 0
+
+# Each traced effect at the device's size, added to ray-traced sun shadows and occlusion.
+set sun_shadows rt
+set ao rt
+set scale 1
+wait 0.5
+perf_begin rt_shadows_ao
+wait 4
+perf_end
+set local_shadows 2
+wait 0.5
+perf_begin plus_lamp_shadows
+wait 4
+perf_end
+set local_shadows 0
+set reflections rt
+wait 0.5
+perf_begin plus_reflections
+wait 4
+perf_end
+set reflections sky
+set indirect probes
+wait 0.5
+perf_begin plus_probes
+wait 4
+perf_end
+
+set sun_shadows maps
+set ao none
+set indirect sky
+set scale 0.5
+max_frame_rate 20
+until thermal_state <= 0 300
+max_frame_rate 0
+
+set sun_shadows rt
+set ao rt
+set scale 1
+set indirect rt
+wait 0.5
+perf_begin plus_indirect_rt
+wait 4
+perf_end
+set local_shadows 2
+set reflections rt
+set indirect probes
+wait 0.5
+perf_begin all_traced
+wait 4
+perf_end
+set sun_shadows maps
+set ao none
+set local_shadows 0
+set reflections sky
+set indirect sky
+wait 0.5
+perf_begin shadow_maps
+wait 4
+perf_end
+
+set scale 0.5
+max_frame_rate 20
+until thermal_state <= 0 300
+max_frame_rate 0
+
+# All of them (the section's defaults) scaled up from 0.67 and 0.5.
+set sun_shadows rt
+set ao rt
+set local_shadows 2
+set reflections rt
+set indirect probes
+set upscaling temporal
+set scale 0.67
+wait 0.5
+perf_begin all_temporal_067
+wait 4
+perf_end
+set upscaling denoised
+wait 0.5
+perf_begin all_denoised_067
+wait 4
+perf_end
+set upscaling temporal
+set scale 0.5
+wait 0.5
+perf_begin all_temporal_05
+wait 4
+perf_end
+set upscaling spatial
+wait 0.5
+perf_begin all_spatial_05
+wait 4
+perf_end
+
+set sun_shadows maps
+set ao none
+set local_shadows 0
+set reflections sky
+set indirect sky
+set upscaling bilinear
+max_frame_rate 20
+until thermal_state <= 0 300
+max_frame_rate 0
+
+# Smaller sets at half size: without the lamp shadows, and sun shadows and occlusion alone.
+set sun_shadows rt
+set ao rt
+set reflections rt
+set indirect probes
+set upscaling spatial
+wait 0.5
+perf_begin no_lamps_spatial_05
+wait 4
+perf_end
+set upscaling temporal
+wait 0.5
+perf_begin no_lamps_temporal_05
+wait 4
+perf_end
+set reflections sky
+set indirect sky
+set upscaling spatial
+wait 0.5
+perf_begin shadows_ao_spatial_05
+wait 4
+perf_end
+set upscaling bilinear
+wait 0.5
+perf_begin shadows_ao_bilinear_05
+wait 4
+perf_end
+quit

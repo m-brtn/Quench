@@ -72,6 +72,10 @@ QUENCH_TEST(options_errors) {
     CHECK(!parse({"--window", "0x600"}).ok(), "zero width");
     CHECK(!parse({"--frame-size", "1280x720x2"}).ok(), "three numbers");
     CHECK(!parse({"--present-mode", "fast"}).ok(), "unknown present mode");
+    CHECK(!parse({})->maxFrameRate, "the display's rate by default");
+    CHECK(parse({"--max-frame-rate", "60"})->maxFrameRate == 60.0, "--max-frame-rate 60");
+    CHECK(parse({"--max-frame-rate=0"})->maxFrameRate == 0.0, "--max-frame-rate=0");
+    CHECK(!parse({"--max-frame-rate", "-1"}).ok() && !parse({"--max-frame-rate", "fast"}).ok(), "bad frame rate");
     CHECK(parse({"--gpu-backend", "metal"})->gpuBackend == gpu::Backend::Metal, "--gpu-backend metal");
     CHECK(parse({"--gpu-backend=sdl"})->gpuBackend == gpu::Backend::SdlGpu, "--gpu-backend=sdl");
     CHECK(!parse({"--gpu-backend", "vulkan"}).ok(), "unknown backend");

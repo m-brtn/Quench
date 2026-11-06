@@ -53,6 +53,8 @@ const char* optionsHelp() {
            "  --gpu-pass-timing    GPU time per pass in every frame (native Metal backend); otherwise only while the\n"
            "                       game shows it or a scenario's perf region runs\n"
            "  --present-mode MODE  vsync, immediate or mailbox\n"
+           "  --max-frame-rate HZ  at most HZ frames per second on the screen, whole display refreshes (60 on a\n"
+           "                       120 Hz display: every second one); 0: the display's rate (the default)\n"
            "  --hdr MODE           HDR output: off (SDR), on (where the GPU backend supports it) or auto (while\n"
            "                       the display has HDR range); default: the game's choice, normally off\n"
            "  --hdr-headroom N     peak brightness of HDR output in multiples of paper white (N >= 1) instead of\n"
@@ -145,6 +147,13 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
                 options.presentMode = gpu::PresentMode::Mailbox;
             else
                 return Error{std::format("--present-mode: '{}' is not vsync, immediate or mailbox", *v)};
+        } else if (flag == "--max-frame-rate") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            const auto hz = parseDouble(*v);
+            if (!hz || *hz < 0.0 || *hz > 1000.0)
+                return Error{std::format("--max-frame-rate: '{}' is not a number from 0 to 1000", *v)};
+            options.maxFrameRate = *hz;
         } else if (flag == "--gpu-backend") {
             Result<std::string_view> v = value();
             if (!v) return Error{v.error()};
