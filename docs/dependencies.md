@@ -176,7 +176,11 @@ in the vertices on 2026-11-06. One library, in `cmake/Dependencies.cmake`, liste
 The archive has no CMake project; the engine compiles its one C file without warnings flags (third-party code) and
 calls it only from `src/assets/Tangents.cpp` (`assets::generateTangents`), so no MikkTSpace type is in a public
 header. Its repository has had no commit since 2020; it is the reference implementation Blender, the glTF sample
-models and most bakers use. Neither game uses it, so no game pin is affected.
+models and most bakers use. Neither game uses it, so no game pin is affected. One patch
+(`cmake/patches/MikkTSpaceRotate.cmake`, FetchContent's `PATCH_COMMAND`): its two quicksorts rotate a random seed
+with a right shift by 32 when the rotation is 0, undefined behaviour that UndefinedBehaviorSanitizer stops in the
+`asan` preset; the shift is masked (`>>((32-t)&31)`), the result the hardware gave, and the changed lines are marked
+in the source as the zlib licence asks. The demo's cooked models were byte-identical before and after.
 
 ## Planned
 

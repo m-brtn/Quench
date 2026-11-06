@@ -313,8 +313,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 MikkTSpace (https://github.com/mmikk/MikkTSpace, commit 3e895b49d05ea07e4c2133156cfa94369e19e409)
 -------------------------------------------------------------------------------------------------
 
-Linked into quench_assets (tangents for cooked and procedural meshes) and quench_cook. The same zlib licence is in
-both of its files, mikktspace.c and mikktspace.h:
+Linked into quench_assets (tangents for cooked and procedural meshes) and quench_cook. Altered: two lines of
+mikktspace.c mask a shift (marked "Quench patch" in the source; cmake/patches/MikkTSpaceRotate.cmake). The same zlib
+licence is in both of its files, mikktspace.c and mikktspace.h:
 
 Copyright (C) 2011 by Morten S. Mikkelsen
 

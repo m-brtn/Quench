@@ -101,6 +101,8 @@ FetchContent_Declare(mikktspace
     URL https://github.com/mmikk/MikkTSpace/archive/3e895b49d05ea07e4c2133156cfa94369e19e409.tar.gz
     URL_HASH SHA256=aeba65ddee85a679133d510d71d00b108f603752f90b15b9ecf7777033f6e351
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    # A seed rotation shifted by 32 (undefined behaviour) is masked; the tangents do not change.
+    PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/MikkTSpaceRotate.cmake
     SOURCE_SUBDIR no-cmake)
 FetchContent_MakeAvailable(mikktspace)
 add_library(quench_mikktspace STATIC ${mikktspace_SOURCE_DIR}/mikktspace.c)
