@@ -53,6 +53,10 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   instances now write their motion only where the frame's depth is their own (`velocity_cutout_fs`, without a depth
   target): in `renderer_moving_cutout_motion_vectors` the motion vector in a hole of a panel moving 0.1 m per frame
   read 251 of 255 in a temporary view of the motion vectors before, 0 after, on all three backends.
+- **The demo's `menu.txt` in the compact layout:** its clicks and touches on the section list failed on phones and
+  in the iOS Simulator (7 of 39), where the list is a sheet; the scenario now opens the sheet first (35 of 35 in
+  the Simulator and in the Mac's batches). Scripted gamepad input works in the Simulator now (hello's `input.txt`
+  14 of 14, the demo's `physics.txt` 18 of 18 and `input.txt` 22 of 22).
 
 ## Changes for games
 

@@ -1,6 +1,6 @@
 # Menu navigation of the engine demo (ctest: demo_menu_<backend>, a part of batch.txt): keyboard, gamepad, mouse and
-# touch switch sections, H hides the windows. Any window size: the click and the touch go to the menu entries the demo
-# names (`@menu:<section>`).
+# touch switch sections, H hides the windows. Any window size and layout: the click and the touch go to the menu
+# entries the demo names (`@menu:<section>`).
 section materials
 
 wait 0.1
@@ -52,15 +52,25 @@ tap H
 until ui == 1 1
 
 # Mouse and touch on the list: entry 2 (Shadows), entry 4 (Post-processing), entry 11 (Ray tracing) and entry 12
-# (Tunnel).
+# (Tunnel). The compact layout shows the list in a sheet that closes when an entry is chosen (`sheet sections`
+# opens it; the wide layout ignores it).
+sheet sections
+wait 0.05
 click @menu:shadows
 until section == 1 1
+sheet sections
+wait 0.05
 touch @menu:post
 until section == 3 1
+sheet sections
+wait 0.05
 click @menu:raytracing
 until section == 10 1
+sheet sections
+wait 0.05
 touch @menu:tunnel
 until section == 11 1
+sheet none
 
 # Keyboard and gamepad on the windows: Tab or the D-pad give them the keys and buttons (the scene's actions stop),
 # Down and Enter (the D-pad and A) choose an entry, Escape (B) gives the keys back to the scene.

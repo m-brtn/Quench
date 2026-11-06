@@ -98,13 +98,16 @@ code may be moved), verified with the engine's tests and the engine demo; no ver
 - Changed: "every module moved with capture comparisons in the game it comes from" became the engine's own captures
   (the games are not switched). Switching TrailForge's renderer to `quench_render` is later work, when the user asks.
 - Done later: cut-out shadows of alpha-tested materials and translucent, tinted shadows of alpha-blended ones
-  (0.6.0, after the user's report from the iPhone); motion vectors of skinned meshes (stage 8).
+  (0.6.0, after the user's report from the iPhone); motion vectors of skinned meshes (stage 8); GPU timing per pass
+  (stage 9, on the native Metal backend); normal maps (0.9.0); scripted gamepad input in the iOS Simulator (checked
+  on 2026-11-06 after 0.9.0: hello's `input.txt` 14 passed, the demo's `physics.txt` 18, `input.txt` 22 and
+  `menu.txt` 35, none failed; it did not attach there on 2026-11-05; the likely fix, not checked against an older
+  build, is the offscreen runs' change that makes the virtual pad the only gamepad `Input` and ImGui use).
 - Not done, remaining: Ashfall's screen-space occlusion, bounce light, reflections and sun shafts (optional modules);
-  normal maps; motion vectors for other vertex-deformed surfaces (custom vertex shaders); quality
-  presets; GPU timing per pass; HDR seen on a Mac HDR display (this Mac's display has no HDR range; on the iPhone the
-  user looked at the demo's HDR section, on and off, on 2026-11-05: "everything is fine"); PQ encoding for `Hdr10`
-  output; auto exposure; scripted gamepad input in the iOS Simulator (the virtual gamepad does not attach there, so
-  the gamepad lines of the demo's and hello's input scenarios fail in the Simulator only).
+  motion vectors for other vertex-deformed surfaces (custom vertex shaders); quality presets; GPU timing per pass on
+  SDL GPU; HDR seen on a Mac HDR display (this Mac's display has no HDR range; on the iPhone the user looked at the
+  demo's HDR section, on and off, on 2026-11-05: "everything is fine"); PQ encoding for `Hdr10` output; auto
+  exposure.
 - Done: version 0.3.0, release notes in [docs/releases/v0.3.0.md](releases/v0.3.0.md).
 
 ## Stage 6: assets (done 2026-11-05 except shader hot reload, version 0.4.0; games not switched)
