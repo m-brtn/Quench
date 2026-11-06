@@ -25,6 +25,7 @@ struct Options {
     int windowHeight = 0;
     int frameWidth = 0; // > 0: every frame is rendered offscreen at this size and scaled to the window
     int frameHeight = 0;
+    std::optional<bool> offscreen;          // --offscreen / --onscreen; empty: offscreen for automated runs on desktops
     std::optional<gpu::Backend> gpuBackend; // empty: AppDesc
     std::string gpuDriver;
     bool gpuDebug = false;
@@ -46,6 +47,8 @@ struct Options {
 
     // Scenario and capture runs step the app time by exactly one fixed step per frame (outside perf regions).
     bool deterministic() const { return !script.empty() || !capture.empty(); }
+    // Runs nobody watches: a scenario, a capture or a fixed run time.
+    bool automated() const { return deterministic() || quitAfter >= 0.0; }
 };
 
 // `args` without the program name. Accepts "--flag value" and "--flag=value".

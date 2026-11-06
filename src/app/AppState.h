@@ -33,6 +33,10 @@ namespace quench::app::detail {
 // Scenario runs keep this much of the mix for audio_measure.
 inline constexpr double kAudioMonitorSeconds = 4.0;
 
+// SDL_CommonEvent::reserved of the events a scenario pushes, which SDL leaves alone: runs that take only scripted
+// input drop device events without it (and gamepad events of other gamepads than the scenario's virtual one).
+inline constexpr Uint32 kScenarioEvent = 0x51534345;
+
 struct LogSinkGuard {
     int id = -1;
     ~LogSinkGuard();
@@ -95,6 +99,13 @@ struct AppState {
     Input input;
     SDL_Joystick* virtualPad = nullptr;
     SDL_JoystickID virtualPadId = 0;
+    SDL_Gamepad* virtualGamepad = nullptr; // the virtual pad as ImGui's only gamepad (scripted input)
+    // No window on the screen (--offscreen; automated runs on desktops): the window stays hidden and unclaimed, frames
+    // go only to frameTexture, at --frame-size or the window size in points.
+    bool offscreen = false;
+    gpu::SwapchainComposition offscreenComposition = gpu::SwapchainComposition::Sdr;
+    // Only the script's events reach ImGui, Input and the game (--script, offscreen runs).
+    bool scriptedInput = false;
     std::unique_ptr<Game> game;
     bool gameStarted = false;
 
@@ -128,6 +139,7 @@ struct AppState {
 
     // Captures and quitting.
     std::string captureRequest;
+    bool scenarioCapturing = false; // the scenario's capture command waits for its frame
     bool capturedFromOptions = false;
     double capturePeak = -1.0; // brightest channel of the last capture, in multiples of paper white; < 0: none yet
     bool quitRequested = false;

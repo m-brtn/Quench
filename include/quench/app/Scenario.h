@@ -9,6 +9,8 @@
 //   expect VAR OP VALUE         check now; OP is < <= > >= == != (== and != with a relative tolerance of 1e-3)
 //   mark VAR                    remember a value; d_VAR is then the change since the mark
 //   log TEXT                    print a line
+//   include FILE                run another scenario file (relative to this one) as a part: its `time` starts at 0,
+//                               its `quit` ends only the part, and its passed and failed checks are logged at its end
 //   quit                        end the scenario; the app exits with 1 if a check failed
 //
 // App commands (src/app/AppScenario.cpp): down/up/tap KEY, text STRING, mouse X Y, click X Y [left|right|middle],
@@ -32,11 +34,18 @@ struct ScenarioCommand {
     int line = 0;
     std::string op;
     std::vector<std::string> args; // for down, up, tap, text and log: the rest of the line as one argument
+    std::string file;              // the scenario file the line is in
+    std::size_t end = 0;           // include: the index of the command that ends the part
 };
 
 class Scenario {
 public:
-    static Result<Scenario> parse(std::string_view text, std::string name);
+    // Reads an included file by its path (the including file's directory joined with the include's argument).
+    using LoadFn = std::function<Result<std::string>(const std::string& path)>;
+
+    // Included files are read through `load` and put in place of their include (between an `include` command and
+    // an `end_include` one); without a loader an include is an error.
+    static Result<Scenario> parse(std::string_view text, std::string name, const LoadFn& load = {});
 
     enum class Exec { Done, Busy, Failed }; // Busy: try again next frame
     using ValueFn = std::function<std::optional<double>(std::string_view name)>;
@@ -53,11 +62,20 @@ public:
     void fail(const ScenarioCommand& command, std::string_view what);
 
 private:
+    struct Part {
+        double origin = 0.0; // app time at its start
+        std::size_t end = 0;
+        int passed = 0, failed = 0; // the counts at its start
+    };
+
+    static Result<void> parseFile(Scenario& scenario, std::string_view text, const std::string& file,
+                                  const LoadFn& load, int depth);
     bool compare(const ScenarioCommand& command, const ValueFn& value, std::string& detail) const;
 
     std::string m_name;
     std::vector<ScenarioCommand> m_commands;
     std::map<std::string, double, std::less<>> m_marks;
+    std::vector<Part> m_parts;
     std::size_t m_next = 0;
     double m_resumeAt = -1.0; // wait
     double m_deadline = -1.0; // until

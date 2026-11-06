@@ -5,6 +5,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdlib>
+#include <cstring>
+
 using namespace quench;
 using namespace quench::gpu;
 
@@ -17,6 +20,18 @@ using namespace quench::gpu;
 
 #if QUENCH_TEST_WINDOWS
 namespace {
+
+// The cases below show a real window (a swapchain needs one on the screen: SDL's Vulkan driver gives a hidden window
+// no swapchain texture). They run only on request, with QUENCH_WINDOW_TESTS=1 in the environment; the device test
+// app on a phone runs them always.
+bool windowTestsWanted() {
+#if defined(QUENCH_TEST_SDL_MAIN)
+    return true;
+#else
+    const char* wanted = std::getenv("QUENCH_WINDOW_TESTS");
+    return wanted && std::strcmp(wanted, "1") == 0;
+#endif
+}
 
 void drawFrames(Device& device, SDL_Window* window) {
     const TextureFormat format = device.swapchainFormat(window);
@@ -62,6 +77,7 @@ QUENCH_TEST(window_present) {
 #if !QUENCH_TEST_WINDOWS
     QUENCH_SKIP("windows need the app lifecycle on this platform");
 #else
+    if (!windowTestsWanted()) QUENCH_SKIP("shows a window: only with QUENCH_WINDOW_TESTS=1");
     QUENCH_GPU_DEVICE(device);
     SDL_Window* window = SDL_CreateWindow("quench_gpu_device_tests", 160, 90, 0);
     REQUIRE(window, "SDL_CreateWindow: %s", SDL_GetError());
@@ -81,6 +97,7 @@ QUENCH_TEST(window_swapchain_compositions) {
 #if !QUENCH_TEST_WINDOWS
     QUENCH_SKIP("windows need the app lifecycle on this platform");
 #else
+    if (!windowTestsWanted()) QUENCH_SKIP("shows a window: only with QUENCH_WINDOW_TESTS=1");
     QUENCH_GPU_DEVICE(device);
     SDL_Window* window = SDL_CreateWindow("quench_gpu_device_tests", 160, 90, 0);
     REQUIRE(window, "SDL_CreateWindow: %s", SDL_GetError());

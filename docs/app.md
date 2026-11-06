@@ -102,6 +102,8 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--script FILE` | run a verification scenario; the exit code is 1 if a check failed. A host path; a relative path not found there is read from the user directory (on a device: copy the script there first) |
 | `--window WxH` | window size in points (desktop) |
 | `--frame-size WxH` | render every frame offscreen at W x H pixels and scale it to the window, so captures do not depend on the display density |
+| `--offscreen` | no window on the screen ([Offscreen runs](#offscreen-runs)); the default on desktops with `--script`, `--capture` or `--quit-after` |
+| `--onscreen` | a visible window also with `--script`, `--capture` or `--quit-after`: to watch a scenario, and for benchmarks |
 | `--gpu-backend NAME` | `sdl` (SDL GPU) or `metal` (the native Metal backend, [Architecture](architecture.md#native-metal-backend); Apple platforms, elsewhere SDL GPU with a warning); default `AppDesc::gpuBackend`, which reads the `QUENCH_GPU_BACKEND` environment variable and otherwise takes SDL GPU |
 | `--gpu-driver NAME` | SDL GPU's driver: `metal`, `vulkan` or `direct3d12` (the native backend has only `metal`) |
 | `--gpu-debug` | GPU validation (the backend's debug mode) |
@@ -121,20 +123,48 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 
 When the audio device cannot be opened, the app logs a warning and mixes offline as with `--no-audio`. Offline mixing
 advances the mix by each frame's time step, so in a deterministic run (below) the mix follows app time exactly and
-the same script gives the same WAV file on every run.
+the same script gives the same WAV file on every run. Offscreen runs mix offline unless `--audio-device` names a
+device.
 
 With `--script` or `--capture` the run is **deterministic**: every frame advances the app time by exactly one fixed
-step and runs one tick, whatever the display rate. Such a frame never takes less than the step in real time (the
-engine waits for the rest), so background work such as streaming keeps its pace against app time; when frames take
-longer (60 Hz vsync), app time runs slower than real time. A scenario's `perf_begin` .. `perf_end` region runs in
-real time instead, with as many ticks per frame as in normal play, so it measures the real frame cost
-(`App::deterministic()` is false there). Games should hide timings in deterministic runs, so captures compare across
-runs. `App::scripted()` tells a game that a scenario runs, for example to start from default settings and keep the
-user's files untouched.
+step and runs one tick, whatever the display rate. On the screen such a frame never takes less than the step in real
+time (the engine waits for the rest); when frames take longer (60 Hz vsync), app time runs slower than real time.
+Offscreen frames run as fast as they render, except while asset loads are in flight or delayed by
+`--asset-latency`: loads take real time, and scripts wait for them in app time, so those frames keep the step's pace.
+A scenario's `perf_begin` .. `perf_end` region runs in real time instead, with as many ticks per frame as in normal
+play, so it measures the real frame cost (`App::deterministic()` is false there); offscreen it warns that the frames
+are not presented, so benchmarks run with `--onscreen`. Games should hide timings in deterministic runs, so captures
+compare across runs. `App::scripted()` tells a game that a scenario runs, for example to start from default settings
+and keep the user's files untouched.
 
 The user directory is `SDL_GetPrefPath(organization, name)`: `~/Library/Application Support/<organization>/<name>/` on
 macOS, `Library/Application Support/<organization>/<name>/` in the app's data container on iOS; `--user-dir`
 replaces it.
+
+### Offscreen runs
+
+Automated runs (`--script`, `--capture`, `--quit-after`) are offscreen on desktops unless `--onscreen` is given, and
+`--offscreen` makes any run so. Nothing of the app reaches the screen or the user's devices:
+
+- **No window:** the SDL window is created hidden and never shown or claimed by the GPU device; frames render into
+  an offscreen texture of the window's pixel size (`--window` in points at a density of 1, or `--frame-size`) with
+  the format the swapchain would have, and captures read it. On macOS the process gets no Dock icon and takes no
+  focus, also as a bundle, whose Info.plist makes it a regular app (the prohibited activation policy, set before
+  `SDL_Init` creates the application, with `LSBackgroundOnly` in the process's copy of the Info.plist;
+  `src/app/ActivationApple.m`). The log
+  says `app: offscreen: no window on the screen, frames WxH, no input from real devices`. `resize` in a script
+  changes the frame size as it would the window's.
+- **No input from real devices:** keyboard, mouse, touch and gamepad events from the system are dropped before they
+  reach ImGui, `Input` or the game; only the script's events (tagged by the scenario runner) and its virtual gamepad
+  get through, and ImGui's gamepad navigation reads only the events it is given. With `--script` this also holds on
+  the screen.
+- **No sound:** the mix runs offline, as with `--no-audio`, unless `--audio-device` names a device (`null` for
+  miniaudio's null device thread).
+
+What stays on the screen: the window tests of `quench_gpu_device_tests` (`window_present`,
+`window_swapchain_compositions`) need a real window and a swapchain; they run only with `QUENCH_WINDOW_TESTS=1`, never
+in a default run or in `tools/check.sh`; and the benchmarks, which run with `--onscreen` to measure the display's
+pacing. Interactive runs (no automation flag) are unchanged.
 
 ## Scenarios
 
@@ -148,6 +178,7 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `expect VAR OP VALUE` | check now; `OP` is `<`, `<=`, `>`, `>=`, `==`, `!=` (`==` and `!=` with a tolerance of 1e-3 × max(1, abs(value))) |
 | `mark VAR` | remember a value; `d_VAR` is then the change since the mark |
 | `log TEXT` | print a line |
+| `include FILE` | run another scenario file (relative to the including one; up to 8 levels) as a part: its `time` starts at 0, its `quit` ends only the part, and the runner logs `part FILE` at its start and `part FILE: N passed, M failed` at its end |
 | `quit` | end the scenario; the app exits with 1 if a check failed |
 | `down KEY`, `up KEY`, `tap KEY` | keys by SDL scancode name; a tap releases on the next frame |
 | `text STRING` | text input |
@@ -156,7 +187,7 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `gamepad attach\|detach` | a virtual gamepad (SDL's virtual joystick) |
 | `gamepad button NAME down\|up\|tap`, `gamepad axis NAME VALUE` | SDL names: `a`, `b`, `x`, `y`, `start`, `dpup`, ...; `leftx`, `lefty`, `rightx`, `righty` (-1..1), `lefttrigger`, `righttrigger` (0..1) |
 | `resize W H` | resize the window (points) |
-| `capture PATH` | capture the next frame |
+| `capture PATH` | capture the next frame; the script goes on once the file is written |
 | `hdr off\|on\|auto` | `App::setHdrMode`; the output changes at the start of the next frame |
 | `perf_begin LABEL`, `perf_end` | measure the frames in between, in real time; `perf_end` logs a `perf:` line (with the game's `Game::perfDetails` at the end) and sets the `perf_*` values |
 | `audio_measure S [MIN_HZ MAX_HZ]` | measure the newest S seconds (at most 4) of the mix: RMS per channel and of both, peak, and the strongest frequency between MIN_HZ and MAX_HZ (default 20 to 20000; a Hann-windowed FFT with interpolation between bins); logs a line and sets the `audio_rms*`, `audio_peak`, `audio_freq*` and `audio_measured` values. A script with this command keeps the last 4 s of the mix for it |
@@ -185,8 +216,9 @@ for a full-scale sine) and `audio_measured` (seconds actually measured); at any 
 `memory_mb` (`App::memoryFootprint` in MiB; -1 where unknown) and `gpu_resources` (`gpu::Device::liveResources`:
 textures, buffers, samplers, pipelines, transfer buffers and fences alive; fences and transfer buffers come and go
 with the frames and uploads in flight), for leak checks with `mark`; then the game's (`Game::scenarioValue`). Unknown commands are offered
-to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N: ...`, and the run ends
-with `N passed, M failed`; tests match `FAIL line`.
+to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N of FILE: ...`, and the
+run ends with `N passed, M failed`; tests match `FAIL line`. Scripts are read from host paths; on a device a relative
+path is read from the user directory, and an `include` there needs its file next to the including one.
 
 ## HDR output
 
@@ -235,19 +267,29 @@ A capture renders the frame into an offscreen texture (or uses the `--frame-size
 and writes an RGBA PNG with opaque alpha (HDR frames: [HDR output](#hdr-output)). Golden images live in `tests/golden/<backend>/<device>/<name>.png`, where
 `<device>` is the Mac's CPU brand in lower case with dashes (`apple-m4-pro`; CMake cache `QUENCH_GOLDEN_DEVICE`).
 
-The capture tests (`hello_metal`, `hello_vulkan`) run `hello --window 640x360 --frame-size 1280x720 --capture-at 1
---quit-after 1 --gpu-debug` and compare with `quench_image_compare` (`tools/imagecompare`): a pixel differs when a
-channel differs by more than 16; the test fails when the mean difference exceeds 0.5 or more than 0.1% of the pixels
-differ. On failure `<name>_diff.png` (differences amplified four times) is left next to the capture in
-`build/<preset>/tests/captures/`. Without a golden image for this device the test is skipped.
+The apps' checks run in **batches** (`tests/CMakeLists.txt`, `quench_add_batch`): one offscreen app process per GPU
+backend runs a scenario that `include`s every check as a part, with a fresh `--user-dir` that collects the parts'
+captures (`build/<preset>/tests/captures/<batch>/`, the log next to it as `<batch>.log`). The batch is a CTest fixture
+(`<app>_batch_<backend>`, `tests/RunBatch.cmake`: it fails when the app crashes or the log has no result line), and
+each part is a test of its own (`<app>_<part>_<backend>`, `tests/CheckPart.cmake`): the part's checks passed, and its
+capture matches the golden image. Running one part's test runs its batch first. For hello, `hello_batch_metal`,
+`hello_batch_metal_native` and `hello_batch_vulkan` run `examples/hello/scenarios/check.txt` (`hello --window 640x360
+--frame-size 1280x720 --gpu-debug`): `hello_frame_*` compares the frame at 1 s with `hello.png`, `hello_input_*` runs
+the scripted input. The demo's batches: [Engine demo](demo.md#checks). Batches are registered where the captures are
+compared: `QUENCH_TEST_CAPTURES`, on in Release builds; other builds run the demo's smoke run only.
+
+Captures are compared with `quench_image_compare` (`tools/imagecompare`): a pixel differs when a channel differs by
+more than 16; the test fails when the mean difference exceeds 0.5 or more than 0.1% of the pixels differ. On failure
+`<name>_diff.png` (differences amplified four times) is left next to the capture. Without a golden image for this
+device the test is skipped.
 
 Updating a golden image: run the test, look at the capture (never commit one unseen), copy it to `tests/golden/...`,
 and say in the devlog why it changed. Two runs of the same binary on Metal are identical (0 pixels differ); Metal and
 Vulkan differ in the driver name the sample prints, so each backend has its own image.
 
-`hello_metal_native` (and `demo_animation_metal_native`, `demo_hdr_on_metal_native`) run the same command with
-`--gpu-backend metal` and compare with the same `metal` golden images as SDL GPU's Metal driver: the native backend
-renders the same pixels (in Release identical, 2026-11-06), so it has no images of its own.
+The native Metal backend's batches (`*_metal_native`) compare with the same `metal` golden images as SDL GPU's Metal
+driver: the native backend renders the same pixels (in Release identical, 2026-11-06), so it has no images of its
+own, except where ray tracing runs (`demo_raytracing_native.png`).
 
 ## Building games: `quench_add_game()`
 

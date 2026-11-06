@@ -16,8 +16,9 @@ build/debug/template_game
 ```
 
 Engine flags (`--help` lists them all): `--quit-after S`, `--capture FILE`, `--capture-at S`, `--script FILE`,
-`--window WxH`, `--frame-size WxH`, `--gpu-driver NAME`, `--gpu-debug`, `--present-mode vsync|immediate|mailbox`,
-`--no-audio`, `--audio-device NAME` (`null`: no sound), `--audio-capture FILE.wav`.
+`--window WxH`, `--frame-size WxH`, `--offscreen`, `--onscreen` (automated runs are offscreen unless it is given),
+`--gpu-driver NAME`, `--gpu-debug`, `--present-mode vsync|immediate|mailbox`, `--no-audio`, `--audio-device NAME`
+(`null`: no sound), `--audio-capture FILE.wav`.
 
 ## Layout
 

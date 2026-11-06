@@ -8,6 +8,8 @@
 #include <quench/core/Log.h>
 #include <quench/core/Parse.h>
 
+#include <imgui_impl_sdl3.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -35,6 +37,7 @@ std::optional<ScenarioPoint> pointArgument(AppState& s, const ScenarioCommand& c
 }
 
 void push(AppState& s, SDL_Event& e) {
+    e.common.reserved = kScenarioEvent;
     SDL_PushEvent(&e);
     s.inputPushedFrame = s.frame;
 }
@@ -171,6 +174,11 @@ Scenario::Exec gamepadCommand(AppState& s, const ScenarioCommand& c) {
             SDL_SetJoystickVirtualAxis(s.virtualPad, axis, 0);
         SDL_SetJoystickVirtualAxis(s.virtualPad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
         SDL_SetJoystickVirtualAxis(s.virtualPad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, SDL_JOYSTICK_AXIS_MIN);
+        // The virtual pad is the only gamepad Input and ImGui use, whatever else is connected.
+        s.input.restrictGamepad(s.virtualPadId);
+        s.virtualGamepad = SDL_OpenGamepad(s.virtualPadId);
+        if (s.virtualGamepad && s.imgui.platform)
+            ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, &s.virtualGamepad, 1);
         s.inputPushedFrame = s.frame;
         return Scenario::Exec::Done;
     }
@@ -340,6 +348,12 @@ Scenario::Exec audioMeasure(AppState& s, const ScenarioCommand& c) {
 } // namespace
 
 void releaseScenarioInput(AppState& s) {
+    if (s.virtualGamepad) {
+        if (s.imgui.platform) ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, nullptr, 0);
+        SDL_CloseGamepad(s.virtualGamepad);
+        s.virtualGamepad = nullptr;
+    }
+    if (s.virtualPadId) s.input.restrictGamepad(0);
     if (s.virtualPad) SDL_CloseJoystick(s.virtualPad);
     if (s.virtualPadId) SDL_DetachVirtualJoystick(s.virtualPadId);
     s.virtualPad = nullptr;
@@ -515,10 +529,19 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
             log::error("scenario", "line {}: capture PATH", c.line);
             return Exec::Failed;
         }
+        // Done once the frame is written, so that the next command (a change of the scene, quit) comes after it.
+        if (s.scenarioCapturing) {
+            if (!s.captureRequest.empty()) return Exec::Busy;
+            s.scenarioCapturing = false;
+            return Exec::Done;
+        }
         s.app.requestCapture(first);
-        return Exec::Done;
+        s.scenarioCapturing = true;
+        return Exec::Busy;
     }
     if (op == "perf_begin") {
+        if (s.offscreen)
+            log::warning("app", "perf region offscreen: frames are not presented; --onscreen to measure as played");
         s.perf = PerfRegion{.label = first.empty() ? std::string("perf") : first};
         return Exec::Done;
     }

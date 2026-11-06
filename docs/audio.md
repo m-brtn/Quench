@@ -190,7 +190,8 @@ boundaries, on jobs, gapless loops, crossfades, missing files, decoders and thei
 the analysis functions) and `audio_device.*` (`null_device`: the null backend renders and suspends;
 `default_output`: plays 0.5 s of a quiet 440 Hz tone through the default output, only with
 `QUENCH_TEST_AUDIO_DEVICE=1` in the environment; `audio_session_category`: iOS only). No automated test plays
-through the speakers: the app tests and capture checks run with `--audio-device null` or `--audio-capture`. The test
+through the speakers: the app tests and capture checks run offscreen, where the mix is offline
+([App shell](app.md#offscreen-runs)), or with `--audio-device null` or `--audio-capture`. The test
 decoder files (`tests/audio/data/`, a FLAC and an MP3 tone) are CC0, made with sox and lame (`CREDITS.md` there).
 
 ## Platforms

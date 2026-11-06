@@ -104,6 +104,47 @@ QUENCH_TEST(scenario_commands_busy_and_input) {
           scenario->passed());
 }
 
+QUENCH_TEST(scenario_include_parts) {
+    const std::map<std::string, std::string> files = {
+        {"dir/a.txt", "expect time == 0\nwait 1\nexpect time == 1\nquit\nexpect never == 1\n"},
+        {"dir/sub/b.txt", "include c.txt\n"},
+        {"dir/sub/c.txt", "wait 0.5\nexpect time == 0.5\nfail_me\n"},
+        {"dir/loop.txt", "include loop.txt\n"},
+    };
+    const Scenario::LoadFn load = [&](const std::string& path) -> Result<std::string> {
+        const auto it = files.find(path);
+        if (it == files.end()) return Error{"not found"};
+        return it->second;
+    };
+    auto scenario = Scenario::parse("include a.txt\ninclude sub/b.txt\nexpect time == 2.5\n", "dir/batch.txt", load);
+    REQUIRE(scenario.ok(), "%s", scenario.error().c_str());
+    const auto& commands = scenario->commands();
+    REQUIRE(commands.size() == 15, "%zu commands", commands.size());
+    CHECK(commands[0].op == "include" && commands[0].args[0] == "dir/a.txt" && commands[0].end == 6,
+          "include a: %s, end %zu", commands[0].args[0].c_str(), commands[0].end);
+    CHECK(commands[6].op == "end_include" && commands[1].file == "dir/a.txt", "a's commands: %s",
+          commands[1].file.c_str());
+    CHECK(commands[8].args[0] == "dir/sub/c.txt" && commands[9].file == "dir/sub/c.txt", "nested include: %s",
+          commands[8].args[0].c_str());
+
+    Harness h;
+    const auto run = [&](double now) {
+        h.values["time"] = now;
+        return h.run(*scenario, now);
+    };
+    CHECK(run(1.0), "part a waits");
+    CHECK(run(2.0), "quit in part a ends only the part; part c waits");
+    CHECK(!run(2.5), "the batch ends after part c");
+    CHECK(scenario->passed() == 4, "%d passed (time from the part's start, the batch's own)", scenario->passed());
+    CHECK(scenario->failed() == 1, "%d failed (part c's command)", scenario->failed());
+    CHECK(h.executed.size() == 1 && h.executed[0] == "fail_me", "%zu executed", h.executed.size());
+
+    CHECK(!Scenario::parse("include a.txt\n", "dir/batch.txt").ok(), "include without a loader");
+    CHECK(!Scenario::parse("include missing.txt\n", "dir/batch.txt", load).ok(), "missing file");
+    CHECK(!Scenario::parse("include loop.txt\n", "dir/batch.txt", load).ok(), "include cycle");
+    CHECK(!Scenario::parse("end_include a.txt\n", "dir/batch.txt", load).ok(), "end_include in a file");
+}
+
 QUENCH_TEST(scenario_tolerance) {
     auto scenario = Scenario::parse("expect x == 1000\nexpect x != 1000\nexpect y == 0\n", "t");
     REQUIRE(scenario.ok(), "%s", scenario.error().c_str());

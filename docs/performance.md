@@ -26,14 +26,17 @@ perf: hello: 600 frames; frame ms avg 16.667 p10 16.243 p50 16.657 p95 17.248 p9
 On the native Metal backend (`--gpu-backend metal`, since stage 9) a second line follows with the GPU time per pass
 ([below](#gpu-time-per-pass)).
 
-Run it in Release, with vsync (the default), at a fixed render size on the Mac:
+Run it in Release, with vsync (the default), at a fixed render size, in a window on the screen on the Mac:
 
 ```sh
 cmake --build --preset release
-build/release/examples/hello/hello --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt \
+build/release/examples/hello/hello --onscreen --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt \
     --audio-device null
 ```
 
+`--onscreen` (since 2026-11-06): scripted runs are offscreen by default ([App shell](app.md#offscreen-runs)), where
+frames are not presented, so a perf region there warns and measures no display pacing; the benchmark needs the
+window. It is the one automated run that shows a window: start it by hand, not from a test.
 `--audio-device null` (since stage 7): miniaudio's null backend pulls the mix on its own thread like a real output,
 without sound; the stage 7 runs below used it.
 

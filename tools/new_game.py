@@ -7,8 +7,9 @@
 The template's names are replaced (display name, target and executable id, C++ class, bundle id, organization) and
 the engine is pinned to a commit of this checkout (HEAD by default). Then, unless --no-check is given, the game is
 configured and built in Debug against this engine checkout (FETCHCONTENT_SOURCE_DIR_QUENCH) and started once with
---quit-after 1 on the null audio device: the check is only that the game builds, starts and quits cleanly. Its own
-gates (ctest with the smoke scenario, a capture looked at) come after that, as described in the new game's AGENTS.md.
+--quit-after 1 (offscreen: no window on the screen, no sound): the check is only that the game builds, starts and
+quits cleanly. Its own gates (ctest with the smoke scenario, a capture looked at) come after that, as described in the
+new game's AGENTS.md.
 Standard library only.
 """
 
@@ -74,7 +75,7 @@ def check(dest: Path, game_id: str) -> None:
 
     run(["cmake", "--preset", "debug", f"-DFETCHCONTENT_SOURCE_DIR_QUENCH={ENGINE_DIR}"])
     run(["cmake", "--build", "--preset", "debug"])
-    run([str(dest / "build" / "debug" / game_id), "--quit-after", "1", "--audio-device", "null"])
+    run([str(dest / "build" / "debug" / game_id), "--quit-after", "1"])
 
 
 def main() -> int:

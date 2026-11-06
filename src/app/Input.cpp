@@ -83,10 +83,25 @@ void Input::press(State& state, bool down) {
     state.down = down;
 }
 
+void Input::restrictGamepad(std::optional<std::uint32_t> id) {
+    m_onlyGamepad = id;
+    if (m_gamepad && id && m_gamepadId != *id) closeGamepad();
+    if (!m_gamepad) openFirstGamepad();
+}
+
+void Input::closeGamepad() {
+    SDL_CloseGamepad(m_gamepad);
+    m_gamepad = nullptr;
+    m_gamepadId = 0;
+    for (State& button : m_buttons) press(button, false);
+    m_rawAxes.fill(0.0f);
+}
+
 void Input::openFirstGamepad() {
     int count = 0;
     SDL_JoystickID* ids = SDL_GetGamepads(&count);
     for (int i = 0; ids && i < count && !m_gamepad; ++i) {
+        if (m_onlyGamepad && ids[i] != *m_onlyGamepad) continue;
         m_gamepad = SDL_OpenGamepad(ids[i]);
         if (m_gamepad) {
             m_gamepadId = ids[i];
@@ -153,11 +168,7 @@ void Input::handleEvent(const SDL_Event& e, float windowWidth, float windowHeigh
     case SDL_EVENT_GAMEPAD_REMOVED:
         if (m_gamepad && e.gdevice.which == m_gamepadId) {
             log::info("app", "gamepad removed: {}", gamepadName());
-            SDL_CloseGamepad(m_gamepad);
-            m_gamepad = nullptr;
-            m_gamepadId = 0;
-            for (State& button : m_buttons) press(button, false);
-            m_rawAxes.fill(0.0f);
+            closeGamepad();
             openFirstGamepad();
         }
         break;

@@ -54,14 +54,15 @@ QUENCH_TEST(display_headroom_log_rate) {
     CHECK(fresh.due(1.0f, 0.0), "the first value is due");
 }
 
-// The platform query on a real window: Apple platforms have one (UIScreen, NSScreen); elsewhere SDL's property is used.
+// The platform query on a real (hidden) window: Apple platforms have one (UIScreen, NSScreen); elsewhere SDL's
+// property is used.
 QUENCH_TEST(display_headroom_query) {
     CHECK(!queryDisplayHeadroom(nullptr), "no window");
 #if !QUENCH_TEST_WINDOWS
     QUENCH_SKIP("windows need the app lifecycle on this platform");
 #else
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) QUENCH_SKIP("no video subsystem");
-    SDL_Window* window = SDL_CreateWindow("quench_app_tests", 160, 90, 0);
+    SDL_Window* window = SDL_CreateWindow("quench_app_tests", 160, 90, SDL_WINDOW_HIDDEN);
     REQUIRE(window, "SDL_CreateWindow: %s", SDL_GetError());
     SDL_PumpEvents();
     const std::optional<DisplayHeadroom> h = queryDisplayHeadroom(window);

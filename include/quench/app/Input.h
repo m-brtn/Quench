@@ -123,6 +123,9 @@ public:
     void beginEvents();
     void handleEvent(const SDL_Event& event, float windowWidth, float windowHeight);
     void endEvents(bool uiKeyboard, bool uiMouse);
+    // Only the gamepad with this SDL joystick id is opened (0: none); nullopt, the default: the first connected one.
+    // Runs on scripted input open only the scenario's virtual gamepad.
+    void restrictGamepad(std::optional<std::uint32_t> id);
 
     static constexpr float kDownThreshold = 0.5f;
 
@@ -143,6 +146,7 @@ private:
     float bindingValue(const Binding& binding) const;
     static void press(State& state, bool down);
     void openFirstGamepad();
+    void closeGamepad();
 
     std::vector<Action> m_actions;
     std::vector<State> m_keys; // per SDL scancode
@@ -157,6 +161,7 @@ private:
     std::vector<Finger> m_fingers;
     SDL_Gamepad* m_gamepad = nullptr;
     std::uint32_t m_gamepadId = 0;
+    std::optional<std::uint32_t> m_onlyGamepad;
     bool m_uiKeyboard = false;
     bool m_uiMouse = false;
 };

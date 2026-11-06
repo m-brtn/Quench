@@ -42,6 +42,10 @@ const char* optionsHelp() {
            "  --window WxH         window size in points (desktop)\n"
            "  --frame-size WxH     render every frame offscreen at W x H pixels and scale it to the window, so\n"
            "                       captures do not depend on the display density\n"
+           "  --offscreen          no window on the screen: a hidden window, frames rendered offscreen (at\n"
+           "                       --frame-size, else at the window size in points), no Dock icon, no focus; the\n"
+           "                       default on desktops with --script, --capture or --quit-after\n"
+           "  --onscreen           a visible window also with --script, --capture or --quit-after (benchmarks)\n"
            "  --gpu-backend NAME   sdl (SDL GPU, the default) or metal (the native Metal backend; Apple platforms,\n"
            "                       elsewhere SDL GPU)\n"
            "  --gpu-driver NAME    metal, vulkan or direct3d12 (SDL GPU's driver)\n"
@@ -69,8 +73,12 @@ const char* optionsHelp() {
            "                       missing (tests and scripted runs)\n"
            "  --version            print the version and exit\n"
            "  --help               print this help and exit\n"
-           "With --script or --capture every frame advances the app time by one fixed step (deterministic runs),\n"
-           "never faster than real time; a scenario's perf_begin .. perf_end region runs in real time.\n";
+           "With --script or --capture every frame advances the app time by one fixed step (deterministic runs):\n"
+           "on the screen never faster than real time, offscreen as fast as frames render (in real time while\n"
+           "assets load); a scenario's perf_begin .. perf_end region runs in real time.\n"
+           "Runs with --script take input only from the script, offscreen runs none from real devices: keyboard,\n"
+           "mouse, touch and gamepads are ignored. Offscreen the mix runs offline (no sound) unless --audio-device\n"
+           "names a device.\n";
 }
 
 Result<Options> parseOptions(std::span<const std::string_view> args) {
@@ -186,6 +194,8 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
             options.assetLatency = *seconds;
         } else if (flag == "--hot-reload" && !inlineValue) {
             options.hotReload = true;
+        } else if ((flag == "--offscreen" || flag == "--onscreen") && !inlineValue) {
+            options.offscreen = flag == "--offscreen";
         } else if (flag == "--gpu-debug" && !inlineValue) {
             options.gpuDebug = true;
         } else if (flag == "--gpu-pass-timing" && !inlineValue) {

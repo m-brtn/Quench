@@ -67,6 +67,11 @@ const char* tmpDir() {
 
 int main(int argc, char** argv) {
     using namespace quench::test;
+#if defined(__APPLE__)
+    // SDL makes a process that starts its video subsystem (every SDL GPU device does) a regular app with a Dock icon
+    // and activates it, unless this hint (read from the environment) says otherwise.
+    setenv("SDL_MAC_BACKGROUND_APP", "1", 0);
+#endif
     if (argc == 2 && std::strcmp(argv[1], "--list") == 0) {
         for (const Case& c : cases()) std::printf("%s\n", c.name);
         return 0;
