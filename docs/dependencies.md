@@ -182,6 +182,20 @@ with a right shift by 32 when the rotation is 0, undefined behaviour that Undefi
 `asan` preset; the shift is masked (`>>((32-t)&31)`), the result the hardware gave, and the changed lines are marked
 in the source as the zlib licence asks. The demo's cooked models were byte-identical before and after.
 
+## Added in stage 12
+
+Area lights ([Render](render.md#area-lights)). No library: fitted tables and shader code from the LTC paper's
+reference code, checked into the repository, listed with their licence in `THIRD_PARTY_LICENSES` (shipped).
+
+| Source | Commit | Licence | In | Purpose |
+|---|---|---|---|---|
+| selfshadow/ltc_code (`fit/results/ltc.js`; `webgl/shaders/ltc/ltc_quad.fs`, `ltc_disk.fs`, `ltc_line.fs`) | `31e5e96b54f98f33098f8503003119ba2231a1c6`; `ltc.js` SHA256 `21071160163defd419b8f754ab604a8e60c44fcf539bfff9916e0e8e82316c1d` | BSD-2-Clause, with a clause asking for a reference to the paper (Heitz, Dupuy, Hill, Neubelt, "Real-Time Polygonal-Light Shading with Linearly Transformed Cosines", SIGGRAPH 2016) in code that uses or adapts it; the licence was read in the repository's `LICENSE` at that commit | `quench_render`: `src/render/LtcTable.inc` (the 64 x 64 GGX fit, written by `tools/make_ltc_table.py`, which checks the SHA256), `shaders/quench/AreaLights.hlsli` (the quad, disk and line integrals, ported to HLSL) | raster shading of rect, disk and tube lights: diffuse and specular |
+
+The paper's reference is in the header comments of both files, in `THIRD_PARTY_LICENSES` and in
+[Render](render.md#area-lights). The tables are 32-bit floats (two RGBA32F layers, 128 KB): at low roughness and
+grazing angles their elements go down to 1e-10, below half precision. Neither game uses them, so no game pin is
+affected.
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.
