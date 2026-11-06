@@ -42,7 +42,9 @@ build/release/examples/hello/hello --onscreen --frame-size 1920x1080 --script ex
 
 `--onscreen` (since 2026-11-06): scripted runs are offscreen by default ([App shell](app.md#offscreen-runs)), where
 frames are not presented, so a perf region there warns and measures no display pacing; the benchmark needs the
-window. It is the one automated run that shows a window: start it by hand, not from a test.
+window. Offscreen regions run unpaced and keep their GPU times (also GPU-bound ones since 2026-11-06; before, a
+frame that waited for the oldest frame in flight replaced it unread, and such regions had no GPU sample): enough
+for an A/B of costs. It is the one automated run that shows a window: start it by hand, not from a test.
 `--audio-device null` (since stage 7): miniaudio's null backend pulls the mix on its own thread like a real output,
 without sound; the stage 7 runs below used it.
 
@@ -207,7 +209,8 @@ portrait, 120 Hz, `--audio-device null`, launched through `devicectl`, no valida
 screen; the captures were copied from the device and looked at.
 
 **The cost of each option** (`scenarios/tunnel_phone.txt`, 20:30-20:35, the native backend, one run; a first run at
-20:28 went to the background after two regions, unexplained, and its two regions agree within 4%): 4 s regions after
+20:28 went to the background after two regions, possibly the user handling the phone, as they did during other runs
+that day (not confirmed for this one), and its two regions agree within 4%): 4 s regions after
 a cool-down to nominal, at the display's rate. As in [stage 11](#stage-11-on-the-iphone), frames slower than the
 display's 8.33 ms run the GPU at its full clock (their busy times are costs); at 481 frames the clock follows the
 load. GPU busy time per range, medians, ms:
@@ -252,6 +255,59 @@ interval (every range about 1.9 times longer at the same work, the state nominal
 With traced reflections the first 20 s ran at 12.7 ms and the phone turned fair within 40 s; without them 7.9 ms and
 nominal throughout, which is why the default leaves them out (the panel turns them on). The SDL GPU run came right
 after 8 s at the display's rate. The iPhone 18 Pro Max (A20 Pro) has not run the tunnel.
+
+### The tunnel in motion
+
+The lamps and the camera's drive (2026-11-06 21:36-21:57, Release; the Mac on the code of `5cc53a6`, the iPhone on
+`61a17ba`). The regions above stay as they were: their scenarios now set the lamps to their time 0 and stop them.
+
+**The M4 Pro**, offscreen A/B on the native backend at 1920 x 1080, the section's desktop default (everything
+traced, MetalFX temporal at 0.67: 1286 x 724), 4 s regions alternated three times: the lamps still at the overview,
+the lamps moving, the lamps moving and the camera driving. Medians of the three runs; GPU busy time per range, ms
+(the frame's GPU p50 reads 11.45 to 11.58 ms over a frame of 10.8, as offscreen frames overlap):
+
+| State | Frames / 4 s | Frame p50 | CPU p50 / p99 | game | accel | rays | reflections | hdr |
+|---|---|---|---|---|---|---|---|---|
+| still | 370 | 10.841 | 1.243 / 1.897 | 10.939 | 0.072 | 1.676 | 3.682 | 1.767 |
+| the lamps moving | 368 | 10.885 | 1.302 / 1.956 | 10.989 | 0.075 | 1.652 | 3.729 | 1.779 |
+| the lamps moving, the camera driving | 371 | 10.797 | 1.252 / 1.975 | 10.893 | 0.075 | 1.563 | 3.499 | 1.966 |
+
+The top level is refitted in every frame anyway (a full build every 30th), so moving instances add nothing to
+`accel`; the moving lamps add 0.05 ms to the frame, and the drive changes the view (less in the reflections, more in
+the main pass) rather than the cost. CPU p50 +0.06 ms (+4.7 %) with the lamps moving, +0.01 ms with the drive; p99
++3.1 % and +4.1 %: within the 5 % rule, and the runs of the still state alone spread from 1.230 to 1.264 ms.
+
+**The iPhone 17**, `scenarios/tunnel_phone.txt` (21:43-21:46, the native backend, the phone defaults at 60 Hz):
+40 s with the lamps still as before, then 20 s in motion; `tunnel_phone_fallback.txt` on SDL GPU (21:47 and 21:53):
+8 s at the display's rate, 20 s at 60 Hz still and 20 s in motion. GPU busy time per range, ms (SDL GPU has none):
+
+| Run | Thermal | Frames / 20 s | Frame p50 / p99 | CPU p50 / p99 | game | accel | rays | denoise | hdr | upscale |
+|---|---|---|---|---|---|---|---|---|---|---|
+| native, still, 0-20 s | nominal | 1159 | 16.669 / 16.764 | 2.066 / 2.245 | 7.986 | 0.157 | 1.221 | 2.065 | 2.295 | 1.060 |
+| native, still, 20-40 s | nominal | 1200 | 16.669 / 16.760 | 1.736 / 1.922 | 15.165 | 0.059 | 2.283 | 3.943 | 4.536 | 1.847 |
+| native, in motion, 40-60 s | nominal | 1200 | 16.669 / 16.749 | 1.703 / 1.903 | 15.253 | 0.059 | 2.220 | 3.724 | 5.290 | 1.804 |
+| SDL GPU, the full size, still | nominal -> fair | 1200 | 16.670 / 16.753 | 1.035 / 1.176 | | | | | | |
+| SDL GPU, the full size, in motion | fair | 1146 | 16.673 / 23.307 | 0.869 / 0.987 | | | | | | |
+| SDL GPU, 0.75, still | nominal | 1200 | 16.669 / 16.782 | 0.968 / 1.090 | | | | | | |
+| SDL GPU, 0.75, in motion | nominal | 1200 | 16.670 / 16.750 | 1.018 / 1.208 | | | | | | |
+
+On the native backend the phone held 60 Hz in motion at the nominal thermal state after 40 s of load (the scenario
+checks the state after the region). From 20 s on the GPU runs at a lowered clock that fills the interval (as above),
+where the motion reads like the still frame (game 15.25 against 15.17 ms). On SDL GPU at the full size the phone
+turned fair while still, as in the run of 20:53, and missed intervals in motion (p95 23.3 ms). So phones without ray
+tracing render the section at three quarters of the size since `61a17ba` (905 x 1967 on the iPhone 17, bilinear;
+MetalFX spatial where it runs): 916 frames in 8 s at the display's rate (frame p50 8.34 ms, p95 11.92 ms), then 60 Hz
+still and in motion at nominal throughout. The captures (the defaults still and in motion, SDL GPU at 0.75, the
+path tracer) were copied from the phone and looked at; nobody looked at the screen.
+
+**The temporal denoiser in motion** (the Mac, native, offscreen; a frame in motion against the same moment held
+still for 1.5 s, mean difference in levels of 255; two still frames 1.5 s apart differ by 0.46): the lamps moving
+0.61 at full size with TAA and 0.75 at the default (MetalFX temporal at 0.67), the drive 1.13 and 1.11, both 1.18
+and 1.16 (1280 x 720). The drive's difference sits on texture edges (TAA is softer in motion), not on the shadows or
+the puddle; the crates under the turning amber spot differ by 0.58. A lamp that takes a shadow channel from another
+(`RenderStats::localShadowChanges`, 4 to 10 times in 34 s of the drive or the overview) leaves no trace beyond that:
+at the frame of the change 0.74 levels, against 0.85 at a frame without one (960 x 540). Nothing was tuned. What to
+look at in motion is the check mode's item "Lamps and camera in motion" ([Engine demo](demo.md#check-mode-on-the-iphone)).
 
 ### Stage 11 on the iPhone
 

@@ -136,7 +136,9 @@ Offscreen frames run as fast as they render, except while asset loads are in fli
 `--asset-latency`: loads take real time, and scripts wait for them in app time, so those frames keep the step's pace.
 A scenario's `perf_begin` .. `perf_end` region runs in real time instead, with as many ticks per frame as in normal
 play, so it measures the real frame cost (`App::deterministic()` is false there); offscreen it warns that the frames
-are not presented, so benchmarks run with `--onscreen`. Games should hide timings in deterministic runs, so captures
+are not presented, so benchmarks run with `--onscreen`. Offscreen regions still time each frame on the GPU (since
+2026-11-06 also when the GPU is the bottleneck, where the frame waits for the oldest one in flight): unpaced, they suit
+an A/B of GPU costs. Games should hide timings in deterministic runs, so captures
 compare across runs. `App::scripted()` tells a game that a scenario runs, for example to start from default settings
 and keep the user's files untouched.
 

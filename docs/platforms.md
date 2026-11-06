@@ -162,10 +162,9 @@ request for it there creates SDL GPU with a warning.
   (`tools/package_demo.sh --ios`) has this crash with `--gpu-backend metal`; on the default SDL GPU backend it works.
   Since the fix `quench_configure_target` sets `-fobjc-arc` and `XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC` on every
   engine target, and every engine Objective-C(++) file stops with `#error` when it is compiled without ARC.
-- **The window cases once failed on the iPhone** (2026-11-06, the first native run after the phone was unlocked):
-  the drawable in portrait (440 x 956), the window in landscape (956 x 440), in every frame. SDL GPU passed them 5 s
-  later, and the native backend 2 minutes later; both read the size from the same `CAMetalLayer` of SDL's Metal
-  view. Not reproduced; a run with the phone held in landscape is open.
+- **The window cases' one failure on the iPhone 18 Pro Max** (2026-11-06, a portrait drawable in a landscape
+  window) came from the user handling the phone during the run (the user's report, 2026-11-06); they passed on SDL
+  GPU 5 s later and on the native backend 2 minutes later. Nothing open.
 
 ## Audio
 

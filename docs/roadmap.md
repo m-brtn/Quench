@@ -402,6 +402,14 @@ BRDF; own procedural content only. No release (the version stays 0.9.0); "Change
   tracing two lamp shadows, no traced reflections, half size with MetalFX spatial; held 40 s at nominal), and the
   cost of the new shader paths in frames that do not use them (5 to 8 % of the M4 Pro's unpaced frame rate;
   [Performance](performance.md#the-tunnel)).
+- [x] The tunnel in motion (requested by the user after stage 12, 2026-11-06): the lamps move (the violet tube on
+  ceiling rails, the orange tube in its bay, the amber spot's cone turning, the white spot circling the sphere, the
+  portal breathing) with their fixtures (instances refitted in the top level), the camera drives a loop through the
+  tunnel by default (a drag hands it to the free camera), everything stands still while the path tracer runs;
+  scripts set the clock, so captures stay deterministic. `RenderStats::localShadowChanges`. The motion costs the M4
+  Pro about 0.05 ms of GPU and CPU time; the iPhone 17 held 60 Hz in motion at the nominal thermal state on both
+  backends, after phones without ray tracing went to three quarters of the size
+  ([Performance](performance.md#the-tunnel-in-motion)). A check mode item (33 in all).
 - [ ] Surface shader variants without the area light and anisotropy paths, for frames and materials that do not
   use them (the 5 to 8 % above); custom surface shaders would compile them too.
 - [ ] Look at the tunnel in motion and on the iPhone's screen (the lamps' shading and shadows, the brushed
@@ -413,11 +421,11 @@ BRDF; own procedural content only. No release (the version stays 0.9.0); "Change
 The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, stage 11 with 0.9.0, and stage
 12 (area lights, anisotropy, the tunnel) after it, not yet released. What stays open, in the order it is useful (nothing of it is scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (32 items:
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (33 items:
    the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
    input devices, loading and streaming, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
    and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
-   the tunnel's lamps, brushed aluminium and puddle, the frame rate and the layout on the phone;
+   the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, the frame rate and the layout on the phone;
    [Engine demo](demo.md#check-mode-on-the-iphone)), on the iPhone 18
    Pro Max the device test app on both backends with the 0.9.0 code and the stage 11 ray tracing runs (done on the
    iPhone 17), Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes,

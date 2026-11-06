@@ -279,8 +279,12 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   `castsShadows` get one shadow ray per pixel each toward a random point of their sphere (`LightDesc::sourceRadius`,
   0: hard), cut-out and translucent casters as for the sun; the result is one channel per light of a second mask,
   filtered like the sun's (fragment sampler 9, `options.w` bit 4). Without ray tracing they are unshadowed; there are
-  no shadow maps for local lights. Test `renderer_ray_traced_local_light_shadows`: behind a box 0, in the open 552
-  (unshadowed 552 in both).
+  no shadow maps for local lights. The channels go to the lights in order of distance each frame: a light that
+  takes a channel another light (or none) had starts from that channel's history, counted in
+  `RenderStats::localShadowChanges` (in the demo's moving tunnel 4 to 10 times in 34 s, without a visible trace:
+  [Performance](performance.md#the-tunnel-in-motion)). Test `renderer_ray_traced_local_light_shadows`: behind a box
+  0, in the open 552 (unshadowed 552 in both); no change while the light keeps its channel, one when the shadows
+  come back.
 - **Reflections** (`Reflections::RayTraced`, default `Sky`): one ray per pixel along a GGX visible-normal sample of
   the pixel's roughness up to `reflectionRoughness` (0.5), faded into the sky's reflection above it; the hit is
   shaded as above, a miss sees the sky. The surface takes it in place of the sky's reflection (sampler 7, bit 8).
@@ -498,9 +502,10 @@ level's instances and the bottom levels built and refitted this frame (`rayInsta
 and (stage 11) the bottom levels compacted this frame (`rayCompactions`), whether the top level was refitted
 (`rayTopRefit`), the GPU memory of the acceleration structures, tables, hit texture arrays and probe atlases
 (`rayMemoryBytes`), the material textures in the hit arrays (`hitTextures`), the probes traced (`probes`) and the
-path tracer's samples (`pathSamples`), and (stage 12) the area lights among the frame's lights (`areaLights`).
+path tracer's samples (`pathSamples`), and (stage 12) the area lights among the frame's lights (`areaLights`) and
+the lights that took another light's shadow channel (`localShadowChanges`).
 The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`,
-`area_lights`, `moved`,
+`area_lights`, `local_shadow_changes`, `moved`,
 `render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`,
 `ray_compactions`, `ray_top_refit`, `ray_memory_mb`, `hit_textures`, `probes`, `path_samples`).
 

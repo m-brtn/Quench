@@ -13,9 +13,17 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   (BSD-2-Clause; `THIRD_PARTY_LICENSES`, [Dependencies](../dependencies.md)).
 - Anisotropic GGX in the standard surface, the ray hits and the path tracer
   ([Render module](../render.md#anisotropic-ggx)).
-- The demo's section 12, "Tunnel" ([Engine demo](../demo.md#sections)).
+- The demo's section 12, "Tunnel" ([Engine demo](../demo.md#sections)), and since the user's request after stage
+  12 the tunnel in motion: moving and turning lamps with their fixtures, a camera that drives a loop through the
+  tunnel, a pause and a free camera; phones without ray tracing render the tunnel at three quarters of the size
+  ([Performance](../performance.md#the-tunnel-in-motion)).
 - The standard surface shader is 5 to 8 % slower in frames that use neither (unpaced, M4 Pro;
   [Performance](../performance.md#the-tunnel)).
+- `RenderStats::localShadowChanges`: the lights that took another light's ray-traced shadow channel this frame.
+- Offscreen perf regions also time GPU-bound frames on the GPU (before, they had no GPU sample and no times per
+  range); unpaced offscreen A/B runs of GPU costs need no window now.
+- The demo's switch cycle checks the memory to below 64 MB of growth (was 32): the footprint moves within about
+  60 MB from round to round on the native backend.
 
 ## Changes for games
 
@@ -32,7 +40,9 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   (the nearest).
 - **`render::MaterialDesc`** has `anisotropy` and `anisotropyRotation` after `name` (default 0: isotropic, as
   before). Anisotropy needs vertex tangents (`computeTangents` or cooked models).
-- **`render::RenderStats::areaLights`** is new; `diskMesh` and `cylinderMesh` are new in `MeshBuilder.h`.
+- **`render::RenderStats::areaLights`** and **`localShadowChanges`** are new (`localShadowChanges` before
+  `renderWidth`: designated initializers in the old order still compile; a positional aggregate initialization
+  would fill the members after it one off); `diskMesh` and `cylinderMesh` are new in `MeshBuilder.h`.
 - **Shaders built on `quench/Surface.hlsli`:** `MaterialUniforms` gained `float4 shading` at its end (x the
   anisotropy, yz its rotation, w the area light shapes); `LocalLight` gained `float4 shape`, its `cone` and
   `direction` carry area light values, and `LightUniforms::count.y` counts the area lights. The fragment sampler 12
