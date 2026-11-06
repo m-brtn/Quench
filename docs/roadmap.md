@@ -368,7 +368,7 @@ scaler.
 - [ ] Look at the effects in motion (noise, lag of the temporal denoiser, MetalFX denoising, reflections and
   probe light while the sun turns): by the user, on the Mac and the iPhone (the demo's check mode).
 - [x] Full test tier, `tools/package_demo.sh` (macOS), release notes [docs/releases/v0.9.0.md](releases/v0.9.0.md);
-  `--ios` not built (no phone at the end of the stage).
+  after the iPhone 17 runs again with `--ios` (2026-11-06 19:07, the macOS zip and the development-signed `.ipa`).
 
 ## What is next
 
