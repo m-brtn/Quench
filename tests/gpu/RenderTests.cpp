@@ -3,6 +3,7 @@
 #include "render_shaders.h"
 
 #include <array>
+#include <cstring>
 #include <vector>
 
 using namespace quench;
@@ -246,6 +247,50 @@ QUENCH_TEST(storage_buffer_instances) {
     CHECK_PIXEL(p, 8, 0, 4, kBlack, 0); // where the second instance would be without the uniform
     CHECK_PIXEL(p, 8, 4, 4, kGreen, 0);
     CHECK_PIXEL(p, 8, 7, 7, kGreen, 0);
+}
+
+// A compute pass with two read-only inputs, a uniform and a read-write output; the last thread group is partial.
+QUENCH_TEST(compute_dispatch) {
+    QUENCH_GPU_DEVICE(device);
+    constexpr std::uint32_t kCount = 70;
+    std::vector<float> a(kCount * 4), b(kCount * 4);
+    for (std::uint32_t i = 0; i < kCount * 4; ++i) {
+        a[i] = float(i % 7) - 3.0f;
+        b[i] = float(i) * 0.5f;
+    }
+    const std::uint32_t size = kCount * 16;
+    Result<Buffer> inA = device.createBuffer({.usage = BufferUsage::ComputeStorageRead, .size = size});
+    Result<Buffer> inB = device.createBuffer({.usage = BufferUsage::ComputeStorageRead, .size = size});
+    Result<Buffer> out = device.createBuffer({.usage = BufferUsage::ComputeStorageWrite, .size = size + 16});
+    Result<ComputePipeline> pipeline = device.createComputePipeline({.shader = shaders::render.find("scale_cs")});
+    REQUIRE(inA && inB && out && pipeline, "creation failed: %s", pipeline ? "" : pipeline.error().c_str());
+    REQUIRE(device.upload(*inA, 0, std::as_bytes(std::span(a))), "upload a");
+    REQUIRE(device.upload(*inB, 0, std::as_bytes(std::span(b))), "upload b");
+    const std::array<float, 4> sentinel{-1, -1, -1, -1};
+    REQUIRE(device.upload(*out, size, std::as_bytes(std::span(sentinel))), "upload sentinel");
+
+    CommandBuffer commands = device.acquireCommandBuffer();
+    {
+        const StorageBufferWrite write{.buffer = *out};
+        ComputePass pass = commands.beginComputePass({&write, 1});
+        REQUIRE(pass, "beginComputePass");
+        pass.bindPipeline(*pipeline);
+        const std::array<BufferRef, 2> inputs{*inA, *inB};
+        pass.bindStorageBuffers(0, inputs);
+        pass.pushUniforms(0, Color{2.0f, float(kCount), 0, 0});
+        pass.dispatch((kCount + 31) / 32);
+    }
+    REQUIRE(commands.submit(), "submit");
+    Result<std::vector<std::byte>> bytes = device.download(*out, 0, size + 16);
+    REQUIRE(bytes && bytes->size() == size + 16, "download");
+    std::vector<float> got(kCount * 4 + 4);
+    std::memcpy(got.data(), bytes->data(), bytes->size());
+    int wrong = 0;
+    for (std::uint32_t i = 0; i < kCount * 4; ++i)
+        if (got[i] != a[i] * 2.0f + b[i] + float(i / 4)) ++wrong;
+    CHECK(wrong == 0, "%d of %u values wrong (first: %g, expected %g)", wrong, kCount * 4, double(got[0]),
+          double(a[0] * 2.0f + b[0]));
+    CHECK(got[kCount * 4] == -1.0f, "thread %u past the count wrote %g", kCount, double(got[kCount * 4]));
 }
 
 // The indirect draw only where Caps::indirectDraw.

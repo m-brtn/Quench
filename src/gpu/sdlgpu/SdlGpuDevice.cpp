@@ -90,6 +90,7 @@ void release(DeviceImpl* device, Kind kind, void* native) noexcept {
     case Kind::GraphicsPipeline:
         SDL_ReleaseGPUGraphicsPipeline(d, static_cast<SDL_GPUGraphicsPipeline*>(native));
         break;
+    case Kind::ComputePipeline: SDL_ReleaseGPUComputePipeline(d, static_cast<SDL_GPUComputePipeline*>(native)); break;
     case Kind::Fence: SDL_ReleaseGPUFence(d, static_cast<SDL_GPUFence*>(native)); break;
     }
     device->live.fetch_sub(1, std::memory_order_relaxed);
@@ -492,6 +493,36 @@ Result<GraphicsPipeline> Device::createPipeline(const GraphicsPipelineDesc& desc
     GraphicsPipeline pipeline = adopt<GraphicsPipeline>(m_impl.get(), native);
     Access::info(pipeline) = pipelineInfo;
     return pipeline;
+}
+
+Result<ComputePipeline> Device::createComputePipeline(const ComputePipelineDesc& desc) {
+    QUENCH_ASSERT(desc.shader && desc.shader->stage == ShaderStage::Compute, "compute shader missing");
+    const ShaderBlob& blob = *desc.shader;
+    const ShaderCode code = shaderCode(blob, m_impl->caps.shaderFormat);
+    if (!code)
+        return Error{std::format("shader '{}' has no {} code in this build", blob.entry,
+                                 shaderFormatName(m_impl->caps.shaderFormat))};
+    const ShaderResources& r = blob.resources;
+    SDL_GPUComputePipelineCreateInfo info{};
+    info.code = code.data;
+    info.code_size = code.size;
+    info.entrypoint = blob.entry;
+    info.format = m_impl->shaderFormat;
+    info.num_samplers = r.samplers;
+    info.num_readonly_storage_textures = r.storageTextures;
+    info.num_readonly_storage_buffers = r.storageBuffers;
+    info.num_readwrite_storage_textures = r.readWriteStorageTextures;
+    info.num_readwrite_storage_buffers = r.readWriteStorageBuffers;
+    info.num_uniform_buffers = r.uniformBuffers;
+    info.threadcount_x = r.threadCount[0];
+    info.threadcount_y = r.threadCount[1];
+    info.threadcount_z = r.threadCount[2];
+    const std::string name = desc.name.empty() ? std::string(blob.entry) : std::string(desc.name);
+    const NameProps props(name, SDL_PROP_GPU_COMPUTEPIPELINE_CREATE_NAME_STRING);
+    info.props = props.id();
+    SDL_GPUComputePipeline* native = SDL_CreateGPUComputePipeline(m_impl->device, &info);
+    if (!native) return sdlError(std::format("cannot create compute pipeline '{}'", name));
+    return adopt<ComputePipeline>(m_impl.get(), native);
 }
 
 // ------------------------------------------------------------------ convenience transfers

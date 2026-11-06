@@ -47,10 +47,22 @@ struct Vertex {
 };
 static_assert(sizeof(Vertex) == 48);
 
+// The joints that move one vertex of a skinned mesh (the layout of assets::ModelSkinVertex): indices into the mesh's
+// joints and their weights in 1/65535 (normalized to their sum when skinned).
+struct SkinVertex {
+    std::array<std::uint16_t, 4> joints{};
+    std::array<std::uint16_t, 4> weights{65535, 0, 0, 0};
+};
+static_assert(sizeof(SkinVertex) == 16);
+
 struct MeshDesc {
     std::span<const Vertex> vertices;
     std::span<const std::uint32_t> indices; // triangle list, counter-clockwise front faces
     std::string_view name{};                // debug name for GPU captures
+    // A skinned mesh: one entry per vertex (vertices in the bind pose) and the number of joints its instances get
+    // matrices for (Scene::setJointPalette). Empty: a rigid mesh.
+    std::span<const SkinVertex> skin{};
+    std::uint32_t jointCount = 0;
 };
 
 // RGBA8 pixel data, rows tightly packed, top row first.
@@ -174,6 +186,12 @@ public:
     void setVisible(InstanceId instance, bool visible);
     void setInstanceMaterial(InstanceId instance, MaterialId material);
     void setInstanceColor(InstanceId instance, const glm::vec4& color, const glm::vec4& custom = glm::vec4(0.0f));
+    // An instance of a skinned mesh: one matrix per joint of the mesh, each taking a bind-pose vertex to its posed
+    // place in the mesh's space (the joint's model matrix times its inverse bind matrix, as
+    // animation::AnimationSystem::skinPalette computes). Until the first call the instance shows the bind pose. The
+    // renderer skins on the GPU (a compute pass), culls with bounds from the palette and measures motion vectors from
+    // the previous palette, as setTransform does for the transform; teleport: no motion from the old pose.
+    void setJointPalette(InstanceId instance, std::span<const glm::mat4> palette, bool teleport = false);
     void removeInstance(InstanceId instance);
 
     LightId addLight(const LightDesc& desc);
@@ -191,6 +209,7 @@ public:
     // Instances that use a mesh or a material (0 for a stale handle).
     std::uint32_t meshUsers(MeshId mesh) const;
     std::uint32_t materialUsers(MaterialId material) const;
+    std::uint32_t jointCount(MeshId mesh) const; // MeshDesc::jointCount; 0: rigid (or a stale handle)
     std::uint32_t meshCount() const;
     std::uint32_t textureCount() const;
     std::uint32_t materialCount() const;

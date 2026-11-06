@@ -105,13 +105,38 @@ may call the other (no FLAC; different device and context structures). TrailForg
 `ma_encoder_*`, which the engine's build does not have (`quench::audio::encodeWav` or `--audio-capture` replace it).
 Ashfall does not use miniaudio.
 
+## Added in stage 8
+
+Animation ([Animation](animation.md)). One library, in `cmake/Dependencies.cmake`, listed with its licence in
+`THIRD_PARTY_LICENSES`; every configure downloads it (headless and web builds included).
+
+| Library | Version | Commit | Licence | Linked into | Purpose |
+|---|---|---|---|---|---|
+| ozz-animation | 0.17.0 | `744eb9d99f606eda849acb0b1204f7a3dc20bca1`, SHA256 `a29a8a014b571487d9a6dabebeed57627fc19bf1f0ebf531b0c76384840c3b74` | MIT | `quench_animation` (`quench_ozz`: the runtime; `quench_ozz_offline`: the builders, for the build functions only), `quench_cook` | sampling, blending, IK, local-to-model matrices; skeleton and clip building, key reduction, additive clips |
+
+How it is built: ozz's own CMake needs 3.30 (the engine's minimum is 3.28), so the engine fetches the archive
+without it (`SOURCE_SUBDIR no-cmake`) and compiles the runtime (`base` and `animation/runtime`) and the offline
+library (`animation/offline`, without its glTF and FBX importers and tools) as two static libraries, without
+warnings (`-w`, third-party code). Its headers are private to `quench_animation` (no ozz type in a public header).
+Neither game uses ozz, so no game pin is affected.
+
+Checked in the 0.17.0 source and in the tests: `SamplingJob` with a per-clip context, `BlendingJob` with per-joint
+weights and additive layers, `LocalToModelJob`, `IKTwoBoneJob`, `IKAimJob`, `SkeletonBuilder`, `AnimationBuilder`,
+`AnimationOptimizer`, `AdditiveAnimationBuilder` and `MotionExtractor` (root motion into position and rotation
+tracks when a clip set is built) are what the engine calls. Its SIMD math is SSE and AVX only, so on ARM (the Mac,
+the iPhone) and WebAssembly it runs its scalar reference implementation (the cost is in
+[Performance](performance.md#measurements)). Its runtime interpolates rotations normalized-linearly, glTF
+spherically: the cook adds keys where it matters ([Animation](animation.md#cooking)). Its archives check their tags
+only with asserts, so the engine wraps them in a container with a checksum. Events, state machines, root motion
+accumulation, foot placement and GPU skinning are the engine's own; ozz's `track_triggering_job` is not used (events
+are markers stored with each clip).
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.
 
 | Library | Latest release | Licence | Planned use |
 |---|---|---|---|
-| ozz-animation | 0.17.0 (2026-08-01) | MIT | skeletal animation runtime and offline tools |
 | KTX-Software (libktx) | 4.4.2 (2025-10-04) | Apache-2.0, with exceptions (see below) | Basis Universal transcoding, ASTC encoding (stage 6 writes and reads KTX2 itself, BC7 and RGBA8 only) |
 | Basis Universal | 2_50 (2026-08-03) | Apache-2.0 | supercompressed textures for Android and the web (bundled in libktx) |
 | Recast & Detour | 1.6.0 (2023-05-21) | zlib | navmesh building, path queries, crowds |
@@ -123,10 +148,11 @@ Already pinned and kept: Dear ImGui (diagnostics). miniaudio was pinned with sta
 
 ## Verified capabilities and caveats
 
-- **ozz-animation**: the runtime has sampling, blending with per-joint weights, `track_triggering_job` (events from
-  user channel tracks), `ik_two_bone_job` and `ik_aim_job`; the samples include additive blending, partial blending,
-  attachments, foot IK, two-bone IK, user channels, motion extraction and skinning. It is tested on WebAssembly and its
-  runtime needs C++17. It has no state machine, no retargeting and no GPU skinning: the engine implements those.
+- **ozz-animation** (pinned in stage 8, above): the runtime has sampling, blending with per-joint weights,
+  `track_triggering_job` (events from user channel tracks), `ik_two_bone_job` and `ik_aim_job`; the samples include
+  additive blending, partial blending, attachments, foot IK, two-bone IK, user channels, motion extraction and
+  skinning. Its runtime needs C++17; the engine's `wasm-node` check runs it under Node.js. It has no state machine,
+  no retargeting and no GPU skinning: the engine implements the first and the last; retargeting is not done.
 - **fastgltf**: current versions require C++20 (`cxx_std_20` in its CMake); C++17 support ended with the 0.9 series.
   The engine is C++20, so this is fine. Checked in the 1.0.0 source: unless a `simdjson` or `simdutf` package is
   found, its configure downloads their single-file releases (5.1.0, 9.3.3) from GitHub with `EXPECTED_HASH SHA256`;

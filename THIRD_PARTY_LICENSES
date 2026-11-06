@@ -284,6 +284,32 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
+ozz-animation 0.17.0 (https://github.com/guillaumeblanc/ozz-animation, commit 744eb9d99f606eda849acb0b1204f7a3dc20bca1)
+-----------------------------------------------------------------------------------------------------------------------
+
+Linked into quench_animation (its runtime; its offline library where skeletons and clips are built at run time) and
+quench_cook. The look-at chain in quench_animation (src/animation/Ik.cpp) follows its look-at sample.
+
+Copyright (c) 2020 Guillaume Blanc
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
 Build-time tools (not linked into programs, not shipped)
 ========================================================
 
@@ -305,3 +331,4 @@ simdjson and simdutf files it downloads), links:
 - bc7enc.cpp of bc7enc_rdo (above): MIT or public domain
 - meshoptimizer (above): MIT
 - miniaudio (above, through quench_audio): public domain or MIT No Attribution
+- ozz-animation (above): MIT

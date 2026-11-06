@@ -20,7 +20,7 @@ namespace detail {
 struct DeviceImpl;
 struct Access;
 
-enum class Kind : std::uint8_t { Buffer, Texture, Sampler, TransferBuffer, GraphicsPipeline, Fence };
+enum class Kind : std::uint8_t { Buffer, Texture, Sampler, TransferBuffer, GraphicsPipeline, ComputePipeline, Fence };
 
 void release(DeviceImpl* device, Kind kind, void* native) noexcept;
 
@@ -84,6 +84,8 @@ public:
 class Sampler : public detail::Resource<detail::Kind::Sampler, detail::NoInfo> {};
 
 class GraphicsPipeline : public detail::Resource<detail::Kind::GraphicsPipeline, detail::PipelineInfo> {};
+
+class ComputePipeline : public detail::Resource<detail::Kind::ComputePipeline, detail::NoInfo> {};
 
 // CPU-visible staging memory for uploads (CopyPass::upload) and downloads (CopyPass::download).
 class TransferBuffer : public detail::Resource<detail::Kind::TransferBuffer, TransferBufferDesc> {

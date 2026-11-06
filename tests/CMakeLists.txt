@@ -38,6 +38,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             audio/AudioTests.cpp
             audio/DeviceTests.cpp
             ${audio_test_data}
+            animation/AnimationTests.cpp
             app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
             app/OptionsTests.cpp
@@ -54,13 +55,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             render/SceneAssetsTests.cpp)
     quench_configure_target(quench_device_tests)
     target_include_directories(quench_device_tests PRIVATE harness gpu)
-    target_link_libraries(quench_device_tests PRIVATE quench_physics quench_assets quench_audio_device quench_render)
+    target_link_libraries(quench_device_tests PRIVATE quench_physics quench_assets quench_audio_device quench_render
+                                                      quench_animation)
     target_compile_definitions(quench_device_tests PRIVATE
         QUENCH_TEST_SDL_MAIN=1
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
     quench_add_shaders(quench_device_tests NAME render SOURCE gpu/shaders/render.hlsl
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
-                rects_vs:vertex)
+                rects_vs:vertex scale_cs:compute)
     quench_add_shaders(quench_device_tests NAME render_test SOURCE render/shaders/custom.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex)
     return()
@@ -136,15 +138,26 @@ quench_add_test_executable(quench_audio_tests PREFIX audio
     SOURCES audio/AudioTests.cpp ${audio_test_data}
     LIBS quench_audio)
 
+quench_add_test_executable(quench_animation_tests PREFIX animation
+    SOURCES animation/AnimationTests.cpp
+    LIBS quench_animation)
+
 # quench_cook (host builds that build the cook themselves): the library's cases, and the command line run twice on the
-# demo's sources with byte-identical outputs.
+# demo's sources and its generated character with byte-identical outputs.
 if(TARGET quench_cook_lib)
     quench_add_test_executable(quench_cook_tests PREFIX cook
         SOURCES cook/CookTests.cpp
         LIBS quench_cook_lib quench_glm)
     target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_SOURCE_DIR="${Quench_SOURCE_DIR}")
+    find_package(Python3 COMPONENTS Interpreter)
+    set(_character_args)
+    if(Python3_Interpreter_FOUND)
+        set(_character_args -DPYTHON=${Python3_EXECUTABLE}
+            -DCHARACTER=${Quench_SOURCE_DIR}/tools/assets/make_demo_character.py)
+    endif()
     add_test(NAME cook_cli COMMAND ${CMAKE_COMMAND} -DCOOK=$<TARGET_FILE:quench_cook>
              -DSOURCES=${Quench_SOURCE_DIR}/examples/demo/assets_src -DSOUNDS=${CMAKE_CURRENT_SOURCE_DIR}/audio/data
+             ${_character_args}
              -DOUT=${CMAKE_CURRENT_BINARY_DIR}/tmp/cook_cli -P ${CMAKE_CURRENT_SOURCE_DIR}/CookCli.cmake)
     add_dependencies(quench_cook_tests quench_cook)
 endif()
@@ -153,7 +166,7 @@ quench_add_test_executable(quench_gpu_tests PREFIX gpu
     SOURCES gpu/ShaderTests.cpp
     LIBS quench_gpu_shaders)
 quench_add_shaders(quench_gpu_tests NAME test SOURCE gpu/shaders/test.hlsl
-    ENTRIES test_vs:vertex test_fs:fragment
+    ENTRIES test_vs:vertex test_fs:fragment test_cs:compute
     INCLUDE_DIRS gpu/shaders/include)
 target_compile_definitions(quench_gpu_tests PRIVATE
     QUENCH_TEST_METAL=$<BOOL:${APPLE}>
@@ -192,7 +205,7 @@ if(NOT QUENCH_HEADLESS)
         ENVIRONMENT ${gpu_environment})
     quench_add_shaders(quench_gpu_device_tests NAME render SOURCE gpu/shaders/render.hlsl
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
-                rects_vs:vertex)
+                rects_vs:vertex scale_cs:compute)
     target_compile_definitions(quench_gpu_device_tests PRIVATE
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
 
@@ -296,7 +309,8 @@ if(NOT QUENCH_HEADLESS)
             # to their own cap (120 per second) instead of the display's rate where the window is not paced to the
             # display (docs/platforms.md), with the same pixels and the same mix; the hello checks and demo_menu keep
             # the default vsync.
-            foreach(entry materials:2 shadows:2 sky:2 post:2 hdr:2 physics:2 input:3 assets:1.5 audio:1.65)
+            foreach(entry materials:2 shadows:2 sky:2 post:2 hdr:2 physics:2 input:3 assets:1.5 audio:1.65
+                  animation:2.4)
                 string(REPLACE ":" ";" entry "${entry}")
                 list(GET entry 0 section)
                 list(GET entry 1 capture_at)
@@ -373,7 +387,7 @@ endforeach()
 add_library(quench_header_check OBJECT ${header_sources})
 quench_configure_target(quench_header_check)
 target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_assets quench_audio
-                                                  quench_gpu_shaders)
+                                                  quench_animation quench_gpu_shaders)
 if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_header_check PRIVATE quench_app quench_render)
 endif()

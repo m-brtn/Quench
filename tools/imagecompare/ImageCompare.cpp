@@ -70,6 +70,7 @@ int main(int argc, char** argv) {
     double sum = 0.0;
     int maxDiff = 0;
     long over = 0;
+    int x0 = w, y0 = h, x1 = -1, y1 = -1; // the rectangle around every pixel that differs at all
     for (int y = 0; y < h; ++y) {
         const auto* a = static_cast<const Uint8*>(actual->pixels) + std::size_t(y) * actual->pitch;
         const auto* e = static_cast<const Uint8*>(expected->pixels) + std::size_t(y) * expected->pitch;
@@ -83,6 +84,12 @@ int main(int argc, char** argv) {
             }
             maxDiff = std::max(maxDiff, pixelMax);
             over += pixelMax > threshold ? 1 : 0;
+            if (pixelMax > 0) {
+                x0 = std::min(x0, x);
+                y0 = std::min(y0, y);
+                x1 = std::max(x1, x);
+                y1 = std::max(y1, y);
+            }
         }
     }
     const double mean = sum / (double(w) * h * 3);
@@ -90,6 +97,7 @@ int main(int argc, char** argv) {
     const bool pass = mean <= maxMean && overShare <= maxOver;
     std::printf("%dx%d: mean difference %.4f (max %.2f), largest %d, pixels over %d: %ld (%.4f%%, max %.4f%%): %s\n", w,
                 h, mean, maxMean, maxDiff, threshold, over, overShare * 100.0, maxOver * 100.0, pass ? "pass" : "FAIL");
+    if (x1 >= 0) std::printf("differences within x %d..%d, y %d..%d\n", x0, x1, y0, y1);
 
     if (diffPath) {
         SDL_Surface* surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, diff.data(), w * 4);

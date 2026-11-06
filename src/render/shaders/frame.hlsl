@@ -22,7 +22,7 @@ float2 clipToUv(float4 c) {
 
 // ---------------------------------------------------------------- shadow casters
 
-#if defined(QUENCH_ENTRY_shadow_vs) || defined(QUENCH_ENTRY_velocity_obj_vs)
+#if defined(QUENCH_ENTRY_shadow_vs) || defined(QUENCH_ENTRY_velocity_obj_vs) || defined(QUENCH_ENTRY_velocity_skin_vs)
 cbuffer QuenchDrawBlock : QUENCH_UNIFORM(1) {
     DrawUniforms draw;
 };
@@ -98,6 +98,22 @@ VelocityOut velocity_obj_vs(float3 position : TEXCOORD0, uint instance : SV_Inst
     o.position = mul(quenchFrame.viewProj, world); // jittered, as the depth it is tested against
     o.cur = mul(quenchFrame.viewProjStable, world);
     o.prev = mul(quenchFrame.prevViewProj, mul(inst.prevModel, float4(position, 1.0)));
+    return o;
+}
+#endif
+
+#if defined(QUENCH_ENTRY_velocity_skin_vs)
+StructuredBuffer<VelocityInstance> moved : QUENCH_STORAGE(0);
+
+// Skinned instances: the previous frame's skinned position comes from a second vertex buffer.
+VelocityOut velocity_skin_vs(float3 position : TEXCOORD0, float3 prevPosition : TEXCOORD1,
+                             uint instance : SV_InstanceID) {
+    const VelocityInstance inst = moved[uint(draw.info.x) + instance];
+    VelocityOut o;
+    const float4 world = mul(inst.model, float4(position, 1.0));
+    o.position = mul(quenchFrame.viewProj, world);
+    o.cur = mul(quenchFrame.viewProjStable, world);
+    o.prev = mul(quenchFrame.prevViewProj, mul(inst.prevModel, float4(prevPosition, 1.0)));
     return o;
 }
 #endif

@@ -1,7 +1,8 @@
 #ifndef QUENCH_RENDER_POST_UNIFORMS_H
 #define QUENCH_RENDER_POST_UNIFORMS_H
 
-// Uniform blocks of the render module's own passes (src/render/shaders/frame.hlsl), read by Renderer.cpp.
+// Uniform blocks of the render module's own passes (src/render/shaders/frame.hlsl and skin.hlsl), read by
+// Renderer.cpp.
 
 #include "quench/Shared.h"
 
@@ -19,6 +20,11 @@ struct QUENCH_ALIGN16 PostUniforms {
 struct QUENCH_ALIGN16 VelocityInstance {
     float4x4 model;
     float4x4 prevModel;
+};
+
+// Uniform slot 0 of skin_cs: one skinned instance (whole numbers, exact as floats below 2^24).
+struct QUENCH_ALIGN16 SkinUniforms {
+    float4 counts; // x: vertices, y: the instance's first joint in the palette buffer, z: its first output vertex
 };
 
 QUENCH_SHARED_END

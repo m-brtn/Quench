@@ -71,6 +71,8 @@ inline SDL_GPUBufferUsageFlags toSdl(BufferUsage usage) {
     if (any(usage & BufferUsage::Index)) flags |= SDL_GPU_BUFFERUSAGE_INDEX;
     if (any(usage & BufferUsage::Indirect)) flags |= SDL_GPU_BUFFERUSAGE_INDIRECT;
     if (any(usage & BufferUsage::GraphicsStorageRead)) flags |= SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+    if (any(usage & BufferUsage::ComputeStorageRead)) flags |= SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ;
+    if (any(usage & BufferUsage::ComputeStorageWrite)) flags |= SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
     return flags;
 }
 

@@ -1,0 +1,35 @@
+{
+  "parameters": {"speed": 0, "lean": 0, "jump": "trigger", "wave": "trigger"},
+  "layers": [
+    {
+      "name": "base",
+      "states": [
+        {"name": "move", "blend": {"parameter": "speed", "clips": [
+          {"clip": "idle", "at": 0}, {"clip": "walk", "at": 1.1}, {"clip": "run", "at": 2.7}]}},
+        {"name": "jump", "clip": "jump", "loop": false}
+      ],
+      "transitions": [
+        {"from": "move", "to": "jump", "trigger": "jump", "duration": 0.15},
+        {"from": "jump", "to": "move", "exitTime": 0.85, "duration": 0.3}
+      ]
+    },
+    {
+      "name": "arms",
+      "mask": ["upperarm_r"],
+      "states": [
+        {"name": "none"},
+        {"name": "wave", "clip": "wave", "loop": false}
+      ],
+      "transitions": [
+        {"from": "none", "to": "wave", "trigger": "wave", "duration": 0.25},
+        {"from": "wave", "to": "none", "exitTime": 0.8, "duration": 0.4}
+      ]
+    },
+    {
+      "name": "lean",
+      "blend": "additive",
+      "weightParameter": "lean",
+      "states": [{"name": "lean", "clip": "lean", "loop": false}]
+    }
+  ]
+}

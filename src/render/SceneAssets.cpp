@@ -40,6 +40,9 @@ struct SceneAssets::Impl {
         glm::mat4 transform{1.0f};
         bool visible = true;
         std::vector<InstanceId> instances;
+        std::vector<int> instanceSkins;               // per instance: the part's skin (-1: rigid, placeholder)
+        std::vector<std::uint32_t> instanceJoints;    // per instance: its mesh's joints
+        std::vector<std::vector<glm::mat4>> palettes; // per skin: the last setJointPalette
         bool placeholder = false;
         bool built = false;
         assets::AssetState builtState = assets::AssetState::Loading;
@@ -134,6 +137,7 @@ Result<void> ModelAsset::decode(fs::Bytes bytes) {
     if (model->meshes.empty()) return Error{"the model has no meshes"};
     Pending pending;
     pending.materials = std::move(model->materials);
+    pending.skins = std::move(model->skins);
     pending.boundsMin = model->boundsMin;
     pending.boundsMax = model->boundsMax;
     for (assets::ModelMesh& mesh : model->meshes) {
@@ -147,6 +151,7 @@ Result<void> ModelAsset::decode(fs::Bytes bytes) {
         PendingMesh out;
         out.name = std::move(mesh.name);
         out.material = mesh.material;
+        out.skin = mesh.skin;
         out.indices.reserve(range.indexCount);
         for (std::uint32_t i = range.firstIndex; i < range.firstIndex + range.indexCount; ++i) {
             std::uint32_t& mapped = remap[mesh.indices[i]];
@@ -154,6 +159,11 @@ Result<void> ModelAsset::decode(fs::Bytes bytes) {
                 mapped = std::uint32_t(out.vertices.size());
                 const assets::ModelVertex& v = mesh.vertices[mesh.indices[i]];
                 out.vertices.push_back({v.position, v.normal, v.uv, v.color});
+                if (mesh.skin >= 0) {
+                    const assets::ModelSkinVertex& w = mesh.skinning[mesh.indices[i]];
+                    out.skinning.push_back({{w.joints[0], w.joints[1], w.joints[2], w.joints[3]},
+                                            {w.weights[0], w.weights[1], w.weights[2], w.weights[3]}});
+                }
             }
             out.indices.push_back(mapped);
         }
@@ -169,7 +179,8 @@ std::uint64_t ModelAsset::uploadBytes() const {
     if (!m_pending) return 0;
     std::uint64_t bytes = 0;
     for (const PendingMesh& mesh : m_pending->meshes)
-        bytes += mesh.vertices.size() * sizeof(Vertex) + mesh.indices.size() * sizeof(std::uint32_t);
+        bytes += mesh.vertices.size() * sizeof(Vertex) + mesh.indices.size() * sizeof(std::uint32_t) +
+                 mesh.skinning.size() * sizeof(SkinVertex);
     return bytes;
 }
 
@@ -206,18 +217,23 @@ Result<void> ModelAsset::finish() {
     std::vector<Part> parts;
     std::uint64_t gpuBytes = 0;
     for (const PendingMesh& mesh : pending.meshes) {
-        Result<MeshId> id = scene.addMesh({mesh.vertices, mesh.indices, mesh.name.empty() ? path() : mesh.name});
+        const auto joints =
+            mesh.skin >= 0 ? std::uint32_t(pending.skins[std::size_t(mesh.skin)].joints.size()) : std::uint32_t(0);
+        Result<MeshId> id =
+            scene.addMesh({mesh.vertices, mesh.indices, mesh.name.empty() ? path() : mesh.name, mesh.skinning, joints});
         if (!id) {
             for (const Part& part : parts) scene.removeMesh(part.mesh);
             for (MaterialId material : materials) scene.removeMaterial(material);
             return Error{id.error()};
         }
-        parts.push_back({*id, materials[mesh.material], std::uint32_t(mesh.indices.size() / 3)});
-        gpuBytes += mesh.vertices.size() * sizeof(Vertex) + mesh.indices.size() * sizeof(std::uint32_t);
+        parts.push_back({*id, materials[mesh.material], std::uint32_t(mesh.indices.size() / 3), mesh.skin});
+        gpuBytes += mesh.vertices.size() * sizeof(Vertex) + mesh.indices.size() * sizeof(std::uint32_t) +
+                    mesh.skinning.size() * sizeof(SkinVertex);
     }
 
     retireParts();
     m_parts = std::move(parts);
+    m_skins = std::move(pending.skins);
     m_materials = std::move(materials);
     m_textures = std::move(textures);
     m_boundsMin = pending.boundsMin;
@@ -232,6 +248,7 @@ void ModelAsset::retireParts() {
     for (const Part& part : m_parts) m_owner.retire(part.mesh, {});
     for (MaterialId material : m_materials) m_owner.retire({}, material);
     m_parts.clear();
+    m_skins.clear();
     m_materials.clear();
 }
 
@@ -330,6 +347,18 @@ void SceneAssets::setVisible(ModelInstanceId instance, bool visible) {
     for (InstanceId id : placed->instances) m_scene.setVisible(id, visible);
 }
 
+void SceneAssets::setJointPalette(ModelInstanceId instance, int skin, std::span<const glm::mat4> palette,
+                                  bool teleport) {
+    Impl::Placed* placed = m_impl->placed.get(instance);
+    QUENCH_ASSERT(placed && skin >= 0, "setJointPalette: stale or null model instance, or a negative skin");
+    if (!placed || skin < 0) return;
+    if (placed->palettes.size() <= std::size_t(skin)) placed->palettes.resize(std::size_t(skin) + 1);
+    placed->palettes[std::size_t(skin)].assign(palette.begin(), palette.end());
+    for (std::size_t i = 0; i < placed->instances.size(); ++i)
+        if (placed->instanceSkins[i] == skin && placed->instanceJoints[i] == palette.size())
+            m_scene.setJointPalette(placed->instances[i], palette, teleport);
+}
+
 void SceneAssets::removeModel(ModelInstanceId instance) {
     Impl::Placed* placed = m_impl->placed.get(instance);
     QUENCH_ASSERT(placed, "removeModel: stale or null model instance");
@@ -358,6 +387,8 @@ void SceneAssets::update() {
         if (placed->built && placed->builtState == model.state() && placed->builtVersion == model.version()) continue;
         for (InstanceId id : placed->instances) m_scene.removeInstance(id);
         placed->instances.clear();
+        placed->instanceSkins.clear();
+        placed->instanceJoints.clear();
         placed->placeholder = model.parts().empty();
         if (placed->placeholder) {
             if (m_impl->box) {
@@ -367,13 +398,24 @@ void SceneAssets::update() {
                                                                  .material = material,
                                                                  .transform = placeholderTransform(placed->transform),
                                                                  .visible = placed->visible}));
+                placed->instanceSkins.push_back(-1);
+                placed->instanceJoints.push_back(0);
             }
         } else {
-            for (const ModelAsset::Part& part : model.parts())
-                placed->instances.push_back(m_scene.addInstance({.mesh = part.mesh,
-                                                                 .material = part.material,
-                                                                 .transform = placed->transform,
-                                                                 .visible = placed->visible}));
+            for (const ModelAsset::Part& part : model.parts()) {
+                const InstanceId id = m_scene.addInstance({.mesh = part.mesh,
+                                                           .material = part.material,
+                                                           .transform = placed->transform,
+                                                           .visible = placed->visible});
+                placed->instances.push_back(id);
+                const std::uint32_t joints = m_scene.jointCount(part.mesh);
+                placed->instanceSkins.push_back(part.skin);
+                placed->instanceJoints.push_back(joints);
+                if (part.skin >= 0 && std::size_t(part.skin) < placed->palettes.size()) {
+                    const std::vector<glm::mat4>& palette = placed->palettes[std::size_t(part.skin)];
+                    if (!palette.empty() && palette.size() == joints) m_scene.setJointPalette(id, palette, true);
+                }
+            }
         }
         placed->built = true;
         placed->builtState = model.state();

@@ -80,7 +80,57 @@ not twice the measured 6.1 ms, because twice would allow frames longer than the 
 In the Mac runs of 20:32-20:34 the frame p95 was above 1.1 intervals (18.33 ms) in most sections, up to 18.85 ms,
 with frame p50 16.67 ms: presentation jitter outside the budget, not a missed interval in the p95; cause not checked.
 
+The demo's `animation` region (a crowd of 256, 259 characters; since stage 8) is a load test and has its own Mac
+budget, at about twice the medians of the runs of 2026-11-06 04:22-04:34 below: CPU p50 5.5 ms, CPU p99 7.5 ms,
+GPU p50 15 ms as for the other sections. It is above the sections' budget of 2.0 and 3.5 ms (they have a few dozen
+instances). No iPhone budget for it yet: it has not run on the phone.
+
 ## Measurements
+
+Stage 8 A/B, 2026-11-06 04:18-04:37, Release, vsync, Mac, Apple M4 Pro, `--frame-size 1920x1080`,
+`--audio-device null`: HEAD `5bace7f` (built from `git archive` in `/tmp/qs8head`) against the stage 8 working tree,
+interleaved. In this session the display paced at about 120 Hz (hello 1129 to 1195 frames in 10 s, the demo 482 to
+601 in 5 s), not the 60 Hz of the sessions below, and the demo's frame p95 was about 25 ms in most regions of both
+builds (missed intervals; cause not checked); Xcode was open. Medians of the runs, HEAD and stage 8, in
+milliseconds:
+
+| Run | Runs | CPU p50 | CPU p99 | GPU p50 |
+|---|---|---|---|---|
+| hello | 5 + 5 | 0.267, 0.268 (+0.4 %) | 0.486, 0.458 (-5.8 %) | 0.549, 0.551 |
+| demo materials (focused) | 5 + 5 | 0.912, 0.885 (-3.0 %) | 1.280, 1.256 (-1.9 %) | 5.684, 4.998 |
+| demo shadows (focused) | 5 + 5 | 0.855, 0.839 (-1.9 %) | 1.195, 1.149 (-3.8 %) | 5.254, 3.332 |
+| demo sky (focused) | 5 + 5 | 0.813, 0.773 (-4.9 %) | 1.106, 1.090 (-1.4 %) | 4.577, 4.084 |
+| demo post (focused) | 5 + 5 | 0.875, 0.865 (-1.1 %) | 1.172, 1.259 (+7.4 %) | 5.297, 4.337 |
+| demo post alone, first region | 6 + 6 | 0.826, 0.851 (+3.0 %) | 1.177, 1.201 (+2.0 %) | 3.485, 3.229 |
+| demo post alone, second region | 6 + 6 | 0.835, 0.8575 (+2.7 %) | 1.1895, 1.1825 (-0.6 %) | 3.359, 3.263 |
+| demo hdr_on (focused) | 5 + 5 | 0.827, 0.819 (-1.0 %) | 1.209, 1.214 (+0.4 %) | 3.083, 2.942 |
+| demo physics (focused) | 5 + 5 | 1.010, 0.972 (-3.8 %) | 1.414, 1.422 (+0.6 %) | 2.863, 2.902 |
+
+The complete demo benchmark, three runs per build (04:22-04:26), gave CPU p50 between -8.2 % (hdr) and +14.7 %
+(hdr_on) per section and CPU p99 between -6.9 % (hdr) and +6.6 % (sky); HEAD's first run read lower than its other
+two in most sections (materials 0.272 against 0.909 and 0.871). Every section above 5 % in either was measured
+again on its own (the focused rows); post's p99 read +7.4 % there and +2.0 % and -0.6 % in 6 + 6 runs of post
+alone. assets read +2.1 % and -2.9 %, audio +3.0 % and -0.6 % in the complete runs. The GPU p50 of one build swings
+by up to 2 ms between runs in this session (shadows: 3.3 to 5.8 ms), with the GPU clock under the irregular pacing;
+a frame without skinned instances records no skinning pass, so these sections' GPU work did not change.
+
+The new `animation` region, three complete runs: 531 to 593 frames, CPU p50 2.663 / 2.797 / 2.757, CPU p99
+3.613 / 3.768 / 3.741, GPU p50 5.495 / 4.808 / 4.968. Three runs of the section alone with crowds of 256, 512 and 0
+(04:33-04:34) and its perf fields ([Engine demo](demo.md#benchmark): the update's mean and largest time over the
+last 240 frames on 12 threads, 11 workers and the frame thread; the skinning pass's GPU time):
+
+| Crowd (characters) | CPU p50 | CPU p99 | GPU p50 | Update mean | Update max | Skinning GPU |
+|---|---|---|---|---|---|---|
+| 256 (259) | 2.727 / 2.625 / 2.636 | 3.829 / 3.622 / 3.725 | 5.027 / 4.853 / 4.868 | 0.752 / 0.663 / 0.654 | 3.749 / 1.948 / 1.098 | 1.552 / 1.979 / 1.147 |
+| 512 (515) | 2.474 / 2.567 / 2.587 | 3.716 / 3.756 / 3.808 | 4.957 / 4.864 / 5.092 | 0.495 / 0.512 / 0.533 | 1.236 / 1.208 / 1.505 | 1.279 / 1.346 / 1.539 |
+| 0 (3) | 1.066 / 1.177 / 1.184 | 1.416 / 1.645 / 1.575 | 3.528 / 5.183 / 5.203 | 0.095 / 0.108 / 0.102 | 0.216 / 0.273 / 0.258 | 0.687 / 0.362 / 0.437 |
+
+All values in milliseconds. The crowd of 256 adds about 1.5 ms of CPU p50 to the section with three characters:
+about 0.6 ms in `AnimationSystem::update`, the rest in the frame's other work for 256 more skinned instances (each
+its own batch and dispatch, 655 shadow draws instead of 21, the palette copies), not broken down further. The crowd
+of 512 read faster than 256 in all three runs, in the update and in the frame; not explained (the CPU clock rising
+with the load is a guess, not checked). The skinning time is the GPU time of the pass's own command buffer (palette
+upload and dispatches) and has a fixed part: 0.36 to 0.69 ms for three characters.
 
 Stage 7 A/B, 2026-11-06 01:12-01:41, Release, vsync, Mac, Apple M4 Pro, LG UltraFine 5K at 60 Hz,
 `--frame-size 1920x1080`: HEAD `162ae77` (built from `git archive` in `/tmp/qs7head`) against the stage 7 working

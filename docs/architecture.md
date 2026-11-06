@@ -21,7 +21,7 @@ src/<module>/              sources and internal headers, per module:
   core/       FixedStepClock, Json, hashing, logging (quench::log), Result, QUENCH_ASSERT, fs interface, job system
   physics/    PhysicsWorld (Jolt), character controller, ray queries, streamed terrain tiles
   assets/     asset IDs, asset manager and cache, cooked format readers, streaming
-  anim/       ozz runtime, state machines, blending, events, IK, attachments
+  animation/  ozz runtime, state machines, blending, events, IK, attachments
   nav/        Recast navmesh building, Detour queries and crowds
   audio/      mixer, sounds, streams, 3D sound, WAV writer, analysis (headless); the playback device and the
               iOS audio session (miniaudio)
@@ -53,16 +53,16 @@ docs/releases/        release notes per version
 | `quench_core` | clock, Json, logging, `quench::fs` interface, job system | enkiTS | yes |
 | `quench_physics` | Jolt wrapper, character controller, terrain tiles | core, Jolt, GLM | yes |
 | `quench_assets` | IDs, manager, cache, cooked formats (KTX2, `.qmodel`), BC7 decoding, streaming grid | core, GLM, xxHash, meshoptimizer, bc7decomp | yes |
-| `quench_anim` | animation runtime and state machines | core, ozz | yes |
+| `quench_animation` | skeletons and clip sets (the `"skeleton"`, `"animation"`, `"animgraph"` asset types), sampling, blending, state machines, events, root motion, IK, foot placement | core, assets, GLM, ozz-animation (`quench_ozz`; `quench_ozz_offline` for the build functions) | yes |
 | `quench_nav` | navmesh and crowds | core, Recast & Detour | yes |
 | `quench_audio` | mixer, buses, sounds (the `"sound"` asset type), streams, generators, 3D sound, WAV writer, signal analysis | core, assets, GLM, miniaudio (decoders) | yes |
 | `quench_audio_device` | playback device, iOS audio session | audio, miniaudio (device API), Core Audio, AVFoundation on iOS | no |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
 | `quench_gpu` | GPU layer and backends | core, gpu_shaders, SDL3 | no |
-| `quench_render` | retained scene, standard frame, render modules, `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, GLM (later anim) | no |
+| `quench_render` | retained scene, standard frame, render modules, GPU skinning, `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, GLM | no |
 | `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log, the app's job system and asset manager | core, assets, audio, audio_device, gpu, GLM, ImGui, SDL3 | no |
 | `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
-| `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files, sounds checked or converted to WAV; `quench_cook_assets()` | assets, audio, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
+| `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files (also skins, skeletons and clips), sounds checked or converted to WAV; `quench_cook_assets()` | assets, audio, animation, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
 
 The `QUENCH_HEADLESS` option (the `headless` preset, forced on for Emscripten) builds only the headless targets and
 does not fetch SDL.
@@ -133,6 +133,10 @@ Headers in `include/quench/gpu/` (`Device.h`, `CommandBuffer.h`, `Resources.h`, 
   `Hdr10`), queried per window (`supportsComposition`) and set with `setComposition`, SDR by default; the swapchain
   format follows it. `gpu::DisplayOutput` (composition, headroom, paper white) is what a frame's values mean; the app
   fills it, the renderer reads it.
+- **Compute** (stage 8, for GPU skinning): `ComputePipeline` (`Device::createComputePipeline` from a compute
+  `ShaderBlob`, with its thread group size), `CommandBuffer::beginComputePass` with read-write storage buffers bound
+  for the pass, and in the pass a pipeline, read-only storage buffers, uniforms and `dispatch`;
+  `BufferUsage::ComputeStorageRead` and `ComputeStorageWrite`. No storage textures in compute yet (no need).
 
 ## Rendering
 
@@ -182,6 +186,9 @@ Done in stage 1 (`quench_add_shaders()` in `cmake/QuenchShaders.cmake`):
   recompiles the shaders that use it (verified with Ninja). DXC gets the same directories with `-I`.
 - Cross builds (iOS) use a macOS `quench_shaderc` given by `QUENCH_HOST_SHADERC` (the `host-tools` preset builds it).
 - Storage textures and combined image samplers are refused with an error for now; no shader uses them yet.
+- Compute shaders (stage 8): `quench_add_shaders(... ENTRIES name:compute)` and `quench_shaderc --stage compute`
+  (read-only resources in space0, read-write storage buffers in space1, uniforms in space2, as SDL GPU wants them;
+  `QUENCH_RW_STORAGE(n)` in `quench/Bindings.hlsli`; the thread group size goes into the table), DXC `cs_6_0`.
 
 Done in stage 5: the engine shader library in `shaders/quench/` (lighting, shadows, sky, fog, tone curves, the surface
 shader interface) and uniform structs defined once in headers read by both C++ and HLSL (`quench/Shared.h`,
@@ -228,8 +235,10 @@ not start a second pool) and game work. Jobs have dependencies and three priorit
 TrailForge does for Jolt's workers. With zero workers (builds without threads, the web without cross-origin isolation)
 jobs run on the creating thread inside `wait`, `waitAll` and `runFor`; the asset manager calls `runFor` with a time
 slice per frame, so loading still makes progress without blocking. The app owns one job system (`App::jobs()`);
-`PhysicsWorld(JobSystem*)` runs Jolt's jobs on it (with `nullptr`, on the thread that calls `step()`). Details:
-[Jobs, assets and the cook](assets.md).
+`PhysicsWorld(JobSystem*)` runs Jolt's jobs on it (with `nullptr`, on the thread that calls `step()`).
+`AnimationSystem::update` splits its characters over `parallelFor` and waits (the frame thread works too); the ground
+query a game gives it for foot placement is called from those jobs, so it must be safe to call concurrently (Jolt's
+queries are, while the world does not step). Details: [Jobs, assets and the cook](assets.md).
 
 The one exception is the audio device's callback thread (stage 7). The operating system's audio API owns it (Core
 Audio through miniaudio) and calls it on its own schedule, every few milliseconds, with a real-time deadline, so it
@@ -245,9 +254,11 @@ As built in stage 6 ([Jobs, assets and the cook](assets.md)):
 
 - **IDs**: `AssetId`, XXH64 of the asset path as `quench::fs` takes it, identical on every platform and in the cook.
 - **Manager**: `AssetManager` for every asset type (textures and models in `quench_render`, sounds in
-  `quench_audio`; animations are a later type of the same manager): reference-counted `AssetRef`s, states loading,
+  `quench_audio`, skeletons, clip sets and graphs in `quench_animation`): reference-counted `AssetRef`s, states loading,
   ready and failed, a placeholder until ready and after a failure (one log line, never a crash), CPU and GPU bytes
-  per type with budgets, and LRU eviction of unreferenced assets over budget.
+  per type with budgets, and LRU eviction of unreferenced assets over budget. A type is registered once per
+  manager, by the system that owns it (`SceneAssets`, `AudioSystem`, `AnimationSystem`): so one `SceneAssets` (one
+  scene) per manager; a second scene needs a second manager on the same job system.
 - **Asynchronous loading**: files are read through `quench::fs` and decoded on jobs; the main-thread part (the GPU
   upload) runs in `AssetManager::update()` under a byte budget per frame, so a frame never waits for a load.
 - **Cooked formats**: games ship cooked files: KTX2 textures (BC7 or RGBA8 with mips; BC7 is decoded to RGBA8 on a
@@ -275,16 +286,28 @@ browser's audio output (Web Audio) is not built: the mixer is checked under Node
 
 ## Animation
 
-ozz-animation provides sampling, blending with per-joint weights, additive layers, two-bone and aim IK, user channel
-tracks with a triggering job (for events), local-to-model matrices (for attachments) and motion extraction. The engine
-adds:
+As built in stage 8 ([Animation](animation.md)). ozz-animation provides sampling, blending with per-joint weights,
+additive layers, two-bone and aim IK, local-to-model matrices (for attachments) and, in its offline library, the
+skeleton and clip builders and the key reduction. ozz stays out of the public headers (poses and matrices are GLM).
+The engine adds:
 
-- data-driven state machines (states, transitions with conditions and durations, blend spaces by speed and direction);
-- animation events from ozz user channel tracks, delivered as an event stream like Ashfall's `GameEvent`;
-- GPU skinning: a joint matrix palette in a storage buffer read by the vertex shader (SDL GPU supports vertex storage
-  buffers; TrailForge's trees and level models already use them);
-- foot placement from ozz two-bone IK and Jolt ray casts;
-- retargeting between compatible skeletons (not in ozz: bone name mapping and rest pose correction).
+- `quench_animation`: skeletons, clip sets and graphs as asset types; an `AnimationSystem` that updates its
+  characters in parallel on the job system (with zero workers on the calling thread), owned by the game;
+- data-driven state machines in JSON (layers that override on a joint mask or add, states with a clip or a 1D blend
+  tree, transitions with conditions, triggers, exit times and cross-fades);
+- events as named markers on a clip's timeline (from the cook's clip settings), delivered in order per update, also
+  across loops and for updates longer than a loop;
+- root motion taken from a named joint and reported per update;
+- foot placement (two-bone IK on the ground a game's ray query finds, from job threads; the demo casts into Jolt) and
+  look-at (aim IK down a chain);
+- GPU skinning in `quench_render`, in a compute pass, not in the vertex shader (decided without the user,
+  2026-11-06): the standard frame draws a mesh up to five times (shadow cascades, the main pass, motion vectors), the
+  surface and shadow shaders stay as they are, and stage 9's ray tracing can refit acceleration structures from the
+  posed vertices. It needed compute in `quench::gpu` and the shader build (above);
+- cooking of glTF skins, skeletons and animations in `quench_cook`.
+
+Not done: retargeting between skeletons (not in ozz: bone name mapping and rest pose correction), 2D blend spaces,
+animation LOD.
 
 ## Coordinate system and units
 

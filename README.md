@@ -11,15 +11,17 @@ display output, scripted verification runs, captures, macOS and iOS app bundles)
 scene (meshes, materials, instances and lights registered in the engine) and a standard frame (sun shadow cascades, an
 HDR pass, sky and fog, bloom, tone mapping, TAA or FXAA, with fallbacks by device capability), audio (a mixer with
 buses, 3D sound, streamed music and output through miniaudio, [audio](docs/audio.md); not yet run on an iPhone or
-listened to), a sample (`examples/hello`), an engine demo with one section per feature
+listened to), skeletal animation on ozz-animation (state machines, blending, events, root motion, IK and foot
+placement, GPU skinning, [animation](docs/animation.md); built after 0.5.0, not released yet, not yet run on an
+iPhone), a sample (`examples/hello`), an engine demo with one section per feature
 ([`examples/demo`](docs/demo.md)), a template for new games and tests. It has run on a Mac (Metal, and Vulkan through
-MoltenVK), in the iOS Simulator and on an iPhone (the asset system and audio not yet on the iPhone). No animation yet;
+MoltenVK), in the iOS Simulator and on an iPhone (the asset system, audio and animation not yet on the iPhone). Next:
 see the [roadmap](docs/roadmap.md).
 
 A new game: `python3 tools/new_game.py "My Game" ../my-game` ([App shell](docs/app.md)).
 
 - Stack: SDL3, SDL GPU (Metal), HLSL shaders compiled at build time, Jolt Physics, Dear ImGui, GLM, enkiTS,
-  meshoptimizer, fastgltf (build time), miniaudio.
+  meshoptimizer, fastgltf (build time), miniaudio, ozz-animation.
 - First platforms: macOS and iOS. Windows, Linux, Android and the web come later.
 
 Documentation: [docs/](docs/README.md). Coding agents: [AGENTS.md](AGENTS.md). Development log: [devlog/](devlog/).

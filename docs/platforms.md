@@ -25,7 +25,9 @@ user looked at every section, HDR output on and off included (report of 2026-11-
 single-threaded WebAssembly under Node.js (Emscripten 6.0.13; the cases that need threads are skipped there).
 Nothing of the engine has run in a browser.
 Audio (stage 7, see "Audio" below) has run only on the null backend and offline, on the Mac, in the iOS Simulator
-and under Node.js; nothing was listened to, and the stage 7 code has not run on the iPhone.
+and under Node.js; nothing was listened to, and the stage 7 code has not run on the iPhone. Animation and GPU
+skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator and (without rendering) under
+Node.js; not on the iPhone.
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
@@ -118,6 +120,20 @@ engine compiles only Core Audio and null on Apple platforms, and no device I/O i
 | iPhone | as in the Simulator | built (`ios-device-release`); not run with the stage 7 code. Needs the user: what plays with the Ring/Silent switch on silent (the default `Ambient` category is silenced), interruptions (a call, Siri, an alarm), route changes (headphones, Bluetooth), background and foreground |
 | Web | none (built with `MA_NO_DEVICE_IO`) | the mixer, decoders and analysis under Node.js (`wasm-node`, single-threaded; the thread stress case is skipped). Browser output needs a device backend (miniaudio's Web Audio one or SDL's audio) and starts only after a user gesture: not built |
 | Windows, Linux, Android | miniaudio's defaults for the platform (not configured or built yet) | nothing |
+
+## Animation
+
+`quench_animation` is headless and portable C++ on ozz-animation, whose SIMD math is SSE and AVX only: on ARM (the
+Mac, the iPhone) and WebAssembly it uses its scalar reference math ([Dependencies](dependencies.md#added-in-stage-8)).
+GPU skinning is a compute pass through SDL GPU, which has compute on all its backends.
+
+| Where | Run so far |
+|---|---|
+| Mac | `animation.*`, the cook cases, the render cases (Metal, and Vulkan through MoltenVK with the validation layer), the demo's Animation section and its captures on both; also under the sanitizers |
+| iOS Simulator | `ios-sim-tests`: `animation.*` and the render cases with skinning (Metal in the Simulator) |
+| iPhone | built (`ios-device-release`); not run. Needs the user: the Animation section at 120 Hz, the crowd's update and skinning times |
+| Web | `animation.*` under Node.js (`wasm-node`, single-threaded); no rendering |
+| Windows, Linux, Android | nothing |
 
 ## Windows and Linux
 

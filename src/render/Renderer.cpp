@@ -9,6 +9,7 @@
 #include <quench/render/Projection.h>
 
 #include <render_frame_shaders.h>
+#include <render_skin_shaders.h>
 #include <render_standard_shaders.h>
 
 #include <glm/common.hpp>
@@ -50,6 +51,16 @@ constexpr gpu::VertexAttribute kVertexAttributes[] = {
 constexpr gpu::VertexAttribute kPositionAttribute[] = {
     {.location = 0, .slot = 0, .format = gpu::VertexFormat::Float3, .offset = offsetof(Vertex, position)},
 };
+// Motion vectors of skinned instances: this frame's and the previous frame's skinned positions.
+constexpr gpu::VertexBufferLayout kSkinVelocityLayouts[] = {{.slot = 0, .stride = sizeof(Vertex)},
+                                                            {.slot = 1, .stride = sizeof(Vertex)}};
+constexpr gpu::VertexAttribute kSkinVelocityAttributes[] = {
+    {.location = 0, .slot = 0, .format = gpu::VertexFormat::Float3, .offset = offsetof(Vertex, position)},
+    {.location = 1, .slot = 1, .format = gpu::VertexFormat::Float3, .offset = offsetof(Vertex, position)},
+};
+constexpr std::uint32_t kSkinGroup = 64;     // [numthreads] of skin_cs
+constexpr std::uint32_t kNotSkinned = ~0u;   // RendererImpl::skinnedOffsets
+constexpr std::size_t kSkinTimingFences = 4; // skinning passes whose GPU time is still to be read
 
 std::uint32_t variantOf(BlendMode blend, bool doubleSided) { return std::uint32_t(blend) * 2 + (doubleSided ? 1 : 0); }
 
@@ -70,13 +81,22 @@ struct PassEntry {
     PassFn fn;
 };
 
-// A run of instances drawn with one call: same pipeline, material and mesh.
+// A run of instances drawn with one call: same pipeline, material and mesh. A skinned instance is a batch of its own
+// that draws its range of the skinned vertex buffer.
 struct Batch {
     const gpu::GraphicsPipeline* pipeline = nullptr;
     const MeshEntry* mesh = nullptr;
     const MaterialEntry* material = nullptr;
     std::uint32_t first = 0;
     std::uint32_t count = 0;
+    gpu::BufferBinding vertices{}; // skinned: this frame's vertices; empty: the mesh's
+    gpu::BufferBinding previous{}; // skinned motion vectors: the previous frame's vertices
+};
+
+struct SkinJob {
+    const MeshEntry* mesh = nullptr;
+    std::uint32_t firstJoint = 0;
+    std::uint32_t offset = 0; // first vertex in the skinned vertex buffer
 };
 
 struct Item {
@@ -140,8 +160,9 @@ struct RendererImpl {
     std::vector<PassId> passOrder;
     std::uint32_t pipelineCount = 0;
 
-    gpu::GraphicsPipeline shadowPipeline, skyPipeline, velocityPipeline, velocityObjPipeline, taaPipeline,
-        bloomDownPipeline, bloomUpPipeline;
+    gpu::GraphicsPipeline shadowPipeline, skyPipeline, velocityPipeline, velocityObjPipeline, velocitySkinPipeline,
+        taaPipeline, bloomDownPipeline, bloomUpPipeline;
+    gpu::ComputePipeline skinPipeline; // empty: skinned instances are drawn in their bind pose (logged at init)
     std::map<TextureFormat, gpu::GraphicsPipeline> tonemapPipelines, fxaaPipelines;
 
     gpu::Sampler shadowSampler, linearClamp, pointClamp, materialSampler;
@@ -171,6 +192,21 @@ struct RendererImpl {
     std::vector<Batch> opaqueBatches, transparentBatches, velocityBatches;
     std::array<std::vector<Batch>, kMaxCascades> shadowBatches;
 
+    // Skinning: every frame writes the skinned vertices of the instances it draws into skinned[frameIndex & 1], so the
+    // other buffer still holds the previous frame's for the motion vectors.
+    std::array<gpu::Buffer, 2> skinned;
+    std::uint32_t skinnedCapacity = 0; // vertices
+    bool skinnedReset = false;         // recreated this frame: no previous vertices
+    gpu::Buffer paletteBuffer;
+    gpu::TransferBuffer paletteTransfer;
+    std::uint32_t paletteCapacity = 0;  // joints
+    std::vector<glm::vec4> paletteData; // three rows per joint
+    std::vector<SkinJob> skinJobs;
+    std::vector<std::uint32_t> skinnedOffsets; // per instance slot; kNotSkinned
+    std::uint32_t skinnedVertices = 0;
+    std::vector<gpu::Fence> skinFences; // oldest first
+    float skinningGpuMs = -1.0f;
+
     // Temporal state
     std::uint64_t frameIndex = 0;
     glm::mat4 prevViewProj{1.0f};
@@ -188,6 +224,9 @@ struct RendererImpl {
                                                 const char* entry, TextureFormat format);
     bool ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32_t ow, std::uint32_t oh, TextureFormat ldrTarget);
     bool ensureBuffers(gpu::CommandBuffer& commands);
+    std::uint32_t skinnedOffset(const InstanceEntry& inst, std::uint32_t slot, const MeshEntry& mesh);
+    bool skin(gpu::CommandBuffer& commands);
+    gpu::BufferBinding skinnedVerticesOf(std::uint32_t slot) const;
     void runPasses(PassStage stage, PassContext& context, const shader::FrameUniforms& frame);
     void buildBatches(const SceneImpl& scene, std::vector<Item>& items, std::vector<Batch>& batches, bool shadow);
     void bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, const MaterialEntry& material);
@@ -356,6 +395,16 @@ Result<void> RendererImpl::init() {
                                                         .name = "render velocity objects"});
             !r)
             return r;
+        if (Result<void> r = make(velocitySkinPipeline, {.vertexShader = frame.find("velocity_skin_vs"),
+                                                         .fragmentShader = frame.find("velocity_obj_fs"),
+                                                         .vertexBuffers = kSkinVelocityLayouts,
+                                                         .vertexAttributes = kSkinVelocityAttributes,
+                                                         .depth = {.test = true, .write = false},
+                                                         .colorTargets = {&velocityTarget, 1},
+                                                         .depthFormat = depthFormat,
+                                                         .name = "render velocity skinned"});
+            !r)
+            return r;
         if (Result<void> r = make(taaPipeline, {.vertexShader = fullscreen,
                                                 .fragmentShader = frame.find("taa_fs"),
                                                 .colorTargets = {&hdrTarget, 1},
@@ -375,6 +424,13 @@ Result<void> RendererImpl::init() {
                                                 .name = "render bloom up"});
         !r)
         return r;
+
+    if (Result<gpu::ComputePipeline> p =
+            device->createComputePipeline({.shader = shaders::render_skin.find("skin_cs"), .name = "render skin"});
+        p)
+        skinPipeline = std::move(*p);
+    else
+        log::error("render", "skinning pipeline: {}; skinned meshes are drawn in their bind pose", p.error());
 
     standard.vertex = shaders::render_standard.find("surface_vs");
     standard.fragment = shaders::render_standard.find("surface_fs");
@@ -618,6 +674,123 @@ bool RendererImpl::ensureBuffers(gpu::CommandBuffer& commands) {
     return true;
 }
 
+// The instance's range of this frame's skinned vertices, given out when it is first drawn; kNotSkinned for rigid
+// meshes and without the skinning pipeline.
+std::uint32_t RendererImpl::skinnedOffset(const InstanceEntry& inst, std::uint32_t slot, const MeshEntry& mesh) {
+    if (mesh.jointCount == 0 || !skinPipeline) return kNotSkinned;
+    std::uint32_t& offset = skinnedOffsets[slot];
+    if (offset != kNotSkinned) return offset;
+    offset = skinnedVertices;
+    skinnedVertices += mesh.vertexCount;
+    skinJobs.push_back({&mesh, std::uint32_t(paletteData.size() / 3), offset});
+    const auto row = [](const glm::mat4& m, int r) { return glm::vec4(m[0][r], m[1][r], m[2][r], m[3][r]); };
+    if (inst.palette.size() == mesh.jointCount) {
+        for (const glm::mat4& m : inst.palette)
+            paletteData.insert(paletteData.end(), {row(m, 0), row(m, 1), row(m, 2)});
+    } else {
+        const glm::mat4 identity(1.0f);
+        for (std::uint32_t j = 0; j < mesh.jointCount; ++j)
+            paletteData.insert(paletteData.end(), {row(identity, 0), row(identity, 1), row(identity, 2)});
+    }
+    return offset;
+}
+
+gpu::BufferBinding RendererImpl::skinnedVerticesOf(std::uint32_t slot) const {
+    const std::uint32_t offset = skinnedOffsets[slot];
+    if (offset == kNotSkinned) return {};
+    return {skinned[frameIndex & 1], offset * std::uint32_t(sizeof(Vertex))};
+}
+
+// Uploads the palettes and poses the vertices of skinJobs. With GPU timing in its own command buffer, submitted
+// before the frame's, whose GPU time is read from its fence a few frames later.
+bool RendererImpl::skin(gpu::CommandBuffer& commands) {
+    const bool timed = device->caps().gpuTiming;
+    while (!skinFences.empty() && device->isSignaled(skinFences.front())) {
+        if (const std::optional<double> ms = device->gpuMilliseconds(skinFences.front())) skinningGpuMs = float(*ms);
+        skinFences.erase(skinFences.begin());
+    }
+    skinnedReset = false;
+    if (skinJobs.empty()) return true;
+    const auto grow = [](std::uint32_t capacity, std::size_t needed) {
+        std::uint32_t c = std::max(capacity, 1024u);
+        while (c < needed) c *= 2;
+        return c;
+    };
+    const std::uint32_t vertices = grow(skinnedCapacity, skinnedVertices);
+    if (vertices != skinnedCapacity || !skinned[0]) {
+        for (int i = 0; i < 2; ++i) {
+            Result<gpu::Buffer> b =
+                device->createBuffer({.usage = gpu::BufferUsage::Vertex | gpu::BufferUsage::ComputeStorageWrite,
+                                      .size = vertices * std::uint32_t(sizeof(Vertex)),
+                                      .name = i == 0 ? "render skinned vertices 0" : "render skinned vertices 1"});
+            if (!b) {
+                log::error("render", "skinned vertex buffer ({} vertices): {}", vertices, b.error());
+                skinned = {};
+                skinnedCapacity = 0;
+                return false;
+            }
+            skinned[std::size_t(i)] = std::move(*b);
+        }
+        skinnedCapacity = vertices;
+        skinnedReset = true;
+    }
+    const auto joints = std::uint32_t(paletteData.size() / 3);
+    if (const std::uint32_t capacity = grow(paletteCapacity, joints); capacity != paletteCapacity || !paletteBuffer) {
+        Result<gpu::Buffer> b = device->createBuffer({.usage = gpu::BufferUsage::ComputeStorageRead,
+                                                      .size = capacity * 3 * std::uint32_t(sizeof(glm::vec4)),
+                                                      .name = "render joint palettes"});
+        Result<gpu::TransferBuffer> t = device->createTransferBuffer(
+            {.size = capacity * 3 * std::uint32_t(sizeof(glm::vec4)), .name = "render joint palettes"});
+        if (!b || !t) {
+            log::error("render", "palette buffer ({} joints): {}", capacity, b ? t.error() : b.error());
+            paletteCapacity = 0;
+            return false;
+        }
+        paletteBuffer = std::move(*b);
+        paletteTransfer = std::move(*t);
+        paletteCapacity = capacity;
+    }
+    gpu::CommandBuffer own;
+    if (timed) own = device->acquireCommandBuffer();
+    gpu::CommandBuffer& target = own ? own : commands;
+    const auto bytes = std::uint32_t(paletteData.size() * sizeof(glm::vec4));
+    std::span<std::byte> mapped = paletteTransfer.map(true);
+    if (mapped.size() < bytes) return false;
+    std::memcpy(mapped.data(), paletteData.data(), bytes);
+    paletteTransfer.unmap();
+    {
+        gpu::CopyPass copy = target.beginCopyPass();
+        copy.upload(paletteTransfer, 0, paletteBuffer, 0, bytes, true);
+    }
+    {
+        const gpu::StorageBufferWrite write{.buffer = skinned[frameIndex & 1], .cycle = true};
+        gpu::ComputePass pass = target.beginComputePass({&write, 1});
+        if (!pass) return false;
+        pass.bindPipeline(skinPipeline);
+        const MeshEntry* bound = nullptr;
+        for (const SkinJob& job : skinJobs) {
+            if (job.mesh != bound) {
+                const std::array<gpu::BufferRef, 3> inputs{job.mesh->vertices, job.mesh->skin, paletteBuffer};
+                pass.bindStorageBuffers(0, inputs);
+                bound = job.mesh;
+            }
+            pass.pushUniforms(0, shader::SkinUniforms{glm::vec4(float(job.mesh->vertexCount), float(job.firstJoint),
+                                                                float(job.offset), 0.0f)});
+            pass.dispatch((job.mesh->vertexCount + kSkinGroup - 1) / kSkinGroup);
+        }
+    }
+    if (own) {
+        Result<gpu::Fence> fence = own.submitWithFence();
+        if (!fence) {
+            log::error("render", "skinning: {}", fence.error());
+            return false;
+        }
+        if (skinFences.size() >= kSkinTimingFences) skinFences.erase(skinFences.begin());
+        skinFences.push_back(std::move(*fence));
+    }
+    return true;
+}
+
 void RendererImpl::runPasses(PassStage stage, PassContext& context, const shader::FrameUniforms& frame) {
     bool ran = false;
     for (const PassId id : passOrder) {
@@ -646,9 +819,12 @@ void RendererImpl::buildBatches(const SceneImpl& scene, std::vector<Item>& items
         const InstanceEntry& inst = *scene.instances.slot(item.slot);
         const MeshEntry* mesh = scene.meshes.get(inst.desc.mesh);
         const MaterialEntry* material = scene.materials.get(inst.desc.material);
+        const gpu::BufferBinding skinnedVb = skinnedVerticesOf(item.slot);
         Batch* last = batches.empty() ? nullptr : &batches.back();
-        if (!last || last->pipeline != item.pipeline || last->mesh != mesh || (!shadow && last->material != material))
-            last = &batches.emplace_back(Batch{item.pipeline, mesh, material, std::uint32_t(instanceData.size()), 0});
+        if (!last || last->pipeline != item.pipeline || last->mesh != mesh || (!shadow && last->material != material) ||
+            skinnedVb.buffer || last->vertices.buffer)
+            last = &batches.emplace_back(
+                Batch{item.pipeline, mesh, material, std::uint32_t(instanceData.size()), 0, skinnedVb});
         last->count++;
         instanceData.push_back({inst.desc.transform, normalMatrices[item.slot], inst.desc.color, inst.desc.custom});
     }
@@ -813,6 +989,10 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     for (auto& s : shadowItems) s.clear();
     const std::uint32_t slots = scene.instances.capacity();
     normalMatrices.resize(slots);
+    skinJobs.clear();
+    paletteData.clear();
+    skinnedVertices = 0;
+    skinnedOffsets.assign(slots, kNotSkinned);
     std::array<glm::vec2, kMaxCascades> lightScale{};
     std::array<float, kMaxCascades> lightScaleZ{};
     for (int c = 0; c < shadow.count; ++c) {
@@ -832,8 +1012,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         const std::uint32_t surfaceIndex = surface ? m.surface.index + 1 : 0;
         if (!surface) surface = &standard;
         const glm::mat4& model = inst->desc.transform;
-        const glm::vec3 center(model * glm::vec4(mesh->center, 1.0f));
-        const float radius = mesh->radius * maxScale(model);
+        const glm::vec3 center(model * glm::vec4(inst->center, 1.0f));
+        const float radius = inst->radius * maxScale(model);
         const bool inView = sphereVisible(planes, center, radius);
         const bool needNormal = inView || (cascades > 0 && inst->desc.castsShadows);
         if (needNormal) normalMatrices[i] = glm::transpose(glm::inverse(model));
@@ -841,6 +1021,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             const std::uint32_t variant = variantOf(m.blend, m.doubleSided);
             const gpu::GraphicsPipeline* pipeline = surfacePipeline(*surface, variant);
             if (pipeline) {
+                const bool skinnedHere = skinnedOffset(*inst, i, *mesh) != kNotSkinned;
                 Item item{0, glm::length(center - cameraPos), i, pipeline};
                 if (m.blend == BlendMode::Opaque) {
                     item.key = (std::uint64_t(surfaceIndex & 0xfff) << 52) | (std::uint64_t(variant) << 48) |
@@ -850,7 +1031,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 } else {
                     transparent.push_back(item);
                 }
-                if (taa && inst->moved) moved.push_back(item);
+                if (taa && (inst->moved || (skinnedHere && inst->posed))) moved.push_back(item);
             }
         } else {
             ++stats.culled;
@@ -867,10 +1048,15 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 if (std::abs(p.x) > 1.0f + radius * s.x || std::abs(p.y) > 1.0f + radius * s.y ||
                     p.z > 1.0f + radius * lightScaleZ[std::size_t(c)])
                     continue;
+                skinnedOffset(*inst, i, *mesh);
                 shadowItems[std::size_t(c)].push_back({key, 0.0f, i, pipeline});
             }
         }
     }
+    if (!skin(commands)) std::fill(skinnedOffsets.begin(), skinnedOffsets.end(), kNotSkinned); // the bind pose
+    stats.skinnedInstances = std::uint32_t(skinJobs.size());
+    stats.skinnedVertices = skinnedVertices;
+    stats.skinningGpuMs = skinningGpuMs;
     std::sort(opaque.begin(), opaque.end(), [](const Item& a, const Item& b) { return a.key < b.key; });
     std::sort(transparent.begin(), transparent.end(),
               [](const Item& a, const Item& b) { return a.distance > b.distance; });
@@ -891,9 +1077,21 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     for (const Item& item : moved) {
         const InstanceEntry& inst = *scene.instances.slot(item.slot);
         const MeshEntry* mesh = scene.meshes.get(inst.desc.mesh);
-        if (velocityBatches.empty() || velocityBatches.back().mesh != mesh)
-            velocityBatches.push_back({&velocityObjPipeline, mesh, nullptr, std::uint32_t(velocityData.size()), 0});
-        velocityBatches.back().count++;
+        const gpu::BufferBinding current = skinnedVerticesOf(item.slot);
+        if (current.buffer) {
+            const bool hasPrevious = !skinnedReset && inst.skinnedFrame != ~0ull && inst.skinnedFrame + 1 == frameIndex;
+            const gpu::BufferBinding previous =
+                hasPrevious ? gpu::BufferBinding{skinned[(frameIndex & 1) ^ 1],
+                                                 inst.skinnedOffset * std::uint32_t(sizeof(Vertex))}
+                            : current;
+            velocityBatches.push_back(
+                {&velocitySkinPipeline, mesh, nullptr, std::uint32_t(velocityData.size()), 1, current, previous});
+        } else {
+            if (velocityBatches.empty() || velocityBatches.back().mesh != mesh ||
+                velocityBatches.back().vertices.buffer)
+                velocityBatches.push_back({&velocityObjPipeline, mesh, nullptr, std::uint32_t(velocityData.size()), 0});
+            velocityBatches.back().count++;
+        }
         velocityData.push_back({inst.desc.transform, inst.previous});
     }
     stats.instances = std::uint32_t(opaque.size() + transparent.size());
@@ -919,7 +1117,12 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 bindMaterial(pass, scene, *b.material);
                 material = b.material;
             }
-            if (b.mesh != mesh) {
+            if (b.vertices.buffer) {
+                pass.bindVertexBuffer(0, b.vertices);
+                if (b.previous.buffer) pass.bindVertexBuffer(1, b.previous);
+                pass.bindIndexBuffer({b.mesh->indices}, gpu::IndexFormat::Uint32);
+                mesh = nullptr;
+            } else if (b.mesh != mesh) {
                 pass.bindVertexBuffer(0, {b.mesh->vertices});
                 pass.bindIndexBuffer({b.mesh->indices}, gpu::IndexFormat::Uint32);
                 mesh = b.mesh;
@@ -1157,11 +1360,19 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     prevCameraFwd = cameraFwd;
     prevValid = true;
     ++frameIndex;
-    for (std::uint32_t i = 0; i < slots; ++i)
-        if (InstanceEntry* inst = scene.instances.slot(i); inst && inst->moved) {
+    for (std::uint32_t i = 0; i < slots; ++i) {
+        InstanceEntry* inst = scene.instances.slot(i);
+        if (!inst) continue;
+        if (inst->moved) {
             inst->previous = inst->desc.transform;
             inst->moved = false;
         }
+        if (skinnedOffsets[i] != kNotSkinned) {
+            inst->skinnedOffset = skinnedOffsets[i];
+            inst->skinnedFrame = frameIndex - 1;
+        }
+        inst->posed = false;
+    }
     stats.pipelines = pipelineCount;
 }
 

@@ -3,7 +3,9 @@
 // quench_cook (tools/cook): converts source assets into the formats the engine loads at run time. Textures (PNG, JPEG,
 // KTX2) become KTX2 files with their mip chain in BC7 or RGBA8; glTF and GLB models become .qmodel files
 // (include/quench/assets/Model.h) with meshoptimizer-optimized meshes, levels of detail, and their textures cooked
-// next to them. The output depends only on the input files and the options (no time stamps, no thread order).
+// next to them; their skins and animations become .qskel skeletons and .qanim clip sets
+// (include/quench/animation/). The output depends only on the input files and the options (no time stamps, no
+// thread order).
 
 #include <quench/assets/Model.h>
 #include <quench/assets/Texture.h>
@@ -69,10 +71,31 @@ struct CookedModel {
     std::vector<std::string> notes;            // what was dropped or changed (unsupported primitives, formats)
 };
 
-// The default scene (or the first) with node transforms applied, one mesh per material. The materials name their
-// textures `<texturePrefix>_<image index>.ktx2` (sRGB) or `<texturePrefix>_<image index>_linear.ktx2` (data), asset
-// paths relative to the asset root.
+// The default scene (or the first) with node transforms applied, one mesh per material and skin. The materials name
+// their textures `<texturePrefix>_<image index>.ktx2` (sRGB) or `<texturePrefix>_<image index>_linear.ktx2` (data),
+// asset paths relative to the asset root. Skinned meshes keep their bind pose (glTF ignores their nodes'
+// transforms), four joints and weights per vertex and their skin's joint names; `scale` must be 1 for them.
 Result<CookedModel> cookModel(const std::filesystem::path& source, std::string_view texturePrefix,
                               const ModelOptions& options, JobSystem& jobs);
+
+struct AnimationOptions {
+    std::filesystem::path skeleton; // glTF or GLB whose skeleton the clips are for; empty: the input's own
+    std::filesystem::path clips;    // clip settings (docs/animation.md); empty: <input stem>.anim.json, if it exists
+};
+
+struct CookedAnimation {
+    std::vector<std::uint8_t> file;            // .qskel or .qanim
+    std::vector<std::string> names;            // of the joints or the clips
+    std::vector<std::filesystem::path> inputs; // every file read, for the depfile
+    std::vector<std::string> notes;            // what was dropped or changed
+};
+
+// The skeleton of a glTF file (.qskel): the joints of its skins, their ancestors and the nodes below them that hold
+// no mesh (attachment points), in the rest pose of their node transforms; a file without skins: its animated nodes
+// and their ancestors. Joints are named after their nodes (unnamed or with a name used twice: node<index>).
+Result<CookedAnimation> cookSkeleton(const std::filesystem::path& source);
+// Every animation of a glTF file as a clip (.qanim) for its own skeleton or for `options.skeleton`'s, joints matched
+// by name. Linear, step and cubic spline keys (the last resampled at 30 Hz); morph target weights are dropped.
+Result<CookedAnimation> cookAnimation(const std::filesystem::path& source, const AnimationOptions& options);
 
 } // namespace quench::cook

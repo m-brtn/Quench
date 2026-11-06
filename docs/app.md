@@ -48,6 +48,10 @@ for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`), the display out
 `quit(exitCode)`. `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
 headroom); the renderer takes it as is ([HDR output](#hdr-output)).
 
+The app has no animation system: a game that animates creates its own `animation::AnimationSystem` on
+`assets()` and `jobs()` (it registers its asset types there; [Animation](animation.md)) and calls its `update(dt)`
+in `Game::update`, after setting its parameters and before handing the palettes to the scene.
+
 ## Input
 
 `quench::app::Input` reads SDL events: keyboard, mouse, the first connected gamepad and touch fingers. Games define
@@ -229,12 +233,14 @@ quench_add_game(<target> NAME <display name> SOURCES <file>...
                 [OUTPUT_NAME <file name>] [BUNDLE_ID <reverse dns>] [VERSION <x.y.z>]
                 [ASSETS <dir>] [COOKED_ASSETS <quench_cook_assets name>...]
                 [ICON <square png, 1024 px or larger>] [ORIENTATIONS landscape|portrait|all] [CUSTOM_MAIN])
-quench_add_shaders(<target> NAME <set> SOURCE <file.hlsl> ENTRIES <entry>:vertex <entry>:fragment ...)
-quench_cook_assets(<name> SOURCE_DIR <dir> [TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...] ...)
+quench_add_shaders(<target> NAME <set> SOURCE <file.hlsl> ENTRIES <entry>:vertex <entry>:fragment <entry>:compute ...)
+quench_cook_assets(<name> SOURCE_DIR <dir> [TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...]
+                   [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>] ...)
 ```
 
 `ASSETS` is copied as it is; `COOKED_ASSETS` names `quench_cook_assets()` targets, whose output (KTX2 textures and
-`.qmodel` models from glTF, GLB, PNG, JPEG and KTX2 sources; WAV, FLAC and MP3 sounds, checked and copied) is merged
+`.qmodel` models from glTF, GLB, PNG, JPEG and KTX2 sources; `.qskel` skeletons and `.qanim` clip sets from glTF
+and GLB; WAV, FLAC and MP3 sounds, checked and copied) is merged
 into the same `assets/`. The cook runs at build
 time, per file and only when a source changed ([Jobs, assets and the cook](assets.md#quench_cook)).
 

@@ -75,3 +75,19 @@ ColorVsOut rects_vs(uint id : SV_VertexID, uint instance : SV_InstanceID) {
     return o;
 }
 #endif
+
+// out[i] = a[i] * scale + b[i] + i for i < count; two read-only inputs, one read-write output.
+#ifdef QUENCH_ENTRY_scale_cs
+StructuredBuffer<float4> b_a : register(t0, space0);
+StructuredBuffer<float4> b_b : register(t1, space0);
+RWStructuredBuffer<float4> b_out : register(u0, space1);
+cbuffer Params : register(b0, space2) {
+    float4 u_params; // scale, count
+};
+
+[numthreads(32, 1, 1)]
+void scale_cs(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= uint(u_params.y)) return;
+    b_out[id.x] = b_a[id.x] * u_params.x + b_b[id.x] + float(id.x);
+}
+#endif

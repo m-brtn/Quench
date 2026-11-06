@@ -146,6 +146,73 @@ elseif(UNIX)
     target_link_libraries(quench_miniaudio PUBLIC ${CMAKE_DL_LIBS} Threads::Threads m)
 endif()
 
+# ---------------------------------------------------------------- ozz-animation
+# 0.17.0 (MIT). quench_animation samples, blends and solves IK with its runtime, and builds skeletons and clips with its
+# offline library (raw data, builders, keyframe optimizer, additive clips, motion extraction: quench_cook, tests, games
+# that make animation data at run time; a game that does not call the build functions does not link it). ozz's own
+# CMake needs 3.30, so the libraries are built here from their sources; its headers stay private to quench_animation.
+# On ARM and WebAssembly ozz uses its scalar reference math (its SIMD paths are SSE and AVX only).
+FetchContent_Declare(ozz
+    URL https://github.com/guillaumeblanc/ozz-animation/archive/744eb9d99f606eda849acb0b1204f7a3dc20bca1.tar.gz
+    URL_HASH SHA256=a29a8a014b571487d9a6dabebeed57627fc19bf1f0ebf531b0c76384840c3b74
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(ozz)
+add_library(quench_ozz STATIC
+    ${ozz_SOURCE_DIR}/src/base/memory/allocator.cc
+    ${ozz_SOURCE_DIR}/src/base/platform.cc
+    ${ozz_SOURCE_DIR}/src/base/log.cc
+    ${ozz_SOURCE_DIR}/src/base/containers/string_archive.cc
+    ${ozz_SOURCE_DIR}/src/base/encode/group_varint.cc
+    ${ozz_SOURCE_DIR}/src/base/io/archive.cc
+    ${ozz_SOURCE_DIR}/src/base/io/stream.cc
+    ${ozz_SOURCE_DIR}/src/base/maths/box.cc
+    ${ozz_SOURCE_DIR}/src/base/maths/simd_math.cc
+    ${ozz_SOURCE_DIR}/src/base/maths/math_archive.cc
+    ${ozz_SOURCE_DIR}/src/base/maths/soa_math_archive.cc
+    ${ozz_SOURCE_DIR}/src/base/maths/simd_math_archive.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/animation.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/animation_utils.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/blending_job.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/ik_aim_job.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/ik_two_bone_job.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/local_to_model_job.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/motion_blending_job.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/sampling_job.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/skeleton.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/skeleton_utils.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/track.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/track_sampling_job.cc
+    ${ozz_SOURCE_DIR}/src/animation/runtime/track_triggering_job.cc)
+target_include_directories(quench_ozz SYSTEM PUBLIC ${ozz_SOURCE_DIR}/include PRIVATE ${ozz_SOURCE_DIR}/src)
+target_compile_features(quench_ozz PUBLIC cxx_std_20)
+set(_ozz_offline ${ozz_SOURCE_DIR}/src/animation/offline)
+add_library(quench_ozz_offline STATIC
+    ${_ozz_offline}/raw_animation.cc
+    ${_ozz_offline}/raw_animation_archive.cc
+    ${_ozz_offline}/raw_animation_utils.cc
+    ${_ozz_offline}/animation_builder.cc
+    ${_ozz_offline}/animation_optimizer.cc
+    ${_ozz_offline}/additive_animation_builder.cc
+    ${_ozz_offline}/motion_extractor.cc
+    ${_ozz_offline}/raw_skeleton.cc
+    ${_ozz_offline}/raw_skeleton_archive.cc
+    ${_ozz_offline}/skeleton_builder.cc
+    ${_ozz_offline}/raw_track.cc
+    ${_ozz_offline}/raw_track_utils.cc
+    ${_ozz_offline}/track_builder.cc
+    ${_ozz_offline}/track_optimizer.cc)
+target_include_directories(quench_ozz_offline PRIVATE ${ozz_SOURCE_DIR}/src)
+target_link_libraries(quench_ozz_offline PUBLIC quench_ozz)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(quench_ozz PRIVATE -w)
+    target_compile_options(quench_ozz_offline PRIVATE -w)
+    # The scalar math's reciprocal square root estimate subtracts float bits as int, also in unused lanes that hold
+    # negative values: signed overflow, undefined unless it wraps (UBSan reports it in the two-bone IK). Every file that
+    # includes ozz's headers gets -fwrapv.
+    target_compile_options(quench_ozz PUBLIC -fwrapv)
+endif()
+
 if(QUENCH_HEADLESS)
     return()
 endif()

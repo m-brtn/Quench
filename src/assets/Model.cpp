@@ -8,20 +8,24 @@
 #include <format>
 
 // Layout (little endian, every field 4-byte aligned):
-//   u32 magic "QMDL", u32 version, u32 mesh count, u32 material count, f32 bounds min[3], max[3]
+//   u32 magic "QMDL", u32 version, u32 mesh count, u32 material count, [v2: u32 skin count,] f32 bounds min[3], max[3]
 //   materials: string name, f32 base color[4], emissive[3], roughness, metallic, alpha cutoff,
 //              u8 alpha mode, u8 double sided, u16 0, string textures[4] (base color, metallic-roughness, normal,
 //              emissive)
+//   v2 skins: string name, u32 joint count, string joint names[count], f32 inverse bind matrices[count][16]
 //   meshes: string name, u32 material, u32 vertex count, u32 index count, u32 LOD count, f32 bounds min[3], max[3],
-//           LODs (u32 first index, u32 index count, f32 error), u32 size + meshopt vertex stream (padded),
-//           u32 size + meshopt index stream (padded)
+//           [v2: u32 skin (0xffffffff: none),] LODs (u32 first index, u32 index count, f32 error),
+//           u32 size + meshopt vertex stream (padded), u32 size + meshopt index stream (padded),
+//           [v2, skinned: u32 size + meshopt stream of the skin vertices (padded)]
 //   string: u32 length + bytes (padded)
 namespace quench::assets {
 namespace {
 
 constexpr std::uint32_t kMagic = 0x4C444D51; // "QMDL"
-constexpr std::uint32_t kVersion = 1;
+constexpr std::uint32_t kVersion = 2;
 constexpr std::uint32_t kMaxCount = 1u << 24;
+constexpr std::uint32_t kMaxSkinJoints = 65536;
+constexpr std::uint32_t kNoSkin = 0xffffffffu;
 
 static_assert(std::endian::native == std::endian::little, "cooked models are read in place as little endian");
 
@@ -105,6 +109,7 @@ Result<std::vector<std::uint8_t>> writeModel(const ModelData& model) {
     w.u32(kVersion);
     w.u32(std::uint32_t(model.meshes.size()));
     w.u32(std::uint32_t(model.materials.size()));
+    w.u32(std::uint32_t(model.skins.size()));
     w.vec(&model.boundsMin.x, 3);
     w.vec(&model.boundsMax.x, 3);
     for (const ModelMaterial& m : model.materials) {
@@ -121,12 +126,33 @@ Result<std::vector<std::uint8_t>> writeModel(const ModelData& model) {
         w.string(m.normalTexture);
         w.string(m.emissiveTexture);
     }
+    for (const ModelSkin& skin : model.skins) {
+        if (skin.joints.empty() || skin.joints.size() > kMaxSkinJoints ||
+            skin.inverseBindMatrices.size() != skin.joints.size())
+            return Error{std::format("skin '{}': {} joints, {} inverse bind matrices", skin.name, skin.joints.size(),
+                                     skin.inverseBindMatrices.size())};
+        w.string(skin.name);
+        w.u32(std::uint32_t(skin.joints.size()));
+        for (const std::string& joint : skin.joints) w.string(joint);
+        for (const glm::mat4& m : skin.inverseBindMatrices) w.vec(&m[0][0], 16);
+    }
     for (const ModelMesh& mesh : model.meshes) {
         if (mesh.vertices.empty() || mesh.indices.empty() || mesh.indices.size() % 3 != 0 || mesh.lods.empty())
             return Error{std::format("mesh '{}': {} vertices, {} indices, {} LODs", mesh.name, mesh.vertices.size(),
                                      mesh.indices.size(), mesh.lods.size())};
         if (mesh.material >= model.materials.size())
             return Error{std::format("mesh '{}': material {} of {}", mesh.name, mesh.material, model.materials.size())};
+        if (mesh.skin >= int(model.skins.size()) || mesh.skin < -1 ||
+            (mesh.skin >= 0 && mesh.skinning.size() != mesh.vertices.size()))
+            return Error{std::format("mesh '{}': skin {} of {} with {} skin vertices for {} vertices", mesh.name,
+                                     mesh.skin, model.skins.size(), mesh.skinning.size(), mesh.vertices.size())};
+        if (mesh.skin >= 0) {
+            const std::size_t joints = model.skins[std::size_t(mesh.skin)].joints.size();
+            for (const ModelSkinVertex& v : mesh.skinning)
+                for (const std::uint16_t j : v.joints)
+                    if (j >= joints)
+                        return Error{std::format("mesh '{}': joint {} of a skin with {}", mesh.name, j, joints)};
+        }
         for (const ModelLod& lod : mesh.lods)
             if (lod.indexCount % 3 != 0 || std::uint64_t(lod.firstIndex) + lod.indexCount > mesh.indices.size())
                 return Error{std::format("mesh '{}': LOD range {} + {} of {} indices", mesh.name, lod.firstIndex,
@@ -138,6 +164,7 @@ Result<std::vector<std::uint8_t>> writeModel(const ModelData& model) {
         w.u32(std::uint32_t(mesh.lods.size()));
         w.vec(&mesh.boundsMin.x, 3);
         w.vec(&mesh.boundsMax.x, 3);
+        w.u32(mesh.skin >= 0 ? std::uint32_t(mesh.skin) : kNoSkin);
         for (const ModelLod& lod : mesh.lods) {
             w.u32(lod.firstIndex);
             w.u32(lod.indexCount);
@@ -151,19 +178,26 @@ Result<std::vector<std::uint8_t>> writeModel(const ModelData& model) {
         stream.resize(
             meshopt_encodeIndexBuffer(stream.data(), stream.size(), mesh.indices.data(), mesh.indices.size()));
         w.blob(stream);
+        if (mesh.skin >= 0) {
+            stream.assign(meshopt_encodeVertexBufferBound(mesh.skinning.size(), sizeof(ModelSkinVertex)), 0);
+            stream.resize(meshopt_encodeVertexBufferLevel(stream.data(), stream.size(), mesh.skinning.data(),
+                                                          mesh.skinning.size(), sizeof(ModelSkinVertex), 2, 1));
+            w.blob(stream);
+        }
     }
     return std::move(w.out);
 }
 
 Result<ModelData> readModel(std::span<const std::uint8_t> file) {
     Reader r(file);
-    std::uint32_t magic = 0, version = 0, meshCount = 0, materialCount = 0;
+    std::uint32_t magic = 0, version = 0, meshCount = 0, materialCount = 0, skinCount = 0;
     if (!r.u32(magic) || magic != kMagic) return Error{"not a cooked model (.qmodel)"};
-    if (!r.u32(version) || version != kVersion)
-        return Error{std::format("cooked model version {} (this engine reads {})", version, kVersion)};
+    if (!r.u32(version) || version < 1 || version > kVersion)
+        return Error{std::format("cooked model version {} (this engine reads 1 to {})", version, kVersion)};
     ModelData model;
-    if (!r.u32(meshCount) || !r.u32(materialCount) || meshCount > kMaxCount || materialCount > kMaxCount ||
-        !r.vec(&model.boundsMin.x, 3) || !r.vec(&model.boundsMax.x, 3))
+    if (!r.u32(meshCount) || !r.u32(materialCount) || (version >= 2 && !r.u32(skinCount)) || meshCount > kMaxCount ||
+        materialCount > kMaxCount || skinCount > kMaxCount || !r.vec(&model.boundsMin.x, 3) ||
+        !r.vec(&model.boundsMax.x, 3))
         return Error{"truncated model header"};
     // A material takes at least 64 bytes and a mesh at least 68: larger counts are corrupt.
     if (std::uint64_t(materialCount) * 64 + std::uint64_t(meshCount) * 68 > r.remaining())
@@ -184,13 +218,34 @@ Result<ModelData> readModel(std::span<const std::uint8_t> file) {
         m.alphaMode = AlphaMode(flags[0]);
         m.doubleSided = flags[1] != 0;
     }
+    // A skin takes at least 8 bytes and 68 per joint.
+    if (std::uint64_t(skinCount) * 8 > r.remaining())
+        return Error{std::format("corrupt model: {} skins in {} bytes", skinCount, r.remaining())};
+    model.skins.resize(skinCount);
+    for (std::uint32_t i = 0; i < skinCount; ++i) {
+        ModelSkin& skin = model.skins[i];
+        std::uint32_t joints = 0;
+        if (!r.string(skin.name) || !r.u32(joints)) return truncated("skin", i);
+        if (joints == 0 || joints > kMaxSkinJoints || std::uint64_t(joints) * 68 > r.remaining())
+            return Error{std::format("corrupt model: skin {} with {} joints", i, joints)};
+        skin.joints.resize(joints);
+        skin.inverseBindMatrices.resize(joints);
+        for (std::string& joint : skin.joints)
+            if (!r.string(joint)) return truncated("skin", i);
+        for (glm::mat4& m : skin.inverseBindMatrices)
+            if (!r.vec(&m[0][0], 16)) return truncated("skin", i);
+    }
     model.meshes.resize(meshCount);
     for (std::uint32_t i = 0; i < meshCount; ++i) {
         ModelMesh& mesh = model.meshes[i];
-        std::uint32_t vertexCount = 0, indexCount = 0, lodCount = 0;
+        std::uint32_t vertexCount = 0, indexCount = 0, lodCount = 0, skin = kNoSkin;
         if (!r.string(mesh.name) || !r.u32(mesh.material) || !r.u32(vertexCount) || !r.u32(indexCount) ||
-            !r.u32(lodCount) || !r.vec(&mesh.boundsMin.x, 3) || !r.vec(&mesh.boundsMax.x, 3))
+            !r.u32(lodCount) || !r.vec(&mesh.boundsMin.x, 3) || !r.vec(&mesh.boundsMax.x, 3) ||
+            (version >= 2 && !r.u32(skin)))
             return truncated("mesh", i);
+        if (skin != kNoSkin && skin >= skinCount)
+            return Error{std::format("corrupt model: mesh {} has skin {} of {}", i, skin, skinCount)};
+        mesh.skin = skin == kNoSkin ? -1 : int(skin);
         if (mesh.material >= materialCount || vertexCount == 0 || vertexCount > kMaxCount || indexCount == 0 ||
             indexCount % 3 != 0 || indexCount > kMaxCount * 3 || lodCount == 0 || lodCount > 64)
             return Error{std::format("corrupt model: mesh {} has material {}, {} vertices, {} indices, {} LODs", i,
@@ -219,6 +274,22 @@ Result<ModelData> readModel(std::span<const std::uint8_t> file) {
             return Error{std::format("corrupt model: index stream of mesh {}", i)};
         if (std::ranges::any_of(mesh.indices, [vertexCount](std::uint32_t index) { return index >= vertexCount; }))
             return Error{std::format("corrupt model: mesh {} has an index out of range", i)};
+        if (mesh.skin >= 0) {
+            std::span<const std::uint8_t> skinStream;
+            if (!r.blob(skinStream)) return truncated("mesh", i);
+            if (vertexCount > 64 * skinStream.size())
+                return Error{std::format("corrupt model: mesh {} has {} skin vertices in {} bytes", i, vertexCount,
+                                         skinStream.size())};
+            mesh.skinning.resize(vertexCount);
+            if (meshopt_decodeVertexBuffer(mesh.skinning.data(), vertexCount, sizeof(ModelSkinVertex),
+                                           skinStream.data(), skinStream.size()) != 0)
+                return Error{std::format("corrupt model: skin stream of mesh {}", i)};
+            const std::size_t joints = model.skins[std::size_t(mesh.skin)].joints.size();
+            for (const ModelSkinVertex& v : mesh.skinning)
+                for (const std::uint16_t j : v.joints)
+                    if (j >= joints)
+                        return Error{std::format("corrupt model: mesh {} names joint {} of {}", i, j, joints)};
+        }
     }
     if (r.remaining() != 0) return Error{std::format("corrupt model: {} bytes after the last mesh", r.remaining())};
     return model;

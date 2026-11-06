@@ -160,6 +160,44 @@ private:
     void* m_native = nullptr;
 };
 
+// A buffer a compute pass writes (BufferUsage::ComputeStorageWrite), bound for the whole pass.
+struct StorageBufferWrite {
+    BufferRef buffer{};
+    bool cycle = false; // write to fresh memory if the GPU may still use the buffer (data replaced every frame)
+};
+
+// Compute work between render and copy passes. Commands after the pass see what it wrote.
+class ComputePass {
+public:
+    ComputePass() = default;
+    ~ComputePass() { end(); }
+    ComputePass(ComputePass&& other) noexcept;
+    ComputePass& operator=(ComputePass&& other) noexcept;
+    ComputePass(const ComputePass&) = delete;
+    ComputePass& operator=(const ComputePass&) = delete;
+
+    explicit operator bool() const { return m_native != nullptr; }
+    void end();
+
+    void bindPipeline(const ComputePipeline& pipeline);
+    // Read-only storage buffers (BufferUsage::ComputeStorageRead) in slot order after the shader's samplers.
+    void bindStorageBuffers(std::uint32_t firstSlot, std::span<const BufferRef> buffers);
+    void pushUniforms(std::uint32_t slot, const void* data, std::uint32_t size);
+    template <class T>
+    void pushUniforms(std::uint32_t slot, const T& data) {
+        static_assert(sizeof(T) % 16 == 0, "uniform blocks are made of 16-byte members (vec4, mat4)");
+        pushUniforms(slot, &data, sizeof(T));
+    }
+    // Thread groups of the pipeline's [numthreads] size.
+    void dispatch(std::uint32_t groupsX, std::uint32_t groupsY = 1, std::uint32_t groupsZ = 1);
+
+private:
+    friend class CommandBuffer;
+    CommandBuffer* m_commands = nullptr;
+    void* m_native = nullptr;
+    bool m_pipelineBound = false;
+};
+
 class CommandBuffer {
 public:
     CommandBuffer() = default;
@@ -177,8 +215,10 @@ public:
         return beginRenderPass({&color, 1}, depth);
     }
     CopyPass beginCopyPass();
+    // `writes`: the read-write storage buffers in slot order (at most 8).
+    ComputePass beginComputePass(std::span<const StorageBufferWrite> writes);
 
-    // Uniform data for the following draws, outside a pass.
+    // Uniform data for the following draws (or dispatches: ShaderStage::Compute), outside a pass.
     void pushUniforms(ShaderStage stage, std::uint32_t slot, const void* data, std::uint32_t size);
     template <class T>
     void pushUniforms(ShaderStage stage, std::uint32_t slot, const T& data) {
@@ -210,6 +250,7 @@ private:
     friend class Device;
     friend class RenderPass;
     friend class CopyPass;
+    friend class ComputePass;
     detail::DeviceImpl* m_device = nullptr;
     void* m_native = nullptr;
     bool m_passOpen = false;

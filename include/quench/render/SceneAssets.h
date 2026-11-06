@@ -72,10 +72,13 @@ public:
         MeshId mesh;
         MaterialId material;
         std::uint32_t triangles = 0;
+        int skin = -1; // index into skins(); -1: rigid
     };
 
     // Empty while loading and after a failure; replaced by a reload (version() changes).
     std::span<const Part> parts() const { return m_parts; }
+    // The skins of skinned parts: joint names and inverse bind matrices, for animation::AnimationSystem::addSkin.
+    std::span<const assets::ModelSkin> skins() const { return m_skins; }
     glm::vec3 boundsMin() const { return m_boundsMin; }
     glm::vec3 boundsMax() const { return m_boundsMax; }
     std::uint32_t triangles() const;
@@ -100,10 +103,13 @@ private:
         std::uint32_t material = 0;
         std::vector<Vertex> vertices;
         std::vector<std::uint32_t> indices; // of the chosen LOD
+        int skin = -1;
+        std::vector<SkinVertex> skinning;
     };
     struct Pending {
         std::vector<PendingMesh> meshes;
         std::vector<assets::ModelMaterial> materials;
+        std::vector<assets::ModelSkin> skins;
         glm::vec3 boundsMin{0.0f}, boundsMax{0.0f};
         std::uint32_t lod = 0, lodCount = 0;
     };
@@ -112,6 +118,7 @@ private:
     std::uint32_t m_wantedLod = 0;    // fixed at creation: decode() runs on a job
     std::optional<Pending> m_pending; // decoded on a job, uploaded by finish()
     std::vector<Part> m_parts;
+    std::vector<assets::ModelSkin> m_skins;
     std::vector<MaterialId> m_materials;
     std::vector<assets::AssetRef<TextureAsset>> m_textures;
     glm::vec3 m_boundsMin{0.0f}, m_boundsMax{0.0f};
@@ -140,6 +147,9 @@ public:
     ModelInstanceId addModel(assets::AssetRef<ModelAsset> model, const glm::mat4& transform, bool visible = true);
     void setTransform(ModelInstanceId instance, const glm::mat4& transform, bool teleport = false);
     void setVisible(ModelInstanceId instance, bool visible);
+    // The joint matrices of one of the model's skins (ModelAsset::skins(), Scene::setJointPalette) for the parts that
+    // use it; kept and applied again when the parts are rebuilt (loaded, reloaded) with a skin of as many joints.
+    void setJointPalette(ModelInstanceId instance, int skin, std::span<const glm::mat4> palette, bool teleport = false);
     void removeModel(ModelInstanceId instance);
     const assets::AssetRef<ModelAsset>& model(ModelInstanceId instance) const;
     std::uint32_t modelInstanceCount() const;

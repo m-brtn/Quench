@@ -94,6 +94,23 @@ add_library(quench_audio STATIC
 quench_configure_target(quench_audio)
 target_link_libraries(quench_audio PUBLIC quench_core quench_assets quench_glm PRIVATE quench_miniaudio)
 
+# ------------------------------------------------------------------ animation
+# Headless: skeletons, clips and graphs as assets, state machines, blending, events, root motion, IK and foot
+# placement, skinning palettes; characters updated in parallel on the job system. ozz-animation underneath.
+add_library(quench_animation STATIC
+    src/animation/AnimationFile.cpp
+    src/animation/AnimationSystem.cpp
+    src/animation/Assets.cpp
+    src/animation/Build.cpp
+    src/animation/Character.cpp
+    src/animation/Clip.cpp
+    src/animation/Graph.cpp
+    src/animation/Ik.cpp
+    src/animation/Skeleton.cpp)
+quench_configure_target(quench_animation)
+target_link_libraries(quench_animation PUBLIC quench_core quench_assets quench_glm
+                                       PRIVATE quench_ozz quench_ozz_offline quench_xxhash)
+
 # The asset cooker (host tool, tools/cook) and quench_cook_assets().
 include(cmake/QuenchCook.cmake)
 
@@ -180,10 +197,12 @@ if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_render PUBLIC quench_core quench_assets quench_gpu quench_gpu_shaders quench_glm)
     quench_add_shaders(quench_render NAME render_frame SOURCE src/render/shaders/frame.hlsl
         ENTRIES fullscreen_vs:vertex shadow_vs:vertex shadow_fs:fragment sky_fs:fragment velocity_fs:fragment
-                velocity_obj_vs:vertex velocity_obj_fs:fragment taa_fs:fragment bloom_down_fs:fragment
+                velocity_obj_vs:vertex velocity_skin_vs:vertex velocity_obj_fs:fragment taa_fs:fragment
+                bloom_down_fs:fragment
                 bloom_up_fs:fragment tonemap_fs:fragment fxaa_fs:fragment)
     quench_add_shaders(quench_render NAME render_standard SOURCE src/render/shaders/standard.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment)
+    quench_add_shaders(quench_render NAME render_skin SOURCE src/render/shaders/skin.hlsl ENTRIES skin_cs:compute)
 
     # SDL main callbacks (src/app/Main.cpp): an object library, so the symbols land in the game executable.
     add_library(quench_main OBJECT src/app/Main.cpp)

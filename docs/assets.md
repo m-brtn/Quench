@@ -4,7 +4,8 @@ Stage 6 of the [Roadmap](roadmap.md): the engine's job system (`quench_core`), t
 with the render integration `SceneAssets` in `quench_render`) and the asset cooker `quench_cook` (a host tool). The
 engine demo's "Assets" section shows them ([Engine demo](demo.md)). Shader hot reload is not built yet (see
 [Limitations](#limitations)). Stage 7 adds sounds as an asset type and the cook's `sound` command
-([Audio](audio.md)).
+([Audio](audio.md)); stage 8 skeletons, clip sets and animation graphs, skins in `.qmodel` and the cook's
+`skeleton` and `animation` commands ([Animation](animation.md)).
 
 ## Job system
 
@@ -76,7 +77,10 @@ quench::render::ModelInstanceId placed = sceneAssets.addModel(crate, transform);
 - **A new asset type** derives from `Asset` (`decode` on a job, `uploadBytes`, `finish` and `unload` on the main
   thread, `residentMemory`) and is registered with `registerType<T>(name, factory, budget)`. Sounds are one
   (`audio::SoundAsset`, type `"sound"`, registered by `audio::AudioSystem`: decoded to float PCM on the load job, CPU
-  memory only, budget `AudioSettings::soundBudget`; [Audio](audio.md#sounds)); animations are meant to be another.
+  memory only, budget `AudioSettings::soundBudget`; [Audio](audio.md#sounds)), and stage 8 skeletons, clip sets and
+  animation graphs (`animation::SkeletonAsset`, `ClipSetAsset`, `GraphAsset`, types `"skeleton"`, `"animation"`,
+  `"animgraph"`, registered by `animation::AnimationSystem`; CPU memory only, budgets in `AnimationSettings`;
+  [Animation](animation.md)).
 
 ### Textures and models in a scene
 
@@ -87,8 +91,14 @@ quench::render::ModelInstanceId placed = sceneAssets.addModel(crate, transform);
   levels.
 - `ModelAsset`: a `.qmodel` file: one scene mesh and material per part, its textures loaded as `TextureAsset`s.
   `SceneAssetsSettings::modelLod` picks the cooked level of detail to upload. `addModel` places a model (any number
-  of times); the placed instances follow its state, and are rebuilt after a reload.
-- One `SceneAssets` per manager; it must be destroyed before the scene, after every reference to its assets.
+  of times); the placed instances follow its state, and are rebuilt after a reload. Skinned parts (stage 8) become
+  skinned scene meshes; `ModelAsset::skins()` names their joints and inverse bind matrices (for
+  `animation::AnimationSystem::addSkin`), and `setJointPalette(instance, skin, palette)` poses them (kept across a
+  rebuild).
+- One `SceneAssets` per manager, because it registers the types `"texture"` and `"model"` there (registering one
+  twice asserts): a game with two scenes gives the second its own `AssetManager` on the same job system and calls
+  its `update()` every frame (the demo's Animation section does). It must be destroyed before the scene, after every
+  reference to its assets.
 
 ### Streaming by distance
 
@@ -108,7 +118,14 @@ synchronous loads.
 - **Models**: `.qmodel` (`include/quench/assets/Model.h`): the meshes of a glTF scene with the node transforms
   applied, the engine's 48-byte vertex (position, normal, uv, linear color), index ranges per level of detail, and
   glTF metallic-roughness materials that name their textures by asset path. Vertex and index streams are compressed
-  with meshoptimizer's codecs. The format has a version; files of another version fail to load.
+  with meshoptimizer's codecs. The format has a version; files of another version fail to load. Version 2
+  (stage 8; version 1 files still load) adds skins: per skin the joint names and inverse bind matrices, per skinned
+  part a skin index and per vertex four 16-bit joint indices and weights (`ModelSkinVertex`, weights summing to
+  65535). Skinned parts keep their vertices in the skin's bind space (no node transform applied).
+- **Skeletons and clip sets**: `.qskel` and `.qanim` ([Animation](animation.md#files)): ozz-animation archives in a
+  container with a magic, a version, the payload size and an XXH64 checksum, so a truncated or corrupt file fails to
+  load (ozz itself checks only with asserts). A clip set holds every clip of one source with its events, flags and
+  root motion, and the signature of its skeleton.
 
 ## quench_cook
 
@@ -120,6 +137,8 @@ quench_cook model models/crate.gltf assets/models/crate.qmodel --asset-root asse
             [--lod-error E] [--scale S]
 quench_cook sound sounds/hit.flac assets/sounds/hit.flac            # checked, copied as it is
 quench_cook sound sounds/engine.mp3 assets/sounds/engine.wav [--channels 1|2]
+quench_cook skeleton characters/hero.gltf assets/characters/hero.qskel
+quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skeleton FILE] [--clips FILE]
 # all: [--depfile FILE] [--verbose]; --version, --help
 ```
 
@@ -134,6 +153,18 @@ quench_cook sound sounds/engine.mp3 assets/sounds/engine.wav [--channels 1|2]
   fetch, and `meshopt_simplify` makes the levels of detail (each about `--lod-ratio` of the one before, while the
   error stays below `--lod-error`). The model's images are cooked next to it as `<model>_<image>.ktx2` (sRGB) or
   `<model>_<image>_linear.ktx2` (data), and the materials name them by asset path (relative to `--asset-root`).
+  Skinned meshes (stage 8) keep their skin: joint names, inverse bind matrices, four joints and weights per vertex
+  (`JOINTS_0` and `WEIGHTS_0`, renormalized; a `JOINTS_1` set is dropped with a note); `--scale` is refused for
+  them (scale the source).
+- **Skeletons** (stage 8): the joints of the file's skins with their ancestors and the non-mesh nodes below joints
+  (attachment points such as a hand socket), or the animated nodes of a file without skins; rest transforms from
+  the nodes.
+- **Animations** (stage 8): every animation of the file becomes a clip of one `.qanim`, for the skeleton of
+  `--skeleton` (another glTF with the same joints) or of the input. Step and linear keys are kept, cubic splines
+  sampled at 30 Hz, linear rotation steps wider than 0.2 rad subdivided spherically (glTF slerps, ozz does not);
+  ozz's optimizer reduces the keys (1 mm at 10 cm by default). Clip settings (loop, additive, events, root motion,
+  the tolerance) come from `<input stem>.anim.json` or `--clips` ([Animation](animation.md#cooking)); unknown keys
+  and unknown clips are errors.
 - **Sounds**: WAV, FLAC or MP3 (miniaudio's decoders). The file is decoded completely to check it (a file that does
   not decode, or decodes to no frames, fails the cook). An output with the input's extension gets the input's bytes;
   a `.wav` output from another format, or with `--channels 1|2` (mix down to mono or up to stereo), is a 16-bit PCM
@@ -142,8 +173,8 @@ quench_cook sound sounds/engine.mp3 assets/sounds/engine.wav [--channels 1|2]
 - **Deterministic**: the output depends only on the inputs and the options (no time stamps, no thread order; a test
   cooks with 0 and 3 worker threads and compares). Files are written to a temporary file and renamed, so a running
   game with hot reload never reads half a file; a model's textures are rewritten only when they change.
-- **Depfile**: `--depfile` lists every file read (the glTF, its buffers and images), so Ninja cooks again when any
-  of them changes.
+- **Depfile**: `--depfile` lists every file read (the glTF, its buffers and images, the clip settings), so Ninja
+  cooks again when any of them changes.
 
 ### In CMake
 
@@ -153,12 +184,15 @@ quench_cook_assets(my_game_cooked SOURCE_DIR assets_src
     DATA_TEXTURES masks/splat.png          # linear
     MODELS models/crate.gltf models/rock.glb
     SOUNDS sounds/hit.wav music/theme.mp3  # checked, same name
+    SKELETONS characters/hero.gltf         # .qskel
+    ANIMATIONS characters/hero.gltf characters/hero_extra.glb  # .qanim, settings from <stem>.anim.json
+    [SKELETON characters/hero.gltf]        # the skeleton the ANIMATIONS are for (default: their own)
     [OUTPUT_DIR dir] [TEXTURE_FORMAT bc7|rgba8] [TEXTURE_MAX_SIZE n] [MODEL_OPTIONS --lods 2 ...])
 quench_add_game(my_game ... ASSETS assets COOKED_ASSETS my_game_cooked)
 ```
 
 `quench_cook_assets` (`cmake/QuenchCook.cmake`) adds a target that cooks each file into the same relative path (with
-`.ktx2` or `.qmodel`; sounds keep their name and format). `quench_add_game(... COOKED_ASSETS ...)` merges the
+`.ktx2`, `.qmodel`, `.qskel` or `.qanim`; sounds keep their name and format). `quench_add_game(... COOKED_ASSETS ...)` merges the
 cooked directories with `ASSETS` into the game's `assets/`: next to the executable on macOS, into the bundle on iOS
 (Ninja), and through a staging directory in Xcode projects. On macOS the copy is `copy_directory_if_different`: rebuilding the game's `<game>_assets` target
 while the game runs with `--hot-reload` cooks what changed and the game reloads exactly those files.
@@ -175,12 +209,17 @@ The demo's sources (`examples/demo/assets_src/`) are procedural, written by `too
 an embedded JPEG and PNG) and a ball (glTF, data URI, vertex colors, no normals). `examples/demo/assets/` adds a
 deliberately broken `.qmodel`. The demo's sounds are not in git: `tools/assets/make_demo_sounds.py` (Python standard
 library, procedural, CC0) writes five WAV files into the build tree at build time and `quench_cook_assets(...
-SOUNDS ...)` checks and copies them ([Audio](audio.md#demo-and-tests)).
+SOUNDS ...)` checks and copies them ([Audio](audio.md#demo-and-tests)). Its animated character is not in git either:
+`tools/assets/make_demo_character.py` (procedural, CC0) writes a mannequin with its clips as glTF and its clip
+settings at build time, and `quench_cook_assets(... MODELS ... SKELETONS ... ANIMATIONS ...)` cooks it
+([Animation](animation.md#demo-and-tests)).
 
 Tests: `core.jobs_*` (also without workers and under stress), `physics.*` (Jolt on the job system, single-threaded,
 two worlds on one pool, worker priority), `assets.*` (the manager with a test asset type, KTX2,
 BC7 decoding, `.qmodel`, the streaming grid), `audio.sound_assets` (the sound type: loading, plays of a loading
-sound, missing and broken files, a late one-shot dropped), `cook.*` and `cook_cli` (sounds included),
+sound, missing and broken files, a late one-shot dropped), `animation.missing_and_corrupt_assets_hold_the_rest_pose`
+and `animation.reload_rebinds_and_keeps_parameters`, `cook.*` and `cook_cli` (sounds, skeletons, clips and skinned
+models included),
 `render.scene_assets_*` and `render_vulkan.scene_assets_*` (pixels of placeholders, loaded textures and models,
 failures; Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_assets_vulkan`.
 
@@ -193,8 +232,9 @@ failures; Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_a
   on the CPU (four times the memory).
 - **Materials**: normal and emissive textures are cooked and named in the model, but the standard surface does not
   read them yet (no normal maps in `quench_render`); occlusion textures, `KHR_texture_transform` and unlit materials
-  are dropped with a note; skins, morph targets, cameras and lights of glTF files are not cooked (skeletons and
-  animations come with stage 8).
+  are dropped with a note; morph targets, cameras and lights of glTF files are not cooked.
+- **One scene per manager**: `SceneAssets` registers its asset types on its manager, so a second scene needs a
+  second `AssetManager` (with its own cache: a file used by both scenes loads twice).
 - **Streaming** loads and unloads by distance; there is no memory budget across cells beyond the manager's per-type
   budgets of unreferenced assets, and the demo's streaming is of textures and models only (no physics bodies).
 - **Timing**: loads finish in real time, so a scripted run whose capture depends on when a load finished is not

@@ -51,11 +51,11 @@ set(QUENCH_SHADER_METAL_SDK ${_metal_sdk} CACHE INTERNAL "")
 set(QUENCH_SHADER_METAL_TARGET ${_metal_target} CACHE INTERNAL "")
 set(QUENCH_SHADER_MSL_PLATFORM ${_msl_platform} CACHE INTERNAL "")
 
-# quench_add_shaders(<target> NAME <name> SOURCE <file.hlsl> ENTRIES <entry>:<vertex|fragment>...
+# quench_add_shaders(<target> NAME <name> SOURCE <file.hlsl> ENTRIES <entry>:<vertex|fragment|compute>...
 #                    [INCLUDE_DIRS <dir>...])
 #
-# Compiles each entry point with QUENCH_ENTRY_<entry> and QUENCH_STAGE_VERTEX or QUENCH_STAGE_FRAGMENT defined and
-# embeds the blobs into <target>. The generated header "<name>_shaders.h" declares the table as
+# Compiles each entry point with QUENCH_ENTRY_<entry> and QUENCH_STAGE_VERTEX, QUENCH_STAGE_FRAGMENT or
+# QUENCH_STAGE_COMPUTE defined and embeds the blobs into <target>. The generated header "<name>_shaders.h" declares the table as
 # quench::shaders::<name> (include/quench/gpu/ShaderBlob.h). #include resolves relative to the including file, then in
 # INCLUDE_DIRS, then in the engine shader library (shaders/); included files are tracked as dependencies.
 function(quench_add_shaders target)
@@ -117,8 +117,8 @@ function(quench_add_shaders target)
         endif()
         list(GET pair 0 entry)
         list(GET pair 1 stage)
-        if(NOT entry MATCHES "^[A-Za-z_][A-Za-z0-9_]*$" OR NOT stage MATCHES "^(vertex|fragment)$")
-            message(FATAL_ERROR "quench_add_shaders: '${item}' is not <identifier>:<vertex|fragment>")
+        if(NOT entry MATCHES "^[A-Za-z_][A-Za-z0-9_]*$" OR NOT stage MATCHES "^(vertex|fragment|compute)$")
+            message(FATAL_ERROR "quench_add_shaders: '${item}' is not <identifier>:<vertex|fragment|compute>")
         endif()
         list(APPEND entries ${entry})
 
@@ -155,9 +155,12 @@ function(quench_add_shaders target)
             if(stage STREQUAL "vertex")
                 set(profile vs_6_0)
                 set(stage_define QUENCH_STAGE_VERTEX=1)
-            else()
+            elseif(stage STREQUAL "fragment")
                 set(profile ps_6_0)
                 set(stage_define QUENCH_STAGE_FRAGMENT=1)
+            else()
+                set(profile cs_6_0)
+                set(stage_define QUENCH_STAGE_COMPUTE=1)
             endif()
             # DXC writes no depfile; depending on the SPIR-V output (rebuilt when an included file changes) reruns it
             # for the same changes.

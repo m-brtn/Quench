@@ -1,0 +1,40 @@
+# Animation (ctest: demo_animation_metal, demo_animation_vulkan): the character's assets load (a skinned model, its
+# skeleton, clips and graph), every character binds and skins; from a restart at a fixed time on, the hero walks its
+# circle by root motion with footstep events, jumps and lands, then waves; the stands' feet reach the slope and the
+# step; the torch stays in the hero's hand. The capture is taken at 2.4 s, the hero walking and waving.
+
+set dither 0
+until anim_ready == 1 3
+expect anim_failed == 0
+expect skinned_instances > 0
+# The loads finish in a frame that varies between runs; from the restart on every step is on the fixed frame clock.
+expect time < 0.4
+until time >= 0.5 1
+set restart 1
+set crowd 24
+set speed 1.6
+wait 0.05
+expect anim_characters == 27
+until anim_bound == 27 1
+expect hero_state == 0
+
+# A jump from the walk: a cross-fade into it, the landing event, back to the walk.
+set jump 1
+until hero_state == 1 0.5
+until landings == 1 1.5
+until hero_state == 0 1
+expect footsteps >= 1
+
+# Foot placement: the stands' feet are on the ground, the step's left foot about 0.2 m up, the slope's pelvis lowered.
+expect slope_leg0_reached == 1
+expect slope_leg1_reached == 1
+expect step_leg0_grounded == 1
+expect step_leg0_offset > 0.17
+expect step_leg1_offset < 0.03
+expect slope_pelvis < -0.01
+expect held_distance < 0.12
+
+set wave 1
+until time >= 2.45 2
+expect hero_angle > -20
+quit

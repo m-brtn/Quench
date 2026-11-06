@@ -92,6 +92,8 @@ public:
         (void)value;
         return false;
     }
+    // Appended to the perf line of a benchmark region (`key=value` pairs, docs/performance.md); empty: nothing.
+    virtual std::string perfDetails() const { return {}; }
     // Named window points for the scenario pointer commands (`click @NAME`), e.g. a projected world point.
     virtual std::optional<glm::vec2> point(const Context& c, std::string_view name) const {
         (void)c;
@@ -113,6 +115,7 @@ std::unique_ptr<Section> makePhysicsSection();
 std::unique_ptr<Section> makeInputSection();
 std::unique_ptr<Section> makeAssetsSection();
 std::unique_ptr<Section> makeAudioSection();
+std::unique_ptr<Section> makeAnimationSection();
 
 // ---- helpers shared by the sections (Common.cpp)
 

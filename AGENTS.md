@@ -437,25 +437,28 @@ cmake/                 Dependencies (runtime pins), ShaderToolchain (shader comp
                        cooker pins), QuenchShaders (quench_add_shaders), QuenchCook (quench_cook_assets),
                        EmbedShaders, QuenchTargets (warnings, include directories), QuenchGame (quench_add_game)
                        and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
-include/quench/        public headers per module: core/, physics/, assets/, audio/, gpu/, app/, render/
+include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
                        src/core/Jobs.cpp: the job system; src/physics/JoltJobSystem: Jolt's jobs on it;
                        src/assets/: the asset manager, KTX2, cooked models, streaming; src/audio/: the mixer,
                        decoders, streams, the device and the iOS audio session (AudioSessionApple.m);
-                       src/gpu/sdlgpu/: the SDL GPU backend; src/app/Main.cpp: quench_main; src/render/: the scene,
-                       SceneAssets, the frame modules and their shaders)
+                       src/animation/: skeletons, clips, graphs, the character update, IK, the animation system
+                       (ozz-animation inside); src/gpu/sdlgpu/: the SDL GPU backend; src/app/Main.cpp: quench_main;
+                       src/render/: the scene, SceneAssets, the frame modules and their shaders, GPU skinning)
 shaders/quench/        the engine shader library (#include "quench/..."): BRDF, shadows, sky, fog, tone curves,
                        surface shaders; SceneUniforms.h, the uniform structs shared by C++ and HLSL
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
 examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input,
-                       assets, audio), per section a scenario with a golden capture; smoke and benchmark scenarios;
-                       assets_src/ (procedural sources cooked at build time) and assets/ (files used as they are)
+                       assets, audio, animation), per section a scenario with a golden capture; smoke and benchmark
+                       scenarios; assets_src/ (procedural sources cooked at build time) and assets/ (files used as
+                       they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
 tools/cook/            quench_cook, the build-time asset cooker (glTF, GLB, PNG, JPEG, KTX2 -> KTX2, .qmodel;
-                       WAV, FLAC, MP3 checked or converted to WAV)
+                       glTF, GLB -> .qskel skeletons, .qanim clip sets; WAV, FLAC, MP3 checked or converted to WAV)
 tools/assets/          make_demo_assets.py: writes the demo's procedural source assets; make_demo_sounds.py: the
-                       demo's procedural sounds (run at build time)
+                       demo's procedural sounds; make_demo_character.py: the demo's animated mannequin as glTF
+                       (the last two run at build time)
 tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the icons of the sample and the demo
 tools/new_game.py      creates a game from templates/game
@@ -463,12 +466,12 @@ tools/check_games.sh   builds every game against this checkout, starts it, check
 tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a development-signed .ipa)
 tools/format.sh        clang-format over the C and C++ sources (--check)
 tests/                 harness/, core/ (job system included), physics/, assets/, audio/ (mixer, streams, decoders,
-                       device; data/: CC0 test sounds), cook/ (and CookCli.cmake), gpu/ (shader tests; GPU device
-                       tests and their shaders), app/, render/ (scene, scene assets and frame tests), header check,
-                       RunCapture.cmake (capture checks); golden/ (reference captures)
+                       device; data/: CC0 test sounds), animation/, cook/ (and CookCli.cmake), gpu/ (shader tests;
+                       GPU device tests and their shaders), app/, render/ (scene, scene assets, skinning and frame
+                       tests), header check, RunCapture.cmake (capture checks); golden/ (reference captures)
 docs/                  documentation (index docs/README.md): architecture, app shell, jobs, assets and the cook,
-                       audio, render module, engine demo, performance, platforms, dependencies, migration, roadmap,
-                       releases/
+                       audio, animation, render module, engine demo, performance, platforms, dependencies,
+                       migration, roadmap, releases/
 dist/                  demo packages from tools/package_demo.sh (not committed)
 devlog/                daily development log (template in devlog/README.md)
 .clang-format          code format; .editorconfig for editors

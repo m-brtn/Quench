@@ -69,6 +69,7 @@ public:
     Result<TransferBuffer> createTransferBuffer(const TransferBufferDesc& desc);
     // The shaders are created from the blobs for the device's shader format and released after the pipeline.
     Result<GraphicsPipeline> createPipeline(const GraphicsPipelineDesc& desc);
+    Result<ComputePipeline> createComputePipeline(const ComputePipelineDesc& desc);
 
     // Empty on failure (logged).
     CommandBuffer acquireCommandBuffer();

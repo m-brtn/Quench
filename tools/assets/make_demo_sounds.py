@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes the sounds of the engine demo's Audio section as 16-bit WAV files: procedural, CC0 (see
+"""Writes the sounds of the engine demo's Audio and Animation sections as 16-bit WAV files: procedural, CC0 (see
 examples/demo/assets/CREDITS.md). Standard library only. The demo's build runs it (examples/demo/CMakeLists.txt) and
 quench_cook checks and copies the files into the demo's assets; nothing it writes is committed.
 
@@ -64,6 +64,20 @@ def ping(rate: int = 48000, seconds: float = 0.5):
     return out
 
 
+def step(rate: int = 24000, seconds: float = 0.25):
+    """The Animation section's footstep: a 90 Hz thump under a low-passed noise scuff, decaying in about 50 ms."""
+    n = int(rate * seconds)
+    out = []
+    state, smooth = 12345, 0.0
+    for i in range(n):
+        t = i / rate
+        state = (state * 1103515245 + 12345) & 0x7FFFFFFF  # a fixed generator: the same file on every run
+        smooth += 0.25 * ((state / 0x3FFFFFFF - 1.0) - smooth)
+        envelope = min(1.0, t / 0.002) * math.exp(-t / 0.05)
+        out.append(envelope * (math.sin(TAU * 90.0 * t) + 0.6 * smooth))
+    return out
+
+
 def snap(frequency: float, seconds: float) -> float:
     """The nearest frequency with a whole number of cycles in the loop."""
     return round(frequency * seconds) / seconds
@@ -106,6 +120,7 @@ def main() -> int:
     write_wav(os.path.join(out, "motor.wav"), 24000, [motor()], 0.8)
     write_wav(os.path.join(out, "siren.wav"), 24000, [siren()], 0.8)
     write_wav(os.path.join(out, "ping.wav"), 48000, [ping()], 0.7)
+    write_wav(os.path.join(out, "step.wav"), 24000, [step()], 0.7)
     # A minor at 120 bpm in eighths; D major in triplets. Every note is above 200 Hz, the drones below.
     a_minor = [220.0, 261.63, 329.63, 440.0, 329.63, 261.63, 392.0, 329.63]
     d_major = [293.66, 369.99, 440.0, 587.33, 440.0, 369.99]

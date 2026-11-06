@@ -1,12 +1,16 @@
-// quench_cook's library: textures (mips, BC7, the RGBA8 fallback, KTX2 pass-through) and models (the demo's glTF and
-// GLB sources), and that the output does not depend on the number of threads.
+// quench_cook's library: textures (mips, BC7, the RGBA8 fallback, KTX2 pass-through), models (the demo's glTF and
+// GLB sources), skeletons, clips and skinned models (a small glTF written by the test), and that the output does not
+// depend on the number of threads.
 
 #include "Test.h"
 
 #include "Cook.h"
 
+#include <quench/animation/AnimationSystem.h>
+#include <quench/assets/AssetManager.h>
 #include <quench/assets/Model.h>
 #include <quench/assets/Texture.h>
+#include <quench/core/FileSystem.h>
 #include <quench/core/Jobs.h>
 
 #include <glm/geometric.hpp>
@@ -15,9 +19,12 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace quench;
@@ -233,4 +240,248 @@ QUENCH_TEST(cook_output_independent_of_threads) {
             same = x->textures[i].image.data == y->textures[i].image.data;
         CHECK(same, "%s: the textures differ", name);
     }
+}
+
+// ---- skins and animations
+
+namespace {
+
+// A small skinned glTF with a separate .bin: root > hip > knee > socket (no mesh, below a joint), a body mesh
+// skinned to root, hip and knee, and two animations: "bend" (the knee's rotation linear, the hip's translation
+// step, the root's translation a cubic spline with zero tangents) and "pose" (one key).
+struct GltfWriter {
+    std::vector<std::uint8_t> bin;
+    std::vector<std::string> views, accessors;
+
+    template <class T>
+    int add(const std::vector<T>& data, int count, const char* type, int componentType, const std::string& extra = "") {
+        while (bin.size() % 4 != 0) bin.push_back(0);
+        const std::size_t offset = bin.size();
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(data.data());
+        bin.insert(bin.end(), bytes, bytes + data.size() * sizeof(T));
+        views.push_back(
+            std::format(R"({{"buffer": 0, "byteOffset": {}, "byteLength": {}}})", offset, data.size() * sizeof(T)));
+        accessors.push_back(std::format(R"({{"bufferView": {}, "componentType": {}, "count": {}, "type": "{}"{}}})",
+                                        views.size() - 1, componentType, count, type, extra));
+        return int(accessors.size() - 1);
+    }
+};
+
+constexpr int kFloat = 5126, kUnsignedByte = 5121, kUnsignedShort = 5123;
+
+std::string join(const std::vector<std::string>& items) {
+    std::string out;
+    for (const std::string& item : items) out += (out.empty() ? "" : ", ") + item;
+    return out;
+}
+
+std::filesystem::path writeSkinnedGltf(const std::filesystem::path& dir, std::string_view settings) {
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    GltfWriter w;
+    const int positions = w.add(std::vector<float>{0, 0, 0, 0.1f, 0, 0, 0, 1, 0, 0.1f, 1, 0}, 4, "VEC3", kFloat,
+                                R"(, "min": [0, 0, 0], "max": [0.1, 1, 0])");
+    const int normals = w.add(std::vector<float>{0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1}, 4, "VEC3", kFloat);
+    const int joints =
+        w.add(std::vector<std::uint8_t>{2, 1, 0, 0, 2, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}, 4, "VEC4", kUnsignedByte);
+    const int weights =
+        w.add(std::vector<float>{0.75f, 0.25f, 0, 0, 0.75f, 0.25f, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}, 4, "VEC4", kFloat);
+    const int indices = w.add(std::vector<std::uint16_t>{0, 1, 2, 2, 1, 3}, 6, "SCALAR", kUnsignedShort);
+    std::vector<float> ibm;
+    for (const float y : {0.0f, -1.0f, -0.5f}) // the joints' bind positions are y 0, 1 and 0.5
+        ibm.insert(ibm.end(), {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, y, 0, 1});
+    const int inverseBind = w.add(ibm, 3, "MAT4", kFloat);
+    const float s = std::sqrt(0.5f);
+    const int linearTimes = w.add(std::vector<float>{0, 1}, 2, "SCALAR", kFloat, R"(, "min": [0], "max": [1])");
+    const int kneeRotations = w.add(std::vector<float>{0, 0, 0, 1, s, 0, 0, s}, 2, "VEC4", kFloat);
+    const int stepTimes = w.add(std::vector<float>{0, 0.5f}, 2, "SCALAR", kFloat, R"(, "min": [0], "max": [0.5])");
+    const int hipTranslations = w.add(std::vector<float>{0, 1, 0, 0, 1.2f, 0}, 2, "VEC3", kFloat);
+    const int cubicTimes = w.add(std::vector<float>{0, 1}, 2, "SCALAR", kFloat, R"(, "min": [0], "max": [1])");
+    const int rootCubic =
+        w.add(std::vector<float>{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0}, 6, "VEC3", kFloat);
+    const int poseTimes = w.add(std::vector<float>{0}, 1, "SCALAR", kFloat, R"(, "min": [0], "max": [0])");
+    const int poseRotation = w.add(std::vector<float>{s, 0, 0, s}, 1, "VEC4", kFloat);
+
+    const std::string json = std::format(
+        R"({{"asset": {{"version": "2.0"}}, "scene": 0, "scenes": [{{"nodes": [0, 4]}}],
+"nodes": [{{"name": "root", "children": [1]}}, {{"name": "hip", "translation": [0, 1, 0], "children": [2]}},
+  {{"name": "knee", "translation": [0, -0.5, 0], "children": [3]}}, {{"name": "socket", "translation": [0.1, 0, 0]}},
+  {{"name": "body", "mesh": 0, "skin": 0}}],
+"skins": [{{"joints": [0, 1, 2], "inverseBindMatrices": {}}}],
+"meshes": [{{"primitives": [{{"attributes": {{"POSITION": {}, "NORMAL": {}, "JOINTS_0": {}, "WEIGHTS_0": {}}},
+  "indices": {}, "material": 0}}]}}],
+"materials": [{{"name": "m"}}],
+"animations": [
+  {{"name": "bend", "channels": [{{"sampler": 0, "target": {{"node": 2, "path": "rotation"}}}},
+    {{"sampler": 1, "target": {{"node": 1, "path": "translation"}}}},
+    {{"sampler": 2, "target": {{"node": 0, "path": "translation"}}}}],
+   "samplers": [{{"input": {}, "output": {}, "interpolation": "LINEAR"}},
+    {{"input": {}, "output": {}, "interpolation": "STEP"}}, {{"input": {}, "output": {}, "interpolation": "CUBICSPLINE"}}]}},
+  {{"name": "pose", "channels": [{{"sampler": 0, "target": {{"node": 2, "path": "rotation"}}}}],
+   "samplers": [{{"input": {}, "output": {}}}]}}],
+"buffers": [{{"uri": "skinned.bin", "byteLength": {}}}],
+"bufferViews": [{}],
+"accessors": [{}]}})",
+        inverseBind, positions, normals, joints, weights, indices, linearTimes, kneeRotations, stepTimes,
+        hipTranslations, cubicTimes, rootCubic, poseTimes, poseRotation, w.bin.size(), join(w.views),
+        join(w.accessors));
+    std::ofstream(dir / "skinned.gltf", std::ios::binary) << json;
+    std::ofstream(dir / "skinned.bin", std::ios::binary)
+        .write(reinterpret_cast<const char*>(w.bin.data()), std::streamsize(w.bin.size()));
+    if (!settings.empty()) std::ofstream(dir / "skinned.anim.json", std::ios::binary) << settings;
+    return dir / "skinned.gltf";
+}
+
+constexpr std::string_view kSettings =
+    R"({"clips": {"bend": {"loop": false, "events": [{"time": 0.5, "name": "step", "value": 2}]}}})";
+
+std::filesystem::path tmpPath(const char* name) { return std::filesystem::path(quench::test::tmpDir()) / name; }
+
+// Model-space joint positions of a cooked clip at normalized times, through the asset system.
+struct Sampled {
+    glm::vec3 root, hip;
+    glm::vec3 kneeUp; // the knee's y axis
+};
+
+std::vector<Sampled> sampleCooked(const std::filesystem::path& dir, const CookedAnimation& skeleton,
+                                  const CookedAnimation& clips, std::span<const float> phases) {
+    std::ofstream(dir / "s.qskel", std::ios::binary)
+        .write(reinterpret_cast<const char*>(skeleton.file.data()), std::streamsize(skeleton.file.size()));
+    std::ofstream(dir / "s.qanim", std::ios::binary)
+        .write(reinterpret_cast<const char*>(clips.file.data()), std::streamsize(clips.file.size()));
+    std::ofstream(dir / "g.json", std::ios::binary)
+        << R"({"layers": [{"name": "base", "states": [{"name": "s", "clip": "bend", "loop": false}]}]})";
+    fs::setBackend(fs::makeStdBackend(dir, {}));
+    std::vector<Sampled> out;
+    {
+        JobSystem jobs(JobSystemDesc{.workerThreads = 0});
+        assets::AssetManager manager(jobs);
+        animation::AnimationSystem anim(manager, jobs);
+        animation::CharacterDesc desc;
+        desc.skeleton = anim.loadSkeleton("s.qskel");
+        desc.clips.push_back(anim.loadClips("s.qanim"));
+        desc.graph = anim.loadGraph("g.json");
+        const animation::CharacterId id = anim.addCharacter(std::move(desc));
+        for (int i = 0; i < 100 && !manager.idle(); ++i) manager.update();
+        for (const float phase : phases) {
+            anim.setPhase(id, phase);
+            manager.update();
+            anim.update(0.0f);
+            const std::span<const glm::mat4> m = anim.modelMatrices(id);
+            const auto at = [&](const char* name) { return m[std::size_t(anim.findJoint(id, name))]; };
+            if (!anim.state(id).bound || m.empty()) break;
+            out.push_back({glm::vec3(at("root")[3]), glm::vec3(at("hip")[3]), glm::vec3(at("knee")[1])});
+        }
+    }
+    fs::setBackend(nullptr);
+    return out;
+}
+
+} // namespace
+
+QUENCH_TEST(cook_skeleton_from_skins) {
+    const std::filesystem::path gltf = writeSkinnedGltf(tmpPath("cook_skeleton"), "");
+    Result<CookedAnimation> cooked = cookSkeleton(gltf);
+    REQUIRE(cooked, "%s", cooked ? "" : cooked.error().c_str());
+    CHECK(cooked->names == (std::vector<std::string>{"root", "hip", "knee", "socket"}),
+          "joints: the skin's, and the socket below the knee (%zu)", cooked->names.size());
+    Result<std::shared_ptr<const animation::Skeleton>> skeleton = animation::readSkeleton(cooked->file);
+    REQUIRE(skeleton, "%s", skeleton ? "" : skeleton.error().c_str());
+    const animation::Skeleton& s = **skeleton;
+    CHECK(s.parent(s.findJoint("socket")) == s.findJoint("knee") && s.parent(s.findJoint("hip")) == s.findJoint("root"),
+          "parents");
+    CHECK(std::abs(s.restModelMatrices()[std::size_t(s.findJoint("knee"))][3].y - 0.5f) < 1e-6f, "the knee at rest");
+    CHECK(cooked->inputs.size() == 2, "inputs: the glTF and its .bin (%zu)", cooked->inputs.size());
+    Result<CookedAnimation> again = cookSkeleton(gltf);
+    CHECK(again && again->file == cooked->file, "two cooks write the same bytes");
+    CHECK(!cookSkeleton(tmpPath("cook_skeleton") / "missing.gltf"), "a missing file is an error");
+}
+
+QUENCH_TEST(cook_animation_keys_and_settings) {
+    const std::filesystem::path dir = tmpPath("cook_animation");
+    const std::filesystem::path gltf = writeSkinnedGltf(dir, kSettings);
+    Result<CookedAnimation> skeleton = cookSkeleton(gltf);
+    Result<CookedAnimation> clips = cookAnimation(gltf, {});
+    REQUIRE(skeleton && clips, "%s", !skeleton ? skeleton.error().c_str() : clips ? "" : clips.error().c_str());
+    CHECK(clips->names == (std::vector<std::string>{"bend", "pose"}), "%zu clips", clips->names.size());
+    CHECK(std::ranges::any_of(clips->notes, [](const std::string& n) { return n.find("one pose") != n.npos; }),
+          "the one-key clip is noted");
+    CHECK(std::ranges::any_of(clips->inputs, [](const auto& p) { return p.filename() == "skinned.anim.json"; }),
+          "the settings are an input (%zu inputs)", clips->inputs.size());
+    Result<std::shared_ptr<const animation::ClipSet>> set = animation::readClipSet(clips->file);
+    REQUIRE(set, "%s", set ? "" : set.error().c_str());
+    const animation::Clip* bend = (*set)->find("bend");
+    REQUIRE(bend && (*set)->find("pose"), "both clips");
+    CHECK(std::abs(bend->duration() - 1.0f) < 1e-6f && !bend->loops() && (*set)->find("pose")->loops(),
+          "bend: %.3f s, loops %d", bend->duration(), bend->loops());
+    CHECK(bend->events().size() == 1 && bend->events()[0].name == "step" && bend->events()[0].value == 2.0f,
+          "bend's event from the settings");
+    Result<CookedAnimation> again = cookAnimation(gltf, {});
+    CHECK(again && again->file == clips->file, "two cooks write the same bytes");
+
+    // Linear (the knee), step (the hip) and the cubic spline (the root, h01(t) = 3t^2 - 2t^3) at a quarter, half and
+    // three quarters.
+    const float phases[] = {0.25f, 0.5f, 0.75f};
+    const std::vector<Sampled> s = sampleCooked(dir, *skeleton, *clips, phases);
+    REQUIRE(s.size() == 3, "sampled %zu times", s.size());
+    const float rootX[] = {0.15625f, 0.5f, 0.84375f}, hipY[] = {1.0f, 1.2f, 1.2f};
+    const float kneeAngle[] = {0.25f * 1.5707964f, 0.5f * 1.5707964f, 0.75f * 1.5707964f};
+    for (int i = 0; i < 3; ++i) {
+        const float angle = std::atan2(s[std::size_t(i)].kneeUp.z, s[std::size_t(i)].kneeUp.y);
+        CHECK(std::abs(s[std::size_t(i)].root.x - rootX[i]) < 3e-3f, "t %.2f: root x %.4f, expected %.4f", phases[i],
+              s[std::size_t(i)].root.x, rootX[i]);
+        CHECK(std::abs(s[std::size_t(i)].hip.y - s[std::size_t(i)].root.y - hipY[i]) < 3e-3f,
+              "t %.2f: hip y %.4f, expected %.4f", phases[i], s[std::size_t(i)].hip.y, hipY[i]);
+        CHECK(std::abs(angle - kneeAngle[i]) < 0.01f, "t %.2f: knee angle %.4f, expected %.4f", phases[i], angle,
+              kneeAngle[i]);
+    }
+}
+
+QUENCH_TEST(cook_animation_errors) {
+    const std::filesystem::path dir = tmpPath("cook_animation_errors");
+    const std::filesystem::path gltf = writeSkinnedGltf(dir, R"({"clips": {"bend": {"loops": true}}})");
+    Result<CookedAnimation> unknownKey = cookAnimation(gltf, {});
+    CHECK(!unknownKey && unknownKey.error().find("loops") != std::string::npos, "an unknown setting: %s",
+          unknownKey ? "accepted" : unknownKey.error().c_str());
+    std::ofstream(dir / "skinned.anim.json", std::ios::binary) << R"({"clips": {"walk": {"loop": true}}})";
+    CHECK(!cookAnimation(gltf, {}), "settings for a clip the file does not have");
+    std::ofstream(dir / "skinned.anim.json", std::ios::binary) << R"({"clips": )";
+    CHECK(!cookAnimation(gltf, {}), "broken JSON");
+    CHECK(!cookAnimation(dir / "missing.gltf", {}), "a missing file");
+    AnimationOptions otherSkeleton;
+    otherSkeleton.skeleton = dir / "missing.gltf";
+    CHECK(!cookAnimation(gltf, otherSkeleton), "a missing skeleton file");
+    std::filesystem::remove(dir / "skinned.anim.json");
+    CHECK(cookAnimation(gltf, {}), "without settings");
+}
+
+QUENCH_TEST(cook_skinned_model) {
+    JobSystem jobs(JobSystemDesc{.workerThreads = 0});
+    const std::filesystem::path gltf = writeSkinnedGltf(tmpPath("cook_skinned_model"), "");
+    Result<CookedModel> cooked = cookModel(gltf, "m", {}, jobs);
+    REQUIRE(cooked, "%s", cooked ? "" : cooked.error().c_str());
+    const assets::ModelData& model = cooked->model;
+    REQUIRE(model.skins.size() == 1 && model.meshes.size() == 1, "%zu skins, %zu meshes", model.skins.size(),
+            model.meshes.size());
+    CHECK(model.skins[0].joints == (std::vector<std::string>{"root", "hip", "knee"}), "the skin's joints");
+    CHECK(model.skins[0].inverseBindMatrices.size() == 3 &&
+              std::abs(model.skins[0].inverseBindMatrices[1][3].y + 1.0f) < 1e-6f,
+          "inverse bind matrices");
+    const assets::ModelMesh& mesh = model.meshes[0];
+    REQUIRE(mesh.skin == 0 && mesh.skinning.size() == mesh.vertices.size(), "skinned mesh: skin %d, %zu weights",
+            mesh.skin, mesh.skinning.size());
+    bool sums = true, split = false;
+    for (std::size_t v = 0; v < mesh.vertices.size(); ++v) {
+        const assets::ModelSkinVertex& w = mesh.skinning[v];
+        sums = sums && w.weights[0] + w.weights[1] + w.weights[2] + w.weights[3] == 65535;
+        if (mesh.vertices[v].position.y < 0.5f)
+            split = split || (w.joints[0] == 2 && w.weights[0] == 49151 && w.joints[1] == 1 && w.weights[1] == 16384);
+    }
+    CHECK(sums && split, "weights sum to 65535 (%d), 0.75 / 0.25 quantized (%d)", sums, split);
+    Result<assets::ModelData> read = assets::readModel(modelBytes(model));
+    CHECK(read && read->skins.size() == 1 && read->meshes[0].skinning.size() == mesh.skinning.size(),
+          "a skinned model reads back");
+    Result<CookedModel> scaled = cookModel(gltf, "m", {.scale = 2.0f}, jobs);
+    CHECK(!scaled && scaled.error().find("--scale") != std::string::npos, "scale with skins: %s",
+          scaled ? "accepted" : scaled.error().c_str());
 }

@@ -9,7 +9,7 @@
 
 namespace quench {
 
-enum class ShaderStage : std::uint8_t { Vertex, Fragment };
+enum class ShaderStage : std::uint8_t { Vertex, Fragment, Compute };
 
 struct ShaderCode {
     const std::uint8_t* data;
@@ -18,12 +18,17 @@ struct ShaderCode {
     explicit operator bool() const { return data != nullptr; }
 };
 
-// Resource counts read from the compiled shader, in the order SDL GPU asks for them when a shader is created.
+// Resource counts read from the compiled shader, in the order SDL GPU asks for them when a shader is created. The
+// storage counts of a compute shader are its read-only ones; the read-write ones and the thread group size exist
+// for compute shaders only.
 struct ShaderResources {
     std::uint32_t samplers;
     std::uint32_t storageTextures;
     std::uint32_t storageBuffers;
     std::uint32_t uniformBuffers;
+    std::uint32_t readWriteStorageTextures;
+    std::uint32_t readWriteStorageBuffers;
+    std::uint32_t threadCount[3]; // [numthreads(x, y, z)]
 };
 
 struct ShaderBlob {

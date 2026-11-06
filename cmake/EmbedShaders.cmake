@@ -1,7 +1,7 @@
 # `cmake -P` script of quench_add_shaders(): embeds the compiled blobs of one shader set into a C++ source that
 # defines quench::shaders::<NAME>. Parameters: NAME, SOURCE_NAME, ENTRIES and FORMATS (comma-separated), GEN_DIR,
-# OUTPUT. Formats: spirv (<entry>.spv), msl (<entry>.msl), metallib (<entry>.metallib), dxil (<entry>.dxil). The stage
-# and resource counts of each entry come from <entry>.reflect.
+# OUTPUT. Formats: spirv (<entry>.spv), msl (<entry>.msl), metallib (<entry>.metallib), dxil (<entry>.dxil). The stage,
+# resource counts and thread group size of each entry come from <entry>.reflect.
 cmake_minimum_required(VERSION 3.28)
 foreach(param NAME SOURCE_NAME ENTRIES FORMATS GEN_DIR OUTPUT)
     if(NOT DEFINED ${param})
@@ -25,19 +25,24 @@ foreach(entry IN LISTS ENTRIES)
             set(_r_${CMAKE_MATCH_1} ${CMAKE_MATCH_2})
         endif()
     endforeach()
-    foreach(_key stage samplers storage_textures storage_buffers uniform_buffers)
+    set(_keys stage samplers storage_textures storage_buffers uniform_buffers readwrite_storage_textures
+              readwrite_storage_buffers threads_x threads_y threads_z)
+    foreach(_key IN LISTS _keys)
         if(NOT DEFINED _r_${_key})
             message(FATAL_ERROR "EmbedShaders.cmake: '${_key}' missing in ${GEN_DIR}/${entry}.reflect")
         endif()
     endforeach()
     if(_r_stage STREQUAL "vertex")
         set(_stage Vertex)
-    else()
+    elseif(_r_stage STREQUAL "fragment")
         set(_stage Fragment)
+    else()
+        set(_stage Compute)
     endif()
     set(_row "    {\"${entry}\", quench::ShaderStage::${_stage}, {${_r_samplers}, ${_r_storage_textures}, ")
-    string(APPEND _row "${_r_storage_buffers}, ${_r_uniform_buffers}}")
-    foreach(_key stage samplers storage_textures storage_buffers uniform_buffers)
+    string(APPEND _row "${_r_storage_buffers}, ${_r_uniform_buffers}, ${_r_readwrite_storage_textures}, ")
+    string(APPEND _row "${_r_readwrite_storage_buffers}, {${_r_threads_x}, ${_r_threads_y}, ${_r_threads_z}}}")
+    foreach(_key IN LISTS _keys)
         unset(_r_${_key})
     endforeach()
     foreach(fmt spirv msl metallib dxil)

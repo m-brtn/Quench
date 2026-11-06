@@ -2,6 +2,7 @@
 
 #include <quench/core/Result.h>
 
+#include <glm/mat4x4.hpp>
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
@@ -13,7 +14,9 @@
 
 // Cooked models (.qmodel): the meshes of a glTF scene with the node transforms applied, their materials, and the
 // level-of-detail index ranges quench_cook made with meshoptimizer. Vertex and index streams are compressed with
-// meshoptimizer's codecs. Materials name their textures by asset path (cooked KTX2 files).
+// meshoptimizer's codecs. Materials name their textures by asset path (cooked KTX2 files). Skinned meshes keep their
+// bind-pose vertices (glTF ignores the transform of a skinned mesh's node) with four joints and weights per vertex,
+// and name their skin's joints, which bind to an animation skeleton by name at run time.
 namespace quench::assets {
 
 // The engine's 48-byte vertex (render::Vertex has the same layout).
@@ -50,24 +53,42 @@ struct ModelLod {
     float error = 0.0f;
 };
 
+// The joints that move one vertex of a skinned mesh: indices into its skin's joints, weights in 1/65535 that sum to
+// 65535.
+struct ModelSkinVertex {
+    std::uint16_t joints[4] = {0, 0, 0, 0};
+    std::uint16_t weights[4] = {65535, 0, 0, 0};
+};
+static_assert(sizeof(ModelSkinVertex) == 16);
+
+// A glTF skin: its joints by name and their inverse bind matrices (model space at bind time to joint space).
+struct ModelSkin {
+    std::string name;
+    std::vector<std::string> joints;
+    std::vector<glm::mat4> inverseBindMatrices;
+};
+
 struct ModelMesh {
     std::string name;
     std::uint32_t material = 0;         // index into ModelData::materials
-    std::vector<ModelVertex> vertices;  // in model space
+    std::vector<ModelVertex> vertices;  // in model space (skinned: in the bind pose)
     std::vector<std::uint32_t> indices; // triangle lists of every LOD, LOD 0 first
     std::vector<ModelLod> lods;         // at least one
-    glm::vec3 boundsMin{0.0f};
+    glm::vec3 boundsMin{0.0f};          // skinned: of the bind pose
     glm::vec3 boundsMax{0.0f};
+    int skin = -1;                         // index into ModelData::skins; -1: not skinned
+    std::vector<ModelSkinVertex> skinning; // one per vertex when skinned
 };
 
 struct ModelData {
     std::vector<ModelMesh> meshes;
     std::vector<ModelMaterial> materials;
+    std::vector<ModelSkin> skins;
     glm::vec3 boundsMin{0.0f};
     glm::vec3 boundsMax{0.0f};
 };
 
-// Checks the header, the counts and every stream.
+// Checks the header, the counts and every stream. Reads versions 1 (no skins) and 2.
 Result<ModelData> readModel(std::span<const std::uint8_t> file);
 // The output depends only on the model. The index codec keeps the order and winding of triangles but may rotate the
 // indices within one.

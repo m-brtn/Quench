@@ -11,11 +11,13 @@ using namespace quench;
 
 QUENCH_TEST(shader_table) {
     const ShaderTable& table = shaders::test;
-    CHECK(table.count == 2, "%zu entries", table.count);
+    CHECK(table.count == 3, "%zu entries", table.count);
     const ShaderBlob* vs = table.find("test_vs");
     const ShaderBlob* fs = table.find("test_fs");
+    const ShaderBlob* cs = table.find("test_cs");
     CHECK(vs && vs->stage == ShaderStage::Vertex, "test_vs");
     CHECK(fs && fs->stage == ShaderStage::Fragment, "test_fs");
+    CHECK(cs && cs->stage == ShaderStage::Compute, "test_cs");
     CHECK(table.find("missing") == nullptr, "found a missing entry");
 }
 
@@ -33,6 +35,22 @@ QUENCH_TEST(shader_resources) {
     CHECK(f.samplers == 1 && f.storageTextures == 0 && f.storageBuffers == 0 && f.uniformBuffers == 1,
           "test_fs: %u samplers, %u storage textures, %u storage buffers, %u uniform buffers", f.samplers,
           f.storageTextures, f.storageBuffers, f.uniformBuffers);
+    CHECK(v.readWriteStorageBuffers == 0 && v.threadCount[0] == 1, "test_vs: compute fields set");
+}
+
+QUENCH_TEST(shader_compute_resources) {
+    const ShaderBlob* cs = shaders::test.find("test_cs");
+    if (!cs) {
+        CHECK(false, "test_cs missing");
+        return;
+    }
+    const ShaderResources c = cs->resources;
+    CHECK(c.samplers == 0 && c.storageBuffers == 1 && c.readWriteStorageBuffers == 2 && c.uniformBuffers == 1 &&
+              c.storageTextures == 0 && c.readWriteStorageTextures == 0,
+          "test_cs: %u samplers, %u storage buffers, %u read-write storage buffers, %u uniform buffers", c.samplers,
+          c.storageBuffers, c.readWriteStorageBuffers, c.uniformBuffers);
+    CHECK(c.threadCount[0] == 8 && c.threadCount[1] == 4 && c.threadCount[2] == 2, "test_cs: threads %u x %u x %u",
+          c.threadCount[0], c.threadCount[1], c.threadCount[2]);
 }
 
 QUENCH_TEST(shader_formats) {

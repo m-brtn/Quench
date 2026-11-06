@@ -30,10 +30,14 @@ constexpr const char* kUsage =
     "usage:\n"
     "  quench_cook texture <input.png|.jpg|.ktx2> <output.ktx2> [options]\n"
     "  quench_cook model <input.gltf|.glb> <output.qmodel> [options]\n"
+    "  quench_cook skeleton <input.gltf|.glb> <output.qskel> [options]\n"
+    "  quench_cook animation <input.gltf|.glb> <output.qanim> [options]\n"
     "  quench_cook sound <input.wav|.flac|.mp3> <output> [options]\n"
     "  quench_cook --version | --help\n"
     "sounds are decoded to check them; the output keeps the input's bytes, or is a 16-bit WAV when it ends in\n"
     ".wav and the input is not one (or --channels is given)\n"
+    "a skeleton holds the joints of the file's skins; animation cooks every animation of the file as a clip, with\n"
+    "the settings (loop, events, root motion) of <input stem>.anim.json when it exists\n"
     "options:\n"
     "  --format bc7|rgba8   texture format (default bc7)\n"
     "  --linear             texture: linear data, not sRGB color (normals, masks)\n"
@@ -44,6 +48,8 @@ constexpr const char* kUsage =
     "  --lod-ratio R        model: index count of each level relative to the one before (default 0.5)\n"
     "  --lod-error E        model: largest simplification error relative to the mesh extent (default 0.05)\n"
     "  --scale S            model: scales the positions (default 1)\n"
+    "  --skeleton FILE      animation: the glTF or GLB whose skeleton the clips are for (default: the input)\n"
+    "  --clips FILE         animation: the clip settings (default: <input stem>.anim.json)\n"
     "  --channels 1|2       sound: mixes down to mono or up to stereo (a .wav output)\n"
     "  --depfile FILE       writes the files read, for the build system\n"
     "  --verbose            one line per file written\n";
@@ -56,6 +62,7 @@ struct Options {
     fs::path depfile;
     cook::TextureOptions texture;
     cook::ModelOptions model;
+    cook::AnimationOptions animation;
     std::uint32_t soundChannels = 0; // 0: the input's
     bool verbose = false;
 };
@@ -159,18 +166,22 @@ std::optional<Options> parseArgs(int argc, char** argv, std::string& error) {
             (arg == "--lod-ratio"   ? o.model.lodRatio
              : arg == "--lod-error" ? o.model.lodError
                                     : o.model.scale) = float(*v);
-        } else if (arg == "--asset-root" || arg == "--depfile") {
+        } else if (arg == "--asset-root" || arg == "--depfile" || arg == "--skeleton" || arg == "--clips") {
             const std::optional<std::string_view> v = value();
             if (!v) return bad(std::format("{}: a path", arg));
-            (arg == "--asset-root" ? o.assetRoot : o.depfile) = fs::path(*v);
+            (arg == "--asset-root" ? o.assetRoot
+             : arg == "--depfile"  ? o.depfile
+             : arg == "--skeleton" ? o.animation.skeleton
+                                   : o.animation.clips) = fs::path(*v);
         } else if (arg.starts_with("--")) {
             return bad(std::format("unknown option {}", arg));
         } else {
             positional.push_back(arg);
         }
     }
-    if (positional.size() != 3 || (positional[0] != "texture" && positional[0] != "model" && positional[0] != "sound"))
-        return bad("expected: texture|model|sound <input> <output> (--help)");
+    constexpr std::string_view kCommands[] = {"texture", "model", "skeleton", "animation", "sound"};
+    if (positional.size() != 3 || std::ranges::find(kCommands, positional[0]) == std::end(kCommands))
+        return bad("expected: texture|model|skeleton|animation|sound <input> <output> (--help)");
     o.command = positional[0];
     o.input = positional[1];
     o.output = positional[2];
@@ -236,6 +247,21 @@ int cookModel(const Options& o, JobSystem& jobs) {
     return 0;
 }
 
+int cookAnimation(const Options& o) {
+    const bool skeleton = o.command == "skeleton";
+    Result<cook::CookedAnimation> cooked =
+        skeleton ? cook::cookSkeleton(o.input) : cook::cookAnimation(o.input, o.animation);
+    if (!cooked) return fail(cooked.error());
+    printNotes(o, cooked->notes);
+    if (Result<void> r = writeFile(o.output, cooked->file, false); !r) return fail(r.error());
+    if (!o.depfile.empty())
+        if (Result<void> r = writeDepfile(o, cooked->inputs); !r) return fail(r.error());
+    if (o.verbose)
+        std::fprintf(stderr, "quench_cook: %s: %zu %s, %zu bytes\n", o.output.string().c_str(), cooked->names.size(),
+                     skeleton ? "joints" : "clips", cooked->file.size());
+    return 0;
+}
+
 std::string lowerExtension(const fs::path& path) {
     std::string extension = path.extension().string();
     for (char& c : extension) c = char(std::tolower(static_cast<unsigned char>(c)));
@@ -292,6 +318,7 @@ int main(int argc, char** argv) {
     if (!options) return fail(error);
     log::setLevel(options->verbose ? log::Level::Info : log::Level::Warning);
     if (options->command == "sound") return cookSound(*options);
+    if (options->command == "skeleton" || options->command == "animation") return cookAnimation(*options);
     JobSystem jobs;
     return options->command == "texture" ? cookTexture(*options, jobs) : cookModel(*options, jobs);
 }

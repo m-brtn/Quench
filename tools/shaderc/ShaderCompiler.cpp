@@ -6,16 +6,20 @@
 //   uniform buffer b[n]            -> [[buffer(n)]]
 //   texture t[n] + sampler s[n]    -> [[texture(n)]] + [[sampler(n)]]
 //   storage buffer (k-th by slot)  -> [[buffer(uniform buffer count + k)]]
+//   compute: read-only storage buffers, then read-write ones, after the uniform buffers
 // Descriptor sets must follow SDL's SPIR-V rules: vertex resources in set 0 and uniforms in set 1, fragment resources
-// in set 2 and uniforms in set 3. DXIL is produced separately by DXC (Windows hosts only).
+// in set 2 and uniforms in set 3; compute read-only resources in set 0, read-write ones in set 1, uniforms in set 2.
+// DXIL is produced separately by DXC (Windows hosts only).
 //
-// QUENCH_ENTRY_<entry> and QUENCH_STAGE_VERTEX or QUENCH_STAGE_FRAGMENT are defined while compiling. #include "x"
-// resolves relative to the including file, then in the --include-dir directories in order. --depfile writes the
-// input and every included file as Make dependencies of the SPIR-V output; --reflect writes the stage and the
-// resource counts SDL GPU needs to create the shader, as key=value lines.
+// QUENCH_ENTRY_<entry> and QUENCH_STAGE_VERTEX, QUENCH_STAGE_FRAGMENT or QUENCH_STAGE_COMPUTE are defined while
+// compiling. #include "x" resolves relative to the including file, then in the --include-dir directories in order.
+// --depfile writes the input and every included file as Make dependencies of the SPIR-V output; --reflect writes the
+// stage, the resource counts SDL GPU needs to create the shader and a compute shader's thread group size, as
+// key=value lines.
 //
-// Usage: quench_shaderc --input FILE.hlsl --entry NAME --stage vertex|fragment --spirv OUT.spv [--reflect OUT]
-//                       [--msl OUT.metal] [--msl-platform macos|ios] [--include-dir DIR]... [--depfile OUT.d]
+// Usage: quench_shaderc --input FILE.hlsl --entry NAME --stage vertex|fragment|compute --spirv OUT.spv
+//                       [--reflect OUT] [--msl OUT.metal] [--msl-platform macos|ios] [--include-dir DIR]...
+//                       [--depfile OUT.d]
 
 #include <SPIRV/GlslangToSpv.h>
 #include <glslang/Public/ResourceLimits.h>
@@ -27,6 +31,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -69,7 +74,8 @@ bool parseArgs(int argc, char** argv, Args& a) {
             return false;
     }
     return argc % 2 == 1 && (a.mslPlatform == "macos" || a.mslPlatform == "ios") && !a.input.empty() &&
-           !a.entry.empty() && (a.stage == "vertex" || a.stage == "fragment") && !a.spirvOut.empty();
+           !a.entry.empty() && (a.stage == "vertex" || a.stage == "fragment" || a.stage == "compute") &&
+           !a.spirvOut.empty();
 }
 
 bool readText(const fs::path& path, std::string& out) {
@@ -137,11 +143,13 @@ private:
 
 bool compileHlsl(const Args& a, const std::string& source, Includer& includer, std::vector<std::uint32_t>& spirv,
                  std::string& log) {
-    const bool vertex = a.stage == "vertex";
-    const EShLanguage lang = vertex ? EShLangVertex : EShLangFragment;
+    const EShLanguage lang = a.stage == "vertex"     ? EShLangVertex
+                             : a.stage == "fragment" ? EShLangFragment
+                                                     : EShLangCompute;
     glslang::TShader shader(lang);
-    const std::string preamble = "#define QUENCH_ENTRY_" + a.entry + " 1\n#define QUENCH_STAGE_" +
-                                 std::string(vertex ? "VERTEX" : "FRAGMENT") + " 1\n";
+    std::string stageName = a.stage;
+    std::transform(stageName.begin(), stageName.end(), stageName.begin(), [](char c) { return char(c - 'a' + 'A'); });
+    const std::string preamble = "#define QUENCH_ENTRY_" + a.entry + " 1\n#define QUENCH_STAGE_" + stageName + " 1\n";
     const char* text = source.c_str();
     const char* name = a.input.c_str();
     shader.setStringsWithLengthsAndNames(&text, nullptr, &name, 1);
@@ -194,16 +202,75 @@ bool legalizeAndValidate(std::vector<std::uint32_t>& spirv, std::string& log) {
     return true;
 }
 
+// glslang gives the block type of a StructuredBuffer the variable's name, and buffers of one element type share that
+// type. MoltenVK's argument buffers then declare `device b_a* b_b`, where the type name is hidden by the variable
+// b_a, and the pipeline fails to compile. Struct types whose debug name is also another id's get "_block" appended.
+void renameBlockTypes(std::vector<std::uint32_t>& spirv) {
+    constexpr std::uint32_t kOpName = 5, kOpTypeStruct = 30, kHeaderWords = 5;
+    auto literal = [&](std::size_t word, std::size_t end) {
+        std::string s;
+        for (std::size_t w = word; w < end; ++w)
+            for (int b = 0; b < 4; ++b) {
+                const char c = char((spirv[w] >> (8 * b)) & 0xff);
+                if (c == '\0') return s;
+                s += c;
+            }
+        return s;
+    };
+    std::set<std::uint32_t> structs;
+    std::map<std::string, int> names;                             // name -> number of ids carrying it
+    std::vector<std::pair<std::size_t, std::string>> structNames; // OpName offset, name
+    std::vector<std::pair<std::size_t, std::uint32_t>> nameOps;   // OpName offset, target id
+    for (std::size_t i = kHeaderWords; i < spirv.size();) {
+        const std::uint32_t count = spirv[i] >> 16, op = spirv[i] & 0xffff;
+        if (count == 0 || i + count > spirv.size()) return;
+        if (op == kOpTypeStruct) structs.insert(spirv[i + 1]);
+        if (op == kOpName) nameOps.emplace_back(i, spirv[i + 1]);
+        i += count;
+    }
+    for (const auto& [offset, id] : nameOps) {
+        const std::string name = literal(offset + 2, offset + (spirv[offset] >> 16));
+        ++names[name];
+        if (structs.count(id)) structNames.emplace_back(offset, name);
+    }
+    std::map<std::size_t, std::string> renamed;
+    for (const auto& [offset, name] : structNames)
+        if (!name.empty() && names[name] > 1) renamed[offset] = name + "_block";
+    if (renamed.empty()) return;
+    std::vector<std::uint32_t> out(spirv.begin(), spirv.begin() + kHeaderWords);
+    for (std::size_t i = kHeaderWords; i < spirv.size();) {
+        const std::uint32_t count = spirv[i] >> 16;
+        const auto it = renamed.find(i);
+        if (it == renamed.end()) {
+            out.insert(out.end(), spirv.begin() + std::ptrdiff_t(i), spirv.begin() + std::ptrdiff_t(i + count));
+        } else {
+            const std::string& name = it->second;
+            const std::uint32_t words = std::uint32_t(name.size() / 4 + 1);
+            out.push_back(((2 + words) << 16) | kOpName);
+            out.push_back(spirv[i + 1]);
+            std::vector<std::uint32_t> text(words, 0);
+            std::memcpy(text.data(), name.data(), name.size());
+            out.insert(out.end(), text.begin(), text.end());
+        }
+        i += count;
+    }
+    spirv.swap(out);
+}
+
 struct Slots {
-    std::uint32_t uniformBuffers = 0, samplers = 0, storageBuffers = 0;
+    std::uint32_t uniformBuffers = 0, samplers = 0, storageBuffers = 0, readWriteStorageBuffers = 0;
+    std::uint32_t threads[3] = {1, 1, 1};
 };
 
 // Checks the descriptor sets, counts the resources and maps them to SDL's MSL slots; with `msl`, also translates.
 bool mapResources(const Args& a, const std::vector<std::uint32_t>& spirv, Slots& slots, std::string* msl,
                   std::string& log) {
-    const bool vertex = a.stage == "vertex";
-    const std::uint32_t resourceSet = vertex ? 0 : 2, uniformSet = vertex ? 1 : 3;
-    const spv::ExecutionModel model = vertex ? spv::ExecutionModelVertex : spv::ExecutionModelFragment;
+    const bool vertex = a.stage == "vertex", compute = a.stage == "compute";
+    const std::uint32_t resourceSet = vertex || compute ? 0 : 2, uniformSet = vertex ? 1 : compute ? 2 : 3;
+    const std::uint32_t writeSet = 1; // compute only
+    const spv::ExecutionModel model = vertex    ? spv::ExecutionModelVertex
+                                      : compute ? spv::ExecutionModelGLCompute
+                                                : spv::ExecutionModelFragment;
     spirv_cross::CompilerMSL compiler(spirv);
     spirv_cross::CompilerMSL::Options options;
     options.platform =
@@ -250,15 +317,27 @@ bool mapResources(const Args& a, const std::vector<std::uint32_t>& spirv, Slots&
         ok &= check(r, resourceSet, "sampler");
         entry(setOf(r), bindingOf(r)).msl_sampler = bindingOf(r);
     }
-    std::vector<std::uint32_t> storage;
+    std::vector<std::uint32_t> storage, writable;
     for (const auto& r : res.storage_buffers) {
+        if (compute && setOf(r) == writeSet) {
+            writable.push_back(bindingOf(r));
+            continue;
+        }
         ok &= check(r, resourceSet, "storage buffer");
         storage.push_back(bindingOf(r));
     }
     std::sort(storage.begin(), storage.end());
+    std::sort(writable.begin(), writable.end());
     for (std::size_t i = 0; i < storage.size(); ++i)
         entry(resourceSet, storage[i]).msl_buffer = slots.uniformBuffers + std::uint32_t(i);
+    for (std::size_t i = 0; i < writable.size(); ++i)
+        entry(writeSet, writable[i]).msl_buffer =
+            slots.uniformBuffers + std::uint32_t(storage.size()) + std::uint32_t(i);
     slots.storageBuffers = std::uint32_t(storage.size());
+    slots.readWriteStorageBuffers = std::uint32_t(writable.size());
+    if (compute)
+        for (std::uint32_t i = 0; i < 3; ++i)
+            slots.threads[i] = std::max(1u, compiler.get_execution_mode_argument(spv::ExecutionModeLocalSize, i));
     if (!res.storage_images.empty() || !res.sampled_images.empty()) {
         log += "storage textures and combined image samplers are not supported yet\n";
         ok = false;
@@ -291,7 +370,7 @@ std::string makeEscape(const std::string& path) {
 int main(int argc, char** argv) {
     Args a;
     if (!parseArgs(argc, argv, a)) {
-        std::fprintf(stderr, "usage: quench_shaderc --input FILE.hlsl --entry NAME --stage vertex|fragment "
+        std::fprintf(stderr, "usage: quench_shaderc --input FILE.hlsl --entry NAME --stage vertex|fragment|compute "
                              "--spirv OUT.spv [--reflect OUT] [--msl OUT.metal] [--msl-platform macos|ios] "
                              "[--include-dir DIR]... [--depfile OUT.d]\n");
         return 2;
@@ -308,6 +387,7 @@ int main(int argc, char** argv) {
     if (!compiled) return fail(a, "HLSL compile failed\n" + log);
     log.clear();
     if (!legalizeAndValidate(spirv, log)) return fail(a, "SPIR-V legalization/validation failed\n" + log);
+    renameBlockTypes(spirv);
 
     Slots slots;
     std::string msl;
@@ -323,7 +403,12 @@ int main(int argc, char** argv) {
     if (!a.reflectOut.empty()) {
         const std::string reflect = "stage=" + a.stage + "\nsamplers=" + std::to_string(slots.samplers) +
                                     "\nstorage_textures=0\nstorage_buffers=" + std::to_string(slots.storageBuffers) +
-                                    "\nuniform_buffers=" + std::to_string(slots.uniformBuffers) + "\n";
+                                    "\nuniform_buffers=" + std::to_string(slots.uniformBuffers) +
+                                    "\nreadwrite_storage_textures=0\nreadwrite_storage_buffers=" +
+                                    std::to_string(slots.readWriteStorageBuffers) +
+                                    "\nthreads_x=" + std::to_string(slots.threads[0]) +
+                                    "\nthreads_y=" + std::to_string(slots.threads[1]) +
+                                    "\nthreads_z=" + std::to_string(slots.threads[2]) + "\n";
         if (!writeText(a.reflectOut, reflect)) return fail(a, "cannot write " + a.reflectOut);
     }
     if (!a.depfileOut.empty()) {

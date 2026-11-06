@@ -22,6 +22,7 @@ ends with a packaged build of it in `dist/` (`tools/package_demo.sh`, below).
 | 7 | `input` | Named actions over every device, shown live: a character that walks, runs, jumps and fires | WASD, left stick or a finger on the left half: walk; Left Shift or the left stick button: run; J, gamepad A or a tap on the right half: jump; F, gamepad X, a click or a tap: fire |
 | 8 | `assets` | Cooked assets loaded through the app's asset manager ([Jobs, assets and the cook](assets.md)): a row of models (a crate from a glTF with an external texture, a pillar from a GLB with embedded JPEG and PNG textures, a vertex-colored ball, a corrupt file and a missing one) shows the load states: gray boxes while loading, magenta on failure. Behind it a 6 x 5 grid of tiles, each with one of eight BC7 textures and a model, streams around a moving focus point | simulated latency, texture cache budget (unlimited, 64, 16, 4 KB), uploads per frame (8 MB, 16 KB, 1 byte), focus angle, moving focus, models on and off, hot reload, reload all; counts of ready, loading, failed, queued and in-flight assets, reloads, evictions, memory per type against its budget, streamed cells |
 | 9 | `audio` | The mixer and 3D sound ([Audio](audio.md)): a head with ears at the listener, facing the way the camera looks; an orange emitter circling it at ear height (a motor loop), a blue fly-by passing at speed (a siren, with Doppler), a green box that plays a tone the demo computes (a generator); streamed music A and B with a crossfade; all sounds procedural | emitters on and off, orbit and fly-by speed, tone frequency and position, attenuation model, minimum and maximum distance, Doppler scale; music off, A or B; per bus volume, mute and a peak meter; pause effects; a ping, a burst of 40 pings (voice stealing), a click or tap on the ground plays a ping there; voices, stolen and rejected sounds, underruns, clipped samples, mix time and the output device |
+| 10 (key 0) | `animation` | Skeletal animation ([Animation](animation.md)) of a procedural mannequin: the hero walks a circle by root motion with a speed blend of idle, walk and run, jumps, waves (a layer masked to the right arm), leans (an additive layer), turns its head toward the camera (look-at), holds a torch on its left hand (an attachment) and plays a step sound at each footstep event (a louder one at the jump's landing); two characters stand with foot placement on a ramp and across a 0.2 m step (rays into a Jolt world); a crowd walks in rings | speed, lean, jump (J, gamepad A), wave (K, gamepad X), restart; foot IK, look-at and footstep sound on and off; ramp angle (0 to 30 degrees), crowd size (0 to 512); the hero's state and transition, characters, joints, clip samples, ground rays, events, skinned instances and vertices, the update time and threads, the skinning GPU time |
 
 Every section has a "Frame and fallbacks" panel: the 3D resolution, draws, culled instances, lights, shadow draws,
 what runs after the device fallbacks (cascades, depth clamp, anti-aliasing), the HDR and depth formats and the device
@@ -29,8 +30,9 @@ capabilities.
 
 Common controls:
 
-- Sections: `]` / `[`, Page Down / Page Up, the digits 1 to 9, the gamepad shoulder buttons, a click or tap on the
-  list. ImGui keyboard and gamepad navigation is on (the demo's keys keep working while a window has focus).
+- Sections: `]` / `[`, Page Down / Page Up, the digits 1 to 9 and 0 (the tenth, labelled "0" in the menu), the
+  gamepad shoulder buttons, a click or tap on the list. ImGui keyboard and gamepad navigation is on (the demo's keys
+  keep working while a window has focus).
 - Camera (all sections but input): drag with the left or right mouse button or one finger to orbit, the wheel or a
   pinch to zoom, the right stick and the triggers on a gamepad.
 - H or the gamepad Start button hides the windows.
@@ -50,13 +52,24 @@ The audio section's sounds are not in git: `tools/assets/make_demo_sounds.py` (P
 CC0, `assets/CREDITS.md`) writes `sounds/motor.wav`, `siren.wav`, `ping.wav` (short loops and a one-shot, 24 and
 48 kHz mono), `music_a.wav` and `music_b.wav` (6 s stereo loops at 22050 Hz: a drone with A minor eighths, and one
 with D major triplets) into the build tree at build time, and `quench_cook_assets(quench_demo_sounds ... SOUNDS ...)`
-checks and copies them into `assets/`. Building the demo therefore needs Python 3.
+checks and copies them into `assets/`; `sounds/step.wav` (a short footstep, stage 8) is one more. Building the demo
+therefore needs Python 3.
+
+The animation section's character is not in git either: `tools/assets/make_demo_character.py` (Python standard
+library, procedural, CC0) writes `characters/mannequin.gltf` and `.bin` (one skin of 20 joints, 836 vertices, clips
+idle, walk, run, jump, wave and lean, the legs solved by IK from foot paths so planted feet stay put) and
+`mannequin.anim.json` (loops, the additive lean, footstep and landing events, root motion on `root`) at build time;
+`quench_cook_assets(quench_demo_character ... MODELS ... SKELETONS ... ANIMATIONS ...)` cooks the model, the
+skeleton and the clips. The graph, `examples/demo/assets/characters/mannequin.graph.json`, is in git. The section has
+its own asset manager on the app's job system (one `SceneAssets` per manager, [Jobs, assets and the
+cook](assets.md#textures-and-models-in-a-scene)) and its own `AnimationSystem`; it restarts on `set restart 1`,
+which makes its capture independent of when the loads finished.
 
 ## Checks
 
 | CTest test | What it runs |
 |---|---|
-| `demo_<section>_metal`, `demo_<section>_vulkan` | `--section <id> --script examples/demo/scenarios/<id>.txt` at 960 x 540 (`--window` and `--frame-size`), with GPU validation and `--present-mode immediate` (below); the scenario switches the section's options and checks the renderer's and the section's values, puts the start state back, and the frame at 2 s (input: 3 s, assets: 1.5 s) is compared with `tests/golden/<backend>/<device>/demo_<id>.png`. The scenarios point at the window in percent or at named points (`@menu:<section>`, `@floor`), so their checks also pass in a portrait phone window (the captures are compared on the Mac only) |
+| `demo_<section>_metal`, `demo_<section>_vulkan` | `--section <id> --script examples/demo/scenarios/<id>.txt` at 960 x 540 (`--window` and `--frame-size`), with GPU validation and `--present-mode immediate` (below); the scenario switches the section's options and checks the renderer's and the section's values, puts the start state back, and the frame at 2 s (input: 3 s, assets: 1.5 s, animation: 2.4 s) is compared with `tests/golden/<backend>/<device>/demo_<id>.png`. The scenarios point at the window in percent or at named points (`@menu:<section>`, `@floor`), so their checks also pass in a portrait phone window (the captures are compared on the Mac only) |
 | `demo_hdr_on_metal`, `demo_hdr_on_vulkan` | the HDR section with `--hdr on --hdr-headroom 4` and `scenarios/hdr_on.txt`: the output is HDR extended linear with headroom 4 and the capture's peak is above 2 and at most 4 times paper white; the capture (clipped at paper white) is compared with `demo_hdr_on.png` |
 | `demo_audio_metal`, `demo_audio_vulkan` | the audio section with `--audio-capture` (offline mixing on the frame clock, the WAV next to the capture) and `scenarios/audio.txt`: every emitter, the tone, the crossfade to music B and a burst of 40 pings, no underruns or clipped samples; the frame at 1.65 s is compared with `demo_audio.png` |
 | `demo_audio_tone`, `demo_audio_flyby`, `demo_audio_music` | the checks on the mix itself (below), on the default backend only: `scenarios/audio_tone.txt`, `audio_flyby.txt` and `audio_music.txt` with `--audio-capture` and `--present-mode immediate`, no capture |
@@ -70,6 +83,14 @@ the corrupt and the missing one failed (two failures in all), more than four str
 (at least six reloads, the failures stay failures), lowers the texture cache to 4 KB, turns the focus to the other
 side of the grid and waits for cells to unload and the cache to evict. It runs with FXAA, not TAA: loads finish in
 real time, and with TAA the history of the frames before a load arrived made two runs differ.
+
+The animation check (`scenarios/animation.txt`, 21 checks) waits for the character to load, restarts the section at
+0.5 s of app time with a crowd of 24 at 1.6 m/s (27 characters, all bound), triggers a jump (the state changes, the
+landing event comes, the state returns to the blend), checks the footstep events, the foot placement (both legs of
+the ramp stand reach, the step stand's raised leg is grounded about 0.2 m up and the other on the floor, the ramp
+stand's pelvis moves down), that the torch stays in the hand (`held_distance`) and the look-at, then waves and is
+captured at 2.4 s. It runs with TAA like the others: the section restarts at a fixed time, so the capture does not
+depend on load timing (two runs gave the same image on each backend).
 
 The audio mix checks are three scenarios that run in parallel: `audio_tone.txt` (23 checks, about 1.7 s of app
 time), `audio_flyby.txt` (11 checks, 2.2 s) and `audio_music.txt` (13 checks, 3.9 s). Each turns the orbit, the
@@ -91,11 +112,16 @@ audio check 18.5 s with vsync, 9.8 s with immediate). Where a window is paced to
 The scenarios turn dithering off (`set dither 0`), which keeps the golden PNGs at 120 to 380 KB. Game values a
 scenario can read: `section`, `sections`, `ui`, `aa` (0 none, 1 FXAA, 2 TAA, after fallbacks), `cascades`, `bloom`,
 `draws`, `instances`, `culled`, `shadow_draws`, `shadow_instances`, `moved`, `lights`, `render_w`, `render_h`,
-`camera_yaw`, `camera_pitch`, `camera_distance`, `clicks`, then the section's own (for example `bodies`, `blasts`,
+`camera_yaw`, `camera_pitch`, `camera_distance`, `clicks`, `skinned_instances`, `skinned_vertices`, then the
+section's own (for example `bodies`, `blasts`,
 `player_x`, `jumps`, `marker_draws`, `exposure`; the assets section's `assets_loading`, `assets_ready`,
 `assets_failed`, `assets_idle`, `assets_loads`, `assets_reloads`, `assets_evictions`, `showcase_ready`,
 `showcase_failed`, `streaming_active`, `streaming_loads`, `streaming_unloads`; the audio section's `sounds_ready`,
-`music_track`, `flyby_x`, `flyby_pitch`, `pings`; the engine's `audio_*` values). Game commands: `section ID`,
+`music_track`, `flyby_x`, `flyby_pitch`, `pings`; the engine's `audio_*` values; the animation section's
+`anim_ready`, `anim_failed`, `anim_characters`, `anim_bound`, `anim_ground_rays`, `hero_state` (0 the blend, 1 the
+jump), `hero_transition`, `hero_look_at`, `hero_angle`, `footsteps`, `landings`, `crowd`, `held_distance`,
+`slope_pelvis`, and per stand and leg `slope_leg0_offset` (also `_reached`, `_grounded`; `slope` or `step`, leg 0
+or 1)). Game commands: `section ID`,
 `camera YAW PITCH DISTANCE` (degrees, meters), `set NAME VALUE` (render settings: `aa none|fxaa|taa`,
 `tone aces|agx`, `cascades`, `shadow_size`, `shadow_filter`, `shadow_distance`, `scale`, `bloom`, `bloom_strength`,
 `sky`, `dither`, `sharpen`, `vignette`; otherwise the section's options, for the assets section `latency SECONDS`,
@@ -103,14 +129,19 @@ scenario can read: `section`, `sections`, `ui`, `aa` (0 none, 1 FXAA, 2 TAA, aft
 `models`, `hot_reload`; for the audio section `orbit`, `flyby` (also restarts the pass), `tone`, `tone_hz`,
 `tone_x`, `tone_z`, `orbit_speed`, `flyby_speed`, `attenuation none|inverse|linear|exponential`, `min_distance`,
 `max_distance`, `doppler`, `music 0|1|2`, `bus_<name>` (volume), `mute_<name>`, `pause_effects`, `ping`,
-`burst N`).
+`burst N`; for the animation section `restart`, `speed`, `lean`, `jump`, `wave`, `foot_ik`, `look_at`,
+`footstep_sound`, `slope DEGREES`, `crowd N`).
 
 ## Benchmark
 
 `scenarios/benchmark.txt` measures the materials, shadows, sky, post-processing, HDR (in SDR, then with HDR output on),
-physics, assets and audio sections for 5 s each in real time (budgets and numbers: [Performance](performance.md));
-the assets region streams with the moving focus and the default budgets, after the first loads have finished; the
-audio region plays the three emitters, the tone and the music. Automated runs add `--audio-device null` (the mix runs
+physics, assets, audio and animation sections for 5 s each in real time (budgets and numbers:
+[Performance](performance.md)); the assets region streams with the moving focus and the default budgets, after the
+first loads have finished; the audio region plays the three emitters, the tone and the music; the animation region
+has a crowd of 256 (259 characters), and its perf line ends with the section's own times over its last 240 frames:
+`anim_update_ms` (mean) and `anim_update_max_ms` of `AnimationSystem::update`, `anim_threads`, and
+`skinning_gpu_ms`, the mean of the skinning pass's GPU time (-1 without GPU timing). Automated runs add
+`--audio-device null` (the mix runs
 on miniaudio's null device thread, without sound):
 
 ```sh

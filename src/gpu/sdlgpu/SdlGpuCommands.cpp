@@ -23,12 +23,16 @@ SDL_GPUTransferBuffer* nativeTransfer(const TransferBuffer& buffer) {
     return static_cast<SDL_GPUTransferBuffer*>(Access::native(buffer));
 }
 
+SDL_GPUComputePass* nativeCompute(void* native) { return static_cast<SDL_GPUComputePass*>(native); }
+
 void pushUniformData(void* commands, ShaderStage stage, std::uint32_t slot, const void* data, std::uint32_t size) {
     QUENCH_ASSERT(slot < 4, "uniform slots are 0..3");
     if (stage == ShaderStage::Vertex)
         SDL_PushGPUVertexUniformData(nativeCommands(commands), slot, data, size);
-    else
+    else if (stage == ShaderStage::Fragment)
         SDL_PushGPUFragmentUniformData(nativeCommands(commands), slot, data, size);
+    else
+        SDL_PushGPUComputeUniformData(nativeCommands(commands), slot, data, size);
 }
 
 } // namespace
@@ -143,6 +147,29 @@ CopyPass CommandBuffer::beginCopyPass() {
     pass.m_native = SDL_BeginGPUCopyPass(nativeCommands(m_native));
     if (!pass.m_native) {
         log::error("gpu", "SDL_BeginGPUCopyPass: {}", SDL_GetError());
+        return pass;
+    }
+    pass.m_commands = this;
+    m_passOpen = true;
+    return pass;
+}
+
+ComputePass CommandBuffer::beginComputePass(std::span<const StorageBufferWrite> writes) {
+    QUENCH_ASSERT(m_native, "beginComputePass on an empty command buffer");
+    QUENCH_ASSERT(!m_passOpen, "a pass is already open");
+    QUENCH_ASSERT(writes.size() <= 8, "at most 8 read-write storage buffers");
+    std::array<SDL_GPUStorageBufferReadWriteBinding, 8> bindings{};
+    for (std::size_t i = 0; i < writes.size(); ++i) {
+        QUENCH_ASSERT(any(writes[i].buffer.desc.usage & BufferUsage::ComputeStorageWrite),
+                      "a compute pass writes only ComputeStorageWrite buffers");
+        bindings[i].buffer = sdl::buffer(writes[i].buffer);
+        bindings[i].cycle = writes[i].cycle;
+    }
+    ComputePass pass;
+    pass.m_native =
+        SDL_BeginGPUComputePass(nativeCommands(m_native), nullptr, 0, bindings.data(), std::uint32_t(writes.size()));
+    if (!pass.m_native) {
+        log::error("gpu", "SDL_BeginGPUComputePass: {}", SDL_GetError());
         return pass;
     }
     pass.m_commands = this;
@@ -364,6 +391,54 @@ void RenderPass::drawIndexedIndirect(const BufferRef& buffer, std::uint32_t offs
     QUENCH_ASSERT(m_pipelineBound, "draw without a pipeline");
     QUENCH_ASSERT(m_commands->m_device->caps.indirectDraw, "indirect draws need Caps::indirectDraw");
     SDL_DrawGPUIndexedPrimitivesIndirect(nativePass(m_native), sdl::buffer(buffer), offset, drawCount);
+}
+
+// ------------------------------------------------------------------ ComputePass
+
+ComputePass::ComputePass(ComputePass&& other) noexcept
+    : m_commands(std::exchange(other.m_commands, nullptr)), m_native(std::exchange(other.m_native, nullptr)),
+      m_pipelineBound(other.m_pipelineBound) {}
+
+ComputePass& ComputePass::operator=(ComputePass&& other) noexcept {
+    if (this != &other) {
+        end();
+        m_commands = std::exchange(other.m_commands, nullptr);
+        m_native = std::exchange(other.m_native, nullptr);
+        m_pipelineBound = other.m_pipelineBound;
+    }
+    return *this;
+}
+
+void ComputePass::end() {
+    if (!m_native) return;
+    SDL_EndGPUComputePass(nativeCompute(std::exchange(m_native, nullptr)));
+    m_commands->m_passOpen = false;
+    m_commands = nullptr;
+}
+
+void ComputePass::bindPipeline(const ComputePipeline& pipeline) {
+    QUENCH_ASSERT(m_native, "bindPipeline outside a compute pass");
+    QUENCH_ASSERT(pipeline, "bindPipeline with an empty pipeline");
+    SDL_BindGPUComputePipeline(nativeCompute(m_native), static_cast<SDL_GPUComputePipeline*>(Access::native(pipeline)));
+    m_pipelineBound = true;
+}
+
+void ComputePass::bindStorageBuffers(std::uint32_t firstSlot, std::span<const BufferRef> buffers) {
+    QUENCH_ASSERT(m_native, "bindStorageBuffers outside a compute pass");
+    QUENCH_ASSERT(buffers.size() <= 8, "at most 8 storage buffers");
+    std::array<SDL_GPUBuffer*, 8> native{};
+    for (std::size_t i = 0; i < buffers.size(); ++i) native[i] = sdl::buffer(buffers[i]);
+    SDL_BindGPUComputeStorageBuffers(nativeCompute(m_native), firstSlot, native.data(), std::uint32_t(buffers.size()));
+}
+
+void ComputePass::pushUniforms(std::uint32_t slot, const void* data, std::uint32_t size) {
+    QUENCH_ASSERT(m_native, "pushUniforms outside a compute pass");
+    pushUniformData(m_commands->m_native, ShaderStage::Compute, slot, data, size);
+}
+
+void ComputePass::dispatch(std::uint32_t groupsX, std::uint32_t groupsY, std::uint32_t groupsZ) {
+    QUENCH_ASSERT(m_pipelineBound, "dispatch without a pipeline");
+    SDL_DispatchGPUCompute(nativeCompute(m_native), groupsX, groupsY, groupsZ);
 }
 
 // ------------------------------------------------------------------ CopyPass

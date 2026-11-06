@@ -122,7 +122,12 @@ struct RenderStats {
     std::uint32_t lights = 0;         // local lights used this frame
     std::uint32_t renderWidth = 0;    // the 3D resolution
     std::uint32_t renderHeight = 0;
-    std::uint32_t pipelines = 0; // pipelines created so far
+    std::uint32_t pipelines = 0;        // pipelines created so far
+    std::uint32_t skinnedInstances = 0; // skinned instances posed on the GPU this frame (drawn in view or shadows)
+    std::uint32_t skinnedVertices = 0;
+    // GPU time of the latest skinning pass whose time is known (palette upload and compute, a few frames old);
+    // -1: none yet, or no GPU timing on this device (gpu::Caps::gpuTiming).
+    float skinningGpuMs = -1.0f;
 };
 
 class Renderer {

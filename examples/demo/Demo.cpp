@@ -62,6 +62,7 @@ public:
         m_sections.push_back(demo::makeInputSection());
         m_sections.push_back(demo::makeAssetsSection());
         m_sections.push_back(demo::makeAudioSection());
+        m_sections.push_back(demo::makeAnimationSection());
         for (const std::unique_ptr<Section>& section : m_sections)
             if (Result<void> r = section->init(*m_context); !r)
                 return Error{std::format("section {}: {}", section->id(), r.error())};
@@ -71,9 +72,10 @@ public:
                                                   Binding::gamepad(GamepadButton::RightShoulder)});
         m_prev = input.addAction("prev_section", {*Binding::key("["), *Binding::key("PageUp"),
                                                   Binding::gamepad(GamepadButton::LeftShoulder)});
-        for (std::size_t i = 0; i < m_sections.size() && i < 9; ++i)
+        // Keys 1 to 9, then 0 for the tenth.
+        for (std::size_t i = 0; i < m_sections.size() && i < 10; ++i)
             m_direct.push_back(
-                input.addAction(std::format("section_{}", i + 1), {*Binding::key(std::to_string(i + 1))}));
+                input.addAction(std::format("section_{}", i + 1), {*Binding::key(std::to_string((i + 1) % 10))}));
         m_toggleUi = input.addAction("toggle_ui", {*Binding::key("H"), Binding::gamepad(GamepadButton::Start)});
         m_drag = input.addAction("orbit_drag",
                                  {Binding::mouse(app::MouseButton::Left), Binding::mouse(app::MouseButton::Right)});
@@ -130,7 +132,7 @@ public:
         ImGui::SetNextWindowBgAlpha(0.8f);
         if (ImGui::Begin("Quench Demo", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             for (std::size_t i = 0; i < m_sections.size(); ++i) {
-                const std::string label = std::format("{}  {}", i + 1, m_sections[i]->title());
+                const std::string label = std::format("{}  {}", (i + 1) % 10, m_sections[i]->title());
                 if (ImGui::Selectable(label.c_str(), i == m_current)) select(i);
                 const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
                 m_menuPoints[i] = glm::vec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
@@ -228,6 +230,8 @@ public:
         if (name == "shadow_instances") return double(s.shadowInstances);
         if (name == "moved") return double(s.movedInstances);
         if (name == "lights") return double(s.lights);
+        if (name == "skinned_instances") return double(s.skinnedInstances);
+        if (name == "skinned_vertices") return double(s.skinnedVertices);
         if (name == "render_w") return double(s.renderWidth);
         if (name == "render_h") return double(s.renderHeight);
         if (name == "render_scale") return m_targetWidth > 0 ? double(s.renderWidth) / double(m_targetWidth) : 0.0;
@@ -288,9 +292,13 @@ public:
         (void)app;
         const render::RenderStats& s = m_renderer->stats();
         const render::ActiveEffects& e = m_renderer->effects();
-        return std::format("section={} render={}x{} draws={} instances={} shadow_draws={} lights={} aa={} cascades={}",
-                           current().id(), s.renderWidth, s.renderHeight, s.draws, s.instances, s.shadowDraws, s.lights,
-                           demo::antiAliasingName(e.antiAliasing), e.shadowCascades);
+        std::string details = std::format(
+            "section={} render={}x{} draws={} instances={} shadow_draws={} lights={} aa={} cascades={} skinned={}",
+            current().id(), s.renderWidth, s.renderHeight, s.draws, s.instances, s.shadowDraws, s.lights,
+            demo::antiAliasingName(e.antiAliasing), e.shadowCascades, s.skinnedInstances);
+        const std::string section = current().perfDetails();
+        if (!section.empty()) details += ' ' + section;
+        return details;
     }
 
 private:
@@ -468,7 +476,8 @@ private:
 
 constexpr const char* kHelp =
     "quench_demo options:\n"
-    "  --section ID   start in a section: materials, shadows, sky, post, hdr, physics, input, assets, audio\n";
+    "  --section ID   start in a section: materials, shadows, sky, post, hdr, physics, input, assets, audio,\n"
+    "                 animation\n";
 
 } // namespace
 

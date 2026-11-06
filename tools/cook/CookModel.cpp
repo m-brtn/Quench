@@ -1,4 +1,5 @@
 #include "Cook.h"
+#include "Gltf.h"
 
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
@@ -10,6 +11,7 @@
 #include <meshoptimizer.h>
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <fstream>
 #include <iterator>
@@ -21,6 +23,7 @@ namespace {
 
 using assets::ModelMaterial;
 using assets::ModelMesh;
+using assets::ModelSkinVertex;
 using assets::ModelVertex;
 
 Result<std::vector<std::uint8_t>> readFile(const std::filesystem::path& path) {
@@ -29,20 +32,32 @@ Result<std::vector<std::uint8_t>> readFile(const std::filesystem::path& path) {
     return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
-std::string_view gltfError(fastgltf::Error error) { return fastgltf::getErrorMessage(error); }
-
-glm::mat4 toGlm(const fastgltf::math::fmat4x4& m) {
-    glm::mat4 out(1.0f);
-    for (int c = 0; c < 4; ++c)
-        for (int r = 0; r < 4; ++r) out[c][r] = m[std::size_t(c)][std::size_t(r)];
-    return out;
-}
-
-// Triangles of one material, in model space.
+// Triangles of one material and skin, in model space (skinned: the bind pose).
 struct Batch {
     std::vector<ModelVertex> vertices;
+    std::vector<ModelSkinVertex> skinning; // skinned batches: one per vertex
     std::vector<std::uint32_t> indices;
 };
+
+// Four weights in 1/65535 that sum to 65535 exactly.
+ModelSkinVertex quantizeWeights(const float joints[4], const float weights[4]) {
+    ModelSkinVertex out;
+    float w[4], sum = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+        w[i] = std::isfinite(weights[i]) ? std::max(weights[i], 0.0f) : 0.0f;
+        sum += w[i];
+        out.joints[i] = std::uint16_t(joints[i]);
+    }
+    if (sum <= 0.0f) return {{out.joints[0], 0, 0, 0}, {65535, 0, 0, 0}};
+    int total = 0, largest = 0;
+    for (int i = 0; i < 4; ++i) {
+        out.weights[i] = std::uint16_t(std::lround(w[i] / sum * 65535.0f));
+        total += out.weights[i];
+        if (w[i] > w[largest]) largest = i;
+    }
+    out.weights[largest] = std::uint16_t(int(out.weights[largest]) + 65535 - total);
+    return out;
+}
 
 class ModelCooker {
 public:
@@ -56,17 +71,29 @@ public:
         if (m_asset.scenes.empty()) return Error{"the file has no scene"};
         const std::size_t scene = m_asset.defaultScene.value_or(0);
         if (scene >= m_asset.scenes.size()) return Error{"the default scene does not exist"};
+        m_jointNames = jointNames(m_asset);
         Result<void> status{};
         fastgltf::iterateSceneNodes(m_asset, scene, fastgltf::math::fmat4x4(),
                                     [&](fastgltf::Node& node, const fastgltf::math::fmat4x4& matrix) {
                                         if (!status || !node.meshIndex) return;
-                                        status = addMesh(m_asset.meshes[*node.meshIndex], toGlm(matrix));
+                                        if (!node.skinIndex) {
+                                            status = addMesh(m_asset.meshes[*node.meshIndex], toGlm(matrix), -1);
+                                            return;
+                                        }
+                                        // glTF ignores the transform of a skinned mesh's node.
+                                        Result<int> skin = modelSkin(*node.skinIndex);
+                                        if (!skin)
+                                            status = Error{skin.error()};
+                                        else
+                                            status = addMesh(m_asset.meshes[*node.meshIndex], glm::mat4(1.0f), *skin);
                                     });
         if (!status) return status;
         if (m_batches.empty()) return Error{"the scene has no triangles"};
+        if (!m_out.model.skins.empty() && m_options.scale != 1.0f)
+            return Error{"--scale is not supported for skinned models: scale the source"};
 
-        for (auto& [materialIndex, batch] : m_batches) {
-            Result<ModelMesh> mesh = optimize(std::move(batch), materialIndex);
+        for (auto& [key, batch] : m_batches) {
+            Result<ModelMesh> mesh = optimize(std::move(batch), key.second, key.first);
             if (!mesh) return Error{mesh.error()};
             m_out.model.meshes.push_back(std::move(*mesh));
         }
@@ -86,6 +113,37 @@ private:
     void note(std::string text) {
         if (std::find(m_out.notes.begin(), m_out.notes.end(), text) == m_out.notes.end())
             m_out.notes.push_back(std::move(text));
+    }
+
+    // The model's skin for a glTF skin (added on first use).
+    Result<int> modelSkin(std::size_t gltfSkin) {
+        if (const auto it = m_skins.find(gltfSkin); it != m_skins.end()) return it->second;
+        if (gltfSkin >= m_asset.skins.size()) return Error{std::format("no skin {}", gltfSkin)};
+        const fastgltf::Skin& skin = m_asset.skins[gltfSkin];
+        if (skin.joints.empty() || skin.joints.size() > 65536)
+            return Error{std::format("skin {}: {} joints", gltfSkin, skin.joints.size())};
+        assets::ModelSkin out;
+        out.name = skin.name.empty() ? std::format("skin{}", gltfSkin) : std::string(skin.name);
+        for (const std::size_t joint : skin.joints) {
+            if (joint >= m_jointNames.size()) return Error{std::format("skin {}: no node {}", gltfSkin, joint)};
+            out.joints.push_back(m_jointNames[joint]);
+        }
+        out.inverseBindMatrices.assign(out.joints.size(), glm::mat4(1.0f));
+        if (skin.inverseBindMatrices) {
+            const std::size_t accessor = *skin.inverseBindMatrices;
+            if (accessor >= m_asset.accessors.size() ||
+                m_asset.accessors[accessor].type != fastgltf::AccessorType::Mat4 ||
+                m_asset.accessors[accessor].count < out.joints.size())
+                return Error{std::format("skin {}: bad inverse bind matrices", gltfSkin)};
+            fastgltf::iterateAccessorWithIndex<fastgltf::math::fmat4x4>(
+                m_asset, m_asset.accessors[accessor], [&](const fastgltf::math::fmat4x4& m, std::size_t i) {
+                    if (i < out.inverseBindMatrices.size()) out.inverseBindMatrices[i] = toGlm(m);
+                });
+        }
+        const int index = int(m_out.model.skins.size());
+        m_out.model.skins.push_back(std::move(out));
+        m_skins.emplace(gltfSkin, index);
+        return index;
     }
 
     // The asset path of an image's cooked texture, cooked later in cookTextures().
@@ -141,7 +199,7 @@ private:
         return {};
     }
 
-    Result<void> addMesh(const fastgltf::Mesh& mesh, const glm::mat4& transform) {
+    Result<void> addMesh(const fastgltf::Mesh& mesh, const glm::mat4& transform, int skin) {
         glm::mat4 scale(m_options.scale);
         scale[3][3] = 1.0f;
         const glm::mat4 toModel = scale * transform;
@@ -223,6 +281,35 @@ private:
                 for (std::size_t i = 0; i < indices.size(); i += 3) std::swap(indices[i + 1], indices[i + 2]);
             if (!hasNormals) smoothNormals(vertices, indices);
 
+            std::vector<ModelSkinVertex> skinning;
+            if (skin >= 0) {
+                const auto joints = prim.findAttribute("JOINTS_0");
+                const auto weights = prim.findAttribute("WEIGHTS_0");
+                if (joints == prim.attributes.end() || weights == prim.attributes.end())
+                    return Error{std::format("{}: a skinned mesh without JOINTS_0 and WEIGHTS_0", what)};
+                if (prim.findAttribute("JOINTS_1") != prim.attributes.end())
+                    note(std::format("{}: only the first four joints per vertex (JOINTS_0) are cooked", what));
+                std::vector<fastgltf::math::fvec4> j(vertexCount), w(vertexCount);
+                r = read<fastgltf::math::fvec4>(joints->accessorIndex, fastgltf::AccessorType::Vec4, vertexCount,
+                                                what + " JOINTS_0",
+                                                [&](const fastgltf::math::fvec4& v, std::size_t i) { j[i] = v; });
+                if (!r) return r;
+                r = read<fastgltf::math::fvec4>(weights->accessorIndex, fastgltf::AccessorType::Vec4, vertexCount,
+                                                what + " WEIGHTS_0",
+                                                [&](const fastgltf::math::fvec4& v, std::size_t i) { w[i] = v; });
+                if (!r) return r;
+                const std::size_t jointCount = m_out.model.skins[std::size_t(skin)].joints.size();
+                skinning.resize(vertexCount);
+                for (std::size_t i = 0; i < vertexCount; ++i) {
+                    const float jv[4] = {j[i][0], j[i][1], j[i][2], j[i][3]};
+                    const float wv[4] = {w[i][0], w[i][1], w[i][2], w[i][3]};
+                    for (const float joint : jv)
+                        if (!(joint >= 0.0f && joint < float(jointCount)))
+                            return Error{std::format("{}: joint {} of a skin with {}", what, joint, jointCount)};
+                    skinning[i] = quantizeWeights(jv, wv);
+                }
+            }
+
             std::uint32_t materialIndex = 0;
             if (prim.materialIndex && *prim.materialIndex < m_asset.materials.size()) {
                 materialIndex = std::uint32_t(*prim.materialIndex);
@@ -230,9 +317,10 @@ private:
                 m_defaultMaterial = true;
                 materialIndex = std::uint32_t(m_asset.materials.size());
             }
-            Batch& batch = m_batches[materialIndex];
+            Batch& batch = m_batches[{skin, materialIndex}];
             const std::uint32_t base = std::uint32_t(batch.vertices.size());
             batch.vertices.insert(batch.vertices.end(), vertices.begin(), vertices.end());
+            batch.skinning.insert(batch.skinning.end(), skinning.begin(), skinning.end());
             for (const std::uint32_t index : indices) batch.indices.push_back(base + index);
         }
         return {};
@@ -255,17 +343,23 @@ private:
 
     // Welds equal vertices, orders triangles for the vertex cache, adds simplified levels of detail and orders the
     // vertices for fetching (one vertex buffer for every level).
-    Result<ModelMesh> optimize(Batch batch, std::uint32_t materialIndex) {
+    Result<ModelMesh> optimize(Batch batch, std::uint32_t materialIndex, int skin) {
         const std::size_t indexCount = batch.indices.size();
+        const bool skinned = skin >= 0;
         std::vector<std::uint32_t> remap(batch.vertices.size());
-        const std::size_t unique =
-            meshopt_generateVertexRemap(remap.data(), batch.indices.data(), indexCount, batch.vertices.data(),
-                                        batch.vertices.size(), sizeof(ModelVertex));
+        const meshopt_Stream streams[2] = {{batch.vertices.data(), sizeof(ModelVertex), sizeof(ModelVertex)},
+                                           {batch.skinning.data(), sizeof(ModelSkinVertex), sizeof(ModelSkinVertex)}};
+        const std::size_t unique = meshopt_generateVertexRemapMulti(remap.data(), batch.indices.data(), indexCount,
+                                                                    batch.vertices.size(), streams, skinned ? 2 : 1);
         std::vector<ModelVertex> vertices(unique);
+        std::vector<ModelSkinVertex> skinning(skinned ? unique : 0);
         std::vector<std::uint32_t> lod0(indexCount);
         meshopt_remapIndexBuffer(lod0.data(), batch.indices.data(), indexCount, remap.data());
         meshopt_remapVertexBuffer(vertices.data(), batch.vertices.data(), batch.vertices.size(), sizeof(ModelVertex),
                                   remap.data());
+        if (skinned)
+            meshopt_remapVertexBuffer(skinning.data(), batch.skinning.data(), batch.skinning.size(),
+                                      sizeof(ModelSkinVertex), remap.data());
         meshopt_optimizeVertexCache(lod0.data(), lod0.data(), indexCount, unique);
 
         std::vector<std::vector<std::uint32_t>> lods{lod0};
@@ -289,6 +383,7 @@ private:
 
         ModelMesh mesh;
         mesh.material = materialIndex;
+        mesh.skin = skin;
         mesh.name = materialIndex < m_out.model.materials.size() && !m_out.model.materials[materialIndex].name.empty()
                         ? m_out.model.materials[materialIndex].name
                         : std::format("mesh{}", m_out.model.meshes.size());
@@ -298,9 +393,17 @@ private:
                                  .error = errors[l]});
             mesh.indices.insert(mesh.indices.end(), lods[l].begin(), lods[l].end());
         }
-        mesh.vertices.resize(unique);
-        mesh.vertices.resize(meshopt_optimizeVertexFetch(mesh.vertices.data(), mesh.indices.data(), mesh.indices.size(),
-                                                         vertices.data(), unique, sizeof(ModelVertex)));
+        std::vector<std::uint32_t> fetch(unique);
+        const std::size_t used =
+            meshopt_optimizeVertexFetchRemap(fetch.data(), mesh.indices.data(), mesh.indices.size(), unique);
+        meshopt_remapIndexBuffer(mesh.indices.data(), mesh.indices.data(), mesh.indices.size(), fetch.data());
+        mesh.vertices.resize(used);
+        meshopt_remapVertexBuffer(mesh.vertices.data(), vertices.data(), unique, sizeof(ModelVertex), fetch.data());
+        if (skinned) {
+            mesh.skinning.resize(used);
+            meshopt_remapVertexBuffer(mesh.skinning.data(), skinning.data(), unique, sizeof(ModelSkinVertex),
+                                      fetch.data());
+        }
         mesh.boundsMin = mesh.boundsMax = mesh.vertices[0].position;
         for (const ModelVertex& v : mesh.vertices) {
             mesh.boundsMin = glm::min(mesh.boundsMin, v.position);
@@ -373,8 +476,10 @@ private:
     const ModelOptions& m_options;
     JobSystem& m_jobs;
     CookedModel& m_out;
-    std::map<std::uint32_t, Batch> m_batches;                     // by material; ordered: deterministic output
+    std::map<std::pair<int, std::uint32_t>, Batch> m_batches;     // by (skin, material); ordered: deterministic output
     std::map<std::pair<std::size_t, bool>, std::string> m_images; // (image, sRGB) -> asset path
+    std::map<std::size_t, int> m_skins;                           // glTF skin -> model skin
+    std::vector<std::string> m_jointNames;
     bool m_defaultMaterial = false;
 };
 
@@ -386,38 +491,9 @@ Result<CookedModel> cookModel(const std::filesystem::path& source, std::string_v
         return Error{"cook: lods must be at least 1, the LOD ratio between 0 and 1, the scale positive"};
     CookedModel out;
     out.inputs.push_back(source);
-    fastgltf::Expected<fastgltf::GltfDataBuffer> data = fastgltf::GltfDataBuffer::FromPath(source);
-    if (data.error() != fastgltf::Error::None)
-        return Error{std::format("{}: {}", source.string(), gltfError(data.error()))};
-
-    fastgltf::Parser parser(fastgltf::Extensions::KHR_mesh_quantization | fastgltf::Extensions::KHR_texture_transform |
-                            fastgltf::Extensions::KHR_materials_emissive_strength |
-                            fastgltf::Extensions::KHR_materials_unlit);
-    const std::filesystem::path directory = source.parent_path();
-    fastgltf::Expected<fastgltf::Asset> asset =
-        parser.loadGltf(data.get(), directory, fastgltf::Options::GenerateMeshIndices);
-    if (asset.error() != fastgltf::Error::None)
-        return Error{std::format("{}: {}", source.string(), gltfError(asset.error()))};
-
-    // External buffers are read here, not by fastgltf, so that every file read is listed in the depfile.
-    for (fastgltf::Buffer& buffer : asset->buffers) {
-        const auto* uri = std::get_if<fastgltf::sources::URI>(&buffer.data);
-        if (!uri) continue;
-        if (!uri->uri->isLocalPath()) return Error{std::format("{}: a buffer is not a local file", source.string())};
-        const std::filesystem::path path = directory / uri->uri->fspath();
-        out.inputs.push_back(path);
-        Result<std::vector<std::uint8_t>> bytes = readFile(path);
-        if (!bytes) return Error{bytes.error()};
-        if (uri->fileByteOffset > bytes->size()) return Error{std::format("{}: offset past the end", path.string())};
-        const auto* begin = reinterpret_cast<const std::byte*>(bytes->data()) + uri->fileByteOffset;
-        buffer.data = fastgltf::sources::Vector{
-            .bytes = std::vector<std::byte>(begin, reinterpret_cast<const std::byte*>(bytes->data()) + bytes->size()),
-            .mimeType = fastgltf::MimeType::GltfBuffer};
-    }
-    if (const fastgltf::Error error = fastgltf::validate(asset.get()); error != fastgltf::Error::None)
-        return Error{std::format("{}: {}", source.string(), gltfError(error))};
-
-    ModelCooker cooker(asset.get(), directory, texturePrefix, options, jobs, out);
+    Result<fastgltf::Asset> asset = loadGltf(source, fastgltf::Options::GenerateMeshIndices, out.inputs);
+    if (!asset) return Error{asset.error()};
+    ModelCooker cooker(*asset, source.parent_path(), texturePrefix, options, jobs, out);
     if (Result<void> r = cooker.run(); !r) return Error{std::format("{}: {}", source.string(), r.error())};
     return out;
 }

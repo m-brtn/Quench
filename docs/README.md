@@ -1,10 +1,13 @@
 # Quench documentation
 
 Stages 1 to 3, 5 and 7 of the [Roadmap](roadmap.md) are implemented, stage 4 (games on the engine) for one game, and
-stage 6 except shader hot reload (version 0.5.0): the core and physics modules, the job system, the asset system and
+stage 6 except shader hot reload (version 0.5.0); stage 8 (animation) is built on top of 0.5.0 and not released yet:
+the core and physics modules, the job system, the asset system and
 the asset cooker, the GPU layer over SDL GPU, the app shell with HDR display output, the render module (a retained
-scene and the standard frame), audio (the mixer, 3D sound, device output, offline captures; not yet run on the
-iPhone or listened to), the sample, the engine demo and the game template. Where a document describes something
+scene and the standard frame, GPU skinning), audio (the mixer, 3D sound, device output, offline captures; not yet run
+on the iPhone or listened to), animation (skeletons and clips, state machines, blending, events, root motion, IK and
+foot placement; not yet run on the iPhone or looked at in motion by the user), the sample, the engine demo and the
+game template. Where a document describes something
 planned, it says so. [Migration](migration.md) describes the engine code in the two
 games, what has moved and what is not moved yet.
 
@@ -12,9 +15,10 @@ games, what has moved and what is not moved yet.
 |---|---|
 | [Architecture](architecture.md) | Modules and targets, the graphics layer, rendering, shaders, main loop, files, threads, assets, audio, animation |
 | [App shell](app.md) | The game interface, input, ImGui, command line flags, scenarios, HDR output, captures and golden images, `quench_add_game()`, iOS runs |
-| [Jobs, assets and the cook](assets.md) | The job system, asset IDs and the manager, budgets and placeholders, textures and models in a scene, streaming by distance, hot reload, the cooked formats, `quench_cook` and `quench_cook_assets()`, limitations |
+| [Jobs, assets and the cook](assets.md) | The job system, asset IDs and the manager, budgets and placeholders, textures and models in a scene, streaming by distance, hot reload, the cooked formats (skins, skeletons and clip sets included), `quench_cook` and `quench_cook_assets()`, limitations |
 | [Audio](audio.md) | The mixer, buses, sounds and streams, generators, 3D sound, voice limit, the audio thread, device output and the iOS audio session, offline mixing and captures, `audio_measure`, the demo section and tests, platforms, limitations |
-| [Render module](render.md) | The retained scene, the standard frame, sky and sun, tone mapping and HDR output, fallbacks, game passes, surface shaders, the shader library, limitations |
+| [Animation](animation.md) | Skeletons and clip sets, graphs (state machines), events, root motion, IK, foot placement and attachments, cooking glTF skins and animations, the file formats, GPU skinning, budgets and failures, the demo section and tests, platforms, limitations |
+| [Render module](render.md) | The retained scene, the standard frame, sky and sun, tone mapping and HDR output, fallbacks, game passes, surface shaders, the shader library, skinned meshes, limitations |
 | [Engine demo](demo.md) | The demo's sections and controls, its checks and golden images, its benchmark, packaged builds (`tools/package_demo.sh`) |
 | [Performance](performance.md) | The benchmark, how to run and compare it, budgets per device |
 | [Platforms](platforms.md) | Target platforms, what has run where, backend and shader formats, known constraints (WebGPU, Android, texture formats) |

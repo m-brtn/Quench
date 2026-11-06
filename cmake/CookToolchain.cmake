@@ -38,7 +38,9 @@ FetchContent_MakeAvailable(stb)
 
 # Built only where something needs it (a quench_cook_assets() call, the cook tests, the host-tools preset).
 add_library(quench_cook_lib STATIC EXCLUDE_FROM_ALL
+    ${Quench_SOURCE_DIR}/tools/cook/CookAnimation.cpp
     ${Quench_SOURCE_DIR}/tools/cook/CookModel.cpp
+    ${Quench_SOURCE_DIR}/tools/cook/Gltf.cpp
     ${Quench_SOURCE_DIR}/tools/cook/CookTexture.cpp
     ${Quench_SOURCE_DIR}/tools/cook/ThirdParty.cpp
     ${bc7enc_SOURCE_DIR}/bc7enc.cpp)
@@ -47,8 +49,8 @@ set_source_files_properties(${Quench_SOURCE_DIR}/tools/cook/ThirdParty.cpp ${bc7
     PROPERTIES COMPILE_OPTIONS "-w")
 target_include_directories(quench_cook_lib PUBLIC ${Quench_SOURCE_DIR}/tools/cook)
 target_include_directories(quench_cook_lib SYSTEM PRIVATE ${stb_SOURCE_DIR} ${bc7enc_SOURCE_DIR})
-target_link_libraries(quench_cook_lib PUBLIC quench_assets quench_core PRIVATE fastgltf::fastgltf quench_meshoptimizer
-                                                                               quench_glm)
+target_link_libraries(quench_cook_lib PUBLIC quench_assets quench_animation quench_core
+                                      PRIVATE fastgltf::fastgltf quench_meshoptimizer quench_glm)
 
 add_executable(quench_cook EXCLUDE_FROM_ALL ${Quench_SOURCE_DIR}/tools/cook/Cook.cpp)
 quench_configure_target(quench_cook)

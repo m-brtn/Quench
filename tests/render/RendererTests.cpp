@@ -458,3 +458,128 @@ QUENCH_TEST(renderer_taa_motion_vectors_and_render_scale) {
     const Rgba8 c = at(pixels, pixelOf(view, glm::vec3(0.3f, 0.4f, 0.0f)));
     CHECK(sum(c) > 150, "the box is drawn: %d %d %d", c.r, c.g, c.b);
 }
+
+namespace {
+
+// Two stacked boxes of 0.5 x 1 x 0.5 m: the lower one (y 0..1) moved by joint 0, the upper one (y 1..2) by joint 1;
+// the middle row of the upper box is shared half and half.
+struct SkinnedBars {
+    MeshData mesh;
+    std::vector<SkinVertex> skin;
+    MeshDesc desc() const { return {mesh.vertices, mesh.indices, "bars", skin, 2}; }
+};
+
+SkinnedBars skinnedBars() {
+    SkinnedBars out;
+    for (int part = 0; part < 2; ++part) {
+        const MeshData box = boxMesh(glm::vec3(0.25f, 0.5f, 0.25f));
+        const auto base = std::uint32_t(out.mesh.vertices.size());
+        for (Vertex v : box.vertices) {
+            v.position.y += 0.5f + float(part);
+            out.mesh.vertices.push_back(v);
+            SkinVertex s;
+            s.joints = {std::uint16_t(part), 0, 0, 0};
+            out.skin.push_back(s);
+        }
+        for (std::uint32_t i : box.indices) out.mesh.indices.push_back(base + i);
+    }
+    return out;
+}
+
+} // namespace
+
+QUENCH_TEST(renderer_skins_on_the_gpu) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, plainSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const SkinnedBars bars = skinnedBars();
+    Result<MeshId> mesh = scene.addMesh(bars.desc());
+    REQUIRE(mesh, "%s", mesh.error().c_str());
+    CHECK(scene.jointCount(*mesh) == 2, "%u joints", scene.jointCount(*mesh));
+    const MaterialId red = scene.addMaterial({.baseColor = glm::vec4(0.8f, 0.05f, 0.05f, 1.0f)});
+    const InstanceId instance = scene.addInstance({.mesh = *mesh, .material = red});
+    addSun(scene, glm::vec3(-0.3f, -1.0f, -0.5f));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0.75f, 1.0f, 6.0f), glm::vec3(0.75f, 1.0f, 0.0f));
+    const glm::vec3 upper(0.0f, 1.6f, 0.25f), moved(1.5f, 0.6f, 0.25f);
+    const auto isRed = [](Rgba8 c) { return c.r > 2 * c.b && c.r > 60; };
+
+    // Without a palette: the bind pose.
+    std::vector<Rgba8> pixels = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(isRed(at(pixels, pixelOf(view, upper))), "bind pose: the upper bar is drawn");
+    CHECK(!isRed(at(pixels, pixelOf(view, moved))), "bind pose: nothing to the right");
+    CHECK(renderer->stats().skinnedInstances == 1 && renderer->stats().skinnedVertices == bars.mesh.vertices.size(),
+          "stats: %u skinned instances, %u vertices", renderer->stats().skinnedInstances,
+          renderer->stats().skinnedVertices);
+
+    // Joint 1 moves the upper bar 1.5 m right and 1 m down, next to the lower one.
+    const std::array<glm::mat4, 2> palette{glm::mat4(1.0f), glm::translate(glm::mat4(1.0f), {1.5f, -1.0f, 0.0f})};
+    scene.setJointPalette(instance, palette);
+    pixels = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(!isRed(at(pixels, pixelOf(view, upper))), "posed: the upper bar left its bind place");
+    CHECK(isRed(at(pixels, pixelOf(view, moved))), "posed: the upper bar is drawn at its new place");
+    CHECK(isRed(at(pixels, pixelOf(view, glm::vec3(0.0f, 0.5f, 0.25f)))), "posed: the lower bar stays");
+
+    // Culling uses the posed bounds: the bind pose is out of view, the pose brings it in.
+    scene.setTransform(instance, glm::translate(glm::mat4(1.0f), {-20.0f, 0.0f, 0.0f}), true);
+    const std::array<glm::mat4, 2> back{glm::translate(glm::mat4(1.0f), {20.0f, 0.0f, 0.0f}),
+                                        glm::translate(glm::mat4(1.0f), {21.5f, -1.0f, 0.0f})};
+    scene.setJointPalette(instance, back, true);
+    pixels = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().culled == 0, "%u culled", renderer->stats().culled);
+    CHECK(isRed(at(pixels, pixelOf(view, moved))), "posed back into view from 20 m away");
+}
+
+QUENCH_TEST(renderer_skinned_motion_vectors) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.antiAliasing = AntiAliasing::Taa;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().antiAliasing != AntiAliasing::Taa) QUENCH_SKIP("no TAA on this device");
+    Scene scene(device);
+    const SkinnedBars bars = skinnedBars();
+    Result<MeshId> mesh = scene.addMesh(bars.desc());
+    REQUIRE(mesh, "%s", mesh.error().c_str());
+    const InstanceId instance = scene.addInstance({.mesh = *mesh, .material = scene.addMaterial({})});
+    addSun(scene, glm::vec3(-0.3f, -1.0f, -0.5f));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0.75f, 1.0f, 6.0f), glm::vec3(0.75f, 1.0f, 0.0f));
+    for (int frame = 0; frame < 4; ++frame) {
+        const std::array<glm::mat4, 2> palette{
+            glm::mat4(1.0f), glm::translate(glm::mat4(1.0f), glm::vec3(0.1f * float(frame), 0.0f, 0.0f))};
+        scene.setJointPalette(instance, palette);
+        renderOnce(device, *renderer, scene, view, *target);
+        CHECK(renderer->stats().movedInstances == 1, "frame %d: %u in the motion vectors", frame,
+              renderer->stats().movedInstances);
+    }
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().movedInstances == 0, "an unchanged pose has no motion");
+    const std::array<glm::mat4, 2> jump{glm::mat4(1.0f), glm::translate(glm::mat4(1.0f), glm::vec3(1.0f, 0, 0))};
+    scene.setJointPalette(instance, jump, true);
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().movedInstances == 0, "a teleported pose has no motion");
+}
+
+QUENCH_TEST(renderer_rejects_bad_skins) {
+    QUENCH_GPU_DEVICE(device);
+    Scene scene(device);
+    SkinnedBars bars = skinnedBars();
+    MeshDesc desc = bars.desc();
+    desc.skin = std::span(bars.skin).first(bars.skin.size() - 1);
+    CHECK(!scene.addMesh(desc), "a skin entry per vertex");
+    desc = bars.desc();
+    desc.jointCount = 0;
+    CHECK(!scene.addMesh(desc), "joints needed");
+    bars.skin[3].joints[1] = 7;
+    bars.skin[3].weights = {40000, 25535, 0, 0};
+    Result<MeshId> bad = scene.addMesh(bars.desc());
+    CHECK(!bad && bad.error().find("joint 7") != std::string::npos, "joint out of range: %s",
+          bad ? "accepted" : bad.error().c_str());
+    bars.skin[3].weights = {65535, 0, 0, 0}; // a zero weight may name any joint
+    CHECK(scene.addMesh(bars.desc()), "an unused joint index is ignored");
+    CHECK(scene.meshCount() == 1, "%u meshes", scene.meshCount());
+}

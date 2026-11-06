@@ -97,6 +97,8 @@ enum class BufferUsage : std::uint8_t {
     Index = 1 << 1,
     Indirect = 1 << 2,
     GraphicsStorageRead = 1 << 3,
+    ComputeStorageRead = 1 << 4,
+    ComputeStorageWrite = 1 << 5, // ComputePass read-write bindings (also readable there)
 };
 QUENCH_FLAGS(BufferUsage)
 
@@ -256,6 +258,12 @@ struct GraphicsPipelineDesc {
     TextureFormat depthFormat = TextureFormat::Invalid; // Invalid: no depth target
     std::uint32_t sampleCount = 1;
     bool alphaToCoverage = false;
+    std::string_view name{};
+};
+
+// The resource counts and the thread group size come from the shader's reflection (ShaderBlob::resources).
+struct ComputePipelineDesc {
+    const ShaderBlob* shader = nullptr;
     std::string_view name{};
 };
 

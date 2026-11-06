@@ -1,0 +1,608 @@
+// Animation: a jointed mannequin cooked from a procedural glTF (tools/assets/make_demo_character.py: one skin of 20
+// joints and the clips idle, walk, run, jump, wave and lean) and animated by animation::AnimationSystem. The hero
+// walks a circle by its clips' root motion: a blend tree over its speed (idle, walk, run), a jump and a wave by
+// trigger with cross-fades (the wave on a layer masked to the right arm), an additive lean, its head turned toward
+// the camera, a torch held in its left hand and a footstep sound at each contact event. Two characters stand on a
+// slope and across a step, their feet placed on the ground by a ray query into a physics world. Behind them a crowd
+// walks in rings, updated in parallel on the job system and skinned by a compute pass.
+
+#include "Demo.h"
+
+#include <quench/animation/AnimationSystem.h>
+#include <quench/assets/AssetManager.h>
+#include <quench/audio/AudioSystem.h>
+#include <quench/physics/PhysicsWorld.h>
+#include <quench/render/Daylight.h>
+#include <quench/render/SceneAssets.h>
+
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+
+#include <glm/ext/matrix_transform.hpp>
+#include <glm/geometric.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/trigonometric.hpp>
+#include <imgui.h>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <format>
+#include <memory>
+#include <numbers>
+#include <optional>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace demo {
+namespace {
+
+using namespace quench;
+using namespace quench::render;
+using animation::AnimationSystem;
+using animation::CharacterId;
+using app::Binding;
+using app::GamepadButton;
+
+constexpr const char* kModel = "characters/mannequin.qmodel";
+constexpr const char* kSkeleton = "characters/mannequin.qskel";
+constexpr const char* kClips = "characters/mannequin.qanim";
+constexpr const char* kGraph = "characters/mannequin.graph.json";
+constexpr const char* kStep = "sounds/step.wav";
+
+constexpr float kPi = std::numbers::pi_v<float>;
+constexpr float kMaxSpeed = 2.7f;   // m/s: the run clip's speed (the graph's blend points are in m/s)
+constexpr float kHeroRadius = 2.4f; // m: the circle the hero walks around kHeroCenter
+const glm::vec2 kHeroCenter(1.6f, -1.4f);
+constexpr float kHeroStart = -0.7f;  // radians on the circle; 0 is its point nearest +Z
+constexpr float kGroundHalf = 28.0f; // m
+const glm::vec2 kCrowdCenter(1.5f, -11.5f);
+constexpr float kCrowdFirstRing = 2.6f; // m
+constexpr float kCrowdRingStep = 1.25f; // m between rings
+constexpr float kCrowdSpacing = 1.3f;   // m between characters on a ring
+constexpr int kMaxCrowd = 512;
+constexpr std::size_t kRecentFrames = 240; // the perf line's update and skinning times: 2 s at 120 Hz
+// The foot placement stand, left of the hero's circle: a ramp rising toward +X from the floor, and a step.
+const glm::vec2 kSlopeAt(-2.6f, 0.0f);
+const glm::vec3 kStepAt(-1.2f, 0.0f, 2.5f);
+constexpr float kSlopeHalf = 1.2f; // m: half the ramp's length
+constexpr float kStepHeight = 0.2f;
+
+glm::mat4 yawed(const glm::vec3& position, float yaw) {
+    return glm::rotate(glm::translate(glm::mat4(1.0f), position), yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+}
+
+JPH::Quat toJolt(const glm::quat& q) { return JPH::Quat(q.x, q.y, q.z, q.w); }
+
+// One animated character and its model in the scene.
+struct Walker {
+    CharacterId id;
+    ModelInstanceId model;
+    int skin = -1; // AnimationSystem::addSkin, once the model is ready
+    glm::vec3 position{0.0f};
+    float yaw = 0.0f; // about +Y; 0 faces +Z
+    // A circle walked by root motion (radius 0: stands): the angle on it follows the distance the clips moved.
+    glm::vec2 center{0.0f};
+    float radius = 0.0f;
+    float angle = 0.0f;
+    float turn = 1.0f; // +1: the angle grows (counterclockwise seen from below), -1: it shrinks
+    glm::mat4 transform{1.0f};
+};
+
+class AnimationSection final : public Section {
+public:
+    AnimationSection() {
+        camera.target = glm::vec3(0.0f, 0.5f, -0.6f);
+        camera.distance = 9.0f;
+        camera.yaw = glm::radians(2.0f);
+        camera.pitch = glm::radians(22.0f);
+        camera.maxDistance = 70.0f;
+    }
+
+    std::string_view id() const override { return "animation"; }
+    std::string_view title() const override { return "Animation"; }
+    std::string_view about() const override {
+        return "Cooked glTF clips on quench::animation: speed blend, jump and wave with cross-fades, a masked arm "
+               "layer, an additive lean, root motion, footstep events with sound, look-at, foot placement on a slope "
+               "and a step (ray queries into Jolt), a held torch; a crowd updated on jobs and skinned on the GPU.";
+    }
+
+    Result<void> init(Context& c) override {
+        m_scene.emplace(c.app.device());
+        Scene& s = *m_scene;
+        const Result<MeshId> ground = addMesh(s, planeMesh(glm::vec2(kGroundHalf), 1.0f));
+        const Result<MeshId> slope = addMesh(s, boxMesh(glm::vec3(kSlopeHalf, 0.25f, 1.0f)));
+        const Result<MeshId> step = addMesh(s, boxMesh(glm::vec3(0.5f, kStepHeight * 0.5f, 0.8f)));
+        const Result<MeshId> stick = addMesh(s, boxMesh(glm::vec3(0.014f, 0.014f, 0.22f)));
+        const Result<MeshId> flame = addMesh(s, sphereMesh(0.045f, 10, 16));
+        const Result<MeshId> path = addMesh(s, torusMesh(kHeroRadius, 0.03f, 96, 8));
+        for (const Result<MeshId>* m : {&ground, &slope, &step, &stick, &flame, &path})
+            if (!*m) return Error{m->error()};
+        s.addInstance({.mesh = *ground,
+                       .material = addCheckerMaterial(c, s, glm::vec3(0.45f, 0.46f, 0.47f),
+                                                      glm::vec3(0.36f, 0.37f, 0.39f), 1.0f)});
+        const MaterialId stone =
+            s.addMaterial({.baseColor = glm::vec4(0.42f, 0.4f, 0.37f, 1.0f), .roughness = 0.8f, .name = "stone"});
+        m_slopeInstance = s.addInstance({.mesh = *slope, .material = stone});
+        s.addInstance({.mesh = *step,
+                       .material = stone,
+                       .transform = placed(kStepAt + glm::vec3(0.52f, kStepHeight * 0.5f, 0.0f))});
+        s.addInstance({.mesh = *path,
+                       .material = s.addMaterial({.baseColor = glm::vec4(0.25f, 0.27f, 0.3f, 1.0f), .roughness = 0.6f}),
+                       .transform = placed(glm::vec3(kHeroCenter.x, 0.005f, kHeroCenter.y)),
+                       .castsShadows = false});
+        m_stick = s.addInstance(
+            {.mesh = *stick,
+             .material = s.addMaterial({.baseColor = glm::vec4(0.35f, 0.22f, 0.12f, 1.0f), .roughness = 0.7f})});
+        m_flame = s.addInstance({.mesh = *flame,
+                                 .material = s.addMaterial({.baseColor = glm::vec4(1.0f, 0.55f, 0.15f, 1.0f),
+                                                            .emissive = glm::vec3(6.0f, 2.4f, 0.5f),
+                                                            .name = "flame"}),
+                                 .castsShadows = false});
+        const glm::vec3 towardSun = skyDirection(38.0f, 40.0f);
+        const Daylight day = daylightFor(towardSun);
+        s.setEnvironment(day.environment);
+        s.addLight({.type = LightType::Directional, .color = day.sunColor, .direction = -towardSun});
+
+        // The ground the feet are placed on: the floor, the slope and the step as static bodies; the characters'
+        // rays query it from the job threads while it is not stepping (it never steps here).
+        m_world = std::make_unique<PhysicsWorld>(&c.app.jobs());
+        JPH::BodyInterface& bodies = m_world->bodies();
+        bodies.CreateAndAddBody(JPH::BodyCreationSettings(new JPH::BoxShape(JPH::Vec3(kGroundHalf, 0.5f, kGroundHalf)),
+                                                          JPH::RVec3(0.0f, -0.5f, 0.0f), JPH::Quat::sIdentity(),
+                                                          JPH::EMotionType::Static, PhysicsLayers::kStatic),
+                                JPH::EActivation::DontActivate);
+        bodies.CreateAndAddBody(JPH::BodyCreationSettings(new JPH::BoxShape(JPH::Vec3(0.5f, kStepHeight * 0.5f, 0.8f)),
+                                                          JPH::RVec3(kStepAt.x + 0.52f, kStepHeight * 0.5f, kStepAt.z),
+                                                          JPH::Quat::sIdentity(), JPH::EMotionType::Static,
+                                                          PhysicsLayers::kStatic),
+                                JPH::EActivation::DontActivate);
+        m_slopeShape = new JPH::BoxShape(JPH::Vec3(kSlopeHalf, 0.25f, 1.0f));
+        placeSlope();
+        m_world->optimizeBroadPhase();
+
+        // The section's own asset manager: SceneAssets registers its asset types once per manager, and the Assets
+        // section's scene has the app's.
+        m_manager = std::make_unique<assets::AssetManager>(c.app.jobs(), c.app.assets().settings());
+        m_assets.emplace(s, *m_manager);
+        m_anim = std::make_unique<AnimationSystem>(*m_manager, c.app.jobs());
+        m_anim->setGroundQuery(
+            [world = m_world.get()](const glm::vec3& from, float length) { return groundHit(*world, from, length); });
+        m_model = m_assets->loadModel(kModel);
+        m_skeleton = m_anim->loadSkeleton(kSkeleton);
+        m_clips = m_anim->loadClips(kClips);
+        m_graph = m_anim->loadGraph(kGraph);
+        m_step = c.app.audio().load(kStep);
+
+        app::Input& input = c.app.input();
+        m_jumpAction = input.addAction("anim_jump", {*Binding::key("J"), Binding::gamepad(GamepadButton::South)});
+        m_waveAction = input.addAction("anim_wave", {*Binding::key("K"), Binding::gamepad(GamepadButton::West)});
+        restart();
+        return {};
+    }
+
+    void enter(Context& c) override { c.app.audio().setListener(listener()); }
+
+    void update(Context& c, double frameDt) override {
+        const float dt = std::min(float(frameDt), 0.1f);
+        const app::Input& input = c.app.input();
+        if (input.pressed(m_jumpAction)) m_anim->trigger(m_hero.id, "jump");
+        if (input.pressed(m_waveAction)) m_anim->trigger(m_hero.id, "wave");
+        m_anim->setFloat(m_hero.id, "speed", m_speed);
+        m_anim->setFloat(m_hero.id, "lean", m_lean);
+        m_anim->setLookAt(m_hero.id, m_lookAt ? std::optional<glm::vec3>(camera.eye()) : std::nullopt);
+        for (const CharacterId id : {m_hero.id, m_slopeStand.id, m_stepStand.id}) m_anim->setFootPlacement(id, m_feet);
+
+        bindSkins();
+        m_manager->update();
+        m_assets->update();
+        m_anim->update(dt);
+        m_recentUpdateMs[m_recentNext] = float(m_anim->stats().updateMs);
+        m_recentSkinningMs[m_recentNext] = c.renderer.stats().skinningGpuMs;
+        m_recentNext = (m_recentNext + 1) % kRecentFrames;
+        m_recentCount = std::min(m_recentCount + 1, kRecentFrames);
+        footsteps(c);
+
+        // Draw at the transform the update used (IK, look-at and the attachments match it), then move on by the
+        // root motion for the next update.
+        forEachWalker([&](Walker& w) {
+            if (w.skin >= 0) m_assets->setJointPalette(w.model, 0, m_anim->skinPalette(w.id, w.skin), m_teleport);
+            m_assets->setTransform(w.model, w.transform, m_teleport);
+            walk(w);
+        });
+        m_teleport = false;
+        const glm::mat4 hand = m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, "hand_l"));
+        const bool holding = m_anim->findJoint(m_hero.id, "hand_l") >= 0;
+        m_scene->setVisible(m_stick, holding);
+        m_scene->setVisible(m_flame, holding);
+        m_stickTransform = hand * glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.075f, 0.06f));
+        m_scene->setTransform(m_stick, m_stickTransform);
+        m_scene->setTransform(m_flame, hand * glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.075f, 0.29f)));
+        c.app.audio().setListener(listener());
+    }
+
+    void ui(Context& c) override {
+        const animation::AnimationStats& stats = m_anim->stats();
+        const RenderStats& r = c.renderer.stats();
+        const animation::CharacterState hero = m_anim->state(m_hero.id);
+        if (!hero.bound)
+            ImGui::TextUnformatted(failedAssets() > 0 ? "Character assets failed (see the log)" : "Loading...");
+        else if (hero.nextState.empty())
+            ImGui::Text("Hero: %.*s", int(hero.layerState.size()), hero.layerState.data());
+        else
+            ImGui::Text("Hero: %.*s -> %.*s %.0f%%", int(hero.layerState.size()), hero.layerState.data(),
+                        int(hero.nextState.size()), hero.nextState.data(), hero.transition * 100.0f);
+        ImGui::SliderFloat("Speed", &m_speed, 0.0f, kMaxSpeed, "%.2f m/s");
+        ImGui::SliderFloat("Lean", &m_lean, 0.0f, 1.0f, "%.2f");
+        if (ImGui::Button("Jump (J)")) m_anim->trigger(m_hero.id, "jump");
+        ImGui::SameLine();
+        if (ImGui::Button("Wave (K)")) m_anim->trigger(m_hero.id, "wave");
+        ImGui::SameLine();
+        if (ImGui::Button("Restart")) restart();
+        ImGui::Checkbox("Foot IK", &m_feet);
+        ImGui::SameLine();
+        ImGui::Checkbox("Look at camera", &m_lookAt);
+        ImGui::Checkbox("Footstep sound", &m_footstepSound);
+        ImGui::SameLine();
+        ImGui::Text("%d steps", m_footsteps);
+        float slope = m_slopeDegrees;
+        if (ImGui::SliderFloat("Slope", &slope, 0.0f, 30.0f, "%.0f deg")) setSlope(slope);
+        int crowd = m_crowdSize;
+        if (ImGui::SliderInt("Crowd", &crowd, 0, kMaxCrowd)) setCrowd(crowd);
+
+        ImGui::SeparatorText("Cost");
+        ImGui::Text("Characters %u, joints %u", stats.characters, stats.joints);
+        ImGui::Text("Samples %u, rays %u, events %u", stats.clipsSampled, stats.groundQueries, stats.events);
+        ImGui::Text("Skinned %u (%u vertices)", r.skinnedInstances, r.skinnedVertices);
+        if (c.app.deterministic()) {
+            ImGui::TextUnformatted("Times hidden (deterministic run)");
+        } else {
+            ImGui::Text("Update %.3f ms, %d threads", stats.updateMs, stats.threads);
+            if (r.skinningGpuMs >= 0.0f)
+                ImGui::Text("Skinning GPU %.3f ms", double(r.skinningGpuMs));
+            else
+                ImGui::TextUnformatted("Skinning GPU time n/a");
+        }
+    }
+
+    Scene& scene() override { return *m_scene; }
+
+    // Over the last kRecentFrames frames: the mean and largest update time, the mean skinning GPU time (frames
+    // without a measurement left out).
+    std::string perfDetails() const override {
+        if (!m_anim || m_recentCount == 0) return {};
+        float updateSum = 0.0f, updateMax = 0.0f, skinningSum = 0.0f;
+        int skinningFrames = 0;
+        for (std::size_t i = 0; i < m_recentCount; ++i) {
+            updateSum += m_recentUpdateMs[i];
+            updateMax = std::max(updateMax, m_recentUpdateMs[i]);
+            if (m_recentSkinningMs[i] < 0.0f) continue;
+            skinningSum += m_recentSkinningMs[i];
+            ++skinningFrames;
+        }
+        return std::format("anim_frames={} anim_update_ms={:.3f} anim_update_max_ms={:.3f} anim_threads={} "
+                           "skinning_gpu_ms={:.3f}",
+                           m_recentCount, updateSum / float(m_recentCount), updateMax, m_anim->stats().threads,
+                           skinningFrames > 0 ? skinningSum / float(skinningFrames) : -1.0f);
+    }
+
+    std::optional<double> value(std::string_view name) const override {
+        if (!m_anim) return std::nullopt;
+        const animation::AnimationStats& stats = m_anim->stats();
+        const animation::CharacterState hero = m_anim->state(m_hero.id);
+        if (name == "anim_ready")
+            return m_model.ready() && m_step.ready() && stats.bound == stats.characters && allSkinned() ? 1.0 : 0.0;
+        if (name == "anim_failed") return double(failedAssets());
+        if (name == "anim_characters") return double(stats.characters);
+        if (name == "anim_bound") return double(stats.bound);
+        if (name == "anim_ground_rays") return double(stats.groundQueries);
+        if (name == "hero_state") return hero.layerState == "jump" ? 1.0 : 0.0;
+        if (name == "hero_transition") return hero.nextState.empty() ? 0.0 : 1.0;
+        if (name == "hero_look_at") return hero.lookAtReached ? 1.0 : 0.0;
+        if (name == "hero_angle") return double(glm::degrees(m_hero.angle));
+        if (name == "footsteps") return double(m_footsteps);
+        if (name == "landings") return double(m_landings);
+        if (name == "crowd") return double(m_crowd.size());
+        if (name == "held_distance") {
+            // The torch's grip from the hand joint (m): 0.096 when attached.
+            const glm::mat4 hand = m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, "hand_l"));
+            return double(glm::length(glm::vec3(m_stickTransform[3]) - glm::vec3(hand[3])));
+        }
+        if (name == "slope_pelvis") return double(m_anim->state(m_slopeStand.id).pelvisOffset);
+        if (name.starts_with("slope_leg") || name.starts_with("step_leg")) {
+            // slope_leg0_offset, step_leg1_reached, ...: the stands' legs (0 left, 1 right).
+            const bool slope = name.starts_with("slope");
+            const std::string_view rest = name.substr(slope ? 9 : 8);
+            const std::size_t leg = rest.starts_with("1") ? 1 : 0;
+            const animation::CharacterState st = m_anim->state(slope ? m_slopeStand.id : m_stepStand.id);
+            if (leg >= st.legs.size()) return 0.0;
+            if (rest.ends_with("_offset")) return double(st.legs[leg].offset);
+            if (rest.ends_with("_reached")) return st.legs[leg].reached ? 1.0 : 0.0;
+            if (rest.ends_with("_grounded")) return st.legs[leg].grounded ? 1.0 : 0.0;
+        }
+        return std::nullopt;
+    }
+
+    bool set(Context& c, std::string_view name, std::string_view value) override {
+        (void)c;
+        const std::optional<float> number = parseFloat(value);
+        const std::optional<bool> flag = parseBool(value);
+        if (name == "restart" && flag) {
+            if (*flag) restart();
+        } else if (name == "speed" && number) {
+            m_speed = std::clamp(*number, 0.0f, kMaxSpeed);
+        } else if (name == "lean" && number) {
+            m_lean = std::clamp(*number, 0.0f, 1.0f);
+        } else if ((name == "jump" || name == "wave") && flag) {
+            if (*flag) m_anim->trigger(m_hero.id, name);
+        } else if (name == "foot_ik" && flag) {
+            m_feet = *flag;
+        } else if (name == "look_at" && flag) {
+            m_lookAt = *flag;
+        } else if (name == "footstep_sound" && flag) {
+            m_footstepSound = *flag;
+        } else if (name == "slope" && number) {
+            setSlope(std::clamp(*number, 0.0f, 30.0f));
+        } else if (name == "crowd" && number) {
+            setCrowd(std::clamp(int(*number), 0, kMaxCrowd));
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    std::optional<glm::vec2> point(const Context& c, std::string_view name) const override {
+        if (name != "hero") return std::nullopt;
+        const glm::vec2 window(float(c.app.windowWidth()), float(c.app.windowHeight()));
+        return camera.project(m_hero.position + glm::vec3(0.0f, 1.0f, 0.0f), window);
+    }
+
+    void shutdown(Context& c) override {
+        (void)c;
+        forEachWalker([&](Walker& w) { m_assets->removeModel(w.model); });
+        m_crowd.clear();
+        m_model = {};
+        m_skeleton = {};
+        m_clips = {};
+        m_graph = {};
+        m_step = {};
+        m_anim.reset();
+        m_assets.reset();
+        m_manager.reset();
+        m_world.reset();
+        m_scene.reset();
+    }
+
+private:
+    static std::optional<animation::GroundHit> groundHit(const PhysicsWorld& world, const glm::vec3& from,
+                                                         float length) {
+        const JPH::RRayCast ray{JPH::RVec3(from.x, from.y, from.z), JPH::Vec3(0.0f, -length, 0.0f)};
+        JPH::RayCastResult hit;
+        if (!world.system().GetNarrowPhaseQuery().CastRay(ray, hit)) return std::nullopt;
+        const JPH::RVec3 point = ray.GetPointOnRay(hit.mFraction);
+        // No body changes while the characters update: the lock-free interface is safe from several threads.
+        const JPH::BodyLockRead lock(world.system().GetBodyLockInterfaceNoLock(), hit.mBodyID);
+        if (!lock.Succeeded()) return std::nullopt;
+        const JPH::Vec3 n = lock.GetBody().GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, point);
+        return animation::GroundHit{.position =
+                                        glm::vec3(float(point.GetX()), float(point.GetY()), float(point.GetZ())),
+                                    .normal = glm::vec3(n.GetX(), n.GetY(), n.GetZ())};
+    }
+
+    // The ramp: a box rotated about Z so that its top rises toward +X, the top's lower edge on the floor.
+    glm::quat slopeRotation() const {
+        return glm::angleAxis(glm::radians(m_slopeDegrees), glm::vec3(0.0f, 0.0f, 1.0f));
+    }
+    glm::vec3 slopeTop() const {
+        return glm::vec3(kSlopeAt.x, kSlopeHalf * std::sin(glm::radians(m_slopeDegrees)), kSlopeAt.y);
+    }
+    glm::vec3 slopeCenter() const { return slopeTop() - slopeRotation() * glm::vec3(0.0f, 0.25f, 0.0f); }
+
+    void placeSlope() {
+        const glm::vec3 p = slopeCenter();
+        const glm::quat q = slopeRotation();
+        JPH::BodyInterface& bodies = m_world->bodies();
+        if (!m_slopeBody.IsInvalid()) {
+            bodies.RemoveBody(m_slopeBody);
+            bodies.DestroyBody(m_slopeBody);
+        }
+        m_slopeBody =
+            bodies.CreateAndAddBody(JPH::BodyCreationSettings(m_slopeShape, JPH::RVec3(p.x, p.y, p.z), toJolt(q),
+                                                              JPH::EMotionType::Static, PhysicsLayers::kStatic),
+                                    JPH::EActivation::DontActivate);
+        m_scene->setTransform(m_slopeInstance, glm::translate(glm::mat4(1.0f), p) * glm::mat4_cast(q));
+    }
+
+    void setSlope(float degrees) {
+        m_slopeDegrees = degrees;
+        placeSlope();
+        m_slopeStand.position = slopeTop();
+        m_slopeStand.transform = yawed(m_slopeStand.position, m_slopeStand.yaw);
+        m_anim->setTransform(m_slopeStand.id, m_slopeStand.transform);
+    }
+
+    audio::Listener listener() const {
+        const glm::vec3 eye = camera.eye();
+        return {.position = eye, .forward = glm::normalize(camera.target - eye)};
+    }
+
+    template <class F>
+    void forEachWalker(F&& f) {
+        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand}) f(*w);
+        for (Walker& w : m_crowd) f(w);
+    }
+
+    bool allSkinned() const {
+        if (m_hero.skin < 0 || m_slopeStand.skin < 0 || m_stepStand.skin < 0) return false;
+        return std::ranges::all_of(m_crowd, [](const Walker& w) { return w.skin >= 0; });
+    }
+
+    int failedAssets() const {
+        int n = 0;
+        for (const assets::AssetState s :
+             {m_model.state(), m_skeleton.state(), m_clips.state(), m_graph.state(), m_step.state()})
+            n += s == assets::AssetState::Failed ? 1 : 0;
+        return n;
+    }
+
+    // The hero also turns its head and reports its events (only its footsteps are heard).
+    CharacterId addCharacter(const glm::mat4& transform, bool feet, bool hero) {
+        animation::CharacterDesc desc;
+        desc.skeleton = m_skeleton;
+        desc.clips.push_back(m_clips);
+        desc.graph = m_graph;
+        desc.transform = transform;
+        if (feet) {
+            animation::FootPlacementDesc f;
+            f.legs = {{"thigh_l", "shin_l", "foot_l"}, {"thigh_r", "shin_r", "foot_r"}};
+            f.pelvis = "pelvis";
+            desc.feet = f;
+        }
+        if (hero)
+            desc.lookAt = animation::LookAtDesc{
+                .joints = {"head", "neck", "chest"}, .offset = glm::vec3(0.0f, 0.11f, 0.1f), .maxAngle = 1.2f};
+        desc.events = hero;
+        return m_anim->addCharacter(std::move(desc));
+    }
+
+    Walker makeWalker(const glm::vec3& position, float yaw, bool feet, bool hero) {
+        Walker w;
+        w.position = position;
+        w.yaw = yaw;
+        w.transform = yawed(position, yaw);
+        w.id = addCharacter(w.transform, feet, hero);
+        w.model = m_assets->addModel(m_model, w.transform);
+        return w;
+    }
+
+    Walker makeCircleWalker(const glm::vec2& center, float radius, float angle, float turn, bool feet, bool hero) {
+        const glm::vec3 p(center.x + radius * std::sin(angle), 0.0f, center.y + radius * std::cos(angle));
+        Walker w = makeWalker(p, angle + turn * 0.5f * kPi, feet, hero);
+        w.center = center;
+        w.radius = radius;
+        w.angle = angle;
+        w.turn = turn;
+        return w;
+    }
+
+    void removeWalker(Walker& w) {
+        if (w.id) m_anim->removeCharacter(w.id);
+        if (w.model) m_assets->removeModel(w.model);
+        w = {};
+    }
+
+    // Every character from the start: new state machines, phases and foot placement, the same on every run.
+    void restart() {
+        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand}) removeWalker(*w);
+        m_hero = makeCircleWalker(kHeroCenter, kHeroRadius, kHeroStart, 1.0f, true, true);
+        m_slopeStand = makeWalker(slopeTop(), 0.0f, true, false);
+        // Across the step's edge: the left foot (+X) above the step, the right one on the floor.
+        m_stepStand = makeWalker(kStepAt, 0.0f, true, false);
+        m_anim->setPhase(m_slopeStand.id, 0.3f);
+        m_anim->setPhase(m_stepStand.id, 0.65f);
+        setCrowd(m_crowdSize);
+        m_footsteps = 0;
+        m_landings = 0;
+        m_teleport = true;
+    }
+
+    // Rings around kCrowdCenter, filled from the inside; a ring walks at one speed (walk, between, run), so its
+    // characters keep their spacing.
+    void setCrowd(int count) {
+        for (Walker& w : m_crowd) removeWalker(w);
+        m_crowd.clear();
+        m_crowdSize = count;
+        Random random;
+        for (int ring = 0; int(m_crowd.size()) < count; ++ring) {
+            const float radius = kCrowdFirstRing + kCrowdRingStep * float(ring);
+            const int slots = std::max(1, int(2.0f * kPi * radius / kCrowdSpacing));
+            const float speed = std::array{1.1f, 1.8f, 2.7f}[std::size_t(ring % 3)];
+            const float turn = ring % 2 == 0 ? 1.0f : -1.0f;
+            for (int i = 0; i < slots && int(m_crowd.size()) < count; ++i) {
+                Walker w =
+                    makeCircleWalker(kCrowdCenter, radius, 2.0f * kPi * float(i) / float(slots), turn, false, false);
+                m_anim->setFloat(w.id, "speed", speed);
+                m_anim->setPhase(w.id, random.uniform());
+                m_crowd.push_back(w);
+            }
+        }
+        m_teleport = true;
+    }
+
+    // Skins need the model's joint names and inverse bind matrices: added once it is ready.
+    void bindSkins() {
+        if (!m_model.ready() || m_model->skins().empty()) return;
+        const assets::ModelSkin& skin = m_model->skins()[0];
+        forEachWalker([&](Walker& w) {
+            if (w.skin < 0 && w.id) w.skin = m_anim->addSkin(w.id, skin.joints, skin.inverseBindMatrices);
+        });
+    }
+
+    // Moves a walker on by the root motion of the last update.
+    void walk(Walker& w) {
+        if (w.radius <= 0.0f) return;
+        const animation::RootMotion motion = m_anim->rootMotion(w.id);
+        const float distance = glm::length(glm::vec2(motion.translation.x, motion.translation.z));
+        w.angle = std::fmod(w.angle + w.turn * distance / w.radius, 2.0f * kPi);
+        w.position =
+            glm::vec3(w.center.x + w.radius * std::sin(w.angle), 0.0f, w.center.y + w.radius * std::cos(w.angle));
+        w.yaw = w.angle + w.turn * 0.5f * kPi;
+        w.transform = yawed(w.position, w.yaw);
+        m_anim->setTransform(w.id, w.transform);
+    }
+
+    void footsteps(Context& c) {
+        audio::AudioSystem& a = c.app.audio();
+        for (const animation::Event& e : m_anim->events()) {
+            if (e.character != m_hero.id) continue;
+            const bool land = e.name == "land";
+            if (!land && e.name != "footstep") continue;
+            (land ? m_landings : m_footsteps) += 1;
+            if (!m_footstepSound || !m_step.ready()) continue;
+            const char* foot = e.value < 0.5f ? "toe_l" : "toe_r";
+            const glm::vec3 at(m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, foot))[3]);
+            const float loud = land ? 1.0f : 0.45f + 0.35f * std::clamp(m_speed / kMaxSpeed, 0.0f, 1.0f);
+            a.play(m_step, {.bus = a.bus("effects"),
+                            .volume = loud * std::min(e.weight * 1.5f, 1.0f),
+                            .pitch = 0.92f + 0.16f * m_random.uniform(),
+                            .spatial = true,
+                            .emitter = {.position = at, .minDistance = 2.0f, .maxDistance = 40.0f}});
+        }
+    }
+
+    std::optional<Scene> m_scene;
+    std::unique_ptr<PhysicsWorld> m_world;
+    JPH::Ref<JPH::Shape> m_slopeShape;
+    JPH::BodyID m_slopeBody;
+    InstanceId m_slopeInstance, m_stick, m_flame;
+    glm::mat4 m_stickTransform{1.0f};
+    std::unique_ptr<assets::AssetManager> m_manager;
+    std::optional<SceneAssets> m_assets;
+    std::unique_ptr<AnimationSystem> m_anim;
+    assets::AssetRef<ModelAsset> m_model;
+    assets::AssetRef<animation::SkeletonAsset> m_skeleton;
+    assets::AssetRef<animation::ClipSetAsset> m_clips;
+    assets::AssetRef<animation::GraphAsset> m_graph;
+    assets::AssetRef<audio::SoundAsset> m_step;
+    Walker m_hero, m_slopeStand, m_stepStand;
+    std::vector<Walker> m_crowd;
+    app::ActionId m_jumpAction = 0, m_waveAction = 0;
+    float m_speed = 1.1f, m_lean = 0.0f, m_slopeDegrees = 16.0f;
+    int m_crowdSize = 48;
+    bool m_feet = true, m_lookAt = true, m_footstepSound = true, m_teleport = true;
+    int m_footsteps = 0, m_landings = 0;
+    std::array<float, kRecentFrames> m_recentUpdateMs{}, m_recentSkinningMs{};
+    std::size_t m_recentNext = 0, m_recentCount = 0;
+    Random m_random;
+};
+
+} // namespace
+
+std::unique_ptr<Section> makeAnimationSection() { return std::make_unique<AnimationSection>(); }
+
+} // namespace demo

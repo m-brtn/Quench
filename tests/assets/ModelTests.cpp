@@ -56,10 +56,58 @@ ModelData sampleModel() {
     tri.indices = {0, 1, 2};
     tri.lods = {{0, 3, 0.0f}};
     tri.boundsMax = {1.0f, 1.0f, 0.0f};
+    tri.skin = 0;
+    tri.skinning.resize(3);
+    tri.skinning[1] = {{1, 0, 0, 0}, {65535, 0, 0, 0}};
+    tri.skinning[2] = {{0, 1, 0, 0}, {30000, 35535, 0, 0}};
+    ModelSkin skin;
+    skin.name = "rig";
+    skin.joints = {"root", "arm"};
+    glm::mat4 arm(1.0f);
+    arm[3] = {-1.0f, 0.0f, 0.0f, 1.0f};
+    skin.inverseBindMatrices = {glm::mat4(1.0f), arm};
+    model.skins = {skin};
     model.meshes = {grid, tri};
     model.boundsMin = {0.0f, 0.0f, 0.0f};
     model.boundsMax = {4.0f, 1.6f, 4.0f};
     return model;
+}
+
+// The version 1 layout of a model without skins (no skin count, no skin index per mesh), from a version 2 file.
+std::vector<std::uint8_t> toVersion1(const std::vector<std::uint8_t>& v2) {
+    std::vector<std::uint8_t> out;
+    std::size_t at = 0;
+    const auto u32 = [&](std::size_t offset) {
+        std::uint32_t v = 0;
+        std::memcpy(&v, v2.data() + offset, 4);
+        return v;
+    };
+    const auto copy = [&](std::size_t n) {
+        out.insert(out.end(), v2.begin() + std::ptrdiff_t(at), v2.begin() + std::ptrdiff_t(at + n));
+        at += n;
+    };
+    const auto skip = [&](std::size_t n) { at += n; };
+    const auto string = [&] { copy(4 + ((u32(at) + 3) & ~3u)); };
+    const std::uint32_t meshes = u32(8), materials = u32(12);
+    copy(16);
+    skip(4); // skin count (0)
+    copy(24);
+    out[4] = 1;
+    for (std::uint32_t m = 0; m < materials; ++m) {
+        string();
+        copy(4 * 10 + 4);
+        for (int t = 0; t < 4; ++t) string();
+    }
+    for (std::uint32_t m = 0; m < meshes; ++m) {
+        string();
+        const std::uint32_t lods = u32(at + 12);
+        copy(16 + 24);
+        skip(4); // skin index
+        copy(std::size_t(lods) * 12);
+        string(); // the vertex and index streams have the layout of strings
+        string();
+    }
+    return out;
 }
 
 // meshoptimizer's index codec keeps the triangle order and winding but may rotate a triangle's indices.
@@ -109,6 +157,29 @@ QUENCH_TEST(model_round_trip) {
     CHECK(read->materials[0].baseColorTexture == "textures/stone.ktx2" && read->materials[0].roughness == 0.8f,
           "material 0");
     CHECK(read->boundsMax == model.boundsMax, "model bounds");
+    REQUIRE(read->skins.size() == 1, "%zu skins", read->skins.size());
+    CHECK(read->skins[0].name == "rig" && read->skins[0].joints == model.skins[0].joints &&
+              read->skins[0].inverseBindMatrices == model.skins[0].inverseBindMatrices,
+          "skin");
+    CHECK(read->meshes[0].skin == -1 && read->meshes[0].skinning.empty(), "mesh 0 is not skinned");
+    CHECK(read->meshes[1].skin == 0 && read->meshes[1].skinning.size() == 3 &&
+              std::memcmp(read->meshes[1].skinning.data(), model.meshes[1].skinning.data(),
+                          3 * sizeof(ModelSkinVertex)) == 0,
+          "mesh 1 skin vertices");
+}
+
+QUENCH_TEST(model_reads_version_1) {
+    ModelData model = sampleModel();
+    model.skins.clear();
+    model.meshes[1].skin = -1;
+    model.meshes[1].skinning.clear();
+    const std::vector<std::uint8_t> v1 = toVersion1(writeModel(model).value());
+    const Result<ModelData> read = readModel(v1);
+    REQUIRE(read.ok(), "read: %s", read.error().c_str());
+    CHECK(read->meshes.size() == 2 && read->skins.empty() && read->meshes[1].skin == -1, "a model without skins");
+    CHECK(sameVertices(read->meshes[0].vertices, model.meshes[0].vertices) &&
+              sameTriangles(read->meshes[1].indices, model.meshes[1].indices),
+          "vertices and triangles");
 }
 
 QUENCH_TEST(model_rejects_corrupt) {
@@ -116,9 +187,9 @@ QUENCH_TEST(model_rejects_corrupt) {
     for (std::size_t size = 0; size < file.size(); ++size)
         CHECK(!readModel(std::span(file).first(size)), "prefix of %zu of %zu bytes accepted", size, file.size());
     std::vector<std::uint8_t> bad = file;
-    bad[4] = 2;
+    bad[4] = 3;
     const Result<ModelData> version = readModel(bad);
-    CHECK(!version && version.error().find("version 2") != std::string::npos, "version: %s",
+    CHECK(!version && version.error().find("version 3") != std::string::npos, "version: %s",
           version ? "accepted" : version.error().c_str());
     // Every byte flip is rejected or gives a model whose indices are in range (asan checks the reads).
     for (std::size_t i = 0; i < file.size(); ++i) {
@@ -126,10 +197,17 @@ QUENCH_TEST(model_rejects_corrupt) {
         bad[i] ^= 0xa5;
         const Result<ModelData> model = readModel(bad);
         if (!model) continue;
-        for (const ModelMesh& mesh : model->meshes)
+        for (const ModelMesh& mesh : model->meshes) {
             for (std::uint32_t index : mesh.indices)
                 CHECK(index < mesh.vertices.size(), "flip at %zu: index %u of %zu vertices", i, index,
                       mesh.vertices.size());
+            if (mesh.skin < 0) continue;
+            CHECK(std::size_t(mesh.skin) < model->skins.size() && mesh.skinning.size() == mesh.vertices.size(),
+                  "flip at %zu: skin %d", i, mesh.skin);
+            for (const ModelSkinVertex& v : mesh.skinning)
+                for (const std::uint16_t j : v.joints)
+                    CHECK(j < model->skins[std::size_t(mesh.skin)].joints.size(), "flip at %zu: joint %u", i, j);
+        }
     }
 }
 
@@ -143,4 +221,13 @@ QUENCH_TEST(model_write_checks) {
     model = sampleModel();
     model.meshes[1].indices.pop_back();
     CHECK(!writeModel(model), "partial triangle written");
+    model = sampleModel();
+    model.meshes[1].skinning.pop_back();
+    CHECK(!writeModel(model), "a skin vertex missing");
+    model = sampleModel();
+    model.meshes[1].skinning[0].joints[0] = 2;
+    CHECK(!writeModel(model), "a joint out of the skin's range");
+    model = sampleModel();
+    model.skins[0].inverseBindMatrices.pop_back();
+    CHECK(!writeModel(model), "an inverse bind matrix missing");
 }

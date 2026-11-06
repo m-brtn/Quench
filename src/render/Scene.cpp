@@ -8,9 +8,11 @@
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <string>
+#include <vector>
 
 namespace quench::render {
 
@@ -19,6 +21,8 @@ using detail::MaterialEntry;
 using detail::MeshEntry;
 
 namespace {
+
+constexpr std::uint32_t kMaxJoints = 65536; // SkinVertex::joints are 16 bits
 
 // Stale or null handles are programming errors: asserted, then ignored in release builds.
 template <class Map, class Id>
@@ -47,6 +51,11 @@ Result<MeshId> Scene::addMesh(const MeshDesc& desc) {
             std::ranges::find_if(desc.indices, [vertexCount](std::uint32_t i) { return i >= vertexCount; });
         bad != desc.indices.end())
         return Error{std::format("mesh '{}': index {} out of range ({} vertices)", name, *bad, vertexCount)};
+    const bool skinned = !desc.skin.empty();
+    if (skinned && desc.skin.size() != desc.vertices.size())
+        return Error{std::format("mesh '{}': {} skin entries for {} vertices", name, desc.skin.size(), vertexCount)};
+    if (skinned && (desc.jointCount == 0 || desc.jointCount > kMaxJoints))
+        return Error{std::format("mesh '{}': {} joints (1..{})", name, desc.jointCount, kMaxJoints)};
 
     MeshEntry mesh;
     glm::vec3 lo(desc.vertices[0].position), hi(lo);
@@ -57,12 +66,53 @@ Result<MeshId> Scene::addMesh(const MeshDesc& desc) {
     mesh.center = (lo + hi) * 0.5f;
     for (const Vertex& v : desc.vertices) mesh.radius = std::max(mesh.radius, glm::length(v.position - mesh.center));
 
+    // Joints of zero weight are moved to joint 0, so the shader reads only valid matrices.
+    std::vector<SkinVertex> skin(desc.skin.begin(), desc.skin.end());
+    if (skinned) {
+        std::vector<glm::vec3> jointLo(desc.jointCount, glm::vec3(1e30f)), jointHi(desc.jointCount, glm::vec3(-1e30f));
+        for (std::size_t v = 0; v < skin.size(); ++v)
+            for (int k = 0; k < 4; ++k) {
+                if (skin[v].weights[std::size_t(k)] == 0) {
+                    skin[v].joints[std::size_t(k)] = 0;
+                    continue;
+                }
+                const std::uint32_t joint = skin[v].joints[std::size_t(k)];
+                if (joint >= desc.jointCount)
+                    return Error{
+                        std::format("mesh '{}': vertex {} uses joint {} of {}", name, v, joint, desc.jointCount)};
+                jointLo[joint] = glm::min(jointLo[joint], desc.vertices[v].position);
+                jointHi[joint] = glm::max(jointHi[joint], desc.vertices[v].position);
+            }
+        mesh.jointBounds.assign(desc.jointCount, glm::vec4(0.0f, 0.0f, 0.0f, -1.0f));
+        for (std::size_t v = 0; v < skin.size(); ++v)
+            for (int k = 0; k < 4; ++k) {
+                if (skin[v].weights[std::size_t(k)] == 0) continue;
+                const std::uint32_t joint = skin[v].joints[std::size_t(k)];
+                glm::vec4& b = mesh.jointBounds[joint];
+                const glm::vec3 c = (jointLo[joint] + jointHi[joint]) * 0.5f;
+                b = glm::vec4(c, std::max(b.w, glm::length(desc.vertices[v].position - c)));
+            }
+        mesh.vertexCount = vertexCount;
+        mesh.jointCount = desc.jointCount;
+    }
+
     gpu::Device& device = *m_impl->device;
     const std::span<const std::byte> vertexBytes = std::as_bytes(desc.vertices);
     const std::span<const std::byte> indexBytes = std::as_bytes(desc.indices);
-    Result<gpu::Buffer> vb = device.createBuffer(
-        {.usage = gpu::BufferUsage::Vertex, .size = std::uint32_t(vertexBytes.size()), .name = name});
+    const gpu::BufferUsage vertexUsage =
+        skinned ? gpu::BufferUsage::Vertex | gpu::BufferUsage::ComputeStorageRead : gpu::BufferUsage::Vertex;
+    Result<gpu::Buffer> vb =
+        device.createBuffer({.usage = vertexUsage, .size = std::uint32_t(vertexBytes.size()), .name = name});
     if (!vb) return Error{std::format("mesh '{}': {}", name, vb.error())};
+    if (skinned) {
+        const std::span<const std::byte> skinBytes = std::as_bytes(std::span(skin));
+        Result<gpu::Buffer> sb = device.createBuffer(
+            {.usage = gpu::BufferUsage::ComputeStorageRead, .size = std::uint32_t(skinBytes.size()), .name = name});
+        if (!sb) return Error{std::format("mesh '{}': {}", name, sb.error())};
+        if (Result<void> r = device.upload(*sb, 0, skinBytes); !r)
+            return Error{std::format("mesh '{}': {}", name, r.error())};
+        mesh.skin = std::move(*sb);
+    }
     Result<gpu::Buffer> ib =
         device.createBuffer({.usage = gpu::BufferUsage::Index, .size = std::uint32_t(indexBytes.size()), .name = name});
     if (!ib) return Error{std::format("mesh '{}': {}", name, ib.error())};
@@ -234,7 +284,40 @@ InstanceId Scene::addInstance(const InstanceDesc& desc) {
     if (!mesh || !material) return {};
     mesh->users++;
     material->users++;
-    return m_impl->instances.add({desc, desc.transform, false});
+    InstanceEntry entry;
+    entry.desc = desc;
+    entry.previous = desc.transform;
+    entry.center = mesh->center;
+    entry.radius = mesh->radius;
+    return m_impl->instances.add(std::move(entry));
+}
+
+void Scene::setJointPalette(InstanceId instance, std::span<const glm::mat4> palette, bool teleport) {
+    InstanceEntry* entry = lookup(m_impl->instances, instance, "setJointPalette: stale or null instance");
+    if (!entry) return;
+    const MeshEntry* mesh = m_impl->meshes.get(entry->desc.mesh);
+    QUENCH_ASSERT(mesh && palette.size() == mesh->jointCount, "setJointPalette: one matrix per joint of the mesh");
+    if (!mesh || palette.size() != mesh->jointCount || palette.empty()) return;
+    entry->palette.assign(palette.begin(), palette.end());
+    entry->posed = !teleport;
+    if (teleport) entry->skinnedFrame = ~0ull;
+    // Every skinned vertex is a weighted mean of its joints' images of it, so it lies in the hull of the joints'
+    // transformed bind-pose spheres.
+    glm::vec3 lo(1e30f), hi(-1e30f);
+    for (std::size_t j = 0; j < palette.size(); ++j) {
+        const glm::vec4& b = mesh->jointBounds[j];
+        if (b.w < 0.0f) continue;
+        const glm::mat4& m = palette[j];
+        const glm::vec3 c(m * glm::vec4(glm::vec3(b), 1.0f));
+        const float r = b.w * std::sqrt(std::max({glm::dot(glm::vec3(m[0]), glm::vec3(m[0])),
+                                                  glm::dot(glm::vec3(m[1]), glm::vec3(m[1])),
+                                                  glm::dot(glm::vec3(m[2]), glm::vec3(m[2]))}));
+        lo = glm::min(lo, c - r);
+        hi = glm::max(hi, c + r);
+    }
+    if (lo.x > hi.x) return;
+    entry->center = (lo + hi) * 0.5f;
+    entry->radius = glm::length(hi - lo) * 0.5f;
 }
 
 void Scene::setTransform(InstanceId instance, const glm::mat4& transform, bool teleport) {
@@ -306,6 +389,10 @@ std::uint32_t Scene::meshUsers(MeshId mesh) const {
 std::uint32_t Scene::materialUsers(MaterialId material) const {
     const MaterialEntry* entry = m_impl->materials.get(material);
     return entry ? entry->users : 0;
+}
+std::uint32_t Scene::jointCount(MeshId mesh) const {
+    const MeshEntry* entry = m_impl->meshes.get(mesh);
+    return entry ? entry->jointCount : 0;
 }
 std::uint32_t Scene::meshCount() const { return m_impl->meshes.size(); }
 std::uint32_t Scene::textureCount() const { return m_impl->textures.size(); }

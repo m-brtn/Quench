@@ -206,14 +206,38 @@ only when a size, the shadow map size or the set of active effects changes.
 ## Statistics
 
 `Renderer::stats()`: instances and draws in the HDR pass, culled instances, instances and draws in the shadow
-cascades, moved instances (motion vectors), local lights used, the 3D resolution, pipelines created. The demo shows
-them and its scenarios check them (`draws`, `shadow_draws`, `lights`, `moved`, `render_w`).
+cascades, moved instances (motion vectors), local lights used, the 3D resolution, pipelines created, and (stage 8)
+skinned instances and vertices posed this frame and the skinning pass's GPU time (`skinningGpuMs`, -1 where
+`Caps::gpuTiming` is false or before the first measurement). The demo shows them and its scenarios check them
+(`draws`, `shadow_draws`, `lights`, `moved`, `render_w`, `skinned_instances`, `skinned_vertices`).
+
+## Skinned meshes
+
+Stage 8 ([Animation](animation.md#gpu-skinning)). A mesh with `MeshDesc::skin` (one `SkinVertex` per vertex: four
+joint indices into the mesh's joints and 16-bit weights) and `jointCount` is skinned; its vertices are in the bind
+pose. `Scene::setJointPalette(instance, palette, teleport)` gives an instance one matrix per joint (joint model
+matrix times inverse bind matrix, as `animation::AnimationSystem::skinPalette` computes; `SceneAssets` does the same
+for cooked models). Before the first palette an instance shows the bind pose.
+
+Every frame the renderer runs one compute pass (`skin_cs` in `src/render/shaders/skin.hlsl`, 64 vertices per group,
+linear blend skinning of positions and normals) over the skinned instances that are drawn in view or in a shadow
+cascade, into each instance's range of a shared vertex buffer; the shadow, main and velocity passes then draw those
+vertices like a rigid mesh, with the surface shaders unchanged. Two output buffers alternate, so the velocity pass
+(`velocity_skin_vs`) has last frame's skinned positions and TAA gets motion vectors of the deformation; a palette
+set with `teleport` has none. Culling uses bounds from the palette: per joint the sphere around the bind-pose
+vertices it moves, transformed by the joint's matrix. The skinning runs in its own command buffer, so its fence gives
+`skinningGpuMs` where the backend measures GPU time (Metal). A mesh with a bad skin (a joint index out of range, no
+joints, a skin entry count other than the vertex count) is refused with an error by `Scene::addMesh`. The compute
+pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; there is no CPU skinning fallback.
 
 ## Limitations
 
 - Alpha-tested and transparent materials cast solid shadows (no cut-out or colored shadows).
-- The motion vectors use the instance transforms only: a `QUENCH_SURFACE_VERTEX` deformation does not reach TAA
-  (moving vertices smear a little under TAA).
+- The motion vectors use the instance transforms and skinning only: a `QUENCH_SURFACE_VERTEX` deformation does not
+  reach TAA (moving vertices smear a little under TAA).
+- Skinning: four joints per vertex, linear blend (no dual quaternions), no blend shapes; every drawn skinned
+  instance is skinned every frame (no caching of unchanged poses, no skinning LOD); the output buffers grow with the
+  skinned vertices drawn (two copies).
 - No normal maps, no MSAA, no image-based lighting from a cubemap (the sky model is the environment), no shadows from
   local lights, at most 16 local lights per frame and no clustered or tiled light lists.
 - One render per scene and frame (several views of one scene need a scene per view).

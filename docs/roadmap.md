@@ -165,10 +165,30 @@ the user was away: the decisions are in the devlog of 2026-11-06 ("decided witho
   2026-11-06, as recommended); they are listed as not verified in the release notes.
 - Done: version 0.5.0, release notes in [docs/releases/v0.5.0.md](releases/v0.5.0.md).
 
-## Stage 8: animation
+## Stage 8: animation (done 2026-11-06 except retargeting and the checks in motion and on the iPhone; not released)
 
-- ozz runtime, GPU skinning, data-driven state machines, blending, animation events.
-- Then partial and additive blending, IK and foot placement, bone attachments, retargeting.
+Requested as P0 (skinning, state machines, blending, events) and P1 (partial and additive blending, IK and foot
+placement, retargeting, attachments) by the user (2026-11-05). Written for the engine: neither game has skeletal
+animation to move. Built while the user was away: the decisions are in the devlog of 2026-11-06 ("decided without
+the user"). Described in [Animation](animation.md).
+
+- Done: `quench_animation` on ozz-animation 0.17.0, headless (tested in CTest, under the sanitizers, in the iOS
+  Simulator and under Node.js): skeletons, clip sets and graphs as asset types (the rest pose and a log line while
+  loading and after a failure; budgets), sampling and 1D blend trees with phase sync, JSON state machines (layers,
+  conditions, triggers, exit times, cross-fades), masked and additive layers, events (in order, across loops, with
+  large steps), root motion, two-bone and aim IK, foot placement on a game's ground query, look-at, bone attachments
+  (`jointWorld`), the update of all characters in parallel on the job system (also with zero workers).
+- Done: cooking in `quench_cook` (`skeleton`, `animation`, skins in `.qmodel` version 2; clip settings with loop,
+  additive, events and root motion; deterministic) and `quench_cook_assets(... SKELETONS ... ANIMATIONS ...)`.
+- Done: compute in `quench::gpu` and `quench_shaderc`; GPU skinning in `quench_render`'s retained scene (a joint
+  palette per instance, a compute pass, motion vectors from the previous pose, culling bounds from the palette,
+  `RenderStats` with the skinning GPU time), through `SceneAssets` for cooked models.
+- Done: the demo's "Animation" section (speed blend, jump and wave, additive lean, look-at, a held torch, footstep
+  sounds, foot placement on a ramp and a step, a crowd of up to 512 with its update and skinning times) with its
+  scripted check and golden captures for Metal and Vulkan through MoltenVK; a benchmark region with 256 characters.
+- Not done, remaining: retargeting (clips bind to the skeleton they were cooked for), 2D blend spaces, animation
+  LOD, dual quaternion skinning, blend shapes; the check in motion by the user (foot sliding, blend pops, IK) and on
+  the iPhone.
 
 ## Stage 9: native Metal backend and ray tracing
 
@@ -206,7 +226,8 @@ TODO for stage 9:
 Requested by the user (2026-11-05). Started in stage 5 (user decision, 2026-11-05; it replaces the planned
 `examples/scene`): every stage adds its section, with a scripted check and golden captures, and ends with a packaged
 build of the demo in `dist/` (`tools/package_demo.sh`); stage 10 finishes and polishes it. Sections so far: materials
-and lights, shadows, sky and fog, post-processing, HDR output, physics, input, assets, audio ([Engine demo](demo.md)).
+and lights, shadows, sky and fog, post-processing, HDR output, physics, input, assets, audio, animation
+([Engine demo](demo.md)).
 
 - One app built with the engine (`examples/demo`, "Quench Demo") for the Mac and iOS: a menu of sections, each a
   small interactive scene of primitives or procedural content (CC0 assets only where a feature needs real content,
@@ -239,14 +260,14 @@ Priorities from the user's request of 2026-11-05.
 | Hot reload | P1 | 6 (assets done, shaders remaining) |
 | Streaming by distance | P1 | 6 (done) |
 | Audio: mixer, buses, music, 3D sound, device output (added 2026-11-05) | P0 | 7 (done; not yet run on the iPhone or listened to) |
-| Skeletal animation and GPU skinning (ozz) | P0 | 8 |
-| Animation state machine | P0 | 8 |
-| Blending | P0 | 8 |
-| Animation events | P0 | 8 |
-| Partial and additive blending | P1 | 8 |
-| IK and foot placement | P1 | 8 |
-| Retargeting | P1 | 8 |
-| Bone attachments | P1 | 8 |
+| Skeletal animation and GPU skinning (ozz) | P0 | 8 (done; not yet looked at in motion or run on the iPhone) |
+| Animation state machine | P0 | 8 (done) |
+| Blending | P0 | 8 (done) |
+| Animation events | P0 | 8 (done) |
+| Partial and additive blending | P1 | 8 (done) |
+| IK and foot placement | P1 | 8 (done) |
+| Retargeting | P1 | 8 (not done) |
+| Bone attachments | P1 | 8 (done) |
 | Engine demo: interactive sections for every feature (added 2026-11-05) | after the stages | 10 (started in 5; each stage adds its section) |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
