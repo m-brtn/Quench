@@ -60,6 +60,8 @@ struct Caps {
     bool rayTracing = false;
     bool spatialUpscaling = false;  // UpscalerType::Spatial (MetalFX on the native Metal backend)
     bool temporalUpscaling = false; // UpscalerType::Temporal (MetalFX on the native Metal backend)
+    // UpscalerType::TemporalDenoised (MetalFX's denoiser on the native Metal backend, from macOS 26 and iOS 26).
+    bool denoisedUpscaling = false;
 };
 
 // GPU time of one range of passes (CommandBuffer::beginTiming .. endTiming). A GPU overlaps passes (on Apple GPUs the
@@ -104,7 +106,7 @@ public:
     // command buffer that recorded its last query has completed on the GPU; empty before that or without a query.
     // Does not wait.
     std::optional<std::uint32_t> compactedSize(const AccelerationStructure& bottomLevel) const;
-    // Caps::spatialUpscaling or Caps::temporalUpscaling, by type.
+    // Caps::spatialUpscaling, Caps::temporalUpscaling or Caps::denoisedUpscaling, by type.
     Result<Upscaler> createUpscaler(const UpscalerDesc& desc);
 
     // Empty on failure (logged).

@@ -29,6 +29,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace quench::gpu::detail {
@@ -126,7 +127,11 @@ struct MetalUpscaler {
 #if !QUENCH_PLATFORM_IOS_SIMULATOR
     id<MTLFXSpatialScaler> spatial;
     id<MTLFXTemporalScaler> temporal;
+    id denoised; // id<MTLFXTemporalDenoisedScaler> (macOS 26, iOS 26)
 #endif
+    // Temporal types: the exposure the scaler reads (1x1 R16Float, private), written when the value changes.
+    id<MTLTexture> exposure;
+    float exposureValue = 0.0f;
 };
 
 struct MetalGraphicsPipeline {
@@ -379,6 +384,9 @@ private:
     std::uint64_t finishedBelow() const;
     void useTransfer(MetalCommandBuffer& commands, MetalTransferBuffer& buffer);
     id<MTLBuffer> uniformChunk();
+    // Shared memory for the command buffer's GPU work (uniform blocks, copies); nil when it cannot be allocated
+    // (logged).
+    std::pair<id<MTLBuffer>, std::uint32_t> uniformSpace(MetalCommandBuffer& commands, std::uint32_t size);
     void flushGraphics(MetalCommandBuffer& commands);
     void flushCompute(MetalCommandBuffer& commands);
     // Sample buffer attachment for a pass being created while a timed range is open; -1 when not sampled.

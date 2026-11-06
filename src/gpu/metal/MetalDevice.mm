@@ -309,6 +309,8 @@ Result<std::unique_ptr<DeviceImpl>> MetalDevice::create(const DeviceDesc& desc) 
 #if !QUENCH_PLATFORM_IOS_SIMULATOR
         caps.spatialUpscaling = [MTLFXSpatialScalerDescriptor supportsDevice:device];
         caps.temporalUpscaling = [MTLFXTemporalScalerDescriptor supportsDevice:device];
+        if (@available(macOS 26.0, iOS 26.0, *))
+            caps.denoisedUpscaling = [MTLFXTemporalDenoisedScalerDescriptor supportsDevice:device];
 #endif
 
         // Blit: the engine's shader (src/gpu/shaders/blit.hlsl) and SDL's two samplers.
@@ -677,6 +679,7 @@ Result<void*> MetalDevice::createUpscaler(const UpscalerDesc& desc) {
 #else
     @autoreleasepool {
         auto upscaler = std::make_unique<MetalUpscaler>();
+        MTLTextureUsage inputUsage = 0, outputUsage = 0; // what MetalFX wants of the textures
         if (desc.type == UpscalerType::Spatial) {
             MTLFXSpatialScalerDescriptor* d = [MTLFXSpatialScalerDescriptor new];
             d.colorTextureFormat = metal::pixelFormat(desc.colorFormat);
@@ -690,6 +693,35 @@ Result<void*> MetalDevice::createUpscaler(const UpscalerDesc& desc) {
                                                   : MTLFXSpatialScalerColorProcessingModePerceptual;
             upscaler->spatial = [d newSpatialScalerWithDevice:m_device];
             if (!upscaler->spatial) return Error{"cannot create a MetalFX spatial scaler"};
+            inputUsage = upscaler->spatial.colorTextureUsage;
+            outputUsage = upscaler->spatial.outputTextureUsage;
+        } else if (desc.type == UpscalerType::TemporalDenoised) {
+            if (@available(macOS 26.0, iOS 26.0, *)) {
+                MTLFXTemporalDenoisedScalerDescriptor* d = [MTLFXTemporalDenoisedScalerDescriptor new];
+                d.colorTextureFormat = metal::pixelFormat(desc.colorFormat);
+                d.depthTextureFormat = metal::pixelFormat(desc.depthFormat);
+                d.motionTextureFormat = metal::pixelFormat(desc.motionFormat);
+                d.diffuseAlbedoTextureFormat = metal::pixelFormat(desc.diffuseAlbedoFormat);
+                d.specularAlbedoTextureFormat = metal::pixelFormat(desc.specularAlbedoFormat);
+                d.normalTextureFormat = metal::pixelFormat(desc.normalFormat);
+                d.roughnessTextureFormat = metal::pixelFormat(desc.roughnessFormat);
+                d.outputTextureFormat = metal::pixelFormat(desc.outputFormat);
+                d.inputWidth = desc.inputWidth;
+                d.inputHeight = desc.inputHeight;
+                d.outputWidth = desc.outputWidth;
+                d.outputHeight = desc.outputHeight;
+                d.requiresSynchronousInitialization = YES;
+                id<MTLFXTemporalDenoisedScaler> denoised = [d newTemporalDenoisedScalerWithDevice:m_device];
+                if (!denoised) return Error{"cannot create a MetalFX temporal denoised scaler"};
+                denoised.depthReversed = desc.reversedDepth;
+                inputUsage = denoised.colorTextureUsage | denoised.depthTextureUsage | denoised.motionTextureUsage |
+                             denoised.diffuseAlbedoTextureUsage | denoised.specularAlbedoTextureUsage |
+                             denoised.normalTextureUsage | denoised.roughnessTextureUsage;
+                outputUsage = denoised.outputTextureUsage;
+                upscaler->denoised = denoised;
+            } else {
+                return Error{"no MetalFX temporal denoised scaler before macOS 26 and iOS 26"};
+            }
         } else {
             MTLFXTemporalScalerDescriptor* d = [MTLFXTemporalScalerDescriptor new];
             d.colorTextureFormat = metal::pixelFormat(desc.colorFormat);
@@ -705,12 +737,28 @@ Result<void*> MetalDevice::createUpscaler(const UpscalerDesc& desc) {
             upscaler->temporal = [d newTemporalScalerWithDevice:m_device];
             if (!upscaler->temporal) return Error{"cannot create a MetalFX temporal scaler"};
             upscaler->temporal.depthReversed = desc.reversedDepth;
+            inputUsage = upscaler->temporal.colorTextureUsage | upscaler->temporal.depthTextureUsage |
+                         upscaler->temporal.motionTextureUsage;
+            outputUsage = upscaler->temporal.outputTextureUsage;
         }
-        // TextureUsage::ShaderWrite gives an output these usages; Sampled gives the inputs ShaderRead.
-        const MTLTextureUsage outputUsage =
-            upscaler->spatial ? upscaler->spatial.outputTextureUsage : upscaler->temporal.outputTextureUsage;
+        if (desc.type != UpscalerType::Spatial) {
+            MTLTextureDescriptor* e = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR16Float
+                                                                                         width:1
+                                                                                        height:1
+                                                                                     mipmapped:NO];
+            e.storageMode = MTLStorageModePrivate;
+            e.usage = MTLTextureUsageShaderRead;
+            upscaler->exposure = [m_device newTextureWithDescriptor:e];
+            if (!upscaler->exposure) return Error{"cannot create the upscaler's exposure texture"};
+            if (m_debug) upscaler->exposure.label = @"upscaler exposure";
+        }
+        // TextureUsage::Sampled gives the inputs ShaderRead; ShaderWrite (with Sampled) gives an output these usages.
+        constexpr MTLTextureUsage kInputUsage = MTLTextureUsageShaderRead;
         constexpr MTLTextureUsage kOutputUsage =
             MTLTextureUsageShaderWrite | MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        if ((inputUsage & ~kInputUsage) != 0)
+            log::warning("gpu", "MetalFX wants input texture usage {:#x}; TextureUsage::Sampled gives {:#x}",
+                         std::uint64_t(inputUsage), std::uint64_t(kInputUsage));
         if ((outputUsage & ~kOutputUsage) != 0)
             log::warning("gpu", "MetalFX wants output texture usage {:#x}; TextureUsage::ShaderWrite gives {:#x}",
                          std::uint64_t(outputUsage), std::uint64_t(kOutputUsage));

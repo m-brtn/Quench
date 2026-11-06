@@ -289,25 +289,32 @@ struct AccelerationStructureDesc {
 };
 
 // ------------------------------------------------------------------ upscaling (Caps::spatialUpscaling,
-// Caps::temporalUpscaling)
+// Caps::temporalUpscaling, Caps::denoisedUpscaling)
 
 enum class UpscalerType : std::uint8_t {
     Spatial,  // from one frame: after anti-aliasing
     Temporal, // from the frame, its depth, motion and the jittered history: replaces temporal anti-aliasing
+    // From the jittered noisy frame and its depth, motion, diffuse and specular albedo, world-space normal and
+    // roughness, denoised and upscaled: replaces temporal anti-aliasing and the engine's own denoiser.
+    TemporalDenoised,
 };
 
 struct UpscalerDesc {
     UpscalerType type = UpscalerType::Temporal;
     TextureFormat colorFormat = TextureFormat::Rgba16Float;
     TextureFormat outputFormat = TextureFormat::Rgba16Float;
-    TextureFormat depthFormat = TextureFormat::Depth32Float; // temporal
-    TextureFormat motionFormat = TextureFormat::Rg16Float;   // temporal
+    TextureFormat depthFormat = TextureFormat::Depth32Float;        // temporal types
+    TextureFormat motionFormat = TextureFormat::Rg16Float;          // temporal types
+    TextureFormat diffuseAlbedoFormat = TextureFormat::Rgba8Unorm;  // temporal denoised
+    TextureFormat specularAlbedoFormat = TextureFormat::Rgba8Unorm; // temporal denoised
+    TextureFormat normalFormat = TextureFormat::Rgba16Float;        // temporal denoised
+    TextureFormat roughnessFormat = TextureFormat::R16Float;        // temporal denoised
     std::uint32_t inputWidth = 0;
     std::uint32_t inputHeight = 0;
     std::uint32_t outputWidth = 0;
     std::uint32_t outputHeight = 0;
-    bool hdrInput = true;      // linear scene values above 1, not display values
-    bool reversedDepth = true; // temporal: near 1, far 0
+    bool hdrInput = true;      // linear scene values above 1, not display values (spatial)
+    bool reversedDepth = true; // temporal types: near 1, far 0
     std::string_view name{};   // not kept after creation
 };
 

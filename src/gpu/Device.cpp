@@ -240,9 +240,14 @@ std::optional<std::uint32_t> Device::compactedSize(const AccelerationStructure& 
 }
 
 Result<Upscaler> Device::createUpscaler(const UpscalerDesc& desc) {
-    const bool temporal = desc.type == UpscalerType::Temporal;
-    if (temporal ? !m_impl->caps.temporalUpscaling : !m_impl->caps.spatialUpscaling)
-        return Error{std::format("no {} upscaling on {}", temporal ? "temporal" : "spatial", m_impl->caps.deviceName)};
+    const Caps& caps = m_impl->caps;
+    const bool spatial = desc.type == UpscalerType::Spatial, temporal = desc.type == UpscalerType::Temporal;
+    if (spatial ? !caps.spatialUpscaling : temporal ? !caps.temporalUpscaling : !caps.denoisedUpscaling)
+        return Error{std::format("no {} upscaling on {}",
+                                 spatial    ? "spatial"
+                                 : temporal ? "temporal"
+                                            : "temporal denoised",
+                                 caps.deviceName)};
     QUENCH_ASSERT(desc.inputWidth > 0 && desc.inputHeight > 0 && desc.outputWidth >= desc.inputWidth &&
                       desc.outputHeight >= desc.inputHeight,
                   "an upscaler's output is at least its input");

@@ -133,9 +133,15 @@ void CommandBuffer::upscale(const Upscaler& upscaler, const UpscaleDesc& desc) {
     QUENCH_ASSERT(desc.color.desc.width == u.inputWidth && desc.color.desc.height == u.inputHeight &&
                       desc.output.desc.width == u.outputWidth && desc.output.desc.height == u.outputHeight,
                   "upscale textures differ in size from the upscaler");
-    QUENCH_ASSERT(any(desc.output.desc.usage & TextureUsage::ShaderWrite), "the upscale output needs ShaderWrite");
+    QUENCH_ASSERT(any(desc.output.desc.usage & TextureUsage::ShaderWrite) &&
+                      any(desc.output.desc.usage & TextureUsage::Sampled),
+                  "the upscale output needs ShaderWrite and Sampled");
     QUENCH_ASSERT(u.type == UpscalerType::Spatial || (desc.depth && desc.motion),
                   "temporal upscaling needs the depth and the motion");
+    QUENCH_ASSERT(u.type != UpscalerType::TemporalDenoised ||
+                      (desc.diffuseAlbedo && desc.specularAlbedo && desc.normal && desc.roughness),
+                  "temporal denoised upscaling needs the albedos, the normal and the roughness");
+    QUENCH_ASSERT(desc.exposure > 0.0f, "upscale exposure not above 0");
     m_device->upscale(m_native, Access::native(upscaler), desc);
 }
 

@@ -179,28 +179,34 @@ void* MetalDevice::acquireCommandBuffer() {
     }
 }
 
-void MetalDevice::pushUniforms(void* commands, ShaderStage stage, std::uint32_t slot, const void* data,
-                               std::uint32_t size) {
-    MetalCommandBuffer& c = commandsOf(commands);
+std::pair<id<MTLBuffer>, std::uint32_t> MetalDevice::uniformSpace(MetalCommandBuffer& c, std::uint32_t size) {
     QUENCH_ASSERT(size <= metal::kUniformChunkSize, "uniform block larger than 32 KB");
-    QUENCH_ASSERT(slot < metal::kUniformSlots, "uniform slot out of range");
     const std::uint32_t aligned = (size + metal::kUniformAlignment - 1) & ~(metal::kUniformAlignment - 1);
     if (c.uniformChunks.empty() || c.uniformOffset + aligned > metal::kUniformChunkSize) {
         id<MTLBuffer> chunk = uniformChunk();
         if (!chunk) {
             log::error("gpu", "cannot allocate uniform memory");
-            return;
+            return {nil, 0};
         }
         c.uniformChunks.push_back(chunk);
         c.uniformOffset = 0;
     }
-    id<MTLBuffer> chunk = c.uniformChunks.back();
-    std::memcpy(static_cast<std::byte*>(chunk.contents) + c.uniformOffset, data, size);
+    const std::uint32_t offset = c.uniformOffset;
+    c.uniformOffset += aligned;
+    return {c.uniformChunks.back(), offset};
+}
+
+void MetalDevice::pushUniforms(void* commands, ShaderStage stage, std::uint32_t slot, const void* data,
+                               std::uint32_t size) {
+    MetalCommandBuffer& c = commandsOf(commands);
+    QUENCH_ASSERT(slot < metal::kUniformSlots, "uniform slot out of range");
+    auto [chunk, offset] = uniformSpace(c, size);
+    if (!chunk) return;
+    std::memcpy(static_cast<std::byte*>(chunk.contents) + offset, data, size);
     MetalUniformBinding& binding = c.uniforms[stageIndex(stage)][slot];
     binding.buffer = chunk;
-    binding.offset = c.uniformOffset;
+    binding.offset = offset;
     binding.dirty = true;
-    c.uniformOffset += aligned;
 }
 
 TextureRef MetalDevice::acquireSwapchainTexture(void* commands, SDL_Window* window) {
@@ -1002,6 +1008,25 @@ void MetalDevice::upscale(void* commands, void* upscaler, const UpscaleDesc& des
                 destinationBytesPerImage:texel];
             [blit endEncoding];
         };
+        if (u.exposure && u.exposureValue != desc.exposure) {
+            const _Float16 value = _Float16(desc.exposure);
+            auto [buffer, offset] = uniformSpace(c, sizeof(value));
+            if (buffer) {
+                std::memcpy(static_cast<std::byte*>(buffer.contents) + offset, &value, sizeof(value));
+                id<MTLBlitCommandEncoder> blit = [c.handle blitCommandEncoder];
+                [blit copyFromBuffer:buffer
+                           sourceOffset:offset
+                      sourceBytesPerRow:sizeof(value)
+                    sourceBytesPerImage:sizeof(value)
+                             sourceSize:MTLSizeMake(1, 1, 1)
+                              toTexture:u.exposure
+                       destinationSlice:0
+                       destinationLevel:0
+                      destinationOrigin:MTLOriginMake(0, 0, 0)];
+                [blit endEncoding];
+                u.exposureValue = desc.exposure;
+            }
+        }
         if (first >= 0) marker(true, desc.color);
         if (u.spatial) {
             u.spatial.colorTexture = textureOf(desc.color).handle;
@@ -1020,8 +1045,34 @@ void MetalDevice::upscale(void* commands, void* upscaler, const UpscaleDesc& des
             u.temporal.jitterOffsetY = desc.jitterY;
             u.temporal.motionVectorScaleX = desc.motionScaleX;
             u.temporal.motionVectorScaleY = desc.motionScaleY;
+            u.temporal.exposureTexture = u.exposure;
             u.temporal.reset = desc.reset;
             [u.temporal encodeToCommandBuffer:c.handle];
+        } else if (u.denoised) {
+            if (@available(macOS 26.0, iOS 26.0, *)) {
+                id<MTLFXTemporalDenoisedScaler> d = u.denoised;
+                d.colorTexture = textureOf(desc.color).handle;
+                d.depthTexture = textureOf(desc.depth).handle;
+                d.motionTexture = textureOf(desc.motion).handle;
+                d.diffuseAlbedoTexture = textureOf(desc.diffuseAlbedo).handle;
+                d.specularAlbedoTexture = textureOf(desc.specularAlbedo).handle;
+                d.normalTexture = textureOf(desc.normal).handle;
+                d.roughnessTexture = textureOf(desc.roughness).handle;
+                d.outputTexture = textureOf(desc.output).handle;
+                d.exposureTexture = u.exposure;
+                d.jitterOffsetX = desc.jitterX;
+                d.jitterOffsetY = desc.jitterY;
+                d.motionVectorScaleX = desc.motionScaleX;
+                d.motionVectorScaleY = desc.motionScaleY;
+                simd_float4x4 worldToView, viewToClip;
+                static_assert(sizeof(worldToView) == sizeof(desc.worldToView));
+                std::memcpy(&worldToView, desc.worldToView.data(), sizeof(worldToView));
+                std::memcpy(&viewToClip, desc.viewToClip.data(), sizeof(viewToClip));
+                d.worldToViewMatrix = worldToView;
+                d.viewToClipMatrix = viewToClip;
+                d.shouldResetHistory = desc.reset;
+                [d encodeToCommandBuffer:c.handle];
+            }
         }
         if (first >= 0) marker(false, desc.output);
     }

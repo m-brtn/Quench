@@ -81,10 +81,11 @@ std::vector<Rgba8> trace(Device& device, RayScene& s, const AccelerationStructur
 QUENCH_TEST(ray_tracing_caps) {
     QUENCH_GPU_DEVICE(device);
     const Caps& caps = device.caps();
-    std::printf("  rayTracing %d, spatialUpscaling %d, temporalUpscaling %d\n", caps.rayTracing, caps.spatialUpscaling,
-                caps.temporalUpscaling);
+    std::printf("  rayTracing %d, spatialUpscaling %d, temporalUpscaling %d, denoisedUpscaling %d\n", caps.rayTracing,
+                caps.spatialUpscaling, caps.temporalUpscaling, caps.denoisedUpscaling);
     if (caps.backend == Backend::SdlGpu)
-        CHECK(!caps.rayTracing && !caps.spatialUpscaling && !caps.temporalUpscaling, "SDL GPU with ray tracing");
+        CHECK(!caps.rayTracing && !caps.spatialUpscaling && !caps.temporalUpscaling && !caps.denoisedUpscaling,
+              "SDL GPU with ray tracing or upscaling");
     // The Mac's GPU (Apple silicon) has both; the iOS Simulator has neither (no MetalFX in its SDK).
     if (caps.backend == Backend::Metal && QUENCH_PLATFORM_MACOS)
         CHECK(caps.rayTracing && caps.spatialUpscaling && caps.temporalUpscaling, "no ray tracing or MetalFX");
@@ -96,6 +97,14 @@ QUENCH_TEST(ray_tracing_caps) {
         Result<Upscaler> u =
             device.createUpscaler({.inputWidth = 16, .inputHeight = 16, .outputWidth = 32, .outputHeight = 32});
         CHECK(!u, "an upscaler without Caps::temporalUpscaling");
+    }
+    if (!caps.denoisedUpscaling) {
+        Result<Upscaler> u = device.createUpscaler({.type = UpscalerType::TemporalDenoised,
+                                                    .inputWidth = 16,
+                                                    .inputHeight = 16,
+                                                    .outputWidth = 32,
+                                                    .outputHeight = 32});
+        CHECK(!u, "a denoised upscaler without Caps::denoisedUpscaling");
     }
 }
 
@@ -437,7 +446,8 @@ std::array<float, 4> readHalf4(Device& device, const Texture& texture, std::uint
 
 } // namespace
 
-// MetalFX spatial and temporal upscaling of a flat color: the output keeps it (gpu::Caps::*Upscaling).
+// MetalFX spatial and temporal upscaling of a flat color: the output keeps it (gpu::Caps::*Upscaling), also with
+// an exposure for the temporal one.
 QUENCH_TEST(upscale_flat_color) {
     QUENCH_GPU_DEVICE(device);
     const Caps& caps = device.caps();
@@ -479,6 +489,7 @@ QUENCH_TEST(upscale_flat_color) {
             if (temporal) {
                 desc.depth = *depth;
                 desc.motion = *motion;
+                desc.exposure = 2.0f;
                 desc.reset = frame == 0;
             }
             commands.beginTiming("upscale");
@@ -504,4 +515,73 @@ QUENCH_TEST(upscale_flat_color) {
         CHECK(std::abs(c[0] - 0.5f) < 0.05f && std::abs(c[1] - 0.25f) < 0.03f && std::abs(c[2] - 2.0f) < 0.2f,
               "%s: %.3f %.3f %.3f", temporal ? "temporal" : "spatial", c[0], c[1], c[2]);
     }
+}
+
+// MetalFX's temporal denoised upscaling of a flat lit floor seen from above: the output keeps its color
+// (gpu::Caps::denoisedUpscaling).
+QUENCH_TEST(upscale_denoised_flat_color) {
+    QUENCH_GPU_DEVICE(device);
+    if (!device.caps().denoisedUpscaling) QUENCH_SKIP("no denoised upscaling (gpu::Caps::denoisedUpscaling)");
+    constexpr std::uint32_t kIn = 64, kOut = 128;
+    const TextureUsage sampledTarget = TextureUsage::ColorTarget | TextureUsage::Sampled;
+    const auto input = [&](TextureFormat format) {
+        return device.createTexture({.format = format, .usage = sampledTarget, .width = kIn, .height = kIn});
+    };
+    Result<Texture> color = input(TextureFormat::Rgba16Float), motion = input(TextureFormat::Rg16Float);
+    Result<Texture> diffuse = input(TextureFormat::Rgba8Unorm), specular = input(TextureFormat::Rgba8Unorm);
+    Result<Texture> normal = input(TextureFormat::Rgba16Float), roughness = input(TextureFormat::R16Float);
+    Result<Texture> depth = device.createTexture({.format = TextureFormat::Depth32Float,
+                                                  .usage = TextureUsage::DepthStencilTarget | TextureUsage::Sampled,
+                                                  .width = kIn,
+                                                  .height = kIn});
+    Result<Texture> output = device.createTexture({.format = TextureFormat::Rgba16Float,
+                                                   .usage = TextureUsage::Sampled | TextureUsage::ShaderWrite,
+                                                   .width = kOut,
+                                                   .height = kOut});
+    Result<Upscaler> upscaler = device.createUpscaler({.type = UpscalerType::TemporalDenoised,
+                                                       .inputWidth = kIn,
+                                                       .inputHeight = kIn,
+                                                       .outputWidth = kOut,
+                                                       .outputHeight = kOut});
+    REQUIRE(color && motion && diffuse && specular && normal && roughness && depth && output, "creation failed");
+    REQUIRE(upscaler, "denoised upscaler: %s", upscaler.error().c_str());
+
+    // The camera 2 m above the floor, looking down; a reversed-depth infinite perspective (90 degrees, near 0.1 m),
+    // so the floor is at depth 0.1 / 2.
+    constexpr float kNear = 0.1f, kHeight = 2.0f;
+    const std::array<float, 16> worldToView = {1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, -kHeight, 1};
+    const std::array<float, 16> viewToClip = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, -1, 0, 0, kNear, 0};
+    {
+        CommandBuffer commands = device.acquireCommandBuffer();
+        const DepthTarget dt{.texture = *depth, .store = StoreOp::Store, .clearDepth = kNear / kHeight};
+        commands.beginRenderPass(ColorTarget{.texture = *color, .clear = {0.5f, 0.25f, 2.0f, 1.0f}}, &dt).end();
+        commands.beginRenderPass(ColorTarget{.texture = *motion, .clear = {0.0f, 0.0f, 0.0f, 0.0f}}).end();
+        commands.beginRenderPass(ColorTarget{.texture = *diffuse, .clear = {0.5f, 0.5f, 0.5f, 1.0f}}).end();
+        commands.beginRenderPass(ColorTarget{.texture = *specular, .clear = {0.04f, 0.04f, 0.04f, 1.0f}}).end();
+        commands.beginRenderPass(ColorTarget{.texture = *normal, .clear = {0.0f, 1.0f, 0.0f, 0.0f}}).end();
+        commands.beginRenderPass(ColorTarget{.texture = *roughness, .clear = {0.5f, 0.0f, 0.0f, 0.0f}}).end();
+        REQUIRE(commands.submit(), "clear failed");
+    }
+    for (int frame = 0; frame < 4; ++frame) {
+        CommandBuffer commands = device.acquireCommandBuffer();
+        commands.upscale(*upscaler, {.color = *color,
+                                     .depth = *depth,
+                                     .motion = *motion,
+                                     .output = *output,
+                                     .diffuseAlbedo = *diffuse,
+                                     .specularAlbedo = *specular,
+                                     .normal = *normal,
+                                     .roughness = *roughness,
+                                     .worldToView = worldToView,
+                                     .viewToClip = viewToClip,
+                                     .reset = frame == 0});
+        REQUIRE(commands.submit(), "submit failed");
+    }
+    const std::array<float, 4> center = readHalf4(device, *output, kOut / 2, kOut / 2);
+    const std::array<float, 4> corner = readHalf4(device, *output, 2, 2);
+    std::printf("  denoised: center %.3f %.3f %.3f, corner %.3f %.3f %.3f\n", center[0], center[1], center[2],
+                corner[0], corner[1], corner[2]);
+    for (const std::array<float, 4>& c : {center, corner})
+        CHECK(std::abs(c[0] - 0.5f) < 0.05f && std::abs(c[1] - 0.25f) < 0.03f && std::abs(c[2] - 2.0f) < 0.2f,
+              "denoised: %.3f %.3f %.3f", c[0], c[1], c[2]);
 }

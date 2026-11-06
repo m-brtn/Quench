@@ -96,16 +96,26 @@ struct RayInstance {
 };
 
 // Upscaler inputs and output, sizes as the upscaler was created for. Temporal upscaling also takes the depth, the
-// motion and the projection's jitter of the frame.
+// motion and the projection's jitter of the frame; temporal denoised upscaling also its G-buffer and camera.
 struct UpscaleDesc {
-    TextureRef color{};
+    TextureRef color{}; // inputs: TextureUsage::Sampled
     TextureRef depth{};
     TextureRef motion{};
-    TextureRef output{};  // TextureUsage::ShaderWrite
+    TextureRef output{}; // TextureUsage::ShaderWrite | Sampled (MetalFX also reads it)
+    // Temporal denoised, at the input size: albedos, the world-space normal and the roughness of the frame.
+    TextureRef diffuseAlbedo{};
+    TextureRef specularAlbedo{};
+    TextureRef normal{};
+    TextureRef roughness{};
     float jitterX = 0.0f; // how far the jitter moved the image, in input pixels (+x right, +y down)
     float jitterY = 0.0f;
     float motionScaleX = 1.0f; // turns the motion texture's values into input pixels toward the previous frame
     float motionScaleY = 1.0f;
+    // Temporal denoised: the frame's camera, column-major (glm::mat4 memory).
+    std::array<float, 16> worldToView{};
+    std::array<float, 16> viewToClip{};
+    // Temporal types: the factor the color is multiplied by before tone mapping (MetalFX's exposure); above 0.
+    float exposure = 1.0f;
     bool reset = false; // forget the history (camera cut, resize)
 };
 
