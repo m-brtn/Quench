@@ -32,7 +32,7 @@ constexpr const char* kUsage =
     "  quench_cook model <input.gltf|.glb> <output.qmodel> [options]\n"
     "  quench_cook skeleton <input.gltf|.glb> <output.qskel> [options]\n"
     "  quench_cook animation <input.gltf|.glb> <output.qanim> [options]\n"
-    "  quench_cook sound <input.wav|.flac|.mp3> <output> [options]\n"
+    "  quench_cook sound <input.wav|.flac|.mp3|.ogg> <output> [options]\n"
     "  quench_cook --version | --help\n"
     "sounds are decoded to check them; the output keeps the input's bytes, or is a 16-bit WAV when it ends in\n"
     ".wav and the input is not one (or --channels is given)\n"

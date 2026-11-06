@@ -2,6 +2,7 @@
 
 #include <miniaudio.h>
 
+#include <algorithm>
 #include <format>
 #include <string>
 
@@ -84,18 +85,29 @@ Decoder::~Decoder() = default;
 
 namespace {
 
+// An Ogg file is opened as Vorbis directly: miniaudio tries MP3 before Vorbis, and an MP3 sync search can take an Ogg
+// file's bytes for frames.
+ma_encoding_format encodingOf(std::span<const std::uint8_t> head) {
+    constexpr std::uint8_t kOgg[] = {'O', 'g', 'g', 'S'};
+    if (head.size() >= 4 && std::equal(kOgg, kOgg + 4, head.begin())) return ma_encoding_format_vorbis;
+    return ma_encoding_format_unknown;
+}
+
 // Opens with the file's channel count, again with two channels if it has more; open(config) does the opening.
 template <class Open>
-Result<void> openDecoder(ma_decoder& decoder, bool& initialized, Open open, const std::string& name) {
+Result<void> openDecoder(ma_decoder& decoder, bool& initialized, ma_encoding_format encoding, Open open,
+                         const std::string& name) {
     ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    config.encodingFormat = encoding;
     ma_result result = open(config);
     if (result != MA_SUCCESS)
-        return Error{std::format("{}: not a WAV, FLAC or MP3 file ({})", name, resultName(result))};
+        return Error{std::format("{}: not a WAV, FLAC, MP3 or Ogg Vorbis file ({})", name, resultName(result))};
     initialized = true;
     if (decoder.outputChannels > 2) {
         ma_decoder_uninit(&decoder);
         initialized = false;
         config = ma_decoder_config_init(ma_format_f32, 2, 0);
+        config.encodingFormat = encoding;
         result = open(config);
         if (result != MA_SUCCESS)
             return Error{std::format("{}: cannot mix down to stereo ({})", name, resultName(result))};
@@ -112,7 +124,7 @@ Result<std::unique_ptr<Decoder>> Decoder::fromMemory(std::span<const std::uint8_
     auto impl = std::make_unique<Impl>();
     impl->name = "sound";
     Result<void> opened = openDecoder(
-        impl->decoder, impl->initialized,
+        impl->decoder, impl->initialized, encodingOf(bytes),
         [&](const ma_decoder_config& config) {
             return ma_decoder_init_memory(bytes.data(), bytes.size(), &config, &impl->decoder);
         },
@@ -127,8 +139,11 @@ Result<std::unique_ptr<Decoder>> Decoder::fromReader(std::unique_ptr<fs::Reader>
     impl->vfs = std::make_unique<ReaderVfs>();
     impl->vfs->callbacks = {vfsOpen, vfsOpenW, vfsClose, vfsRead, vfsWrite, vfsSeek, vfsTell, vfsInfo};
     impl->vfs->reader = std::move(reader);
+    std::uint8_t head[4] = {};
+    Result<std::size_t> headSize = impl->vfs->reader->read(0, head);
+    const ma_encoding_format encoding = headSize ? encodingOf({head, *headSize}) : ma_encoding_format_unknown;
     Result<void> opened = openDecoder(
-        impl->decoder, impl->initialized,
+        impl->decoder, impl->initialized, encoding,
         [&](const ma_decoder_config& config) {
             return ma_decoder_init_vfs(impl->vfs.get(), impl->name.c_str(), &config, &impl->decoder);
         },

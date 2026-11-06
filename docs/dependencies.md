@@ -79,20 +79,31 @@ Audio ([Audio](audio.md)). One library, in `cmake/Dependencies.cmake`, listed wi
 
 | Library | Version | Commit | Licence | Linked into | Purpose |
 |---|---|---|---|---|---|
-| miniaudio | 0.11.25 | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` (TrailForge's), SHA256 `1a3a79b80fc6f0b0cc155e28b954a598e0ddfa2db64e2afa8466be88c476fa55` | public domain (Unlicense) or MIT-0 | `quench_audio` (decoders), `quench_audio_device` (device API), `quench_cook` (through `quench_audio`) | WAV, FLAC and MP3 decoding; the playback device (Core Audio on Apple platforms, a null backend for tests) |
+| miniaudio | 0.11.25 | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` (TrailForge's), SHA256 `1a3a79b80fc6f0b0cc155e28b954a598e0ddfa2db64e2afa8466be88c476fa55` | public domain (Unlicense) or MIT-0 | `quench_audio` (decoders), `quench_audio_device` (device API), `quench_cook` (through `quench_audio`) | WAV, FLAC, MP3 and Ogg Vorbis decoding; the playback device (Core Audio on Apple platforms, a null backend for tests) |
+| stb_vorbis (in miniaudio's archive) | 1.22 (2021-07-11) | the same archive, `extras/stb_vorbis.c` | MIT or public domain (Unlicense), the reader's choice | `quench_audio` (through miniaudio's Vorbis backend) | Ogg Vorbis decoding (since 2026-11-07) |
 
-How it is built (`quench_miniaudio`, a static library from `miniaudio.c`): the engine, node graph, resource manager,
+How it is built (`quench_miniaudio`, a static library from `src/audio/Miniaudio.c`, which includes `miniaudio.h`
+with `MINIAUDIO_IMPLEMENTATION` between the declarations of `extras/stb_vorbis.c` and its definitions, in the order of
+miniaudio's own `tools/audioconverter`; no new archive): the engine, node graph, resource manager,
 waveform generation and encoders are compiled out (`MA_NO_ENGINE`, `MA_NO_NODE_GRAPH`, `MA_NO_RESOURCE_MANAGER`,
 `MA_NO_GENERATION`, `MA_NO_ENCODING`; the engine writes WAV itself, `quench::audio::encodeWav`). Headless and web
 builds add `MA_NO_DEVICE_IO` (the web build also `MA_NO_THREADING`). On Apple platforms only the Core Audio and null
 backends are compiled, with the frameworks linked at build time (`MA_NO_RUNTIME_LINKING`, miniaudio's advice for
-App Store builds); on iOS `miniaudio.c` is compiled as Objective-C (its backend uses `AVAudioSession`).
+App Store builds); on iOS that unit is compiled as Objective-C (miniaudio's backend uses `AVAudioSession`).
 
-Checked in the 0.11.25 source and in the tests: the decoders read WAV (16-bit PCM and 32-bit float), FLAC and MP3
-from memory (`audio.decode_wav_flac_mp3`); streams read through a miniaudio VFS over `quench::fs` readers
-(`audio.stream_*`, tested with WAV files only). The MP3 decoder (dr_mp3) does not
+Checked in the 0.11.25 source and in the tests: the decoders read WAV (16-bit PCM and 32-bit float), FLAC, MP3 and
+Ogg Vorbis from memory (`audio.decode_wav_flac_mp3`, `audio.decode_vorbis`); streams read through a miniaudio VFS over
+`quench::fs` readers (`audio.stream_*`, with WAV and Ogg Vorbis files). The MP3 decoder (dr_mp3) does not
 remove the encoder delay and padding of the test file (12672 frames decoded for 11025 encoded at 22050 Hz), so
-gapless loops should be WAV or FLAC. The null backend runs a device thread that discards the mix
+gapless loops should be WAV, FLAC or Vorbis. Vorbis from memory uses stb_vorbis' pull mode
+(`stb_vorbis_open_memory`), which knows the length and trims the last frame to the final granule position (the test
+loop decodes to its 48000 frames); from a reader miniaudio uses the push mode, where
+`ma_decoder_get_length_in_pcm_frames` is always 0 (`miniaudio.h`, its documentation of that function and
+`ma_stbvorbis_get_length_in_pcm_frames`) and a seek back reopens the decoder. The engine's streams need neither: they
+read until the decoder gives no frames and then seek to the start, and the push mode gives the same frames as the
+pull mode (`audio.stream_vorbis_loop`, bit for bit). The decoder opens a file that starts with `OggS` as
+Vorbis directly, since miniaudio's trial order puts MP3 before Vorbis. stb_vorbis allocates with `malloc` and
+`alloca` while it decodes; that runs on jobs, never on the audio thread. The null backend runs a device thread that discards the mix
 (`audio_device.null_device`).
 
 **Games.** TrailForge builds its own `miniaudio_lib` from the same commit with another configuration (encoder on,
@@ -240,8 +251,8 @@ Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest
 | Tracy | 0.14.1 (2026-08-22) | BSD-3-Clause | CPU and GPU profiler (development builds) |
 | Flecs | 4.2.0 (2026-11-04) | MIT | optional ECS module for games that want one |
 
-Already pinned and kept: Dear ImGui (diagnostics). miniaudio was pinned with stage 7 (above). Vorbis decoding
-(`stb_vorbis`) is not planned until a game needs `.ogg` files.
+Already pinned and kept: Dear ImGui (diagnostics). miniaudio was pinned with stage 7 (above); Vorbis decoding
+(`stb_vorbis`, from miniaudio's archive) was added on 2026-11-07.
 
 ## Verified capabilities and caveats
 

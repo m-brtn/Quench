@@ -52,6 +52,12 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   `pollShaderHotReload` and `shaderReloadStatus`; scenario values `shader_reloads`, `shader_reload_failures`,
   `shader_reload_pipelines`. Checked on the Mac's three backends; the renderer's `render_frame` set (15 entries)
   compiled again in 3.7 to 4.2 s while the demo kept rendering.
+- Ogg Vorbis sounds and streams (stage 7 remaining work): `quench_audio` decodes `.ogg` files through stb_vorbis 1.22
+  from miniaudio's archive (MIT or public domain; no new download), as sounds in memory, streams and music, and
+  `quench_cook sound` and `quench_cook_assets(SOUNDS)` accept them ([Audio](../audio.md#streams-and-music)). A
+  streamed Vorbis loop needs no length (miniaudio reports none for it there) and gives exactly the frames of the file
+  decoded in memory every time round; the test loop decodes to its 48000 frames at 38 to 39 dB signal to error
+  against its source; also under Node.js.
 
 ## Fixes
 
@@ -147,6 +153,10 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   builds a `ShaderBlob` itself with a positional initializer warns under `-Wmissing-field-initializers` until it
   adds it. **`--hot-reload` now reloads shaders too** on desktops (the build's sources); `quench_add_shaders()`
   writes `quench_shaders/<set>/manifest.json` in host builds with a single-configuration generator.
+- **`.ogg` files play:** a sound or stream that is an Ogg Vorbis file decoded to `Failed` before and plays now. The
+  decoder's error for a file of no known format reads "not a WAV, FLAC, MP3 or Ogg Vorbis file". `quench_miniaudio`
+  (for a game that links it) is built from the engine's `src/audio/Miniaudio.c` with stb_vorbis inside, instead of
+  `miniaudio.c`; its configuration is unchanged.
 - **Xcode projects** (`quench_add_game` with the Xcode generator): the merged assets are no longer a folder
   reference in the target's resources but are copied by a `CMake PostBuild Rules` script phase; a game's own script
   that expects the folder in `Copy Bundle Resources` needs to change. The `<target>_assets` target stays.

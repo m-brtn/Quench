@@ -202,8 +202,9 @@ public:
     // Loads (or finds) the sound and plays it.
     SoundHandle play(std::string_view path, const PlayParams& params = {});
     SoundHandle play(std::shared_ptr<const SoundData> data, const PlayParams& params = {});
-    // Streams a WAV, FLAC or MP3 file through quench::fs, decoding it on jobs a little ahead of the mix. A file that
-    // cannot be opened or decoded is logged once and ends the sound.
+    // Streams a WAV, FLAC, MP3 or Ogg Vorbis file through quench::fs, decoding it on jobs a little ahead of the mix
+    // (a loop starts over where the decoder runs out: no length needed, which Vorbis streams do not report). A file
+    // that cannot be opened or decoded is logged once and ends the sound.
     SoundHandle playStream(std::string_view path, const PlayParams& params = {});
     SoundHandle playGenerator(std::shared_ptr<Generator> generator, const PlayParams& params = {});
 

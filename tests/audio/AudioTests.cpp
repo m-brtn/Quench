@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <numbers>
@@ -32,6 +33,7 @@ namespace quench::test {
 // tests/audio/data, embedded by tests/CMakeLists.txt.
 std::span<const std::uint8_t> toneFlac();
 std::span<const std::uint8_t> toneMp3();
+std::span<const std::uint8_t> loopOgg();
 } // namespace quench::test
 
 namespace {
@@ -105,6 +107,16 @@ float maxStep(std::span<const float> samples) {
 }
 
 bool near(float a, float b, float tolerance) { return std::abs(a - b) <= tolerance; }
+
+// One channel of interleaved stereo.
+std::vector<float> channelOf(std::span<const float> stereo, std::uint32_t channel) {
+    std::vector<float> mono(stereo.size() / 2);
+    for (std::size_t i = 0; i < mono.size(); ++i) mono[i] = stereo[i * 2 + channel];
+    return mono;
+}
+
+// tests/audio/data/loop.ogg: 1 s at 48 kHz, 0.5 * sin of 440 Hz on the left and 880 Hz on the right.
+constexpr float kLoopOggHz[2] = {440.0f, 880.0f};
 
 // Asset files for one case, read through quench::fs; restores the default backend at the end.
 struct AssetDir {
@@ -675,9 +687,105 @@ QUENCH_TEST(stream_music_crossfade) {
     CHECK(!a.alive(second) && !a.music().valid(), "music stopped");
 }
 
+// A streamed Vorbis file is decoded in miniaudio's push mode, which reports no length: the stream gives the frames of
+// the file decoded in memory (pull mode) and starts over where the decoder runs out, without a gap or a click.
+QUENCH_TEST(stream_vorbis_loop) {
+    AssetDir assets("audio_stream_vorbis_loop");
+    assets.write("loop.ogg", quench::test::loopOgg());
+    const Result<SoundData> expected = decodeSound(quench::test::loopOgg());
+    REQUIRE(expected && expected->format.channels == 2, "decode");
+    const std::vector<float>& once = expected->samples;
+
+    AudioSettings settings;
+    settings.streamBufferSeconds = 0.05; // the smallest ring: many refills, several of them across the loop point
+    Rig rig(settings);
+    const SoundHandle h = rig.audio.playStream("loop.ogg", {.loop = true});
+    const std::vector<float> out = rig.run(3.5);
+    REQUIRE(out.size() == std::size_t(3.5 * kRate) * 2, "mixed %zu", out.size());
+    CHECK(rig.audio.alive(h), "still looping");
+    float worst = 0.0f;
+    for (std::size_t i = 0; i < out.size(); ++i) worst = std::max(worst, std::abs(out[i] - once[i % once.size()]));
+    CHECK(worst == 0.0f, "the loop differs from the decoded file by up to %g", worst);
+
+    // By measurement: the largest step between neighbouring frames within 5 ms of the loop points against the
+    // largest elsewhere (a click), and the level of 25 ms windows (whole periods of both tones) every 12.5 ms, on and
+    // across the loop points, against the whole (a gap).
+    const std::size_t period = expected->frames(), near5ms = kRate / 200, window = kRate / 40;
+    float stepAtLoops = 0.0f, stepElsewhere = 0.0f;
+    for (std::size_t f = 1; f < out.size() / 2; ++f) {
+        const std::size_t fromLoop = std::min(f % period, period - f % period);
+        float& step = fromLoop <= near5ms ? stepAtLoops : stepElsewhere;
+        for (std::size_t c = 0; c < 2; ++c) step = std::max(step, std::abs(out[f * 2 + c] - out[(f - 1) * 2 + c]));
+    }
+    CHECK(stepAtLoops <= stepElsewhere * 1.05f, "a step of %f at the loop points, %f elsewhere", stepAtLoops,
+          stepElsewhere);
+    // The lowest and highest window level relative to the whole.
+    auto levelRange = [&](std::span<const float> samples) {
+        const float whole = measureLevels(samples, 2).rmsMono();
+        float lowest = 10.0f, highest = 0.0f;
+        for (std::size_t start = 0; start + window <= samples.size() / 2; start += window / 2) {
+            const float rms = measureLevels(samples.subspan(start * 2, window * 2), 2).rmsMono();
+            lowest = std::min(lowest, rms / whole);
+            highest = std::max(highest, rms / whole);
+        }
+        return std::pair(lowest, highest);
+    };
+    const auto [lowest, highest] = levelRange(out);
+    CHECK(lowest >= 0.98f && highest <= 1.02f, "25 ms levels %f..%f of the whole", lowest, highest);
+    // The measurement sees a gap: 2.5 ms of silence at the first loop point.
+    std::vector<float> gapped = out;
+    gapped.insert(gapped.begin() + std::ptrdiff_t(period * 2), kRate / 400 * 2, 0.0f);
+    const float gappedLowest = levelRange(gapped).first;
+    CHECK(gappedLowest < 0.98f, "a gap of 2.5 ms measured %f of the whole", gappedLowest);
+    std::printf("vorbis loop: largest step %.4f at the loop points, %.4f elsewhere; 25 ms levels %.4f..%.4f of the "
+                "whole (%.4f with a 2.5 ms gap)\n",
+                stepAtLoops, stepElsewhere, lowest, highest, gappedLowest);
+    const std::vector<float> left = channelOf(last(out, 1.0), 0), right = channelOf(last(out, 1.0), 1);
+    CHECK(near(dominantFrequency(left, 1, kRate).frequency, kLoopOggHz[0], 1.0f) &&
+              near(dominantFrequency(right, 1, kRate).frequency, kLoopOggHz[1], 1.0f),
+          "440 Hz left, 880 Hz right");
+    CHECK(rig.audio.stats().underruns == 0, "underruns %llu", (unsigned long long)rig.audio.stats().underruns);
+}
+
+// Vorbis music loops past its end and crossfades into the next track like any other file.
+QUENCH_TEST(stream_vorbis_music_crossfade) {
+    AssetDir assets("audio_stream_vorbis_music_crossfade");
+    assets.write("loop.ogg", quench::test::loopOgg());
+    assets.write("next.wav", encodeWav(sineSamples(660.0f, 0.5f, 1.0), 2, kRate));
+    Rig rig;
+    AudioSystem& a = rig.audio;
+    std::vector<std::pair<SoundHandle, EndReason>> ended;
+    a.setEndCallback([&](SoundHandle h, EndReason r) { ended.emplace_back(h, r); });
+    const SoundHandle first = a.playMusic("loop.ogg", {.crossfade = 0.0f});
+    std::vector<float> out = rig.run(1.6); // past the end of the 1 s file
+    CHECK(a.alive(first) && ended.empty(), "the Vorbis music loops");
+    const std::vector<float> left = channelOf(last(out, 0.5), 0);
+    CHECK(near(dominantFrequency(left, 1, kRate).frequency, kLoopOggHz[0], 1.0f), "first track after its loop point");
+    const float before = measureLevels(last(out, 0.5), 2).rms[0];
+
+    const SoundHandle second = a.playMusic("next.wav", {.crossfade = 0.5f});
+    out = rig.run(0.5);
+    float lowest = 10.0f, highest = 0.0f;
+    for (double t = 0.0; t + 0.05 <= 0.5; t += 0.05) {
+        const float rms =
+            measureLevels(std::span(out).subspan(std::size_t(t * kRate) * 2, std::size_t(0.05 * kRate) * 2), 2).rms[0];
+        lowest = std::min(lowest, rms);
+        highest = std::max(highest, rms);
+    }
+    CHECK(lowest > before * 0.85f && highest < before * 1.15f, "level during the crossfade %f..%f (before %f)", lowest,
+          highest, before);
+    out = rig.run(0.3);
+    const std::vector<float> after = channelOf(last(out, 0.25), 0);
+    CHECK(near(dominantFrequency(after, 1, kRate, 300.0f, 1000.0f).frequency, 660.0f, 1.0f), "second track");
+    CHECK(near(dominantFrequency(after, 1, kRate, 400.0f, 500.0f).level, 0.0f, 0.01f), "first track gone");
+    CHECK(ended.size() == 1 && ended[0].first == first && ended[0].second == EndReason::Stopped, "first stopped");
+    CHECK(a.music() == second, "the second is the music");
+}
+
 QUENCH_TEST(stream_missing_file) {
     AssetDir assets("audio_stream_missing_file");
     assets.write("broken.mp3", std::vector<std::uint8_t>(5000, 0x42));
+    assets.write("truncated.ogg", quench::test::loopOgg().first(60));
     for (bool offline : {true, false}) {
         JobSystem jobs(JobSystemDesc{.workerThreads = 0});
         AudioSystem audio(jobs, nullptr);
@@ -686,12 +794,13 @@ QUENCH_TEST(stream_missing_file) {
         audio.setEndCallback([&](SoundHandle, EndReason r) { reasons.push_back(r); });
         audio.playStream("missing.ogg");
         audio.playStream("broken.mp3");
-        for (int i = 0; i < 10 && reasons.size() < 2; ++i) {
+        audio.playStream("truncated.ogg");
+        for (int i = 0; i < 10 && reasons.size() < 3; ++i) {
             audio.update();
             jobs.waitAll();
         }
-        CHECK(reasons.size() == 2 && reasons[0] == EndReason::Failed && reasons[1] == EndReason::Failed,
-              "both fail (offline %d): %zu", int(offline), reasons.size());
+        CHECK(reasons.size() == 3 && std::ranges::all_of(reasons, [](EndReason r) { return r == EndReason::Failed; }),
+              "all fail (offline %d): %zu", int(offline), reasons.size());
     }
 }
 
@@ -727,6 +836,29 @@ QUENCH_TEST(decode_wav_flac_mp3) {
     }
 }
 
+// The Ogg Vorbis loop against the signal it was encoded from: its exact length (the last page's granule position),
+// and the error of each channel against the sine.
+QUENCH_TEST(decode_vorbis) {
+    const Result<SoundData> sound = decodeSound(quench::test::loopOgg());
+    REQUIRE(sound, "ogg: %s", sound.error().c_str());
+    CHECK(sound->format.channels == 2 && sound->format.sampleRate == kRate, "format %u ch %u Hz",
+          sound->format.channels, sound->format.sampleRate);
+    CHECK(sound->frames() == kRate, "%llu frames", (unsigned long long)sound->frames());
+    for (std::uint32_t c = 0; c < 2; ++c) {
+        double signal = 0.0, error = 0.0;
+        for (std::uint64_t f = 0; f < sound->frames(); ++f) {
+            const double expected = 0.5 * std::sin(2.0 * std::numbers::pi * kLoopOggHz[c] * double(f) / kRate);
+            signal += expected * expected;
+            error += (sound->samples[f * 2 + c] - expected) * (sound->samples[f * 2 + c] - expected);
+        }
+        const double snr = 10.0 * std::log10(signal / std::max(error, 1e-30));
+        std::printf("vorbis channel %u: %.2f dB signal to error\n", c, snr);
+        CHECK(snr >= 30.0, "channel %u: %.2f dB signal to error", c, snr);
+        const Peak peak = dominantFrequency(channelOf(sound->samples, c), 1, kRate);
+        CHECK(near(peak.frequency, kLoopOggHz[c], 0.5f), "channel %u: %f Hz", c, peak.frequency);
+    }
+}
+
 QUENCH_TEST(decode_errors) {
     std::vector<std::uint8_t> text;
     for (int i = 0; i < 200; ++i)
@@ -738,6 +870,11 @@ QUENCH_TEST(decode_errors) {
     CHECK(!noFrames, "a WAV without frames decoded");
     const std::span<const std::uint8_t> flac = quench::test::toneFlac();
     CHECK(!decodeSound(flac.first(60)), "a truncated FLAC header decoded");
+    const std::span<const std::uint8_t> ogg = quench::test::loopOgg();
+    CHECK(!decodeSound(ogg.first(60)), "a truncated Ogg Vorbis header decoded");
+    std::vector<std::uint8_t> notVorbis(3000, 0x42);
+    std::copy(ogg.begin(), ogg.begin() + 4, notVorbis.begin()); // "OggS", then no Ogg pages
+    CHECK(!decodeSound(notVorbis), "an Ogg signature without pages decoded");
 }
 
 QUENCH_TEST(sound_assets) {

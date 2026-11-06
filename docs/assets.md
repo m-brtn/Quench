@@ -213,11 +213,13 @@ quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skele
   ozz's optimizer reduces the keys (1 mm at 10 cm by default). Clip settings (loop, additive, events, root motion,
   the tolerance) come from `<input stem>.anim.json` or `--clips` ([Animation](animation.md#cooking)); unknown keys
   and unknown clips are errors.
-- **Sounds**: WAV, FLAC or MP3 (miniaudio's decoders). The file is decoded completely to check it (a file that does
-  not decode, or decodes to no frames, fails the cook). An output with the input's extension gets the input's bytes;
-  a `.wav` output from another format, or with `--channels 1|2` (mix down to mono or up to stereo), is a 16-bit PCM
-  WAV at the source's sample rate. No resampling, normalization or Vorbis output: the mixer resamples per voice, and
-  files of other formats are refused ("a sound is cooked to its own format or to .wav").
+- **Sounds**: WAV, FLAC, MP3 or Ogg Vorbis (miniaudio's decoders, Vorbis through stb_vorbis). The file is decoded
+  completely to check it (a file that does not decode, or decodes to no frames, fails the cook). An output with the
+  input's extension gets the input's bytes; a `.wav` output from another format, or with `--channels 1|2` (mix down
+  to mono or up to stereo), is a 16-bit PCM WAV at the source's sample rate (`cook_cli`: the test loop's `.ogg` is
+  copied byte for byte, and cooked to a mono WAV of its 48000 frames). No resampling, normalization or encoding to
+  Vorbis: the mixer resamples per voice, and files of other formats are refused ("a sound is cooked to its own
+  format or to .wav").
 - **Deterministic**: the output depends only on the inputs and the options (no time stamps, no thread order; a test
   cooks with 0 and 3 worker threads and compares). Files are written to a temporary file and renamed, so a running
   game with hot reload never reads half a file; a model's textures are rewritten only when they change.

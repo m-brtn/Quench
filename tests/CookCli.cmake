@@ -56,6 +56,18 @@ file(SIZE "${OUT}/tone.wav" size)
 if(NOT result EQUAL 0 OR size LESS 44100)
     message(FATAL_ERROR "the MP3 cooked to a stereo WAV failed (${result}, ${size} bytes)")
 endif()
+execute_process(COMMAND "${COOK}" sound "${SOUNDS}/loop.ogg" "${OUT}/loop.ogg" RESULT_VARIABLE result)
+execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files "${SOUNDS}/loop.ogg" "${OUT}/loop.ogg"
+                RESULT_VARIABLE different)
+if(NOT result EQUAL 0 OR different)
+    message(FATAL_ERROR "an Ogg Vorbis file cooked to .ogg is not a copy (${result})")
+endif()
+# 48000 frames, mixed down to mono: 96000 bytes of 16-bit samples after the 44-byte header.
+execute_process(COMMAND "${COOK}" sound "${SOUNDS}/loop.ogg" "${OUT}/loop.wav" --channels 1 RESULT_VARIABLE result)
+file(SIZE "${OUT}/loop.wav" size)
+if(NOT result EQUAL 0 OR NOT size EQUAL 96044)
+    message(FATAL_ERROR "the Ogg Vorbis file cooked to a mono WAV failed (${result}, ${size} bytes)")
+endif()
 execute_process(COMMAND "${COOK}" sound "${SOURCES}/CREDITS.md" "${OUT}/bad.wav" RESULT_VARIABLE result
                 ERROR_VARIABLE sound_error)
 if(result EQUAL 0 OR EXISTS "${OUT}/bad.wav")

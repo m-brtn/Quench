@@ -53,8 +53,9 @@ returns the master bus and logs a warning for an unknown name; `findBus` returns
 
 Sounds in memory are an asset type of the `AssetManager` ([Jobs, assets and the cook](assets.md)):
 `audio::SoundAsset`, type `"sound"`, registered by the `AudioSystem` (and unregistered by its destructor). A load
-reads the file through `quench::fs` and decodes it on a job to 32-bit float PCM (WAV, FLAC, MP3 through miniaudio;
-more than two channels are mixed down to stereo; at most 256 MB decoded). The memory counts as CPU memory against
+reads the file through `quench::fs` and decodes it on a job to 32-bit float PCM (WAV, FLAC, MP3 and Ogg Vorbis
+through miniaudio, Vorbis through its `stb_vorbis`; more than two channels are mixed down to stereo; at most 256 MB
+decoded). The memory counts as CPU memory against
 `AudioSettings::soundBudget` (unreferenced sounds are evicted over it). A play of a sound that is still loading
 starts when it is ready; a one-shot that would start more than `maxStartDelay` (0.25 s) late is dropped instead
 (`EndReason::Dropped`), loops wait. A missing or corrupt file ends its sounds with `Failed` and the manager logs it
@@ -63,11 +64,17 @@ SoundData>)` plays decoded data the game made itself.
 
 ## Streams and music
 
-`playStream(path, params)` streams a WAV, FLAC or MP3 file: it is opened through `quench::fs::openAsset` (a reader,
-not the whole file) and decoded on jobs into a ring of `streamBufferSeconds` (1 s) per stream, refilled when half of
-it has played; one job at a time per stream. Loops start over without a gap (`audio.stream_loop_is_gapless`; for
-MP3 see [Limitations](#limitations)). A stream that runs empty plays silence and counts an underrun. A file that
-cannot be opened or decoded is logged once and ends the sound with `Failed`.
+`playStream(path, params)` streams a WAV, FLAC, MP3 or Ogg Vorbis file: it is opened through `quench::fs::openAsset`
+(a reader, not the whole file) and decoded on jobs into a ring of `streamBufferSeconds` (1 s) per stream, refilled
+when half of it has played; one job at a time per stream. Loops start over without a gap where the decoder runs out
+of frames, without the file's length (`audio.stream_loop_is_gapless`; for MP3 see [Limitations](#limitations)). That
+matters for Vorbis: a stream reads it in miniaudio's push mode, which reports no length (a sound decoded from memory
+reads it in pull mode, which does). A streamed Vorbis loop gives exactly the frames of the file decoded in memory,
+every time round (`audio.stream_vorbis_loop`: 3.5 s of a 1 s loop; the largest step between neighbouring frames 0.0587
+within 5 ms of the loop points against 0.0603 elsewhere, 25 ms levels 0.990 to 1.004 of the whole, where 2.5 ms of
+silence at a loop point measures 0.939). Starting over reopens a Vorbis decoder (miniaudio seeks back by opening it
+again), on the stream's job. A stream that runs empty plays silence and counts an underrun. A file that cannot be
+opened or decoded is logged once and ends the sound with `Failed`.
 
 `playMusic(path, {crossfade, volume, loop, bus})` keeps one streamed track: the new one fades in while the playing
 one fades out over `crossfade` seconds (equal power); `stopMusic(fade)` ends it. Music goes to the bus named `music`
@@ -184,16 +191,19 @@ music tracks and the crossfade, a muted bus, no underruns or clipping, and steal
 batches write no WAV file, so the backends' mixes are no longer compared byte for byte (`demo_audio_wav_match` is
 gone).
 
-Tests (`tests/audio/`): `audio.*` (24 cases, headless, also under Node.js: spatial formulas, bus gains, click-free
+Tests (`tests/audio/`): `audio.*` (27 cases, headless, also under Node.js: spatial formulas, bus gains, click-free
 ramps, resampling and pitch, Doppler, panning and attenuation in the mix, voice stealing, one-shots and loops,
 pause, handles, offline carry and the monitor, `PcmStream`, the thread stress case, streams across chunk
-boundaries, on jobs, gapless loops, crossfades, missing files, decoders and their errors, the sound asset type,
-the analysis functions) and `audio_device.*` (`null_device`: the null backend renders and suspends;
+boundaries, on jobs, gapless loops, crossfades, Vorbis streams, loops and music, missing files, decoders and their
+errors, the sound asset type, the analysis functions) and `audio_device.*` (`null_device`: the null backend renders and suspends;
 `default_output`: plays 0.5 s of a quiet 440 Hz tone through the default output, only with
 `QUENCH_TEST_AUDIO_DEVICE=1` in the environment; `audio_session_category`: iOS only). No automated test plays
 through the speakers: the app tests and capture checks run offscreen, where the mix is offline
 ([App shell](app.md#offscreen-runs)), or with `--audio-device null` or `--audio-capture`. The test
-decoder files (`tests/audio/data/`, a FLAC and an MP3 tone) are CC0, made with sox and lame (`CREDITS.md` there).
+decoder files (`tests/audio/data/`, a FLAC and an MP3 tone and an Ogg Vorbis loop) are CC0, made with sox (with
+libvorbis) and lame (`CREDITS.md` there). `audio.decode_vorbis` decodes the loop (1 s, 440 Hz left and 880 Hz right
+at quality 3, 8.6 KB) to exactly its 48000 frames, 38.97 dB (left) and 37.99 dB (right) of signal to error against
+the sines it was encoded from.
 
 ## Platforms
 
@@ -214,8 +224,12 @@ decoder files (`tests/audio/data/`, a FLAC and an MP3 tone) are CC0, made with s
   Mac's speakers, headphones and the iPhone is for the user to judge.
 - **3D**: stereo panning only (no HRTF, no front and back difference, no occlusion, no reverb or filters); one
   listener; no virtual voices (a stolen or rejected sound is gone).
-- **Formats**: WAV, FLAC and MP3; no Vorbis or Opus. The MP3 decoder keeps the encoder's delay and padding (the test
-  file decodes to 12672 frames for 11025 encoded), so gapless MP3 loops are not gapless: loop WAV or FLAC files.
+- **Formats**: WAV, FLAC, MP3 and Ogg Vorbis; no Opus. The MP3 decoder keeps the encoder's delay and padding (the
+  test file decodes to 12672 frames for 11025 encoded), so gapless MP3 loops are not gapless: loop WAV, FLAC or
+  Vorbis files. Vorbis: one logical stream per file (stb_vorbis does not decode chained streams), and the
+  start-of-stream sample truncation of a file whose first granule position is not 0 is ignored (stb_vorbis' limits).
+  Only a file from libvorbis (through sox) was tried. A streamed Vorbis loop opens its decoder again at every loop
+  point, on the stream's job (miniaudio's push mode seeks back that way); the cost of that was not timed.
 - **Resampling** is linear interpolation (some aliasing at high pitch; cheap). The cook does not resample.
 - **Offline mode** decodes streams on the main thread (meant for tests, captures and `--no-audio`, not for play).
 - **Mix time** is measured per `render` call on the audio thread; there is no per-bus or per-voice profile.

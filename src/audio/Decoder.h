@@ -1,7 +1,8 @@
 #pragma once
 
-// miniaudio's decoders (WAV, FLAC, MP3) behind a small interface: from bytes in memory or from a quench::fs reader,
-// to interleaved float frames at the file's rate, mono or stereo (more channels are mixed down to stereo).
+// miniaudio's decoders (WAV, FLAC, MP3, Ogg Vorbis) behind a small interface: from bytes in memory or from a
+// quench::fs reader, to interleaved float frames at the file's rate, mono or stereo (more channels are mixed down to
+// stereo).
 
 #include <quench/audio/Sound.h>
 #include <quench/core/FileSystem.h>
@@ -27,7 +28,7 @@ public:
     Decoder& operator=(const Decoder&) = delete;
 
     const Format& format() const { return m_format; }
-    // Total frames, when the file says.
+    // Total frames, when the file says (never for Vorbis from a reader: miniaudio's push mode does not know it).
     std::optional<std::uint64_t> length() const;
     // Up to `frames` frames into `out`; 0 at the end.
     Result<std::uint32_t> read(float* out, std::uint32_t frames);

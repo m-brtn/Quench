@@ -1,7 +1,7 @@
 # The audio tests' decoder files (audio/data), embedded so that the device test app has them too.
 set(audio_test_data ${CMAKE_CURRENT_BINARY_DIR}/AudioTestData.cpp)
 set(audio_test_data_content "#include <cstdint>\n#include <span>\n\nnamespace quench::test {\n")
-foreach(entry tone.flac:toneFlac tone.mp3:toneMp3)
+foreach(entry tone.flac:toneFlac tone.mp3:toneMp3 loop.ogg:loopOgg)
     string(REPLACE ":" ";" entry "${entry}")
     list(GET entry 0 file)
     list(GET entry 1 function)

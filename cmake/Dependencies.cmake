@@ -122,17 +122,20 @@ target_include_directories(quench_bc7decomp SYSTEM PUBLIC ${bc7enc_SOURCE_DIR})
 target_compile_features(quench_bc7decomp PUBLIC cxx_std_20)
 
 # ---------------------------------------------------------------- miniaudio
-# 0.11.25 (TrailForge's pin; public domain or MIT-0). quench_audio decodes WAV, FLAC and MP3 with it, and
-# quench_audio_device plays through its device API. Built here from miniaudio.c with the high-level parts compiled out
-# (engine, node graph, resource manager, waveform generation, encoders); the defines are PUBLIC so that the header sees
-# the same configuration. Headless and web builds have no device I/O (and the single-threaded web build no threads).
+# 0.11.25 (TrailForge's pin; public domain or MIT-0). quench_audio decodes WAV, FLAC, MP3 and Ogg Vorbis with it (Vorbis
+# through stb_vorbis 1.22 from the same archive, extras/stb_vorbis.c, MIT or public domain), and quench_audio_device
+# plays through its device API. Built from src/audio/Miniaudio.c (miniaudio and stb_vorbis in one unit) with the
+# high-level parts compiled out (engine, node graph, resource manager, waveform generation, encoders); the defines are
+# PUBLIC so that the header sees the same configuration. Headless and web builds have no device I/O (and the
+# single-threaded web build no threads).
 FetchContent_Declare(miniaudio
     URL https://github.com/mackron/miniaudio/archive/9634bedb5b5a2ca38c1ee7108a9358a4e233f14d.tar.gz
     URL_HASH SHA256=1a3a79b80fc6f0b0cc155e28b954a598e0ddfa2db64e2afa8466be88c476fa55
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SOURCE_SUBDIR no-cmake)
 FetchContent_MakeAvailable(miniaudio)
-add_library(quench_miniaudio STATIC ${miniaudio_SOURCE_DIR}/miniaudio.c)
+set(_quench_miniaudio_source ${CMAKE_CURRENT_LIST_DIR}/../src/audio/Miniaudio.c)
+add_library(quench_miniaudio STATIC ${_quench_miniaudio_source})
 target_include_directories(quench_miniaudio SYSTEM PUBLIC ${miniaudio_SOURCE_DIR})
 target_compile_definitions(quench_miniaudio PUBLIC
     MA_NO_ENGINE MA_NO_NODE_GRAPH MA_NO_RESOURCE_MANAGER MA_NO_GENERATION MA_NO_ENCODING)
@@ -153,7 +156,7 @@ elseif(APPLE)
                                                   "-framework AudioToolbox")
     if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         # The iOS backend uses AVAudioSession (Objective-C).
-        set_source_files_properties(${miniaudio_SOURCE_DIR}/miniaudio.c PROPERTIES LANGUAGE OBJC)
+        set_source_files_properties(${_quench_miniaudio_source} PROPERTIES LANGUAGE OBJC)
         target_link_libraries(quench_miniaudio PUBLIC "-framework AVFoundation" "-framework Foundation")
     endif()
 elseif(UNIX)

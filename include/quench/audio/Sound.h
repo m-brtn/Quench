@@ -1,8 +1,8 @@
 #pragma once
 
 // Sounds decoded into memory (effects, short loops): 32-bit float PCM at the file's sample rate, mono or stereo.
-// WAV, FLAC and MP3 are decoded with miniaudio; files with more than two channels are mixed down to stereo. Long
-// files (music) are streamed instead (AudioSystem::playStream).
+// WAV, FLAC, MP3 and Ogg Vorbis are decoded with miniaudio (Vorbis through stb_vorbis); files with more than two
+// channels are mixed down to stereo. Long files (music) are streamed instead (AudioSystem::playStream).
 
 #include <quench/assets/AssetManager.h>
 #include <quench/core/FileSystem.h>
@@ -32,7 +32,7 @@ struct SoundData {
 // Decoded sounds larger than this are refused (stream them instead).
 inline constexpr std::uint64_t kMaxSoundBytes = 256ull << 20;
 
-// A whole WAV, FLAC or MP3 file. A file that does not decode, or decodes to no frames, is an error.
+// A whole WAV, FLAC, MP3 or Ogg Vorbis file. A file that does not decode, or decodes to no frames, is an error.
 Result<SoundData> decodeSound(std::span<const std::uint8_t> file);
 
 class AudioSystem;

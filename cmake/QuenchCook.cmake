@@ -25,8 +25,8 @@ endif()
 # (glTF, GLB) <path>.qmodel with their textures as <path>_<image>.ktx2. SKELETONS (glTF, GLB) become <path>.qskel
 # (the joints of their skins), ANIMATIONS (glTF, GLB) <path>.qanim (their animations as clips, with the settings of
 # <path without extension>.anim.json when it exists), for their own skeleton or for SKELETON's (a file under
-# SOURCE_DIR). SOUNDS (WAV, FLAC, MP3) are decoded to check them and copied with their extension; FILES (texts,
-# settings, licences) are copied as they are (a call with FILES only needs no quench_cook). The run-time asset
+# SOURCE_DIR). SOUNDS (WAV, FLAC, MP3, Ogg Vorbis) are decoded to check them and copied with their extension; FILES
+# (texts, settings, licences) are copied as they are (a call with FILES only needs no quench_cook). The run-time asset
 # path of a file is its path under OUTPUT_DIR. Creates the custom target <name>; quench_add_game(... COOKED_ASSETS
 # <name>) copies its output into the game's assets. Every file and everything it reads (glTF buffers and images, clip
 # settings) is tracked: a change re-cooks it.
