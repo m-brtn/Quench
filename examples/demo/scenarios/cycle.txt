@@ -4,9 +4,11 @@
 # it, switching leaves the scene and the log as they are, the GPU resources within 3 (fences and transfer buffers of the
 # frames and uploads in flight come and go), and a reset makes the same section again (the assets section logs its
 # broken and missing model again, on purpose). The memory is marked after the second round and grows by less than
-# 32 MB in the third (allocator noise; a section that leaked its scene at every switch would be far more): after the
+# 64 MB in the third (allocator noise; a section that leaked its scene at every switch would be more): after the
 # first round alone, the footprint swung between -24 and +47 MB on the native backend, where the ray tracing section's
-# filter histories (about 25 MB by their formats at this size) come and go and the driver hands freed GPU memory back late.
+# filter histories (about 25 MB by their formats at this size) come and go and the driver hands freed GPU memory back
+# late; over 20 rounds of resets it moved within about 60 MB from round to round with the tunnel's lamps and drive
+# moving and with them still, without a trend, the GPU resources the same in every round.
 
 wait 0.1
 section materials
@@ -135,5 +137,5 @@ expect sections_ready == 12
 expect d_gpu_resources < 4
 expect d_gpu_resources > -4
 expect d_scene_instances == 0
-expect d_memory_mb < 32
+expect d_memory_mb < 64
 quit
