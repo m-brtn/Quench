@@ -4,15 +4,18 @@
 // What the rays of the hit passes see (raylight.hlsl, pathtrace.hlsl; ray queries, compiled by DXC): the scene's top
 // level, every instance's triangles and material (RayInstanceData), the base color, metallic-roughness and emissive
 // textures as layers of two texture arrays (256 x 256, no mip levels, no normal maps), the lights and the probe grid.
-// Hits are shaded with the standard surface's BRDF from the material's values: a surface shader's own shading is not
-// run for rays.
+// Hits are shaded with the standard surface's BRDF from the material's values (anisotropy included): a surface
+// shader's own shading is not run for rays. The shapes of area lights are in the top level for path rays only
+// (QUENCH_RT_MASK_EMITTER): the other rays get the area lights' light from their shading, as the raster passes do.
 //
 // Bindings (fragment): uniform 0 FrameUniforms, uniform 1 RayHitUniforms, uniform 2 LightUniforms; samplers 0 the
 // prepass depth, 1 the G-buffer normal and roughness, 2 the color array (sRGB: base color, emissive), 3 the linear
-// array (metallic-roughness), 4 and 5 the probe grid's irradiance and distance atlases, then the entry's own
-// (QUENCH_RT_SAMPLERS in all); storage buffers after them: RayInstanceData[], the vertex table and the frame's skinned
-// vertices (four float4 per vertex), the index table; then the acceleration structure.
+// array (metallic-roughness), 4 and 5 the probe grid's irradiance and distance atlases, 6 the area lights' table
+// (quench/AreaLights.hlsli), then the entry's own (QUENCH_RT_SAMPLERS in all); storage buffers after them:
+// RayInstanceData[], the vertex table and the frame's skinned vertices (four float4 per vertex), the index table;
+// then the acceleration structure.
 
+#include "quench/AreaLights.hlsli"
 #include "quench/Bindings.hlsli"
 #include "quench/Brdf.hlsli"
 #include "quench/Probes.hlsli"
@@ -41,21 +44,23 @@ Texture2D<float4> rtProbeIrradiance : QUENCH_TEXTURE(4);
 SamplerState rtProbeSampler : QUENCH_SAMPLER(4);
 Texture2D<float4> rtProbeDistance : QUENCH_TEXTURE(5);
 SamplerState rtProbeDistanceSampler : QUENCH_SAMPLER(5);
+Texture2DArray<float4> rtAreaTable : QUENCH_TEXTURE(6);
+SamplerState rtAreaSampler : QUENCH_SAMPLER(6);
 
-#if QUENCH_RT_SAMPLERS == 6
-StructuredBuffer<RayInstanceData> rtInstances : QUENCH_STORAGE(6);
-StructuredBuffer<float4> rtVertices : QUENCH_STORAGE(7);
-StructuredBuffer<float4> rtSkinned : QUENCH_STORAGE(8);
-StructuredBuffer<uint> rtIndices : QUENCH_STORAGE(9);
-RaytracingAccelerationStructure rtScene : QUENCH_STORAGE(10);
-#elif QUENCH_RT_SAMPLERS == 7
+#if QUENCH_RT_SAMPLERS == 7
 StructuredBuffer<RayInstanceData> rtInstances : QUENCH_STORAGE(7);
 StructuredBuffer<float4> rtVertices : QUENCH_STORAGE(8);
 StructuredBuffer<float4> rtSkinned : QUENCH_STORAGE(9);
 StructuredBuffer<uint> rtIndices : QUENCH_STORAGE(10);
 RaytracingAccelerationStructure rtScene : QUENCH_STORAGE(11);
+#elif QUENCH_RT_SAMPLERS == 8
+StructuredBuffer<RayInstanceData> rtInstances : QUENCH_STORAGE(8);
+StructuredBuffer<float4> rtVertices : QUENCH_STORAGE(9);
+StructuredBuffer<float4> rtSkinned : QUENCH_STORAGE(10);
+StructuredBuffer<uint> rtIndices : QUENCH_STORAGE(11);
+RaytracingAccelerationStructure rtScene : QUENCH_STORAGE(12);
 #else
-#error "QUENCH_RT_SAMPLERS: 6 or 7"
+#error "QUENCH_RT_SAMPLERS: 7 or 8"
 #endif
 
 // A vertex's float4 n (0: position and normal.x, 1: normal.yz and uv, 2: color, 3: tangent) by its index in the
@@ -161,6 +166,9 @@ struct RtSurface {
     float roughness;
     float metallic;
     float3 emissive;
+    float anisotropy; // 0: isotropic
+    float3 anisotropyDirection;
+    int light; // the shape of an area light: 1 + its id (LocalLight::shape.w), else 0
 };
 
 RtSurface rtSurfaceAt(RtHit h, float3 origin, float3 direction) {
@@ -176,6 +184,16 @@ RtSurface rtSurfaceAt(RtHit h, float3 origin, float3 direction) {
                                      float3(a2.w, b2.x, b2.y) * w.z);
     n = dot(n, n) > 1e-12 ? normalize(n) : normalize(geometric);
     const bool facing = dot(geometric, direction) < 0.0; // counter-clockwise front faces
+    // The anisotropy direction: the vertex tangent turned by the material's rotation (the normal matrix keeps its
+    // direction under rotations and uniform scales).
+    const float anisotropy = d.normal0.w;
+    float3 anisotropyDirection = float3(1.0, 0.0, 0.0);
+    if (anisotropy > 0.0) {
+        const float4 t0 = rtVertex(d, v0, 3u), t1 = rtVertex(d, v1, 3u), t2 = rtVertex(d, v2, 3u);
+        const float3 T = mul(normalMatrix, t0.xyz * w.x + t1.xyz * w.y + t2.xyz * w.z);
+        const float3 B = cross(n, T) * (t0.w < 0.0 ? -1.0 : 1.0);
+        anisotropyDirection = T * d.normal1.w + B * d.normal2.w;
+    }
     if (dot(n, direction) > 0.0) n = -n;
     const float2 uv = b0.zw * w.x + b1.zw * w.y + b2.zw * w.z;
     const float4 vc = rtVertex(d, v0, 2u) * w.x + rtVertex(d, v1, 2u) * w.y + rtVertex(d, v2, 2u) * w.z;
@@ -194,6 +212,9 @@ RtSurface rtSurfaceAt(RtHit h, float3 origin, float3 direction) {
     s.roughness = saturate(d.surface.x * mr.g);
     s.metallic = saturate(d.surface.y * mr.b);
     s.emissive = emissive;
+    s.anisotropy = anisotropy;
+    s.anisotropyDirection = anisotropyDirection;
+    s.light = int(d.layers.w);
     return s;
 }
 
@@ -208,7 +229,26 @@ float3 rtDirectLight(RtSurface s, float3 V, float3 L, float3 E) {
     const float3 F0 = lerp(((float3)(0.04)), s.albedo, s.metallic);
     const float3 F = fresnelSchlick(F0, saturate(dot(V, H)));
     const float3 kd = (1.0 - F) * (1.0 - s.metallic);
+    if (s.anisotropy > 0.0) {
+        float3 T, B;
+        ggxAnisotropicFrame(N, s.anisotropyDirection, T, B);
+        const float spec = ggxSpecAnisotropic(N, T, B, V, L, ggxAnisotropicAlpha(s.roughness, s.anisotropy));
+        return (kd * s.albedo / QUENCH_PI + F * spec) * E * NdotL;
+    }
     return (kd * s.albedo / QUENCH_PI + F * ggxSpec(NdotH, NdotV, NdotL, s.roughness)) * E * NdotL;
+}
+
+// The normal and roughness of the lobe that reflects the sky and the area lights (quenchShade's).
+void rtLobe(RtSurface s, float3 V, out float3 normal, out float roughness) {
+    normal = s.normal;
+    roughness = s.roughness;
+    if (s.anisotropy > 0.0) {
+        float3 T, B;
+        ggxAnisotropicFrame(s.normal, s.anisotropyDirection, T, B);
+        normal = ggxAnisotropicNormal(s.normal, B, V, s.roughness, s.anisotropy);
+        const float2 alpha = ggxAnisotropicAlpha(s.roughness, s.anisotropy);
+        roughness = sqrt(sqrt(alpha.x * alpha.y));
+    }
 }
 
 // The diffuse light of the hit's surroundings (irradiance / pi): the probe grid, or the sky's ambient.
@@ -218,8 +258,8 @@ float3 rtIndirectAt(RtSurface s, float3 V) {
     return quenchProbeIrradiance(rtProbeIrradiance, rtProbeDistance, rtProbeSampler, s.position, s.normal, V, ambient);
 }
 
-// The light a hit sends back along the ray: emissive, the sun (with a shadow ray), the local lights (without
-// shadows) and the indirect light; its own reflections are the sky's.
+// The light a hit sends back along the ray: emissive, the sun (with a shadow ray), the local and area lights
+// (without shadows) and the indirect light; its own reflections are the sky's.
 float3 rtShade(RtSurface s, float3 V) {
     float3 color = s.emissive;
     const float offset = 0.002 * max(length(s.position - quenchFrame.cameraPos.xyz), 1.0);
@@ -227,10 +267,21 @@ float3 rtShade(RtSurface s, float3 V) {
         const float3 visibility = rtVisibility(s.position + s.normal * offset, quenchFrame.sunDir.xyz, rtHit.params.z);
         color += rtDirectLight(s, V, quenchFrame.sunDir.xyz, quenchFrame.sunColor.rgb * visibility);
     }
+    float3 lobeNormal;
+    float lobeRoughness;
+    rtLobe(s, V, lobeNormal, lobeRoughness);
+    QuenchLtc ltc = quenchNoLtc();
+    if (rtLights.count.y > 0.0)
+        ltc = quenchLtcAt(rtAreaTable, s.normal, lobeNormal, V, lobeRoughness, s.albedo, s.metallic);
     const int lights = int(rtLights.count.x);
     for (int k = 0; k < lights; ++k) {
         const LocalLight light = rtLights.lights[k];
         const int type = int(light.color.w);
+        if (type >= QUENCH_LIGHT_RECT) {
+            const float a = quenchAreaWindow(light, s.position);
+            if (a > 0.0) color += quenchAreaLight(light, s.position, ltc) * a;
+            continue;
+        }
         float3 L = -light.direction.xyz;
         float attenuation = 1.0;
         if (type != 0) {
@@ -251,8 +302,8 @@ float3 rtShade(RtSurface s, float3 V) {
     color += indirect * s.albedo * (1.0 - s.metallic);
     const float3 F0 = lerp(((float3)(0.04)), s.albedo, s.metallic);
     const float NdotV = max(dot(s.normal, V), 1e-3);
-    const float3 R = reflect(-V, s.normal);
-    color += lerp(skyRadiance(R), indirect, saturate(s.roughness * 1.2)) * envBRDFApprox(F0, s.roughness, NdotV);
+    const float3 R = reflect(-V, lobeNormal);
+    color += lerp(skyRadiance(R), indirect, saturate(lobeRoughness * 1.2)) * envBRDFApprox(F0, lobeRoughness, NdotV);
     return color;
 }
 

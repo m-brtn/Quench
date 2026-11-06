@@ -58,6 +58,10 @@ constexpr float kRayDenoiseTolerance = 0.02f; // relative view depth: neighbours
 constexpr float kRayLightLength = 1000.0f;
 constexpr float kProbeBias = 0.3f;
 
+#include "LtcTable.inc"
+constexpr std::uint32_t kLtcSize = 64;
+static_assert(std::size(kLtcMatrix) == std::size_t(kLtcSize) * kLtcSize * 4);
+
 constexpr gpu::VertexBufferLayout kVertexLayout{.slot = 0, .stride = sizeof(Vertex)};
 constexpr gpu::VertexAttribute kVertexAttributes[] = {
     {.location = 0, .slot = 0, .format = gpu::VertexFormat::Float3, .offset = offsetof(Vertex, position)},
@@ -259,7 +263,7 @@ struct RendererImpl {
     std::map<TextureFormat, gpu::GraphicsPipeline> tonemapPipelines, fxaaPipelines;
 
     gpu::Sampler shadowSampler, linearClamp, pointClamp, materialSampler;
-    gpu::Texture white, dummyShadow, dummyTransmittance;
+    gpu::Texture white, dummyShadow, dummyTransmittance, areaTable;
 
     // Targets
     std::uint32_t renderWidth = 0, renderHeight = 0, outputWidth = 0, outputHeight = 0;
@@ -469,6 +473,29 @@ Result<void> RendererImpl::init() {
             device->upload(gpu::TextureRegion{.texture = dummyTransmittance}, std::as_bytes(std::span(clearPixel)));
         !r)
         return Error{std::format("render: placeholder texture: {}", r.error())};
+    // The area lights' table (quench/AreaLights.hlsli): layer 0 the inverse transforms, layer 1 the lobe's magnitude
+    // and Fresnel part.
+    Result<gpu::Texture> ltc = device->createTexture({.type = gpu::TextureType::Texture2DArray,
+                                                      .format = TextureFormat::Rgba32Float,
+                                                      .width = kLtcSize,
+                                                      .height = kLtcSize,
+                                                      .layers = 2,
+                                                      .name = "render area lights"});
+    if (!ltc) return Error{std::format("render: area light table: {}", ltc.error())};
+    areaTable = std::move(*ltc);
+    std::vector<float> amplitude(std::size_t(kLtcSize) * kLtcSize * 4, 0.0f);
+    for (std::size_t i = 0; i < std::size_t(kLtcSize) * kLtcSize; ++i) {
+        amplitude[i * 4] = kLtcAmplitude[i * 2];
+        amplitude[i * 4 + 1] = kLtcAmplitude[i * 2 + 1];
+    }
+    if (Result<void> r =
+            device->upload(gpu::TextureRegion{.texture = areaTable, .layer = 0}, std::as_bytes(std::span(kLtcMatrix)));
+        !r)
+        return Error{std::format("render: area light table: {}", r.error())};
+    if (Result<void> r =
+            device->upload(gpu::TextureRegion{.texture = areaTable, .layer = 1}, std::as_bytes(std::span(amplitude)));
+        !r)
+        return Error{std::format("render: area light table: {}", r.error())};
 
     // The engine's pipelines.
     const auto& frame = shaders::render_frame;
@@ -1233,6 +1260,11 @@ void RendererImpl::bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, c
     }
     u.surface = glm::vec4(m.roughness, m.metallic, m.alphaCutoff, float(mask));
     for (std::size_t i = 0; i < 4; ++i) u.params[i] = m.params[i];
+    u.shading =
+        glm::vec4(std::clamp(m.anisotropy, 0.0f, 1.0f), std::cos(m.anisotropyRotation), std::sin(m.anisotropyRotation),
+                  material.light == 0      ? 0.0f
+                  : material.lightTwoSided ? 2.0f
+                                           : 1.0f);
     pass.pushUniforms(kFragment, 2, u);
     pass.bindSamplers(kFragment, 1, bindings);
 }
@@ -1322,6 +1354,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         float score;
         shader::LocalLight light;
         bool shadows = false; // LightDesc::castsShadows
+        bool area = false;
     };
     std::vector<Candidate> candidates;
     for (std::uint32_t i = 0; i < scene.lights.capacity(); ++i) {
@@ -1337,7 +1370,22 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (std::max({color.r, color.g, color.b}) <= 0.0f) continue; // switched off
         if (l.type == LightType::Directional) {
             candidates.push_back(
-                {-1.0f, {glm::vec4(0.0f), glm::vec4(color, 0.0f), glm::vec4(dir, 0.0f), glm::vec4(0.0f)}});
+                {-1.0f,
+                 {glm::vec4(0.0f), glm::vec4(color, 0.0f), glm::vec4(dir, 0.0f), glm::vec4(0.0f), glm::vec4(0.0f)}});
+            continue;
+        }
+        if (isAreaLight(l.type)) {
+            const AreaLightFrame f = areaLightFrame(l);
+            const float reach = l.range + f.radius;
+            if (l.range <= 0.0f || !sphereVisible(planes, l.position, reach)) continue;
+            shader::LocalLight local{};
+            local.positionRange = glm::vec4(l.position, l.range);
+            local.color = glm::vec4(color, float(QUENCH_LIGHT_RECT + int(l.type) - int(LightType::Rect)));
+            local.direction = glm::vec4(f.normal, l.twoSided ? 1.0f : 0.0f);
+            local.cone = glm::vec4(f.half.x, 0.0f, f.half.y, 0.0f);
+            local.shape = glm::vec4(f.tangent, float(i + 1));
+            candidates.push_back(
+                {std::max(0.0f, glm::length(l.position - cameraPos) - reach), local, l.castsShadows, true});
             continue;
         }
         if (l.range <= 0.0f || !sphereVisible(planes, l.position, l.range)) continue;
@@ -1351,10 +1399,19 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     }
     std::stable_sort(candidates.begin(), candidates.end(),
                      [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
+    // The nearest lights, of which at most QUENCH_MAX_AREA_LIGHTS area lights.
+    std::size_t areaCount = 0;
+    std::erase_if(candidates, [&areaCount](const Candidate& c) {
+        return c.area && ++areaCount > std::size_t(QUENCH_MAX_AREA_LIGHTS);
+    });
     shader::LightUniforms lu{};
     const auto lightCount = std::min<std::size_t>(candidates.size(), QUENCH_MAX_LIGHTS);
-    for (std::size_t i = 0; i < lightCount; ++i) lu.lights[i] = candidates[i].light;
-    lu.count = glm::vec4(float(lightCount), 0.0f, 0.0f, 0.0f);
+    areaCount = 0;
+    for (std::size_t i = 0; i < lightCount; ++i) {
+        lu.lights[i] = candidates[i].light;
+        if (candidates[i].area) ++areaCount;
+    }
+    lu.count = glm::vec4(float(lightCount), float(areaCount), 0.0f, 0.0f);
     stats.lights = std::uint32_t(lightCount);
 
     glm::vec3 towardSun(0.0f, 1.0f, 0.0f);
@@ -1383,7 +1440,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     if (anyTraced() && !rayTracing.available()) {
         if (!rayTracingTried)
             rayTracing.init(*device, pipelineCount,
-                            {&pointClamp, &linearClamp, &materialSampler, &white, &dummyTransmittance});
+                            {&pointClamp, &linearClamp, &materialSampler, &white, &dummyTransmittance, &areaTable});
         rayTracingTried = true;
         if (!rayTracing.available()) {
             support.rayTracing = support.rayLighting = false;
@@ -1502,7 +1559,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         }
         const ShadowMode shadowMode = shadowModeOf(m);
         const bool caster = inst->desc.castsShadows && shadowMode != ShadowMode::None;
-        const bool seen = hitData && m.blend != BlendMode::Additive;
+        // The shapes of area lights are seen by path rays only (the other rays get their light by shading).
+        const bool seen = material->light > 0 ? pathTracing : hitData && m.blend != BlendMode::Additive;
         if (rayTraced && (caster || seen)) {
             // Every caster is in the top level (and with hit shading every surface rays can see); skinned ones only
             // near the camera (they are posed for it).
@@ -1865,6 +1923,9 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             h.add(m.metallic);
             h.add(m.alphaCutoff);
             h.add(m.textures);
+            h.add(m.anisotropy);
+            h.add(m.anisotropyRotation);
+            h.add(m.doubleSided);
         }
         const gpu::Texture& radiance = pathTracer.render(commands, rayTracing, hu, lu, h.value, settings.pathBounces,
                                                          settings.pathSamples, pointClamp);
@@ -1910,6 +1971,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.bindSampler(kFragment, 5, transmittanceBinding);
                 pass.bindSamplers(kFragment, 6, opaqueSurfaces ? opaqueTraced : noTraced);
                 pass.bindSamplers(kFragment, 10, probeBindings);
+                pass.bindSampler(kFragment, 12, {areaTable, pointClamp});
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
             };
             bindFrame(true);

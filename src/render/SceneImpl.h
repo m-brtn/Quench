@@ -8,9 +8,11 @@
 #include <quench/render/Scene.h>
 
 #include <glm/mat4x4.hpp>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -41,6 +43,8 @@ struct TextureEntry {
 struct MaterialEntry {
     MaterialDesc desc; // without the name
     std::uint32_t users = 0;
+    std::uint32_t light = 0;    // the shape of an area light: 1 + the light's slot (LocalLight::shape.w), else 0
+    bool lightTwoSided = false; // the shape emits from both faces (else its back is black)
 };
 
 struct InstanceEntry {
@@ -61,7 +65,24 @@ struct InstanceEntry {
 
 struct LightEntry {
     LightDesc desc;
+    // An area light's shape, drawn with its radiance: the scene's own (not in its counts).
+    InstanceId shape{};
+    MaterialId shapeMaterial{};
 };
+
+bool isAreaLight(LightType type);
+
+// An area light's unit frame (tangent: rect along the width, tube the axis; normal: rect and disk; bitangent:
+// cross(normal, tangent)), its half extents (rect: half width and height; disk: the radius twice; tube: half length
+// and radius) and the radius of the sphere around its shape.
+struct AreaLightFrame {
+    glm::vec3 tangent{1.0f, 0.0f, 0.0f};
+    glm::vec3 normal{0.0f, -1.0f, 0.0f};
+    glm::vec3 bitangent{0.0f, 0.0f, 1.0f};
+    glm::vec2 half{0.5f};
+    float radius = 0.0f;
+};
+AreaLightFrame areaLightFrame(const LightDesc& desc);
 
 struct SceneImpl {
     gpu::Device* device = nullptr;
@@ -73,6 +94,10 @@ struct SceneImpl {
     SlotMap<InstanceId, InstanceEntry> instances;
     SlotMap<LightId, LightEntry> lights;
     Environment environment;
+    // The area lights' shapes (rect, disk, tube), made with the first light of each, and the scene's own entries
+    // in the maps above.
+    std::array<MeshId, 3> areaShapes{};
+    std::uint32_t ownMeshes = 0, ownMaterials = 0, ownInstances = 0;
 };
 
 } // namespace quench::render::detail

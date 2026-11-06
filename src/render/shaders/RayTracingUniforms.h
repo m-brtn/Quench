@@ -14,6 +14,7 @@
 #define QUENCH_RT_MASK_TRANSLUCENT 2u // casts translucent shadows (tints the light)
 #define QUENCH_RT_MASK_VISIBLE 4u     // seen by reflection, indirect light and path rays (opaque and cut-out)
 #define QUENCH_RT_MASK_SEE_THROUGH 8u // translucent, seen by path rays
+#define QUENCH_RT_MASK_EMITTER 16u    // the shape of an area light, seen by path rays
 
 QUENCH_SHARED_BEGIN
 
@@ -39,10 +40,14 @@ struct QUENCH_ALIGN16 RayInstanceData {
     float4 geometry;
     float4 color;    // base color times the instance color (opacity in a)
     float4 emissive; // rgb: emissive radiance, w: alpha cutoff (0: none)
-    float4 surface;  // x: roughness, y: metallic, z: alpha texture slot of the shadow pass (-1: none), w: unused
-    // Layers of the hit texture arrays (-1: none): x base color, y metallic-roughness (linear array), z emissive
+    // x: roughness, y: metallic, z: alpha texture slot of the shadow pass (-1: none), w: 1 when double-sided
+    float4 surface;
+    // Layers of the hit texture arrays (-1: none): x base color, y metallic-roughness (linear array), z emissive;
+    // w: the shape of an area light: 1 + the light's id (LocalLight::shape.w), else 0
     float4 layers;
-    float4 normal0; // rows of the normal matrix (inverse transpose of the instance's 3 x 3), w: unused
+    // xyz: rows of the normal matrix (inverse transpose of the instance's 3 x 3); w: anisotropy (normal0), the cos
+    // and sin of its rotation (normal1, normal2)
+    float4 normal0;
     float4 normal1;
     float4 normal2;
 };

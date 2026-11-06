@@ -70,7 +70,7 @@ const gpu::Texture& PathTracer::render(gpu::CommandBuffer& commands, RayTracing&
     if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
         pass.bindPipeline(m_pipeline);
         rays.bindHits(pass, false);
-        pass.bindSampler(ShaderStage::Fragment, 6, {m_accumulation[std::size_t(m_index)], point});
+        pass.bindSampler(ShaderStage::Fragment, 7, {m_accumulation[std::size_t(m_index)], point});
         pass.pushUniforms(ShaderStage::Fragment, 1, uniforms);
         pass.pushUniforms(ShaderStage::Fragment, 2, lights);
         pass.draw(3);

@@ -13,12 +13,19 @@
 //             sampler 5 the cascades' transmittance of translucent casters (Texture2DArray<float4>),
 //             samplers 6..9 the ray-traced sun visibility and occlusion, reflections, indirect light and local light
 //             shadows at the render size, samplers 10 and 11 the probe grid's irradiance and distance atlases
-//             (each read only where FrameUniforms::options.w says so)
+//             (each read only where FrameUniforms::options.w says so), sampler 12 the table of the area lights
+//             (quench/AreaLights.hlsli, read where LightUniforms::count.y is not 0)
 
 #include "quench/Shared.h"
 
 #define QUENCH_MAX_CASCADES 4
 #define QUENCH_MAX_LIGHTS 16
+#define QUENCH_MAX_AREA_LIGHTS 8 // of QUENCH_MAX_LIGHTS
+
+// LocalLight::color.w of the area lights.
+#define QUENCH_LIGHT_RECT 3
+#define QUENCH_LIGHT_DISK 4
+#define QUENCH_LIGHT_TUBE 5
 
 QUENCH_SHARED_BEGIN
 
@@ -85,18 +92,29 @@ struct QUENCH_ALIGN16 MaterialUniforms {
     float4 emissive;  // rgb: linear radiance, w: 1 in the depth pass of a cascade when the opacity is dithered into it
     float4 surface;   // x: roughness, y: metallic, z: alpha cutoff (0: off), w: textures set (bit n: texture n)
     float4 params[4]; // MaterialDesc::params, for the surface shader
+    // x: anisotropy (0: isotropic), yz: cos and sin of its rotation, w: the shape of an area light, shown with its
+    // emissive radiance only: 1 on the front face (the back is black), 2 on both
+    float4 shading;
 };
 
-// A light other than the sun: x of `color.w` selects the type (0 directional, 1 point, 2 spot).
+// A light other than the sun: `color.w` selects the type (0 directional, 1 point, 2 spot, 3 rect, 4 disk, 5 tube).
 struct QUENCH_ALIGN16 LocalLight {
-    float4 positionRange; // xyz: position (m), w: range (m)
-    float4 color;         // rgb: color times intensity, w: type
-    float4 direction;     // xyz: unit direction the light shines in, w: cos of the outer cone angle
-    float4 cone;          // x: 1 / (cos inner - cos outer)
+    float4 positionRange; // xyz: position (area lights: the center, m), w: range (m)
+    float4 color;         // rgb: color times intensity (area lights: the radiance of the shape), w: type
+    // xyz: unit direction the light shines in (rect, disk: the normal), w: spot: cos of the outer cone angle; rect,
+    // disk: 1 when two-sided
+    float4 direction;
+    // x: spot: 1 / (cos inner - cos outer); rect: half width, disk: radius, tube: half length (m); y: the channel of
+    // its ray-traced shadow + 1 (0: none); z: point, spot: radius of the emitting sphere; rect: half height, tube:
+    // radius (m)
+    float4 cone;
+    // Area lights: xyz the unit tangent (rect: along the width, tube: the axis), w: 1 + the light's id (the id its
+    // shape's RayInstanceData refers to)
+    float4 shape;
 };
 
 struct QUENCH_ALIGN16 LightUniforms {
-    float4 count; // x: lights in use
+    float4 count; // x: lights in use, y: area lights among them
     LocalLight lights[QUENCH_MAX_LIGHTS];
 };
 

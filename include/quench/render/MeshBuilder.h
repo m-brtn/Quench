@@ -29,6 +29,10 @@ MeshData sphereMesh(float radius, int rings = 24, int segments = 48);
 MeshData planeMesh(const glm::vec2& halfSize, float uvScale = 1.0f);
 // Around the y axis.
 MeshData torusMesh(float ringRadius, float tubeRadius, int rings = 64, int sides = 32);
+// In the xz plane facing +y; uv 0..1 over the square around it.
+MeshData diskMesh(float radius, int segments = 48);
+// Around the y axis from -halfHeight to +halfHeight, open at both ends; u around, v from the top.
+MeshData cylinderMesh(float radius, float halfHeight, int segments = 48);
 
 // MikkTSpace tangents (assets::generateTangents) for a mesh made elsewhere: from its positions, normals and uvs.
 // Vertices at mirrored uv seams may be split; vertices no triangle uses are dropped.

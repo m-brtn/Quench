@@ -38,12 +38,12 @@ int3 rtProbeCell(int3 slot, int3 first) {
 
 #if defined(QUENCH_ENTRY_rt_reflect_fs) || defined(QUENCH_ENTRY_rt_indirect_fs) ||                                   \
     defined(QUENCH_ENTRY_rt_probe_trace_fs)
-#define QUENCH_RT_SAMPLERS 6
+#define QUENCH_RT_SAMPLERS 7
 #include "RayHit.hlsli"
 #endif
 
 #if defined(QUENCH_ENTRY_pt_fs)
-#define QUENCH_RT_SAMPLERS 7
+#define QUENCH_RT_SAMPLERS 8
 #include "PathTrace.hlsli"
 #endif
 

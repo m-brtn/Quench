@@ -497,8 +497,12 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
         const MaterialDesc& m = c.material->desc;
         const bool cutOut = m.alphaCutoff > 0.0f;
         std::uint8_t mask = 0;
+        const bool emitter = c.material->light > 0;
         if (c.caster) mask |= c.translucent ? QUENCH_RT_MASK_TRANSLUCENT : QUENCH_RT_MASK_CASTER;
-        if (hitData) mask |= c.translucent ? QUENCH_RT_MASK_SEE_THROUGH : QUENCH_RT_MASK_VISIBLE;
+        if (hitData)
+            mask |= emitter         ? QUENCH_RT_MASK_EMITTER
+                    : c.translucent ? QUENCH_RT_MASK_SEE_THROUGH
+                                    : QUENCH_RT_MASK_VISIBLE;
         if (mask == 0) continue;
         gpu::RayInstance instance{.bottomLevel = bottom,
                                   .transform = rowsOf(c.instance->desc.transform),
@@ -536,13 +540,15 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
                                                  : 0.0f);
             d.color = m.baseColor * c.instance->desc.color;
             d.emissive = glm::vec4(m.emissive, cutOut ? m.alphaCutoff : 0.0f);
-            d.surface = glm::vec4(m.roughness, m.metallic, float(alphaSlot), m.doubleSided ? 1.0f : 0.0f);
+            // The shape of a one-sided area light: its back is a black surface (RtSurface::back).
+            const bool twoSided = c.material->light > 0 ? c.material->lightTwoSided : m.doubleSided;
+            d.surface = glm::vec4(m.roughness, m.metallic, float(alphaSlot), twoSided ? 1.0f : 0.0f);
             d.layers = glm::vec4(layerOf(colorWanted, colorLayers, m.textures[0]),
                                  layerOf(linearWanted, linearLayers, m.textures[1]),
-                                 layerOf(colorWanted, colorLayers, m.textures[3]), 0.0f);
-            d.normal0 = glm::vec4(normal[0][0], normal[1][0], normal[2][0], 0.0f);
-            d.normal1 = glm::vec4(normal[0][1], normal[1][1], normal[2][1], 0.0f);
-            d.normal2 = glm::vec4(normal[0][2], normal[1][2], normal[2][2], 0.0f);
+                                 layerOf(colorWanted, colorLayers, m.textures[3]), float(c.material->light));
+            d.normal0 = glm::vec4(normal[0][0], normal[1][0], normal[2][0], std::clamp(m.anisotropy, 0.0f, 1.0f));
+            d.normal1 = glm::vec4(normal[0][1], normal[1][1], normal[2][1], std::cos(m.anisotropyRotation));
+            d.normal2 = glm::vec4(normal[0][2], normal[1][2], normal[2][2], std::sin(m.anisotropyRotation));
             instance.id = std::uint32_t(m_data.size());
             m_data.push_back(d);
         }
@@ -623,7 +629,8 @@ void RayTracing::bindHits(gpu::RenderPass& pass, bool probes) {
         {m_hitColor.texture ? gpu::TextureRef(m_hitColor.texture) : array, material},
         {m_hitLinear.texture ? gpu::TextureRef(m_hitLinear.texture) : array, material},
         {grid ? gpu::TextureRef(probeIrradiance()) : white, linear},
-        {grid ? gpu::TextureRef(probeDistance()) : white, linear}};
+        {grid ? gpu::TextureRef(probeDistance()) : white, linear},
+        {*m_samplers.areaTable, point}};
     pass.bindSamplers(kFragment, 0, samplers);
     const std::array<gpu::BufferRef, 4> buffers{m_instanceTable, m_vertices,
                                                 m_skinned ? m_skinned : gpu::BufferRef(m_vertices), m_indices};

@@ -1704,3 +1704,411 @@ QUENCH_TEST(renderer_denoised_upscaling) {
     std::printf("  the temporal upscaler and the engine's denoiser: mean %.2f (%.2f%% over 16); frame to frame %.2f\n",
                 de.mean, de.over16 * 100.0, fe.mean);
 }
+
+// ---------------------------------------------------------------- area lights and anisotropic GGX
+
+namespace {
+
+// The light an area light sends from a white rough ground point P toward V, integrated over the light's surface on
+// the CPU with the standard surface's BRDF ((1 - F) Lambert + GGX, as quenchDirectLight): the value the raster's LTC
+// approximates and the path tracer converges to.
+struct AreaSample {
+    glm::vec3 point;
+    glm::vec3 normal;
+    float area;
+};
+
+std::vector<AreaSample> areaSamples(const LightDesc& l, int n) {
+    std::vector<AreaSample> out;
+    const glm::vec3 t = glm::normalize(l.tangent);
+    if (l.type == LightType::Tube) {
+        const glm::vec3 e1 =
+            glm::normalize(glm::cross(t, std::abs(t.y) < 0.9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0)));
+        const glm::vec3 e2 = glm::cross(t, e1);
+        const float r = l.size.y, half = 0.5f * l.size.x;
+        const float da = 2.0f * glm::pi<float>() * r * 2.0f * half / float(n * n);
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < n; ++j) {
+                const float phi = 2.0f * glm::pi<float>() * (float(i) + 0.5f) / float(n);
+                const float s = ((float(j) + 0.5f) / float(n) * 2.0f - 1.0f) * half;
+                const glm::vec3 nrm = std::cos(phi) * e1 + std::sin(phi) * e2;
+                out.push_back({l.position + t * s + nrm * r, nrm, da});
+            }
+        return out;
+    }
+    const glm::vec3 nrm = glm::normalize(l.direction);
+    const glm::vec3 tt = glm::normalize(t - nrm * glm::dot(nrm, t));
+    const glm::vec3 b = glm::cross(nrm, tt);
+    if (l.type == LightType::Disk) {
+        const float r = l.size.x, da = glm::pi<float>() * r * r / float(n * n);
+        for (int i = 0; i < n; ++i)
+            for (int j = 0; j < n; ++j) {
+                const float rr = r * std::sqrt((float(i) + 0.5f) / float(n));
+                const float phi = 2.0f * glm::pi<float>() * (float(j) + 0.5f) / float(n);
+                out.push_back({l.position + rr * (std::cos(phi) * tt + std::sin(phi) * b), nrm, da});
+            }
+        return out;
+    }
+    const float da = l.size.x * l.size.y / float(n * n);
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j) {
+            const float u = ((float(i) + 0.5f) / float(n) - 0.5f) * l.size.x;
+            const float v = ((float(j) + 0.5f) / float(n) - 0.5f) * l.size.y;
+            out.push_back({l.position + u * tt + v * b, nrm, da});
+        }
+    return out;
+}
+
+float ggxSpecCpu(float NdotH, float NdotV, float NdotL, float rough) {
+    const float a = std::max(rough * rough, 0.002f), a2 = a * a;
+    const float d = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
+    const float D = a2 / (glm::pi<float>() * d * d);
+    const float k = (rough + 1.0f) * (rough + 1.0f) / 8.0f;
+    const float G = NdotV / (NdotV * (1.0f - k) + k) * NdotL / (NdotL * (1.0f - k) + k);
+    return D * G / std::max(4.0f * NdotV * NdotL, 1e-4f);
+}
+
+// White ground (albedo 1, F0 0.04) with a roughness, normal +y.
+float areaLightOnGround(const LightDesc& l, glm::vec3 p, glm::vec3 eye, float rough) {
+    const glm::vec3 N(0, 1, 0), V = glm::normalize(eye - p);
+    const float NdotV = std::max(glm::dot(N, V), 1e-3f);
+    double sum = 0.0;
+    for (const AreaSample& s : areaSamples(l, 160)) {
+        const glm::vec3 d = s.point - p;
+        const float d2 = glm::dot(d, d);
+        const glm::vec3 L = d / std::sqrt(d2);
+        float cosLight = -glm::dot(s.normal, L);
+        if (l.twoSided && l.type != LightType::Tube) cosLight = std::abs(cosLight);
+        const float NdotL = glm::dot(N, L);
+        if (cosLight <= 0.0f || NdotL <= 0.0f) continue;
+        const glm::vec3 H = glm::normalize(L + V);
+        const float F = 0.04f + 0.96f * std::pow(1.0f - std::clamp(glm::dot(V, H), 0.0f, 1.0f), 5.0f);
+        const float brdf =
+            (1.0f - F) / glm::pi<float>() + F * ggxSpecCpu(std::max(glm::dot(N, H), 0.0f), NdotV, NdotL, rough);
+        sum += double(brdf * NdotL * cosLight * s.area / d2);
+    }
+    return float(sum) * l.intensity;
+}
+
+// Three area lights over a white ground, one of each shape, and a fourth upright one facing the camera that lights
+// nothing near the measured points (its range ends 0.5 m from it): the shape that shows its radiance (not behind the
+// disk, whose back is black from above).
+struct AreaScene {
+    std::array<LightDesc, 3> lights;
+    LightDesc facing;
+    std::array<glm::vec3, 3> points{glm::vec3(-2.5f, 0, 0), glm::vec3(0, 0, 0), glm::vec3(2.5f, 0, 0)};
+    glm::vec3 eye{0, 3.5f, 5.0f};
+};
+
+AreaScene areaScene() {
+    AreaScene a;
+    a.lights[0] = {.type = LightType::Rect,
+                   .color = glm::vec3(1.0f, 0.9f, 0.8f),
+                   .intensity = 4.0f,
+                   .position = {-2.5f, 1.5f, 0},
+                   .range = 20.0f,
+                   .size = {1.0f, 0.5f}};
+    a.lights[1] = {.type = LightType::Disk,
+                   .color = glm::vec3(0.8f, 0.9f, 1.0f),
+                   .intensity = 4.0f,
+                   .position = {0, 1.5f, 0},
+                   .range = 20.0f,
+                   .size = {0.4f, 0.0f}};
+    a.lights[2] = {.type = LightType::Tube,
+                   .color = glm::vec3(1.0f),
+                   .intensity = 10.0f,
+                   .position = {2.5f, 1.0f, 0},
+                   .range = 20.0f,
+                   .size = {1.2f, 0.05f}};
+    a.facing = {.type = LightType::Rect,
+                .color = glm::vec3(1.0f),
+                .intensity = 0.5f,
+                .position = {-1.2f, 0.5f, -3.0f},
+                .direction = glm::normalize(glm::vec3(1.2f, 3.0f, 8.0f)),
+                .range = 0.5f,
+                .size = {0.8f, 0.6f}};
+    return a;
+}
+
+// The mean scene value (green) of the 3 x 3 pixels around a world point.
+float meanValue(const std::vector<Rgba8>& pixels, const View& view, glm::vec3 p) {
+    const glm::ivec2 c = pixelOf(view, p);
+    float v = 0.0f;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) v += sceneValue(at(pixels, c + glm::ivec2(x, y))).g / 9.0f;
+    return v;
+}
+
+// Where the middle of a pixel's view ray meets the ground (y = 0).
+glm::vec3 groundOf(const View& view, glm::ivec2 pixel) {
+    const glm::mat4 inverse = glm::inverse(reversedPerspective(view.fovY, 1.0f, view.nearPlane) * view.view);
+    const glm::vec2 ndc((float(pixel.x) + 0.5f) / float(kSize) * 2.0f - 1.0f,
+                        1.0f - (float(pixel.y) + 0.5f) / float(kSize) * 2.0f);
+    const glm::vec4 a = inverse * glm::vec4(ndc, 1.0f, 1.0f), b = inverse * glm::vec4(ndc, 0.5f, 1.0f);
+    const glm::vec3 near = glm::vec3(a) / a.w, far = glm::vec3(b) / b.w;
+    return near + (far - near) * (near.y / (near.y - far.y));
+}
+
+// The lights' integrated green over the same 3 x 3 pixels' ground points (meanValue's).
+float meanIntegral(const std::array<LightDesc, 3>& lights, const View& view, glm::vec3 p, glm::vec3 eye, float rough) {
+    const glm::ivec2 c = pixelOf(view, p);
+    float v = 0.0f;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+            for (const LightDesc& l : lights)
+                v += areaLightOnGround(l, groundOf(view, c + glm::ivec2(x, y)), eye, rough) * l.color.g / 9.0f;
+    return v;
+}
+
+} // namespace
+
+// Rect, disk and tube lights on a rough white ground: the raster's LTC shading against the BRDF integrated over each
+// light's surface on the CPU, on every backend (no rays involved); the shape of a light shows its radiance.
+QUENCH_TEST(renderer_area_lights_match_their_integrals) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, plainSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(5.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = 1.0f})});
+    const AreaScene a = areaScene();
+    for (const LightDesc& l : a.lights) scene.addLight(l);
+    scene.addLight(a.facing);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(a.eye, glm::vec3(0));
+    const std::vector<Rgba8> pixels = renderOnce(device, *renderer, scene, view, *target);
+    REQUIRE(pixels.size() == kSize * kSize, "%zu pixels", pixels.size());
+    const char* names[3] = {"rect", "disk", "tube"};
+    for (std::size_t i = 0; i < a.points.size(); ++i) {
+        const float expected = meanIntegral(a.lights, view, a.points[i], a.eye, 1.0f);
+        const float measured = meanValue(pixels, view, a.points[i]);
+        std::printf("  under the %s: %.3f, integrated %.3f (%.1f%%)\n", names[i], double(measured), double(expected),
+                    double((measured / expected - 1.0f) * 100.0f));
+        CHECK(std::abs(measured / expected - 1.0f) < 0.08f, "under the %s: %.3f vs %.3f", names[i], double(measured),
+              double(expected));
+    }
+    const float shape = meanValue(pixels, view, a.facing.position);
+    std::printf("  the facing rect's surface %.3f (radiance %.3f)\n", double(shape), double(a.facing.intensity));
+    CHECK(std::abs(shape - a.facing.intensity) < 0.03f, "the shape shows its radiance: %.3f", double(shape));
+    CHECK(renderer->stats().lights == 4, "%u local lights", renderer->stats().lights);
+}
+
+// The shapes of area lights are the scene's own: not in its counts, moved with the light, gone with it; a one-sided
+// light sends nothing behind it.
+QUENCH_TEST(renderer_area_light_shapes_follow_their_lights) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, plainSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.fogColor = glm::vec3(0.0f); // the sky below the horizon, behind the panel
+    scene.setEnvironment(e);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(5.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = 1.0f})});
+    // A rect facing the camera at the middle of the view, 1 m up; it lights the ground in front of it.
+    LightDesc panel{.type = LightType::Rect,
+                    .intensity = 0.6f,
+                    .position = {0, 1.0f, 0},
+                    .direction = {0, 0, 1.0f},
+                    .range = 6.0f,
+                    .size = {1.0f, 1.0f}};
+    const LightId light = scene.addLight(panel);
+    CHECK(scene.meshCount() == 1 && scene.materialCount() == 1 && scene.instanceCount() == 1 && scene.lightCount() == 1,
+          "counts: %u meshes, %u materials, %u instances, %u lights", scene.meshCount(), scene.materialCount(),
+          scene.instanceCount(), scene.lightCount());
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 1.0f, 4.0f), glm::vec3(0, 1.0f, 0));
+    const glm::vec3 front(0, 0, 1.5f);
+    std::vector<Rgba8> pixels = renderOnce(device, *renderer, scene, view, *target);
+    const float face = meanValue(pixels, view, panel.position), lit = meanValue(pixels, view, front);
+    std::printf("  the panel %.3f, the ground in front %.3f\n", double(face), double(lit));
+    CHECK(std::abs(face - panel.intensity) < 0.03f, "the panel shows its radiance: %.3f", double(face));
+    CHECK(lit > 0.02f, "the ground in front is lit: %.3f", double(lit));
+
+    // Turned away: its back is a black surface (one-sided) and the ground in front gets nothing; the ground behind it
+    // is lit.
+    panel.direction = {0, 0, -1.0f};
+    scene.setLight(light, panel);
+    pixels = renderOnce(device, *renderer, scene, view, *target);
+    const float back = sceneValue(at(pixels, pixelOf(view, panel.position))).g;
+    const float dark = meanValue(pixels, view, front), lit2 = meanValue(pixels, view, {0, 0, -1.2f});
+    std::printf("  turned away: the panel's back %.3f, in front %.3f, behind %.3f\n", double(back), double(dark),
+                double(lit2));
+    CHECK(back < 0.02f && dark < 0.005f, "nothing toward the camera: %.3f, %.3f", double(back), double(dark));
+    CHECK(lit2 > 0.01f, "the ground behind it is lit: %.3f", double(lit2));
+
+    // Two-sided: both faces show the radiance and light the ground.
+    panel.twoSided = true;
+    scene.setLight(light, panel);
+    pixels = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(std::abs(meanValue(pixels, view, panel.position) - panel.intensity) < 0.03f &&
+              meanValue(pixels, view, front) > 0.02f,
+          "two-sided: %.3f, %.3f", double(meanValue(pixels, view, panel.position)),
+          double(meanValue(pixels, view, front)));
+
+    // A point light now: no shape; removed: nothing left.
+    scene.setLight(light, {.type = LightType::Point, .intensity = 0.0f, .position = {0, 1.0f, 0}});
+    pixels = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(sceneValue(at(pixels, pixelOf(view, panel.position))).g < 0.01f, "no shape for a point light");
+    panel.type = LightType::Disk;
+    panel.size = {0.5f, 0.0f};
+    panel.direction = {0, 0, 1.0f};
+    scene.setLight(light, panel);
+    pixels = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(std::abs(meanValue(pixels, view, panel.position) - panel.intensity) < 0.03f, "a disk again: %.3f",
+          double(meanValue(pixels, view, panel.position)));
+    scene.removeLight(light);
+    pixels = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(sceneValue(at(pixels, pixelOf(view, panel.position))).g < 0.01f, "removed with its light");
+    CHECK(scene.meshCount() == 1 && scene.materialCount() == 1 && scene.instanceCount() == 1 && scene.lightCount() == 0,
+          "counts: %u meshes, %u materials, %u instances, %u lights", scene.meshCount(), scene.materialCount(),
+          scene.instanceCount(), scene.lightCount());
+}
+
+// Ray-traced area light shadows: a 1 m box under a 1 m square light shadows the ground below it fully (the umbra is
+// 1 m wide), the ground beside that partly (the penumbra of an area: about 40% of the light seen at 1.3 m from the
+// middle), the open ground not at all.
+QUENCH_TEST(renderer_ray_traced_area_light_shadows) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.localLightShadows = 1;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "ray-traced local light shadows: "))
+        QUENCH_SKIP("no ray tracing: unshadowed area lights");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.6f, 0.6f, 0.6f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0, 1.5f, 0})});
+    scene.addLight(
+        {.type = LightType::Rect, .intensity = 6.0f, .position = {0, 3.0f, 0}, .range = 12.0f, .size = {1.0f, 1.0f}});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // From the side, so the light's shape and the box do not hide the measured ground.
+    const View view = lookAt(glm::vec3(0, 4.0f, 6.0f), glm::vec3(0));
+    const glm::vec3 umbra(0, 0, 0), penumbra(1.3f, 0, 0), open(2.5f, 0, 0);
+    const std::vector<Rgba8> traced = settle(device, *renderer, scene, view, *target, 24);
+    REQUIRE(traced.size() == kSize * kSize, "%zu pixels", traced.size());
+    settings.localLightShadows = 0;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> unshadowed = settle(device, *renderer, scene, view, *target, 2);
+    const float u = meanValue(traced, view, umbra) / meanValue(unshadowed, view, umbra);
+    const float p = meanValue(traced, view, penumbra) / meanValue(unshadowed, view, penumbra);
+    const float o = meanValue(traced, view, open) / meanValue(unshadowed, view, open);
+    std::printf("  lit share under the box %.3f, beside it %.3f, in the open %.3f\n", double(u), double(p), double(o));
+    CHECK(u < 0.1f, "the umbra: %.3f", double(u));
+    CHECK(p > 0.2f && p < 0.8f, "the penumbra: %.3f", double(p));
+    CHECK(o > 0.95f && o < 1.05f, "the open ground: %.3f", double(o));
+}
+
+// The path tracer and the raster agree on area lights: the scene of renderer_area_lights_match_their_integrals traced
+// with next-event estimation on the lights and MIS against BRDF samples that hit their shapes.
+QUENCH_TEST(renderer_path_tracer_area_lights) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.pathTracer = true;
+    settings.pathBounces = 2;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "path tracer: ")) QUENCH_SKIP("no ray tracing: no path tracer");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(5.0f)));
+    // A smoother ground than the raster test's, so BRDF samples hit the shapes too and MIS weighs both.
+    const float rough = 0.5f;
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = rough})});
+    const AreaScene a = areaScene();
+    for (const LightDesc& l : a.lights) scene.addLight(l);
+    scene.addLight(a.facing);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(a.eye, glm::vec3(0));
+    const std::vector<Rgba8> traced = settle(device, *renderer, scene, view, *target, 256);
+    REQUIRE(traced.size() == kSize * kSize, "%zu pixels", traced.size());
+    settings.pathTracer = false;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> raster = settle(device, *renderer, scene, view, *target, 1);
+    const char* names[3] = {"rect", "disk", "tube"};
+    for (std::size_t i = 0; i < a.points.size(); ++i) {
+        const float expected = meanIntegral(a.lights, view, a.points[i], a.eye, rough);
+        const float t = meanValue(traced, view, a.points[i]), r = meanValue(raster, view, a.points[i]);
+        std::printf("  under the %s: path traced %.3f, raster %.3f, integrated %.3f\n", names[i], double(t), double(r),
+                    double(expected));
+        CHECK(std::abs(t / expected - 1.0f) < 0.08f, "path traced under the %s: %.3f vs %.3f", names[i], double(t),
+              double(expected));
+        CHECK(std::abs(r / expected - 1.0f) < 0.12f, "raster under the %s: %.3f vs %.3f", names[i], double(r),
+              double(expected));
+    }
+    const float shape = meanValue(traced, view, a.facing.position);
+    std::printf("  the facing rect's surface: path traced %.3f, raster %.3f\n", double(shape),
+                double(meanValue(raster, view, a.facing.position)));
+    CHECK(std::abs(shape - a.facing.intensity) < 0.03f, "the path tracer shows its radiance: %.3f", double(shape));
+}
+
+namespace {
+
+// The extent (pixels) of a highlight along a row and a column through its peak: pixels above half the peak.
+glm::ivec2 highlightExtent(const std::vector<Rgba8>& pixels, glm::ivec2 c) {
+    const float peak = sceneValue(at(pixels, c)).g;
+    glm::ivec2 n(0);
+    for (int i = 0; i < int(kSize); ++i) {
+        if (sceneValue(at(pixels, {i, c.y})).g > 0.5f * peak) ++n.x;
+        if (sceneValue(at(pixels, {c.x, i})).g > 0.5f * peak) ++n.y;
+    }
+    return n;
+}
+
+} // namespace
+
+// Anisotropic GGX: a point light's highlight on brushed metal stretches along the anisotropy direction (the plane's
+// tangent, +x, turned by the rotation), in the raster and in the path tracer.
+QUENCH_TEST(renderer_anisotropic_highlight_stretches) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId plate = addMesh(scene, planeMesh(glm::vec2(5.0f)));
+    MaterialDesc brushed{.baseColor = glm::vec4(0.9f, 0.9f, 0.9f, 1.0f), .roughness = 0.3f, .metallic = 1.0f};
+    const MaterialId isotropic = scene.addMaterial(brushed);
+    brushed.anisotropy = 0.8f;
+    const MaterialId alongX = scene.addMaterial(brushed);
+    brushed.anisotropyRotation = glm::half_pi<float>();
+    const MaterialId alongZ = scene.addMaterial(brushed);
+    const InstanceId instance = scene.addInstance({.mesh = plate, .material = isotropic});
+    scene.addLight({.type = LightType::Point, .intensity = 6.0f, .position = {0, 3.0f, 0}, .range = 20.0f});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 4.0f, 0.01f), glm::vec3(0), glm::vec3(0, 0, -1));
+    const glm::ivec2 c = pixelOf(view, glm::vec3(0));
+    const auto extent = [&](MaterialId m, int frames) {
+        scene.setInstanceMaterial(instance, m);
+        return highlightExtent(settle(device, *renderer, scene, view, *target, frames), c);
+    };
+    const glm::ivec2 iso = extent(isotropic, 1), x = extent(alongX, 1), z = extent(alongZ, 1);
+    std::printf("  highlight width x height (pixels): isotropic %d x %d, along x %d x %d, rotated %d x %d\n", iso.x,
+                iso.y, x.x, x.y, z.x, z.y);
+    CHECK(std::abs(iso.x - iso.y) <= 2, "isotropic: round");
+    CHECK(x.x > x.y * 3 / 2 && z.y > z.x * 3 / 2, "stretched along the direction: %d x %d, %d x %d", x.x, x.y, z.x,
+          z.y);
+
+    settings.pathTracer = true;
+    renderer->setSettings(settings);
+    if (!renderer->effects().pathTracer) QUENCH_SKIP("no ray tracing: no path tracer");
+    const glm::ivec2 px = extent(alongX, 64), pz = extent(alongZ, 64);
+    std::printf("  path traced: along x %d x %d, rotated %d x %d\n", px.x, px.y, pz.x, pz.y);
+    CHECK(px.x > px.y * 3 / 2 && pz.y > pz.x * 3 / 2, "path traced, stretched: %d x %d, %d x %d", px.x, px.y, pz.x,
+          pz.y);
+    CHECK(std::abs(px.x - x.x) * 5 <= x.x + 5 && std::abs(px.y - x.y) * 5 <= x.y + 5,
+          "as wide as the raster's: %d x %d", px.x, px.y);
+}

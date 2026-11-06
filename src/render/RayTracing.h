@@ -65,7 +65,8 @@ struct RaySamplers {
     const gpu::Sampler* linear = nullptr;
     const gpu::Sampler* material = nullptr;
     const gpu::Texture* white = nullptr;
-    const gpu::Texture* array = nullptr; // a texture array, bound in place of the hit textures before there are any
+    const gpu::Texture* array = nullptr;     // a texture array, bound in place of the hit textures before there are any
+    const gpu::Texture* areaTable = nullptr; // the area lights' table (quench/AreaLights.hlsli)
 };
 
 // How the traced signals are filtered before the surfaces read them.

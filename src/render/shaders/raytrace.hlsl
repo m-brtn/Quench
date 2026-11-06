@@ -8,7 +8,7 @@
 // where their alpha is below the cutoff, translucent ones tint it as their transmittance map does
 // (quenchTransmittanceOf), once per instance. Output: rgb the sun's transmittance, a the ambient occlusion.
 // rt_shadow_local_fs also traces one ray per pixel toward each local light with ray-traced shadows (LocalLight::cone:
-// y the channel + 1, z the light's radius) into a second target.
+// y the channel + 1, z the light's radius; area lights: toward a point of their shape) into a second target.
 //
 // Bindings (fragment): uniform 0 FrameUniforms, uniform 1 RayTracingUniforms, uniform 2 LightUniforms
 // (rt_shadow_local_fs). rt_shadow_fs: sampler 0 the prepass depth, samplers 1..8 the alpha textures (texture 0 of
@@ -219,16 +219,31 @@ ShadowOut rt_shadow_local_fs(FullscreenOut vin) {
         const LocalLight light = rtLights.lights[k];
         if (light.cone.y <= 0.0) continue;
         const int c = int(light.cone.y) - 1;
-        // A point on the light's sphere, uniformly over its area.
-        const float z = rtRandom(seed) * 2.0 - 1.0;
-        const float a = 6.2831853 * rtRandom(seed);
-        const float r = sqrt(max(1.0 - z * z, 0.0));
-        const float3 target = light.positionRange.xyz + float3(r * cos(a), z, r * sin(a)) * light.cone.z;
-        const float3 toLight = target - origin;
-        const float distance = length(toLight);
         float visible = 0.0;
-        if (distance > 1e-4 && dot(N, light.positionRange.xyz - P) > 0.0)
-            visible = luminance(traceVisibility(origin, toLight / distance, max(distance - light.cone.z, 0.0)));
+        if (int(light.color.w) >= QUENCH_LIGHT_RECT) {
+            // An area light: a point of its shape, uniformly over its area (a second one when the first lies below
+            // the surface or on the shape's dark side; points the light does not shine from count as lit).
+            visible = 1.0;
+            for (int attempt = 0; attempt < 2; ++attempt) {
+                float3 normal;
+                const float3 target = rtAreaPoint(light, P, seed, normal);
+                const float3 toLight = target - origin;
+                const float distance = length(toLight);
+                if (distance <= 1e-4 || dot(N, target - P) <= 0.0 || dot(normal, P - target) <= 0.0) continue;
+                visible = luminance(traceVisibility(origin, toLight / distance, distance * 0.999));
+                break;
+            }
+        } else {
+            // A point on the light's sphere, uniformly over its area.
+            const float z = rtRandom(seed) * 2.0 - 1.0;
+            const float a = 6.2831853 * rtRandom(seed);
+            const float r = sqrt(max(1.0 - z * z, 0.0));
+            const float3 target = light.positionRange.xyz + float3(r * cos(a), z, r * sin(a)) * light.cone.z;
+            const float3 toLight = target - origin;
+            const float distance = length(toLight);
+            if (distance > 1e-4 && dot(N, light.positionRange.xyz - P) > 0.0)
+                visible = luminance(traceVisibility(origin, toLight / distance, max(distance - light.cone.z, 0.0)));
+        }
         o.local = c == 0 ? float4(visible, o.local.yzw) : o.local;
         o.local = c == 1 ? float4(o.local.x, visible, o.local.zw) : o.local;
         o.local = c == 2 ? float4(o.local.xy, visible, o.local.w) : o.local;

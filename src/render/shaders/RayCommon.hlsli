@@ -6,6 +6,7 @@
 
 #include "quench/Common.hlsli"
 #include "quench/Frame.hlsli"
+#include "quench/SceneUniforms.h"
 
 // World position of a pixel center at a depth (reversed: near 1, far 0).
 float3 rtWorldAt(float2 pixel, float depth) {
@@ -75,6 +76,55 @@ float3 rtGgxVisibleNormal(float3 N, float3 V, float alpha, float2 u) {
     const float p2 = (1.0 - s) * sqrt(max(1.0 - p1 * p1, 0.0)) + s * r * sin(phi);
     const float3 h = p1 * t1 + p2 * t2 + sqrt(max(1.0 - p1 * p1 - p2 * p2, 0.0)) * v;
     const float3 m = normalize(float3(alpha * h.x, alpha * h.y, max(h.z, 1e-6)));
+    return normalize(T * m.x + B * m.y + N * m.z);
+}
+
+// The area an area light is sampled over from P: the whole rect or disk, the half of a tube that faces P.
+float rtAreaOf(LocalLight light) {
+    const int type = int(light.color.w);
+    if (type == QUENCH_LIGHT_RECT) return 4.0 * light.cone.x * light.cone.z;
+    if (type == QUENCH_LIGHT_DISK) return QUENCH_PI * light.cone.x * light.cone.x;
+    return QUENCH_PI * light.cone.z * 2.0 * light.cone.x;
+}
+
+// A point of an area light's shape seen from P, uniform over rtAreaOf, and the shape's normal there (toward P's side
+// for two-sided lights; a one-sided light seen from behind gives a normal facing away from P).
+float3 rtAreaPoint(LocalLight light, float3 P, inout uint seed, out float3 normal) {
+    const int type = int(light.color.w);
+    const float3 c = light.positionRange.xyz;
+    const float3 t = light.shape.xyz;
+    const float u1 = rtRandom(seed), u2 = rtRandom(seed);
+    if (type == QUENCH_LIGHT_TUBE) {
+        const float3 q = P - c;
+        float3 n0 = q - t * dot(q, t);
+        n0 = dot(n0, n0) > 1e-10 ? normalize(n0) : rtPerpendicular(t);
+        const float a = QUENCH_PI * (u2 - 0.5);
+        normal = n0 * cos(a) + cross(t, n0) * sin(a);
+        return c + t * ((u1 * 2.0 - 1.0) * light.cone.x) + normal * light.cone.z;
+    }
+    normal = light.direction.xyz;
+    if (light.direction.w > 0.5 && dot(P - c, normal) < 0.0) normal = -normal;
+    const float3 b = cross(light.direction.xyz, t);
+    if (type == QUENCH_LIGHT_RECT)
+        return c + t * ((u1 * 2.0 - 1.0) * light.cone.x) + b * ((u2 * 2.0 - 1.0) * light.cone.z);
+    const float r = sqrt(u1) * light.cone.x;
+    const float a = 6.2831853 * u2;
+    return c + (t * cos(a) + b * sin(a)) * r;
+}
+
+// The same for an anisotropic lobe: alpha.x along T, alpha.y along B (a unit frame around N).
+float3 rtGgxVisibleNormalAnisotropic(float3 N, float3 T, float3 B, float3 V, float2 alpha, float2 u) {
+    const float3 v = normalize(float3(dot(V, T) * alpha.x, dot(V, B) * alpha.y, max(dot(V, N), 1e-4)));
+    const float lensq = v.x * v.x + v.y * v.y;
+    const float3 t1 = lensq > 0.0 ? float3(-v.y, v.x, 0.0) * rsqrt(lensq) : float3(1.0, 0.0, 0.0);
+    const float3 t2 = cross(v, t1);
+    const float r = sqrt(u.x);
+    const float phi = 6.2831853 * u.y;
+    const float p1 = r * cos(phi);
+    const float s = 0.5 * (1.0 + v.z);
+    const float p2 = (1.0 - s) * sqrt(max(1.0 - p1 * p1, 0.0)) + s * r * sin(phi);
+    const float3 h = p1 * t1 + p2 * t2 + sqrt(max(1.0 - p1 * p1 - p2 * p2, 0.0)) * v;
+    const float3 m = normalize(float3(alpha.x * h.x, alpha.y * h.y, max(h.z, 1e-6)));
     return normalize(T * m.x + B * m.y + N * m.z);
 }
 

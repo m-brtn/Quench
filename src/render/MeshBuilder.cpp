@@ -116,6 +116,39 @@ MeshData torusMesh(float ringRadius, float tubeRadius, int rings, int sides) {
     return mesh;
 }
 
+MeshData diskMesh(float radius, int segments) {
+    MeshData mesh;
+    const glm::vec3 up(0.0f, 1.0f, 0.0f);
+    const glm::vec4 tangent(1.0f, 0.0f, 0.0f, 1.0f);
+    mesh.vertices.push_back({glm::vec3(0.0f), up, {0.5f, 0.5f}, glm::vec4(1.0f), tangent});
+    for (int i = 0; i < segments; ++i) {
+        const float a = kTau * float(i) / float(segments);
+        const float x = std::cos(a), z = -std::sin(a);
+        mesh.vertices.push_back(
+            {{x * radius, 0.0f, z * radius}, up, {x * 0.5f + 0.5f, z * 0.5f + 0.5f}, glm::vec4(1.0f), tangent});
+    }
+    for (int i = 0; i < segments; ++i)
+        mesh.indices.insert(mesh.indices.end(), {0u, 1u + std::uint32_t(i), 1u + std::uint32_t((i + 1) % segments)});
+    return mesh;
+}
+
+MeshData cylinderMesh(float radius, float halfHeight, int segments) {
+    MeshData mesh;
+    for (int r = 0; r <= 1; ++r)
+        for (int c = 0; c <= segments; ++c) {
+            const float u = float(c) / float(segments);
+            const float a = u * kTau;
+            const glm::vec3 n(std::sin(a), 0.0f, std::cos(a));
+            mesh.vertices.push_back({n * radius + glm::vec3(0.0f, r == 0 ? halfHeight : -halfHeight, 0.0f),
+                                     n,
+                                     {u, float(r)},
+                                     glm::vec4(1.0f),
+                                     tangentOf(n, glm::vec3(std::cos(a), 0.0f, -std::sin(a)), glm::vec3(0, 1, 0))});
+        }
+    addGridIndices(mesh, 0, 1, segments);
+    return mesh;
+}
+
 void computeTangents(MeshData& mesh) {
     static_assert(sizeof(assets::ModelVertex) == sizeof(Vertex));
     std::vector<assets::ModelVertex> vertices(mesh.vertices.size());

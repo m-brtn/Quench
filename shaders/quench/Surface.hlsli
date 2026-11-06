@@ -26,6 +26,7 @@
 // and transmittanceShader, so that their holes and opacity are the surface's own (without them the standard surface's
 // opacity is used). There, QuenchSurfaceInput::view points toward the sun and pixel is the shadow map texel.
 
+#include "quench/AreaLights.hlsli"
 #include "quench/Brdf.hlsli"
 #include "quench/Common.hlsli"
 #include "quench/Fog.hlsli"
@@ -75,6 +76,10 @@ struct QuenchSurface {
     float3 normal;   // unit shading normal (world)
     float3 emissive; // linear radiance, added after lighting
     float occlusion; // ambient occlusion of the indirect light, 0..1
+    // Anisotropic GGX (MaterialDesc::anisotropy): 0 isotropic, up to 1 where the roughness along anisotropyDirection
+    // (world, made perpendicular to the normal when lit) is 1.
+    float anisotropy;
+    float3 anisotropyDirection;
 };
 
 #if defined(QUENCH_STAGE_FRAGMENT)
@@ -113,6 +118,9 @@ Texture2D<float4> quenchProbeIrradianceAtlas : QUENCH_TEXTURE(10);
 SamplerState quenchProbeSampler : QUENCH_SAMPLER(10);
 Texture2D<float4> quenchProbeDistanceAtlas : QUENCH_TEXTURE(11);
 SamplerState quenchProbeDistanceSampler : QUENCH_SAMPLER(11);
+// The area lights' table (quench/AreaLights.hlsli), read with Load.
+Texture2DArray<float4> quenchAreaTable : QUENCH_TEXTURE(12);
+SamplerState quenchAreaSampler : QUENCH_SAMPLER(12);
 
 // True when the material has texture n (MaterialDesc::textures); unset textures sample white.
 bool quenchHasTexture(int n) { return (uint(quenchMaterial.surface.w) & (1u << uint(n))) != 0u; }
@@ -133,7 +141,7 @@ float3 quenchNormalFromMap(QuenchSurfaceInput i, float3 texel) {
 
 // The standard surface: base color times texture 0 (sRGB) and the vertex color, roughness and metallic times the
 // green and blue channels of texture 1 (glTF's metallic-roughness layout), the normal map of texture 2 (tangent
-// space), emissive times texture 3 (sRGB).
+// space), emissive times texture 3 (sRGB); the material's anisotropy along the vertex tangent turned by its rotation.
 QuenchSurface quenchStandardSurface(QuenchSurfaceInput i) {
     QuenchSurface s;
     const float4 base = quenchMaterial.baseColor * quenchTexture0.Sample(quenchSampler0, i.uv) * i.color;
@@ -148,6 +156,12 @@ QuenchSurface quenchStandardSurface(QuenchSurfaceInput i) {
     }
     s.emissive = quenchMaterial.emissive.rgb * quenchTexture3.Sample(quenchSampler3, i.uv).rgb;
     s.occlusion = 1.0;
+    s.anisotropy = quenchMaterial.shading.x;
+    s.anisotropyDirection = i.tangent.xyz;
+    [branch] if (s.anisotropy > 0.0) {
+        const float3 B = cross(i.normal, i.tangent.xyz) * i.tangent.w;
+        s.anisotropyDirection = i.tangent.xyz * quenchMaterial.shading.y + B * quenchMaterial.shading.z;
+    }
     return s;
 }
 
@@ -159,7 +173,8 @@ float3 quenchAmbient(float3 N) {
     return lerp(quenchFrame.groundAmbient.rgb, quenchFrame.skyAmbient.rgb, N.y * 0.5 + 0.5);
 }
 
-// Light from one direction L with irradiance E on a surface facing it (GGX specular, Lambert diffuse).
+// Light from one direction L with irradiance E on a surface facing it (GGX specular, anisotropic where the surface
+// is, Lambert diffuse).
 float3 quenchDirectLight(QuenchSurface s, float3 V, float3 L, float3 E) {
     const float3 N = s.normal;
     const float NdotL = saturate(dot(N, L));
@@ -170,15 +185,33 @@ float3 quenchDirectLight(QuenchSurface s, float3 V, float3 L, float3 E) {
     const float3 F0 = lerp(((float3)(0.04)), s.albedo, s.metallic);
     const float3 F = fresnelSchlick(F0, saturate(dot(V, H)));
     const float3 kd = (1.0 - F) * (1.0 - s.metallic);
+    [branch] if (s.anisotropy > 0.0) {
+        float3 T, B;
+        ggxAnisotropicFrame(N, s.anisotropyDirection, T, B);
+        const float spec = ggxSpecAnisotropic(N, T, B, V, L, ggxAnisotropicAlpha(s.roughness, s.anisotropy));
+        return (kd * s.albedo / QUENCH_PI + F * spec) * E * NdotL;
+    }
     return (kd * s.albedo / QUENCH_PI + F * ggxSpec(NdotH, NdotV, NdotL, s.roughness)) * E * NdotL;
 }
 
-// The engine's lighting of a surface: the sun with its shadows, the local lights, the sky as ambient and as a
-// reflection blurred toward the ambient with roughness (TrailForge's shadeSplitEnv without its game terms).
+// The engine's lighting of a surface: the sun with its shadows, the local and area lights, the sky as ambient and as
+// a reflection blurred toward the ambient with roughness (TrailForge's shadeSplitEnv without its game terms). The
+// shape of an area light (MaterialUniforms::shading.w) shows its radiance only, on its emitting faces.
 float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
+    [branch] if (quenchMaterial.shading.w > 0.5) return i.front || quenchMaterial.shading.w > 1.5 ? s.emissive : 0.0;
     const float3 V = i.view;
     const float3 N = s.normal;
     const float NdotV = max(dot(N, V), 1e-3);
+    // An anisotropic lobe reflects the sky and the area lights around its bent normal, with the mean roughness.
+    float3 lobeNormal = N;
+    float lobeRoughness = s.roughness;
+    [branch] if (s.anisotropy > 0.0) {
+        float3 T, B;
+        ggxAnisotropicFrame(N, s.anisotropyDirection, T, B);
+        lobeNormal = ggxAnisotropicNormal(N, B, V, s.roughness, s.anisotropy);
+        const float2 alpha = ggxAnisotropicAlpha(s.roughness, s.anisotropy);
+        lobeRoughness = sqrt(sqrt(alpha.x * alpha.y));
+    }
     float shadow = 1.0;
     float3 color = float3(0.0, 0.0, 0.0);
     const uint rayTraced = uint(quenchFrame.options.w);
@@ -208,9 +241,22 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
         localShadows = quenchRayLocalShadows.SampleLevel(quenchRayLocalShadowsSampler, i.pixel * quenchFrame.screen.zw,
                                                          0.0);
     }
+    QuenchLtc ltc = quenchNoLtc();
+    [branch] if (quenchLights.count.y > 0.0) {
+        ltc = quenchLtcAt(quenchAreaTable, N, lobeNormal, V, lobeRoughness, s.albedo, s.metallic);
+    }
     for (int k = 0; k < lights; ++k) {
         const LocalLight light = quenchLights.lights[k];
         const int type = int(light.color.w);
+        [branch] if (type >= QUENCH_LIGHT_RECT) {
+            float a = quenchAreaWindow(light, i.world);
+            if (localRays && light.cone.y > 0.0) {
+                const int c = int(light.cone.y) - 1;
+                a *= dot(localShadows, float4(c == 0, c == 1, c == 2, c == 3));
+            }
+            if (a > 0.0) color += quenchAreaLight(light, i.world, ltc) * a;
+            continue;
+        }
         float3 L = -light.direction.xyz;
         float attenuation = 1.0;
         if (type != 0) {
@@ -247,8 +293,8 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     const float occlusion = (rayTraced & 2u) != 0u && !tracedIndirect ? s.occlusion * rayMask.a : s.occlusion;
     color += ambient * s.albedo * (1.0 - s.metallic) * occlusion;
     // Sun-shadowed areas see less of the bright sky in their reflection.
-    const float3 R = reflect(-V, N);
-    float3 env = lerp(skyRadiance(R), ambient, saturate(s.roughness * 1.2)) * lerp(0.35, 1.0, shadow);
+    const float3 R = reflect(-V, lobeNormal);
+    float3 env = lerp(skyRadiance(R), ambient, saturate(lobeRoughness * 1.2)) * lerp(0.35, 1.0, shadow);
     float envOcclusion = occlusion;
     // Traced reflections up to the roughness cutoff, faded into the sky's over its last quarter.
     [branch] if ((rayTraced & 8u) != 0u) {
@@ -258,7 +304,7 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
         env = lerp(env, traced.rgb, w);
         envOcclusion = lerp(occlusion, 1.0, w);
     }
-    color += env * envBRDFApprox(F0, s.roughness, NdotV) * envOcclusion;
+    color += env * envBRDFApprox(F0, lobeRoughness, NdotV) * envOcclusion;
     return color + s.emissive;
 }
 #endif

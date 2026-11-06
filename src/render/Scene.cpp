@@ -4,6 +4,7 @@
 
 #include <quench/core/Log.h>
 #include <quench/gpu/Device.h>
+#include <quench/render/MeshBuilder.h>
 
 #include <glm/geometric.hpp>
 
@@ -367,16 +368,150 @@ void Scene::removeInstance(InstanceId instance) {
     m_impl->instances.remove(instance);
 }
 
-LightId Scene::addLight(const LightDesc& desc) { return m_impl->lights.add({desc}); }
+namespace detail {
+
+bool isAreaLight(LightType type) {
+    return type == LightType::Rect || type == LightType::Disk || type == LightType::Tube;
+}
+
+AreaLightFrame areaLightFrame(const LightDesc& desc) {
+    AreaLightFrame f;
+    const auto unit = [](const glm::vec3& v, const glm::vec3& fallback) {
+        const float l = glm::length(v);
+        return l > 1e-6f ? v / l : fallback;
+    };
+    const auto across = [](const glm::vec3& n) {
+        return glm::normalize(glm::cross(n, std::abs(n.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0)));
+    };
+    if (desc.type == LightType::Tube) {
+        f.tangent = unit(desc.tangent, glm::vec3(1, 0, 0));
+        f.normal = across(f.tangent);
+        f.half = glm::vec2(std::max(desc.size.x, 0.0f) * 0.5f, std::max(desc.size.y, 1e-4f));
+    } else {
+        f.normal = unit(desc.direction, glm::vec3(0, -1, 0));
+        f.tangent = unit(desc.tangent - f.normal * glm::dot(f.normal, desc.tangent), across(f.normal));
+        f.half = desc.type == LightType::Rect ? glm::max(desc.size * 0.5f, glm::vec2(1e-4f))
+                                              : glm::vec2(std::max(desc.size.x, 1e-4f));
+    }
+    f.bitangent = glm::cross(f.normal, f.tangent);
+    f.radius = desc.type == LightType::Disk ? f.half.x : glm::length(f.half);
+    return f;
+}
+
+} // namespace detail
+
+namespace {
+
+// The shape of an area light: a unit mesh per type, placed by the light's frame (its local y is the rect's and the
+// disk's normal, the tube's axis).
+glm::mat4 areaShapeTransform(const LightDesc& desc) {
+    const detail::AreaLightFrame f = detail::areaLightFrame(desc);
+    glm::mat4 m(1.0f);
+    if (desc.type == LightType::Tube) {
+        const glm::vec3 x = f.normal, z = glm::cross(x, f.tangent);
+        m[0] = glm::vec4(x * f.half.y, 0.0f);
+        m[1] = glm::vec4(f.tangent * (f.half.x * 2.0f), 0.0f);
+        m[2] = glm::vec4(z * f.half.y, 0.0f);
+    } else {
+        const float scale = desc.type == LightType::Rect ? 2.0f : 1.0f;
+        m[0] = glm::vec4(f.tangent * (f.half.x * scale), 0.0f);
+        m[1] = glm::vec4(f.normal, 0.0f);
+        m[2] = glm::vec4(glm::cross(f.tangent, f.normal) * (f.half.y * scale), 0.0f);
+    }
+    m[3] = glm::vec4(desc.position, 1.0f);
+    return m;
+}
+
+MaterialDesc areaShapeMaterial(const LightDesc& desc) {
+    MaterialDesc m;
+    m.baseColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    m.emissive = desc.color * desc.intensity;
+    m.roughness = 1.0f;
+    m.doubleSided = true; // the back of a one-sided shape is drawn black (MaterialEntry::lightTwoSided)
+    m.shadows = ShadowMode::None;
+    return m;
+}
+
+void dropAreaShape(Scene& scene, detail::SceneImpl& impl, detail::LightEntry& light) {
+    if (light.shape) {
+        scene.removeInstance(light.shape);
+        --impl.ownInstances;
+    }
+    if (light.shapeMaterial) {
+        scene.removeMaterial(light.shapeMaterial);
+        --impl.ownMaterials;
+    }
+    light.shape = {};
+    light.shapeMaterial = {};
+}
+
+// Makes, updates or removes the shape of a light after its description changed.
+void syncAreaShape(Scene& scene, detail::SceneImpl& impl, LightId id) {
+    detail::LightEntry* light = impl.lights.get(id);
+    if (!light) return;
+    const LightDesc desc = light->desc;
+    if (!detail::isAreaLight(desc.type)) {
+        dropAreaShape(scene, impl, *light);
+        return;
+    }
+    const auto shape = std::size_t(desc.type) - std::size_t(LightType::Rect);
+    MeshId& mesh = impl.areaShapes[shape];
+    if (!mesh) {
+        const MeshData data = desc.type == LightType::Rect   ? planeMesh(glm::vec2(0.5f))
+                              : desc.type == LightType::Disk ? diskMesh(1.0f)
+                                                             : cylinderMesh(1.0f, 0.5f, 24);
+        Result<MeshId> made = scene.addMesh(data.desc("area light"));
+        if (!made) {
+            log::error("render", "area light shape: {}", made.error());
+            return;
+        }
+        mesh = *made;
+        ++impl.ownMeshes;
+    }
+    if (light->shape) {
+        const InstanceEntry* instance = impl.instances.get(light->shape);
+        if (!instance || instance->desc.mesh != mesh) dropAreaShape(scene, impl, *light);
+    }
+    MaterialDesc material = areaShapeMaterial(desc);
+    if (!light->shapeMaterial) {
+        light->shapeMaterial = scene.addMaterial(material);
+        ++impl.ownMaterials;
+    } else {
+        scene.setMaterial(light->shapeMaterial, material);
+    }
+    detail::MaterialEntry* entry = impl.materials.get(light->shapeMaterial);
+    entry->light = id.index + 1;
+    entry->lightTwoSided = desc.twoSided && desc.type != LightType::Tube;
+    const glm::mat4 transform = areaShapeTransform(desc);
+    if (!light->shape) {
+        light->shape = scene.addInstance(
+            {.mesh = mesh, .material = light->shapeMaterial, .transform = transform, .castsShadows = false});
+        ++impl.ownInstances;
+    } else {
+        scene.setTransform(light->shape, transform);
+    }
+}
+
+} // namespace
+
+LightId Scene::addLight(const LightDesc& desc) {
+    const LightId id = m_impl->lights.add({desc});
+    if (detail::isAreaLight(desc.type)) syncAreaShape(*this, *m_impl, id);
+    return id;
+}
 
 void Scene::setLight(LightId light, const LightDesc& desc) {
-    if (detail::LightEntry* entry = lookup(m_impl->lights, light, "setLight: stale or null light")) entry->desc = desc;
+    detail::LightEntry* entry = lookup(m_impl->lights, light, "setLight: stale or null light");
+    if (!entry) return;
+    entry->desc = desc;
+    if (detail::isAreaLight(desc.type) || entry->shape) syncAreaShape(*this, *m_impl, light);
 }
 
 void Scene::removeLight(LightId light) {
-    const bool removed = m_impl->lights.remove(light);
-    QUENCH_ASSERT(removed, "removeLight: stale or null handle");
-    (void)removed;
+    detail::LightEntry* entry = lookup(m_impl->lights, light, "removeLight: stale or null handle");
+    if (!entry) return;
+    dropAreaShape(*this, *m_impl, *entry);
+    m_impl->lights.remove(light);
 }
 
 void Scene::setEnvironment(const Environment& environment) { m_impl->environment = environment; }
@@ -399,10 +534,10 @@ std::uint32_t Scene::jointCount(MeshId mesh) const {
     const MeshEntry* entry = m_impl->meshes.get(mesh);
     return entry ? entry->jointCount : 0;
 }
-std::uint32_t Scene::meshCount() const { return m_impl->meshes.size(); }
+std::uint32_t Scene::meshCount() const { return m_impl->meshes.size() - m_impl->ownMeshes; }
 std::uint32_t Scene::textureCount() const { return m_impl->textures.size(); }
-std::uint32_t Scene::materialCount() const { return m_impl->materials.size(); }
-std::uint32_t Scene::instanceCount() const { return m_impl->instances.size(); }
+std::uint32_t Scene::materialCount() const { return m_impl->materials.size() - m_impl->ownMaterials; }
+std::uint32_t Scene::instanceCount() const { return m_impl->instances.size() - m_impl->ownInstances; }
 std::uint32_t Scene::lightCount() const { return m_impl->lights.size(); }
 
 } // namespace quench::render

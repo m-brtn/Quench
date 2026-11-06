@@ -7,7 +7,8 @@
 //
 // Units: meters, linear HDR colors. Light values follow the shading of quench/Surface.hlsli: a directional light's
 // color times intensity is the irradiance on a surface facing it (a white diffuse surface reflects 1 / pi of it), a
-// point or spot light's is the irradiance at 1 m; ambient values are the radiance of a uniform surround (a white
+// point or spot light's is the irradiance at 1 m, an area light's is the radiance of its surface (as
+// MaterialDesc::emissive: the camera sees its shape so); ambient values are the radiance of a uniform surround (a white
 // surface reflects all of it).
 
 #include <quench/assets/Texture.h>
@@ -111,6 +112,11 @@ struct MaterialDesc {
     std::array<TextureId, 4> textures{};
     std::array<glm::vec4, 4> params{}; // MaterialUniforms::params, for custom surfaces
     std::string_view name{};
+    // Anisotropic GGX (the standard surface, ray hits and the path tracer; KHR_materials_anisotropy's model): 0
+    // isotropic, up to 1 where the roughness along the direction is 1 (brushed metal). The direction is the vertex
+    // tangent (+u) turned by anisotropyRotation (radians) toward the bitangent; needs vertex tangents.
+    float anisotropy = 0.0f;
+    float anisotropyRotation = 0.0f;
 };
 
 struct InstanceDesc {
@@ -123,24 +129,35 @@ struct InstanceDesc {
     bool castsShadows = true; // as the material's ShadowMode says; false: none
 };
 
-enum class LightType : std::uint8_t { Directional, Point, Spot };
+// Rect, Disk and Tube are area lights: an emitting rectangle, disk or cylinder (a light strip, a neon tube).
+enum class LightType : std::uint8_t { Directional, Point, Spot, Rect, Disk, Tube };
 
 // The first directional light is the sun: it lights the scene with cascaded shadow maps (when castsShadows and the
-// renderer has cascades) and places the sun in the sky. Further directional lights, point and spot lights light the
-// surfaces; per frame the renderer uses at most 16 of them, the nearest to the camera. Point and spot lights have
-// shadows only where they are ray traced (RenderSettings::localLightShadows: the nearest ones with castsShadows). A
-// light with zero color or intensity is off (a sun that is off still places the sun disc and casts no shadows).
+// renderer has cascades) and places the sun in the sky. Further directional lights, point, spot and area lights light
+// the surfaces; per frame the renderer uses at most 16 of them, the nearest to the camera, of which at most 8 area
+// lights. Local lights have shadows only where they are ray traced (RenderSettings::localLightShadows: the nearest
+// ones with castsShadows; area lights soft by their area). A light with zero color or intensity is off (a sun that is
+// off still places the sun disc and casts no shadows).
+//
+// Area lights are shaded with linearly transformed cosines (diffuse and specular, docs/render.md, "Area lights").
+// The scene draws their shape with the light's radiance (an instance, a material and a mesh of its own, not in the
+// counts or handles of the scene); a one-sided shape shows it from its front only, and it casts no shadows.
 struct LightDesc {
     LightType type = LightType::Point;
     glm::vec3 color{1.0f}; // linear
     float intensity = 1.0f;
-    glm::vec3 position{0.0f};
-    glm::vec3 direction{0.0f, -1.0f, 0.0f}; // the way the light shines (directional, spot)
-    float range = 10.0f;                    // point, spot: the light fades to zero at this distance (m)
-    float innerAngle = 0.35f;               // spot: half angle of the full-intensity cone (radians)
-    float outerAngle = 0.5f;                // spot: half angle where the light ends
-    bool castsShadows = true;               // the sun; point and spot lights with ray-traced local light shadows
-    float sourceRadius = 0.0f;              // point, spot: the radius of the emitting sphere (m): soft traced shadows
+    glm::vec3 position{0.0f};               // area lights: the center
+    glm::vec3 direction{0.0f, -1.0f, 0.0f}; // the way the light shines (directional, spot; rect, disk: the normal)
+    float range = 10.0f;      // local lights: the light fades to zero at this distance (m; area lights: from the shape)
+    float innerAngle = 0.35f; // spot: half angle of the full-intensity cone (radians)
+    float outerAngle = 0.5f;  // spot: half angle where the light ends
+    bool castsShadows = true; // the sun; local lights with ray-traced local light shadows
+    float sourceRadius = 0.0f; // point, spot: the radius of the emitting sphere (m): soft traced shadows
+    // Area lights (m): rect: width along `tangent` and height; disk: x the radius; tube: x the length along
+    // `tangent`, y the radius.
+    glm::vec2 size{1.0f, 1.0f};
+    glm::vec3 tangent{1.0f, 0.0f, 0.0f}; // rect: the direction of its width; tube: its axis (unit, across direction)
+    bool twoSided = false;               // rect, disk: light from both faces
 };
 
 // Sky, ambient light, fog and exposure. The defaults are a clear day with the sun about 25 degrees high
