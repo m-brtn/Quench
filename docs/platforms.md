@@ -79,6 +79,14 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   ran `immediate` unpaced: the hello benchmark 4286 frames in 10 s, GPU time 0.62 ms on average; the cause of the
   difference is not known. The demo's checks use `immediate` ([Engine demo](demo.md#checks)): unpaced it halves their
   time, paced it changes nothing.
+- SDL GPU's Vulkan driver (seen through MoltenVK; the code is the same for every Vulkan device, and SDL's D3D12
+  driver reads the same) shares one reference between a fence from `SDL_SubmitGPUCommandBufferAndAcquireFence` and
+  its command buffer. A fence released after it signalled but before SDL's next cleanup pass goes back to SDL's pool
+  while the command buffer still points at it; the next submission resets it before that pass, so the command buffer
+  and the textures and buffers it used stay in flight, and SDL makes new ones for every cycled render target. The
+  demo's assets section grew to 4.5 GB in 6 s this way (2026-11-06). The GPU layer waits on a signalled fence before
+  it releases it (`SdlGpuDevice::release`), which runs that cleanup pass first: 676 MB, flat. SDL's Metal driver
+  gives the caller a reference of its own and is not affected. Not reported upstream yet.
 
 ## iOS
 

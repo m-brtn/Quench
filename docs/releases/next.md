@@ -25,6 +25,15 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
 - The demo's switch cycle checks the memory to below 64 MB of growth (was 32): the footprint moves within about
   60 MB from round to round on the native backend.
 
+## Fixes
+
+- **Memory growth on SDL GPU's Vulkan driver:** a fence released after it signalled could keep its command buffer,
+  and every texture and buffer it used, in flight for good (a reference counting issue in SDL's Vulkan driver), so
+  cycled render targets were made anew every frame: the demo's assets section reached 4.5 GB on Vulkan through
+  MoltenVK. The GPU layer now waits on a signalled fence (which does not block) before it releases it: 676 MB, flat.
+  The demo's switch cycle now also runs on Vulkan (`batch.txt`; `batch_metal.txt` is gone): +34 MB in its third
+  round, below the bound of 64 MB, where it grew by 459 MB before.
+
 ## Changes for games
 
 What a game on 0.9.0 changes or checks when it moves to this release. Neither game uses `quench_render` yet.

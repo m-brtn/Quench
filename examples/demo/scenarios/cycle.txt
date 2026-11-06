@@ -1,4 +1,4 @@
-# Section switching (ctest: demo_cycle_<backend>, a part of batch_metal.txt and batch_native.txt): three rounds through
+# Section switching (ctest: demo_cycle_<backend>, a part of batch.txt and batch_native.txt): three rounds through
 # every section, with a reset of each in the first and the third. The first round creates or resets every section (and
 # waits for the assets of those that load some), so that the parts before it in a batch leave no settings behind; after
 # it, switching leaves the scene and the log as they are, the GPU resources within 3 (fences and transfer buffers of the

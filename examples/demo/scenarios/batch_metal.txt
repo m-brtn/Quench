@@ -1,6 +1,0 @@
-# Every check of the demo in one run on SDL GPU's Metal driver (ctest: demo_batch_metal): batch.txt and section
-# switching without growth (cycle.txt; also in batch_native.txt). The cycle does not run on Vulkan through MoltenVK:
-# there the memory grows by hundreds of MB when the sections reset (devlog 2026-11-06). Run with --hdr-headroom 4.
-include batch.txt
-include cycle.txt
-quit

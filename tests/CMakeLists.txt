@@ -377,13 +377,13 @@ if(NOT QUENCH_HEADLESS)
         set_tests_properties(hello_version hello_bad_argument hello_bad_flag_value PROPERTIES LABELS hello)
 
         if(TARGET quench_demo)
-            # The engine demo (docs/demo.md, "Checks"): batch.txt on Vulkan through MoltenVK, batch_metal.txt (batch.txt
-            # and cycle.txt) on SDL GPU's Metal driver, batch_native.txt (ray tracing itself instead of its fallbacks,
-            # and cycle.txt) on the native Metal backend, which compares with the Metal golden images except for ray
-            # tracing's and the tunnel's own (demo_raytracing_native, demo_tunnel_native, demo_tunnel_motion_native: the
-            # tunnel in motion, the last part, so that no other capture moves in the frame sequence). The tunnel's path
-            # tracer part (tunnel_path) writes its capture without a golden image: 1.3 MB of noise at 256 samples; the
-            # render tests check the path tracer's area lights by numbers.
+            # The engine demo (docs/demo.md, "Checks"): batch.txt (ending in cycle.txt) on SDL GPU's Metal driver and on
+            # Vulkan through MoltenVK, batch_native.txt (ray tracing itself instead of its fallbacks, and cycle.txt) on
+            # the native Metal backend, which compares with the Metal golden images except for ray tracing's and the
+            # tunnel's own (demo_raytracing_native, demo_tunnel_native, demo_tunnel_motion_native: the tunnel in motion,
+            # the last part, so that no other capture moves in the frame sequence). The tunnel's path tracer part
+            # (tunnel_path) writes its capture without a golden image: 1.3 MB of noise at 256 samples; the render tests
+            # check the path tracer's area lights by numbers.
             # A part with a golden name ends in a capture: the sections without the demo's windows, demo_ui and the
             # compact layouts with them.
             set(demo_scenarios ${Quench_SOURCE_DIR}/examples/demo/scenarios)
@@ -393,7 +393,7 @@ if(NOT QUENCH_HEADLESS)
                 compact_landscape:demo_compact_landscape menu audio_tone audio_flyby audio_music)
             set(demo_args --window 960x540 --gpu-debug --hdr-headroom 4)
             if(QUENCH_TEST_CAPTURES)
-                quench_add_batch(demo metal APP quench_demo SCRIPT ${demo_scenarios}/batch_metal.txt BACKEND metal
+                quench_add_batch(demo metal APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND metal
                     ARGS ${demo_args} ENVIRONMENT MTL_DEBUG_LAYER=1
                     PARTS ${demo_parts} raytracing_fallback:demo_raytracing tunnel_fallback:demo_tunnel
                     tunnel_motion_fallback cycle)
@@ -407,7 +407,7 @@ if(NOT QUENCH_HEADLESS)
                     quench_add_batch(demo vulkan APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND vulkan
                         ARGS ${demo_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment}
                         FAIL_REGEX "Validation (Error|Warning)" PARTS ${demo_parts} raytracing_fallback:demo_raytracing
-                        tunnel_fallback:demo_tunnel tunnel_motion_fallback)
+                        tunnel_fallback:demo_tunnel tunnel_motion_fallback cycle)
                 endif()
                 # The tour (started by its flag), the check mode, the settings and benchmark-all with their files in a
                 # fresh user directory (they need runs of their own).

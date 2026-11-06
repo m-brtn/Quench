@@ -221,7 +221,16 @@ void SdlGpuDevice::release(Kind kind, void* native) noexcept {
         SDL_ReleaseGPUGraphicsPipeline(d, static_cast<SDL_GPUGraphicsPipeline*>(native));
         break;
     case Kind::ComputePipeline: SDL_ReleaseGPUComputePipeline(d, static_cast<SDL_GPUComputePipeline*>(native)); break;
-    case Kind::Fence: SDL_ReleaseGPUFence(d, static_cast<SDL_GPUFence*>(native)); break;
+    case Kind::Fence: {
+        // SDL's Vulkan driver shares one reference between the fence and its command buffer: a fence released
+        // before a cleanup pass has seen it signalled goes back to the pool while the command buffer still points at
+        // it, is reset by its next submission, and the command buffer (with the textures and buffers it holds) can
+        // stay in flight for good. Waiting on a signalled fence does not block and runs that cleanup pass first.
+        SDL_GPUFence* fence = static_cast<SDL_GPUFence*>(native);
+        if (SDL_QueryGPUFence(d, fence)) SDL_WaitForGPUFences(d, true, &fence, 1);
+        SDL_ReleaseGPUFence(d, fence);
+        break;
+    }
     case Kind::AccelerationStructure:
     case Kind::Upscaler: QUENCH_ASSERT(false, "SDL GPU creates no acceleration structures or upscalers"); break;
     }

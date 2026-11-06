@@ -332,14 +332,15 @@ per GPU backend, `--window 960x540 --gpu-debug --hdr-headroom 4`, runs every che
 
 | Batch | Scenario | Backend |
 |---|---|---|
-| `demo_batch_metal` | `batch_metal.txt`: `batch.txt`, then `cycle.txt` | SDL GPU's Metal driver, with the Metal API validation layer |
+| `demo_batch_metal` | `batch.txt` | SDL GPU's Metal driver, with the Metal API validation layer |
 | `demo_batch_metal_native` | `batch_native.txt`: `batch.txt` with `raytracing.txt`, `tunnel.txt`, `tunnel_path.txt` and `tunnel_motion.txt` in place of `raytracing_fallback.txt`, `tunnel_fallback.txt` and `tunnel_motion_fallback.txt`, with `cycle.txt` before `tunnel_motion.txt` | the native Metal backend, with the validation layer; compared with the Metal golden images except ray tracing's own |
 | `demo_batch_vulkan` | `batch.txt` | Vulkan through MoltenVK with the Khronos validation layer (an error or warning fails the batch) |
 
 `batch.txt` includes, in this order: materials, shadows, sky, post, hdr, hdr_on, physics, input, assets, audio,
 animation, raytracing_fallback, tunnel_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone,
-audio_flyby, audio_music, tunnel_motion_fallback. The parts that move (the tunnel's motion) come last: TAA's jitter
-follows the frame count, so a part inserted earlier would move every capture after it.
+audio_flyby, audio_music, tunnel_motion_fallback, cycle. The parts that move (the tunnel's motion) come last, before
+the cycle, which has no capture: TAA's jitter follows the frame count, so a part inserted earlier would move every
+capture after it.
 Every part selects its section first (and resets it where it needs the defaults), so it does not depend on the parts
 before it, and its `time` starts at 0. A test per part and backend, `demo_<part>_<backend>`, checks the part's line
 in the batch's log (`part <file>: N passed, 0 failed`) and compares its capture with
@@ -371,12 +372,14 @@ elements stay where they are what is checked. The menu and the layouts have capt
 | `compact_portrait`, `compact_landscape` | `compact.txt` in a phone-sized frame (400 x 720 and 720 x 320 points): the compact layout, the bar's arrows, the menu sheet, About and its licences, the controls sheet | `demo_compact_portrait.png`, `demo_compact_landscape.png`: the controls sheet over the materials section |
 | `menu` | switching sections by keys, gamepad, a click and a tap on the list; the menu by Tab, the arrows and Enter and by the D-pad, A and B; hiding the windows | none |
 | `audio_tone`, `audio_flyby`, `audio_music` | the checks on the mix itself (below) | none |
-| `cycle` (the Metal batches) | every section three times (created or reset, switched, reset), with the live GPU resources, the scene's instances and the error count marked after the first round and the memory after the second: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 64 MB in the third round; no instance more; no new error). The memory is marked a round later since stage 11: after the first round alone it swung between -24 and +47 MB on the native backend, where the ray tracing section's filter histories come and go. The bound is 64 MB since the tunnel moves (2026-11-06): over 20 rounds the footprint moved within about 60 MB from round to round, with the tunnel's motion and without it, with no trend and the same GPU resources | none |
+| `cycle` (every batch, the last part on SDL GPU) | every section three times (created or reset, switched, reset), with the live GPU resources, the scene's instances and the error count marked after the first round and the memory after the second: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 64 MB in the third round; no instance more; no new error). The memory is marked a round later since stage 11: after the first round alone it swung between -24 and +47 MB on the native backend, where the ray tracing section's filter histories come and go. The bound is 64 MB since the tunnel moves (2026-11-06): over 20 rounds the footprint moved within about 60 MB from round to round, with the tunnel's motion and without it, with no trend and the same GPU resources | none |
 
-The cycle does not run on Vulkan through MoltenVK: there the memory grows by hundreds of MB in the reset round (459
-MB in the batch with the validation layer, 2026-11-06; the cycle never ran on Vulkan before the batches), which is
-not explained yet. Its first round resets every section, so the settings the parts before it changed do not count
-as growth.
+The cycle runs on Vulkan through MoltenVK since 2026-11-06, when the growth there was found in SDL GPU's Vulkan
+driver (a released fence could keep its command buffer and the textures it used in flight; the GPU layer works
+around it, [Platforms](platforms.md)). Over 12 rounds of resets with the validation layer the footprint grew from
+918 to 1088 MB, by less each round (from +50 to +4 MB), with the same GPU resources; SDL GPU's Metal driver stayed
+within 671 to 695 MB, the native backend within 957 to 1015 MB. Its first round resets every section, so the
+settings the parts before it changed do not count as growth.
 
 Every section has a clock of its own (`Section::sectionTime`), which runs only while the section is shown: its
 animations and the surface shaders' time follow it, so a capture does not depend on how long the batch ran before
