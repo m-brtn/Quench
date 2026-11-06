@@ -248,8 +248,14 @@ double average(const std::vector<double>& values) {
 
 } // namespace
 
+void startPerf(AppState& s, std::string label) {
+    s.perf = PerfRegion{.label = std::move(label), .thermalStart = s.stats.thermal, .thermalMax = s.stats.thermal};
+}
+
 PerfReport finishPerf(AppState& s) {
     const PerfRegion& r = *s.perf;
+    const ThermalState thermalEnd = s.stats.thermal;
+    const ThermalState thermalMax = std::max(r.thermalMax, thermalEnd);
     auto& v = s.perfValues;
     v.clear();
     v["perf_frames"] = double(r.frameMs.size());
@@ -269,15 +275,23 @@ PerfReport finishPerf(AppState& s) {
     v["perf_gpu_p10"] = percentile(r.gpuMs, 0.10);
     v["perf_gpu_p50"] = percentile(r.gpuMs, 0.50);
     v["perf_gpu_p95"] = percentile(r.gpuMs, 0.95);
+    v["perf_thermal_start"] = double(r.thermalStart);
+    v["perf_thermal_end"] = double(thermalEnd);
+    v["perf_thermal_max"] = double(thermalMax);
+    // "thermal fair", or "thermal nominal -> serious (max critical)" where it changed.
+    std::string thermal = thermalStateName(r.thermalStart);
+    if (thermalEnd != r.thermalStart) thermal += std::format(" -> {}", thermalStateName(thermalEnd));
+    if (thermalMax > r.thermalStart && thermalMax > thermalEnd)
+        thermal += std::format(" (max {})", thermalStateName(thermalMax));
     std::string details = s.game->perfDetails(s.app);
     log::info("perf",
               "{}: {} frames; frame ms avg {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f} max {:.3f}; cpu ms avg "
               "{:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f}; gpu ms avg {:.3f} min {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} "
-              "({} samples){}{}",
+              "({} samples); thermal {}{}{}",
               r.label, r.frameMs.size(), v["perf_frame_avg"], v["perf_frame_p10"], v["perf_frame_p50"],
               v["perf_frame_p95"], v["perf_frame_p99"], v["perf_frame_max"], v["perf_cpu_avg"], v["perf_cpu_p50"],
               v["perf_cpu_p95"], v["perf_cpu_p99"], v["perf_gpu_avg"], v["perf_gpu_min"], v["perf_gpu_p10"],
-              v["perf_gpu_p50"], v["perf_gpu_p95"], r.gpuMs.size(), details.empty() ? "" : "; ", details);
+              v["perf_gpu_p50"], v["perf_gpu_p95"], r.gpuMs.size(), thermal, details.empty() ? "" : "; ", details);
     PerfReport report{.label = r.label,
                       .frames = r.frameMs.size(),
                       .frameAvg = v["perf_frame_avg"],
@@ -291,7 +305,10 @@ PerfReport finishPerf(AppState& s) {
                       .gpuP50 = v["perf_gpu_p50"],
                       .gpuSamples = r.gpuMs.size(),
                       .passP50 = {},
-                      .details = std::move(details)};
+                      .details = std::move(details),
+                      .thermalStart = r.thermalStart,
+                      .thermalEnd = thermalEnd,
+                      .thermalMax = thermalMax};
     if (!r.passMs.empty()) {
         std::string passes;
         for (const auto& [name, ms] : r.passMs) {
@@ -385,6 +402,7 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
         return bytes ? double(*bytes) / double(1u << 20) : -1.0;
     }
     if (name == "gpu_resources") return double(s.device->liveResources());
+    if (name == "thermal_state") return double(s.stats.thermal);
     if (const auto it = s.perfValues.find(name); it != s.perfValues.end()) return it->second;
     if (name.starts_with("audio_")) {
         if (const auto it = s.audioValues.find(name); it != s.audioValues.end()) return it->second;
@@ -542,7 +560,7 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
     if (op == "perf_begin") {
         if (s.offscreen)
             log::warning("app", "perf region offscreen: frames are not presented; --onscreen to measure as played");
-        s.perf = PerfRegion{.label = first.empty() ? std::string("perf") : first};
+        startPerf(s, first.empty() ? std::string("perf") : first);
         return Exec::Done;
     }
     if (op == "perf_end") {

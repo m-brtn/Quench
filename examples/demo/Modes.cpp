@@ -261,6 +261,9 @@ bool DemoGame::writeBenchmark(App& app) {
         for (const auto& [name, p50] : r.passP50) passes.object[name] = ms(p50);
         s.object["pass_p50_ms"] = std::move(passes);
         s.object["details"] = json::Value::makeString(r.details);
+        s.object["thermal_start"] = json::Value::makeString(app::thermalStateName(r.thermalStart));
+        s.object["thermal_end"] = json::Value::makeString(app::thermalStateName(r.thermalEnd));
+        s.object["thermal_max"] = json::Value::makeString(app::thermalStateName(r.thermalMax));
         sections.array.push_back(std::move(s));
     }
     v.object["sections"] = std::move(sections);

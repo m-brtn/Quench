@@ -67,12 +67,18 @@ struct Frame {
     gpu::DisplayOutput output{};
 };
 
+// The operating system's thermal state (Apple platforms: NSProcessInfo's thermalState; Unknown elsewhere). Fair and
+// above: the system lowers clocks to cool down, so frame times grow without a change in the work.
+enum class ThermalState { Unknown = -1, Nominal = 0, Fair = 1, Serious = 2, Critical = 3 };
+const char* thermalStateName(ThermalState state); // "unknown", "nominal", "fair", "serious", "critical"
+
 struct FrameStats {
     double frameMs = 0.0; // real time between frames, averaged over 0.5 s
     double fps = 0.0;
     double cpuMs = 0.0;  // last frame: main thread work until the submit, without the wait for a swapchain texture
     double gpuMs = -1.0; // last measured GPU time of a frame; -1 where unavailable (!gpu::Caps::gpuTiming)
     int ticks = 0;       // simulation ticks in the last frame
+    ThermalState thermal = ThermalState::Unknown; // read every 0.5 s, with frameMs; a change is logged
     // GPU time per timed range of passes of the last measured frame, in the order they began (gpu::Caps::gpuPassTiming;
     // empty without it, and unless App::requestPassTiming, a perf region or --gpu-pass-timing turned the ranges on a
     // few frames before): the app's "game" (around Game::render, with the renderer's ranges inside), "ui" and "blit".
@@ -90,6 +96,9 @@ struct PerfReport {
     // GPU busy time p50 per timed range (FrameStats::gpuPasses), in the order first seen; empty without pass timing.
     std::vector<std::pair<std::string, double>> passP50;
     std::string details; // Game::perfDetails at the end
+    // The thermal state at the start and the end of the region and the highest one read in it.
+    ThermalState thermalStart = ThermalState::Unknown, thermalEnd = ThermalState::Unknown,
+                 thermalMax = ThermalState::Unknown;
 };
 
 struct WindowRect {

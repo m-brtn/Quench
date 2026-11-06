@@ -212,6 +212,7 @@ void DemoGame::performancePanel(App& app) {
                         static_cast<long long>(app.device().liveResources()));
         else
             ImGui::Text("GPU resources %lld", static_cast<long long>(app.device().liveResources()));
+        ImGui::Text("Thermal state %s", app::thermalStateName(stats.thermal));
         const Slot& slot = m_slots[m_current];
         if (slot.initMs >= 0.0) ImGui::Text("Section ready in %.1f ms, switch %.1f ms", slot.initMs, m_switchMs);
         ImGui::Text("Jobs: %d threads, %d pending", app.jobs().threadCount(), app.jobs().pendingCount());
@@ -511,6 +512,8 @@ void DemoGame::aboutContents(App& app) {
             else
                 ImGui::TextUnformatted("Audio: offline mix (no device)");
             ImGui::TextWrapped("Jobs: %d threads", app.jobs().threadCount());
+            ImGui::TextWrapped("Thermal state: %s (from fair on, the system lowers clocks and frame times grow)",
+                               app::thermalStateName(app.stats().thermal));
             ImGui::SeparatorText("GPU backend");
             ImGui::TextWrapped("SDL GPU is the default; the native Metal backend (Apple platforms) adds GPU times per "
                                "pass, ray tracing and MetalFX.");

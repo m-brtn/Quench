@@ -14,7 +14,7 @@ the region was deterministic too (1201 frames of one tick each). `perf_end` logs
 `Game::perfDetails` fields come at its end:
 
 ```
-perf: hello: 600 frames; frame ms avg 16.667 p10 16.243 p50 16.657 p95 17.248 p99 17.433 max 17.830; cpu ms avg 0.246 p50 0.242 p95 0.314 p99 0.355; gpu ms avg 0.545 min 0.537 p10 0.540 p50 0.544 p95 0.549 (600 samples)
+perf: hello: 600 frames; frame ms avg 16.667 p10 16.243 p50 16.657 p95 17.248 p99 17.433 max 17.830; cpu ms avg 0.246 p50 0.242 p95 0.314 p99 0.355; gpu ms avg 0.545 min 0.537 p10 0.540 p50 0.544 p95 0.549 (600 samples); thermal nominal
 ```
 
 - **frame**: wall time between frames. With vsync it is the display interval; it shows missed frames, not cost.
@@ -22,6 +22,12 @@ perf: hello: 600 frames; frame ms avg 16.667 p10 16.243 p50 16.657 p95 17.248 p9
 - **gpu**: the GPU time of the frame's command buffer (`gpu::Caps::gpuTiming`: Metal only, through SDL's internal
   fence on SDL GPU, directly on the native Metal backend), one sample per frame. Its minimum and 10th percentile are
   the frames least disturbed by other work on the machine.
+- **thermal** (since 2026-11-06): the operating system's thermal state at the start of the region, `-> end` where
+  it changed and `(max ...)` where it rose higher in between (`app::ThermalState`, read every 0.5 s; Apple platforms:
+  `NSProcessInfo`'s `thermalState`, unknown elsewhere). From fair on the system lowers clocks: every GPU range grows
+  by the same factor without a change in the work, so numbers taken in different states do not compare. The app logs
+  each change (`app: thermal state nominal -> fair`); the demo shows the state in its Performance panel and About,
+  and `benchmark.json` has it per section (`thermal_start`, `thermal_end`, `thermal_max`).
 
 On the native Metal backend (`--gpu-backend metal`, since stage 9) a second line follows with the GPU time per pass
 ([below](#gpu-time-per-pass)).

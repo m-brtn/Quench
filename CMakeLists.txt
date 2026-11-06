@@ -181,9 +181,11 @@ if(NOT QUENCH_HEADLESS)
         src/app/ScenarioPoint.cpp
         src/app/SdlFileSystem.cpp
         src/app/SdlLog.cpp
+        src/app/ThermalState.cpp
         src/app/UiComposite.cpp)
     if(APPLE)
-        target_sources(quench_app PRIVATE src/app/ActivationApple.m src/app/DisplayHeadroomApple.m)
+        target_sources(quench_app PRIVATE src/app/ActivationApple.m src/app/DisplayHeadroomApple.m
+                                          src/app/ThermalStateApple.m)
         if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
             target_link_libraries(quench_app PRIVATE "-framework UIKit")
         else()

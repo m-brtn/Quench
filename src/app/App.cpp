@@ -1,4 +1,5 @@
 #include "AppState.h"
+#include "ThermalState.h"
 
 #include "core/Platform.h"
 
@@ -54,7 +55,7 @@ bool App::scripted() const { return !m_state.options.script.empty(); }
 const FrameStats& App::stats() const { return m_state.stats; }
 void App::requestPassTiming() { m_state.passTimingRequested = true; }
 
-void App::beginPerf(std::string label) { m_state.perf = detail::PerfRegion{.label = std::move(label)}; }
+void App::beginPerf(std::string label) { detail::startPerf(m_state, std::move(label)); }
 
 bool App::perfRunning() const { return m_state.perf.has_value(); }
 
@@ -355,6 +356,13 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
     return true;
 }
 
+void updateThermalState(AppState& s) {
+    const ThermalState state = queryThermalState();
+    if (state == s.stats.thermal) return;
+    log::info("app", "thermal state {} -> {}", thermalStateName(s.stats.thermal), thermalStateName(state));
+    s.stats.thermal = state;
+}
+
 void updateStats(AppState& s, double realDt, double cpuMs, int ticks) {
     s.statsWindowMs += realDt * 1000.0;
     ++s.statsWindowFrames;
@@ -363,10 +371,12 @@ void updateStats(AppState& s, double realDt, double cpuMs, int ticks) {
         s.stats.fps = 1000.0 / s.stats.frameMs;
         s.statsWindowMs = 0.0;
         s.statsWindowFrames = 0;
+        updateThermalState(s);
     }
     s.stats.cpuMs = cpuMs;
     s.stats.ticks = ticks;
     if (s.perf) {
+        s.perf->thermalMax = std::max(s.perf->thermalMax, s.stats.thermal);
         s.perf->frameMs.push_back(realDt * 1000.0);
         s.perf->cpuMs.push_back(cpuMs);
         if (s.stats.gpuMs >= 0.0) s.perf->gpuMs.push_back(s.stats.gpuMs);
@@ -582,6 +592,8 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     log::info("app", "{} {} (Quench {}), SDL {}.{}.{}", s.desc.name, s.desc.version, QUENCH_VERSION,
               SDL_VERSIONNUM_MAJOR(SDL_GetVersion()), SDL_VERSIONNUM_MINOR(SDL_GetVersion()),
               SDL_VERSIONNUM_MICRO(SDL_GetVersion()));
+    s.stats.thermal = queryThermalState();
+    log::info("app", "thermal state {}", thermalStateName(s.stats.thermal));
 
     Result<std::unique_ptr<fs::Backend>> files = makeSdlFileSystem(
         {.org = s.desc.organization, .app = s.desc.name, .assetDir = s.desc.assetDir, .userDir = s.options.userDir});

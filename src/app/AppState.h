@@ -64,6 +64,8 @@ struct PerfRegion {
     std::vector<double> passSumMs;
     std::vector<double> passSpanMs;
     std::vector<double> passShare;
+    ThermalState thermalStart = ThermalState::Unknown;
+    ThermalState thermalMax = ThermalState::Unknown;
 };
 
 // Multi-frame scenario input (tap, click, touch): what the next frames still have to send.
@@ -169,7 +171,9 @@ void quit(AppState& state, SDL_AppResult result);
 std::optional<double> scenarioValue(AppState& state, std::string_view name);
 Scenario::Exec scenarioCommand(AppState& state, const ScenarioCommand& command);
 void releaseScenarioInput(AppState& state);
-// Ends the running perf region: logs its perf line, sets the perf_* values and returns its numbers.
+// Starts a perf region (replacing a running one); ends it: logs its perf line, sets the perf_* values and returns its
+// numbers.
+void startPerf(AppState& state, std::string label);
 PerfReport finishPerf(AppState& state);
 
 // Capture.cpp: writes RGBA8 or BGRA8 pixels, or the Rgba16Float pixels of an HDR extended-linear frame (tightly

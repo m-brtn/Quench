@@ -208,14 +208,16 @@ in multiples of paper white; -1 before one), after `perf_end` `perf_frames`,
 `perf_gpu_p50`, `perf_gpu_p95` (milliseconds; -1 when
 there were no samples, for example GPU time without `gpu::Caps::gpuTiming`), with `gpu::Caps::gpuPassTiming` also
 `perf_pass_<range>_p50` per timed range, `perf_pass_sum_p50`, `perf_pass_span_p50` and `perf_pass_share_p50`
-([Performance](performance.md#gpu-time-per-pass)); after `audio_measure` `audio_rms`,
+([Performance](performance.md#gpu-time-per-pass)), and `perf_thermal_start`, `perf_thermal_end`, `perf_thermal_max`
+(as `thermal_state`); after `audio_measure` `audio_rms`,
 `audio_rms_l`, `audio_rms_r`, `audio_peak` (linear, 1 is full scale), `audio_freq` (Hz), `audio_freq_level` (about 1
 for a full-scale sine) and `audio_measured` (seconds actually measured); at any time `audio_voices`, `audio_sounds`,
 `audio_pending`, `audio_streams`, `audio_played`, `audio_stolen`, `audio_rejected`, `audio_failed`,
 `audio_underruns`, `audio_clipped` (the `AudioStats` counters) and `audio_device` (1 with a device, 0 offline);
 `memory_mb` (`App::memoryFootprint` in MiB; -1 where unknown) and `gpu_resources` (`gpu::Device::liveResources`:
 textures, buffers, samplers, pipelines, transfer buffers and fences alive; fences and transfer buffers come and go
-with the frames and uploads in flight), for leak checks with `mark`; then the game's (`Game::scenarioValue`). Unknown commands are offered
+with the frames and uploads in flight), for leak checks with `mark`; `thermal_state` (`FrameStats::thermal`: -1
+unknown, 0 nominal, 1 fair, 2 serious, 3 critical; `until thermal_state <= 0 600` waits for a cool device); then the game's (`Game::scenarioValue`). Unknown commands are offered
 to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N of FILE: ...`, and the
 run ends with `N passed, M failed`; tests match `FAIL line`. Scripts are read from host paths; on a device a relative
 path is read from the user directory, and an `include` there needs its file next to the including one.
