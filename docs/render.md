@@ -519,7 +519,8 @@ The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `tran
 `ray_compactions`, `ray_top_refit`, `ray_memory_mb`, `hit_textures`, `probes`, `path_samples`).
 
 GPU time per pass (stage 9, where `gpu::Caps::gpuPassTiming`: the native Metal backend): `Renderer::render` wraps its
-passes in timed ranges of the command buffer it records into, `upload` (the instance and light buffers), `accel`,
+passes in timed ranges of the command buffer it records into, `upload` (the instance and light buffers), `accel`
+(with `blas`, the bottom levels' builds, refits and compactions, and `tlas`, the top level, inside it),
 `prepass` (with the G-buffer, the motion vectors for the temporal denoiser and the denoising upscaler's inputs) and
 `raytrace` (ray tracing; `rays`, `denoise`, `probes`, `reflections` and `indirect` inside it), `path` (the path
 tracer), `shadows` (the cascades and their

@@ -22,6 +22,8 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   slower in such frames than before stage 12 (unpaced, M4 Pro); with it within 0.6 %
   ([Performance](../performance.md#the-tunnel)).
 - `RenderStats::localShadowChanges`: the lights that took another light's ray-traced shadow channel this frame.
+- The renderer's `accel` timing range has two ranges inside it: `blas` (the bottom levels' builds, refits and
+  compactions; absent in a frame without them) and `tlas` (the top level's build or refit).
 - Offscreen perf regions also time GPU-bound frames on the GPU (before, they had no GPU sample and no times per
   range); unpaced offscreen A/B runs of GPU costs need no window now.
 - The demo's switch cycle checks the memory to below 64 MB of growth (was 32): the footprint moves within about

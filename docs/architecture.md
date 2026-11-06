@@ -218,7 +218,8 @@ end of the vertex and fragment stages of a render pass, start and end of a compu
 is the union of those stage intervals: on Apple GPUs the vertex stage of a pass runs while the previous pass still
 shades fragments, so a range from first to last timestamp would count the wait, and the sum of the ranges may exceed
 the frame. The timestamp period is measured once against the CPU clock (1.0000 ns on the M4 Pro). The renderer times
-`upload`, `accel`, `prepass`, `raytrace` (`rays`, `denoise`, `probes`, `reflections`, `indirect`), `path`, `shadows`,
+`upload`, `accel` (`blas`, `tlas`), `prepass`, `raytrace` (`rays`, `denoise`, `probes`, `reflections`, `indirect`),
+`path`, `shadows`,
 `hdr`, `taa`, `upscale`, `bloom` and `tonemap` inside the app's `game` range; the app adds `ui` and `blit`
 ([Performance](performance.md#gpu-time-per-pass)). MetalFX encodes passes of its own: in a range, a blit encoder
 before and one after them copy a texel (of the input, then of the output, so Metal orders them around MetalFX's

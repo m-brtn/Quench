@@ -331,8 +331,8 @@ scaler.
   (`ray_query_front_faces`).
 - [x] Top-level refit when only transforms change, bottom-level compaction, `rayMemoryBytes`, `rayCompactions`,
   `rayTopRefit` (2026-11-06).
-- [ ] Split the `accel` timing into `blas` / `tlas`: not done (one `accel` range with builds, refits, compactions and
-  the top level).
+- [x] Split the `accel` timing into `blas` / `tlas` (after stage 12, 2026-11-06): ranges inside `accel`, the bottom
+  levels' builds, refits and compactions, and the top level's build or refit.
 - [x] Reference path tracer: progressive, next event estimation toward the sun and one local light, furnace test,
   restarts on any change including a new skinned pose ([Render module](render.md#path-tracer)).
 - [x] Temporal ray denoiser (SVGF-like without the variance estimate, with anti-lag; `RenderSettings::rayDenoiser`,
@@ -441,7 +441,7 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    render scale).
 3. **Remaining work of the stages:** shader hot reload, ASTC or Basis Universal textures and asset hot reload on a
    device (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
-   dual quaternion skinning and blend shapes (stage 8); the `accel` timing split into `blas` / `tlas`, normal maps
+   dual quaternion skinning and blend shapes (stage 8); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray
    tracing, normal maps in ray hits (stage 12).

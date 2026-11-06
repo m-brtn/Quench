@@ -104,7 +104,7 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 the asset system, the engine's audio or animation yet. No shader hot reload, ASTC or Basis Universal textures,
 asset hot reload on a device (stage 6 remaining work), browser audio, HRTF, reverb or Vorbis (stage 7 remaining
 work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
-work), the native backend as the default, the `accel` timing split into `blas` / `tlas`, normal maps or custom
+work), the native backend as the default, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
 ray tracing (stage 9 and 11 remaining work) or shadows of area lights without ray tracing (stage 12 remaining work)
 yet; what comes next is listed in `docs/roadmap.md`, "What is next".**

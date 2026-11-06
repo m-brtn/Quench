@@ -76,7 +76,8 @@ a claim rests on.
 With `gpu::Caps::gpuPassTiming` (the native Metal backend; SDL GPU has no timestamp queries, so it reports false and
 logs nothing of this) the frame's command buffer is timed per range of passes ([Architecture](architecture.md#gpu-timestamps-per-pass)):
 the app's `game` (around `Game::render`), `ui` and `blit`, and inside `game` the renderer's `upload` (its per-frame
-buffers), `accel` (acceleration structure builds, refits and compactions), `prepass` (the depth prepass for the
+buffers), `accel` (acceleration structure builds, refits and compactions; inside it `blas`, the bottom levels, and
+`tlas`, the top level), `prepass` (the depth prepass for the
 rays, with the G-buffer, the motion vectors and the denoising upscaler's inputs where those are needed), `raytrace`
 (with `rays` (sun, occlusion and local light shadows), `denoise`, `probes`, `reflections` and `indirect` inside; the
 last two include their own filters), `path` (the path tracer), `shadows` (all cascades), `hdr` (the main pass with

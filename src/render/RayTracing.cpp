@@ -417,8 +417,26 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
         return -1.0f;
     };
 
-    gpu::AccelerationStructurePass pass = commands.beginAccelerationStructurePass();
-    if (!pass) return false;
+    // The bottom levels and the top level in passes of their own, timed as "blas" and "tlas"; a frame that builds,
+    // refits or compacts no bottom level has no "blas" pass.
+    gpu::AccelerationStructurePass bottomPass;
+    bool bottomFailed = false;
+    const auto bottomLevels = [&]() -> gpu::AccelerationStructurePass* {
+        if (!bottomPass && !bottomFailed) {
+            commands.beginTiming("blas");
+            bottomPass = commands.beginAccelerationStructurePass();
+            if (!bottomPass) {
+                commands.endTiming();
+                bottomFailed = true;
+            }
+        }
+        return bottomPass ? &bottomPass : nullptr;
+    };
+    const auto endBottomLevels = [&] {
+        if (!bottomPass) return;
+        bottomPass.end();
+        commands.endTiming();
+    };
     const auto create = [this](const gpu::AccelerationStructureDesc& desc) -> gpu::AccelerationStructure {
         Result<gpu::AccelerationStructure> s = m_device->createAccelerationStructure(desc);
         if (!s) {
@@ -452,13 +470,15 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
                 replaced = true;
             }
             if (!inst.rayStructure) continue;
+            gpu::AccelerationStructurePass* pass = bottomLevels();
+            if (!pass) return false;
             if (fresh || inst.rayRefits >= kRefitsPerBuild) {
-                pass.build(inst.rayStructure, geometry);
+                pass->build(inst.rayStructure, geometry);
                 // A crowd made in one frame would otherwise build again all in one frame.
                 inst.rayRefits = fresh ? m_skinnedBuilds++ % kRefitsPerBuild : 0;
                 ++stats.builds;
             } else {
-                pass.refit(inst.rayStructure, geometry);
+                pass->refit(inst.rayStructure, geometry);
                 ++inst.rayRefits;
                 ++stats.refits;
             }
@@ -469,9 +489,11 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
                 mesh.rayStructure =
                     create({.vertexCount = mesh.vertexCount, .triangleCount = triangles, .name = "render ray mesh"});
                 if (!mesh.rayStructure) continue;
-                pass.build(mesh.rayStructure, geometry);
+                gpu::AccelerationStructurePass* pass = bottomLevels();
+                if (!pass) return false;
+                pass->build(mesh.rayStructure, geometry);
                 // Rigid meshes do not change: a compacted copy replaces the built one once its size is known.
-                pass.queryCompactedSize(mesh.rayStructure);
+                pass->queryCompactedSize(mesh.rayStructure);
                 mesh.rayCompaction = Compaction::Queried;
                 ++stats.builds;
                 replaced = true;
@@ -481,8 +503,10 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
                         *size > 0 ? create({.compactedSize = *size, .name = "render ray mesh"})
                                   : gpu::AccelerationStructure{};
                     mesh.rayCompaction = Compaction::Done;
+                    gpu::AccelerationStructurePass* pass = compacted ? bottomLevels() : nullptr;
+                    if (compacted && !pass) return false;
                     if (compacted) {
-                        pass.copyAndCompact(mesh.rayStructure, compacted);
+                        pass->copyAndCompact(mesh.rayStructure, compacted);
                         stats.compactedBytes +=
                             std::max(mesh.rayStructure.bytes(), compacted.bytes()) - compacted.bytes();
                         mesh.rayStructure = std::move(compacted); // the command buffer keeps the source alive
@@ -554,6 +578,7 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
         }
         m_instances.push_back(instance);
     }
+    endBottomLevels();
     if (m_instances.empty()) return false;
     const auto needed = std::uint32_t(m_instances.size());
     if (!m_top || m_top.desc().instanceCapacity < needed) {
@@ -568,6 +593,12 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
     // a refitted top level grows worse the farther its instances move.
     const bool refit = !replaced && m_topRefits < kTopRefitsPerBuild &&
                        std::ranges::equal(m_instances, m_topBottoms, {}, &gpu::RayInstance::bottomLevel);
+    commands.beginTiming("tlas");
+    gpu::AccelerationStructurePass pass = commands.beginAccelerationStructurePass();
+    if (!pass) {
+        commands.endTiming();
+        return false;
+    }
     if (refit) {
         pass.refit(m_top, m_instances);
         ++m_topRefits;
@@ -584,6 +615,7 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
         for (const gpu::AccelerationStructure* b : distinct) m_structureBytes += b->bytes();
     }
     pass.end();
+    commands.endTiming();
     stats.instances = needed;
     stats.topRefit = refit;
 
