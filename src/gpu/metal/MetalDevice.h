@@ -102,9 +102,10 @@ struct MetalAccelerationStructure {
     NSUInteger refitScratch = 0;
     bool allowRefit = false;
     // Top level: the bottom levels of the last build, kept alive here and made resident where it is bound (shaders
-    // reach them through the top level only).
+    // reach them through the top level only), and the index into them of each instance (what a refit must keep).
     NSArray<id<MTLAccelerationStructure>>* bottomLevels = nil;
     std::vector<__unsafe_unretained id<MTLResource>> residency;
+    std::vector<std::uint32_t> instanceBottomLevels;
 };
 
 struct MetalUpscaler {
@@ -318,7 +319,7 @@ public:
     void* beginAccelerationStructurePass(void* commands) override;
     void endAccelerationStructurePass(void* commands, void* pass) override;
     void buildBottomLevel(void* pass, void* structure, const RayGeometry& geometry, bool refit) override;
-    void buildTopLevel(void* pass, void* structure, std::span<const RayInstance> instances) override;
+    void buildTopLevel(void* pass, void* structure, std::span<const RayInstance> instances, bool refit) override;
     void bindAccelerationStructure(void* pass, ShaderStage stage, std::uint32_t slot, void* structure) override;
     void upscale(void* commands, void* upscaler, const UpscaleDesc& desc) override;
 

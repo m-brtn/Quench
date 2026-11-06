@@ -465,6 +465,14 @@ namespace {
            geometry.triangleCount <= desc.triangleCount && geometry.vertexStride >= 12 && geometry.indexOffset % 4 == 0;
 }
 
+[[maybe_unused]] bool validInstances(std::span<const RayInstance> instances) {
+    for (const RayInstance& instance : instances)
+        if (!instance.bottomLevel || !*instance.bottomLevel ||
+            instance.bottomLevel->desc().level != AccelerationStructureLevel::Bottom || instance.id >= (1u << 24))
+            return false;
+    return true;
+}
+
 } // namespace
 
 void AccelerationStructurePass::build(const AccelerationStructure& bottomLevel, const RayGeometry& geometry) {
@@ -489,12 +497,17 @@ void AccelerationStructurePass::build(const AccelerationStructure& topLevel, std
     QUENCH_ASSERT(topLevel && topLevel.desc().level == AccelerationStructureLevel::Top,
                   "build(instances) needs a top level");
     QUENCH_ASSERT(instances.size() <= topLevel.desc().instanceCapacity, "more instances than the top level holds");
-    for ([[maybe_unused]] const RayInstance& instance : instances)
-        QUENCH_ASSERT(instance.bottomLevel && *instance.bottomLevel &&
-                          instance.bottomLevel->desc().level == AccelerationStructureLevel::Bottom &&
-                          instance.id < (1u << 24),
-                      "a top-level instance needs a bottom level and a 24-bit id");
-    m_commands->m_device->buildTopLevel(m_native, Access::native(topLevel), instances);
+    QUENCH_ASSERT(validInstances(instances), "a top-level instance needs a bottom level and a 24-bit id");
+    m_commands->m_device->buildTopLevel(m_native, Access::native(topLevel), instances, false);
+}
+
+void AccelerationStructurePass::refit(const AccelerationStructure& topLevel, std::span<const RayInstance> instances) {
+    QUENCH_ASSERT(m_native, "refit outside an acceleration structure pass");
+    QUENCH_ASSERT(topLevel && topLevel.desc().level == AccelerationStructureLevel::Top,
+                  "refit(instances) needs a top level");
+    QUENCH_ASSERT(instances.size() <= topLevel.desc().instanceCapacity, "more instances than the top level holds");
+    QUENCH_ASSERT(validInstances(instances), "a top-level instance needs a bottom level and a 24-bit id");
+    m_commands->m_device->buildTopLevel(m_native, Access::native(topLevel), instances, topLevel.desc().allowRefit);
 }
 
 } // namespace quench::gpu

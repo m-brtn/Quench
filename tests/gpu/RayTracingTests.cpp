@@ -268,6 +268,70 @@ QUENCH_TEST(ray_query_refit) {
           wider.distance);
 }
 
+// A top level refitted to a moved instance: rays see it where a fresh build puts it. A refit before the first build
+// or with another bottom level builds instead, as one of a top level without allowRefit does.
+QUENCH_TEST(ray_query_top_level_refit) {
+    QUENCH_GPU_DEVICE(device);
+    if (!device.caps().rayTracing) QUENCH_SKIP("no ray tracing (gpu::Caps::rayTracing)");
+    const ShaderBlob* rayFs = shaders::render.find("ray_fs");
+    if (!rayFs) QUENCH_SKIP("no ray query shaders in this build");
+    const std::array<float, 12> vertices = quad(0.0f);
+    std::optional<RayScene> s = rayScene(device, vertices, kQuadIndices, rayFs);
+    Result<AccelerationStructure> first = device.createAccelerationStructure({.vertexCount = 4, .triangleCount = 2});
+    Result<AccelerationStructure> second = device.createAccelerationStructure({.vertexCount = 4, .triangleCount = 2});
+    Result<AccelerationStructure> top = device.createAccelerationStructure(
+        {.level = AccelerationStructureLevel::Top, .instanceCapacity = 2, .allowRefit = true});
+    Result<AccelerationStructure> fresh =
+        device.createAccelerationStructure({.level = AccelerationStructureLevel::Top, .instanceCapacity = 2});
+    REQUIRE(s && first && second && top && fresh, "creation failed");
+    {
+        const RayGeometry geometry{
+            .vertices = s->vertices, .vertexCount = 4, .indices = s->indices, .triangleCount = 2};
+        CommandBuffer commands = device.acquireCommandBuffer();
+        AccelerationStructurePass pass = commands.beginAccelerationStructurePass();
+        pass.build(*first, geometry);
+        pass.build(*second, geometry);
+        pass.end();
+        REQUIRE(commands.submit(), "bottom-level builds failed");
+    }
+    // `top` refitted, `fresh` built (or refitted without allowRefit) from the same instance.
+    const auto update = [&](const RayInstance& instance, bool refitFresh) {
+        CommandBuffer commands = device.acquireCommandBuffer();
+        AccelerationStructurePass pass = commands.beginAccelerationStructurePass();
+        pass.refit(*top, {&instance, 1});
+        if (refitFresh)
+            pass.refit(*fresh, {&instance, 1});
+        else
+            pass.build(*fresh, {&instance, 1});
+        pass.end();
+        return bool(commands.submit());
+    };
+    const auto check = [&](const char* what, std::uint32_t x, int id, float distance) {
+        const std::vector<Rgba8> refitted = trace(device, *s, *top);
+        const std::vector<Rgba8> built = trace(device, *s, *fresh);
+        REQUIRE(refitted.size() == kSize * kSize && built.size() == kSize * kSize, "readback failed");
+        int differing = 0;
+        for (std::size_t i = 0; i < refitted.size(); ++i) differing += !test::near(refitted[i], built[i]);
+        const Hit at = hitAt(refitted, x, 16), other = hitAt(refitted, kSize - 1 - x, 16);
+        std::printf("  %s: id %d at %.2f m, other side %d, %d pixels differ from a build\n", what, at.id, at.distance,
+                    other.hit, differing);
+        CHECK(at.hit && at.id == id && std::abs(at.distance - distance) < 0.1f, "%s: %d, id %d, %.2f m", what, at.hit,
+              at.id, at.distance);
+        CHECK(!other.hit && differing == 0, "%s: a hit on the other side %d, %d pixels differ from a build", what,
+              other.hit, differing);
+    };
+
+    REQUIRE(update({.bottomLevel = &*first, .transform = translation(-0.5f, 0.0f, 0.0f), .id = 5}, false),
+            "first update failed");
+    check("before a build", 8, 5, 10.0f);
+    REQUIRE(update({.bottomLevel = &*first, .transform = translation(0.5f, 0.0f, -2.0f), .id = 6}, false),
+            "refit failed");
+    check("moved", 24, 6, 12.0f);
+    REQUIRE(update({.bottomLevel = &*second, .transform = translation(-0.5f, 0.0f, -1.0f), .id = 8}, true),
+            "refit with another bottom level failed");
+    check("another bottom level", 8, 8, 11.0f);
+}
+
 namespace {
 
 float halfToFloat(std::uint16_t h) {

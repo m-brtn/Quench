@@ -119,7 +119,8 @@ struct DeviceImpl {
     virtual void* beginAccelerationStructurePass(void*) { return nullptr; }
     virtual void endAccelerationStructurePass(void*, void*) {}
     virtual void buildBottomLevel(void*, void*, const RayGeometry&, bool) {}
-    virtual void buildTopLevel(void*, void*, std::span<const RayInstance>) {}
+    // refit: when the bottom levels are those of the last build (else it builds).
+    virtual void buildTopLevel(void*, void*, std::span<const RayInstance>, bool) {}
     virtual void bindAccelerationStructure(void*, ShaderStage, std::uint32_t, void*) {}
     virtual void upscale(void*, void*, const UpscaleDesc&) {}
 

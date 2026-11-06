@@ -626,6 +626,7 @@ Result<void*> MetalDevice::createAccelerationStructure(const AccelerationStructu
             MTLInstanceAccelerationStructureDescriptor* top = [MTLInstanceAccelerationStructureDescriptor descriptor];
             top.instanceCount = desc.instanceCapacity;
             top.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeUserID;
+            top.usage = desc.allowRefit ? MTLAccelerationStructureUsageRefit : MTLAccelerationStructureUsageNone;
             d = top;
         }
         const MTLAccelerationStructureSizes sizes = [m_device accelerationStructureSizesWithDescriptor:d];

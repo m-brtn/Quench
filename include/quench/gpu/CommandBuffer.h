@@ -257,6 +257,10 @@ public:
     void refit(const AccelerationStructure& bottomLevel, const RayGeometry& geometry);
     // A top level from instances of built bottom levels (at most instanceCapacity).
     void build(const AccelerationStructure& topLevel, std::span<const RayInstance> instances);
+    // New transforms, masks, ids and flags for a top level created with allowRefit: the same bottom levels in the
+    // same order as its last build. Faster than a build; the structure degrades when instances move far from where it
+    // was built. Builds instead when the bottom levels differ, before the first build or without allowRefit.
+    void refit(const AccelerationStructure& topLevel, std::span<const RayInstance> instances);
 
 private:
     friend class CommandBuffer;

@@ -831,7 +831,7 @@ void MetalDevice::buildBottomLevel(void* pass, void* structure, const RayGeometr
     }
 }
 
-void MetalDevice::buildTopLevel(void* pass, void* structure, std::span<const RayInstance> instances) {
+void MetalDevice::buildTopLevel(void* pass, void* structure, std::span<const RayInstance> instances, bool refit) {
     @autoreleasepool {
         MetalCommandBuffer& c = commandsOf(pass);
         MetalAccelerationStructure& as = *static_cast<MetalAccelerationStructure*>(structure);
@@ -854,6 +854,12 @@ void MetalDevice::buildTopLevel(void* pass, void* structure, std::span<const Ray
                 found = natives.end() - 1;
             }
             indices[i] = std::uint32_t(found - natives.begin());
+        }
+        // A refit keeps each instance's bottom level from the last build; with others, or before a build, it builds.
+        if (refit) {
+            refit =
+                as.bottomLevels && as.bottomLevels.count == bottomLevels.count && as.instanceBottomLevels == indices;
+            for (NSUInteger i = 0; refit && i < bottomLevels.count; ++i) refit = as.bottomLevels[i] == bottomLevels[i];
         }
 
         const NSUInteger bytes =
@@ -887,10 +893,21 @@ void MetalDevice::buildTopLevel(void* pass, void* structure, std::span<const Ray
         d.instanceCount = instances.size();
         d.instanceDescriptorBuffer = buffer;
         d.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeUserID;
+        d.usage = as.allowRefit ? MTLAccelerationStructureUsageRefit : MTLAccelerationStructureUsageNone;
+        if (refit) {
+            const NSUInteger offset = scratch(c, as.refitScratch);
+            [c.accel refitAccelerationStructure:as.handle
+                                     descriptor:d
+                                    destination:nil
+                                  scratchBuffer:m_scratch
+                            scratchBufferOffset:offset];
+            return;
+        }
         const NSUInteger offset = scratch(c, as.buildScratch);
         [c.accel buildAccelerationStructure:as.handle descriptor:d scratchBuffer:m_scratch scratchBufferOffset:offset];
 
         as.bottomLevels = bottomLevels;
+        as.instanceBottomLevels = std::move(indices);
         as.residency.clear();
         for (id<MTLAccelerationStructure> bottom in bottomLevels) as.residency.push_back(bottom);
     }

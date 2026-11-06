@@ -281,8 +281,8 @@ struct AccelerationStructureDesc {
     std::uint32_t vertexCount = 0;      // bottom level
     std::uint32_t triangleCount = 0;    // bottom level
     std::uint32_t instanceCapacity = 0; // top level
-    bool allowRefit = false;            // bottom level: AccelerationStructurePass::refit (deforming meshes)
-    std::string_view name{};            // not kept after creation
+    bool allowRefit = false; // AccelerationStructurePass::refit: deforming meshes (bottom), moving instances (top)
+    std::string_view name{}; // not kept after creation
 };
 
 // ------------------------------------------------------------------ upscaling (Caps::spatialUpscaling,
