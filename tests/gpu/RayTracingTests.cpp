@@ -8,6 +8,8 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <optional>
+#include <span>
 #include <vector>
 
 using namespace quench;
@@ -43,6 +45,24 @@ struct RayScene {
     Texture target;
     GraphicsPipeline pipeline;
 };
+
+// The mesh in buffers, the target and a pipeline of fullscreen_vs and the fragment shader; empty on failure.
+std::optional<RayScene> rayScene(Device& device, std::span<const float> vertices,
+                                 std::span<const std::uint32_t> indices, const ShaderBlob* fragment) {
+    Result<Buffer> vb =
+        device.createBuffer({.usage = BufferUsage::Vertex, .size = std::uint32_t(vertices.size_bytes())});
+    Result<Buffer> ib = device.createBuffer({.usage = BufferUsage::Index, .size = std::uint32_t(indices.size_bytes())});
+    Result<Texture> target =
+        device.createTexture({.usage = TextureUsage::ColorTarget, .width = kSize, .height = kSize});
+    const ColorTargetDesc color{.format = TextureFormat::Rgba8Unorm};
+    Result<GraphicsPipeline> pipeline = device.createPipeline({.vertexShader = shaders::render.find("fullscreen_vs"),
+                                                               .fragmentShader = fragment,
+                                                               .colorTargets = {&color, 1}});
+    if (!vb || !ib || !target || !pipeline || !device.upload(*vb, 0, std::as_bytes(vertices)) ||
+        !device.upload(*ib, 0, std::as_bytes(indices)))
+        return std::nullopt;
+    return RayScene{std::move(*vb), std::move(*ib), std::move(*target), std::move(*pipeline)};
+}
 
 // Traces ray_fs against the top level and reads the target back.
 std::vector<Rgba8> trace(Device& device, RayScene& s, const AccelerationStructure& top) {
@@ -135,6 +155,54 @@ QUENCH_TEST(ray_query_instances) {
     CHECK(moved.hit && moved.id == 9 && std::abs(moved.distance - 14.0f) < 0.1f, "moved: %d, id %d, %.2f m", moved.hit,
           moved.id, moved.distance);
     CHECK(hitAt(pixels, 8, 16).id == 7, "left instance lost");
+}
+
+// The quad is counter-clockwise seen from +z, where the rays come from (ray_face_fs): front faces of a plain
+// instance and of a mirrored one whose normal faces the rays; back faces of a turned and of a mirrored instance
+// whose normal faces away.
+QUENCH_TEST(ray_query_front_faces) {
+    QUENCH_GPU_DEVICE(device);
+    if (!device.caps().rayTracing) QUENCH_SKIP("no ray tracing (gpu::Caps::rayTracing)");
+    const ShaderBlob* rayFaceFs = shaders::render.find("ray_face_fs");
+    if (!rayFaceFs) QUENCH_SKIP("no ray query shaders in this build");
+    const std::array<float, 12> vertices = quad(0.0f);
+    std::optional<RayScene> s = rayScene(device, vertices, kQuadIndices, rayFaceFs);
+    Result<AccelerationStructure> bottom = device.createAccelerationStructure({.vertexCount = 4, .triangleCount = 2});
+    Result<AccelerationStructure> top =
+        device.createAccelerationStructure({.level = AccelerationStructureLevel::Top, .instanceCapacity = 4});
+    REQUIRE(s && bottom && top, "creation failed");
+
+    // 0.4 m wide, side by side at x -0.75, -0.25, 0.25 and 0.75.
+    const RayInstance instances[] = {
+        {.bottomLevel = &*bottom, .transform = {0.4f, 0, 0, -0.75f, 0, 0.4f, 0, 0, 0, 0, 0.4f, 0}, .id = 1},
+        {.bottomLevel = &*bottom, .transform = {-0.4f, 0, 0, -0.25f, 0, 0.4f, 0, 0, 0, 0, -0.4f, 0}, .id = 2},
+        {.bottomLevel = &*bottom, .transform = {-0.4f, 0, 0, 0.25f, 0, 0.4f, 0, 0, 0, 0, 0.4f, 0}, .id = 3},
+        {.bottomLevel = &*bottom, .transform = {0.4f, 0, 0, 0.75f, 0, 0.4f, 0, 0, 0, 0, -0.4f, 0}, .id = 4},
+    };
+    {
+        CommandBuffer commands = device.acquireCommandBuffer();
+        AccelerationStructurePass pass = commands.beginAccelerationStructurePass();
+        pass.build(*bottom, {.vertices = s->vertices, .vertexCount = 4, .indices = s->indices, .triangleCount = 2});
+        pass.build(*top, instances);
+        pass.end();
+        REQUIRE(commands.submit(), "build failed");
+    }
+    const std::vector<Rgba8> pixels = trace(device, *s, *top);
+    REQUIRE(pixels.size() == kSize * kSize, "readback failed");
+    struct Expected {
+        std::uint32_t x;
+        int id;
+        bool front;
+        const char* what;
+    };
+    for (const Expected& e : {Expected{4, 1, true, "plain"}, Expected{12, 2, false, "turned"},
+                              Expected{20, 3, true, "mirrored in x"}, Expected{28, 4, false, "mirrored in z"}}) {
+        const Rgba8 p = pixels[16 * kSize + e.x];
+        const bool hit = p.r > 127, front = p.g > 127;
+        std::printf("  %s: hit %d, id %d, front %d\n", e.what, hit, p.b, front);
+        CHECK(hit && p.b == e.id && front == e.front, "%s: hit %d, id %d, front %d (expected %d)", e.what, hit, p.b,
+              front, e.front);
+    }
 }
 
 // A bottom level refitted to moved vertices (skinned meshes): rays see the new positions.

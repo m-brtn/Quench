@@ -63,7 +63,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
     quench_add_shaders(quench_device_tests NAME render SOURCE gpu/shaders/render.hlsl
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
-                rects_vs:vertex scale_cs:compute ray_fs:fragment:rayquery)
+                rects_vs:vertex scale_cs:compute ray_fs:fragment:rayquery ray_face_fs:fragment:rayquery)
     quench_add_shaders(quench_device_tests NAME render_test SOURCE render/shaders/custom.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment)
@@ -217,7 +217,7 @@ if(NOT QUENCH_HEADLESS)
         ENVIRONMENT ${gpu_environment})
     quench_add_shaders(quench_gpu_device_tests NAME render SOURCE gpu/shaders/render.hlsl
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
-                rects_vs:vertex scale_cs:compute ray_fs:fragment:rayquery)
+                rects_vs:vertex scale_cs:compute ray_fs:fragment:rayquery ray_face_fs:fragment:rayquery)
     target_compile_definitions(quench_gpu_device_tests PRIVATE
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
 

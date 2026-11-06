@@ -870,6 +870,8 @@ void MetalDevice::buildTopLevel(void* pass, void* structure, std::span<const Ray
             for (int column = 0; column < 4; ++column)
                 for (int row = 0; row < 3; ++row)
                     o.transformationMatrix.columns[column].elements[row] = in.transform[std::size_t(row * 4 + column)];
+            // Metal's default front faces (clockwise in its left-handed terms, judged in object space) are the
+            // engine's counter-clockwise ones, also through mirroring transforms; the winding option turns them around.
             o.options = MTLAccelerationStructureInstanceOptionNone;
             if (any(in.flags & RayInstanceFlags::Opaque)) o.options |= MTLAccelerationStructureInstanceOptionOpaque;
             if (any(in.flags & RayInstanceFlags::NonOpaque))

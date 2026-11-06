@@ -111,3 +111,22 @@ float4 ray_fs(FullscreenOut i) : SV_Target0 {
     return float4(1.0, float(q.CommittedInstanceID()) / 255.0, q.CommittedRayT() / 20.0, 1.0);
 }
 #endif
+
+// The rays of ray_fs: r 1 on a hit, g 1 when it hit a front face, b the instance id / 255.
+#ifdef QUENCH_ENTRY_ray_face_fs
+RaytracingAccelerationStructure t_scene : register(t0, space2);
+
+float4 ray_face_fs(FullscreenOut i) : SV_Target0 {
+    RayDesc ray;
+    ray.Origin = float3(i.uv.x * 2.0 - 1.0, 1.0 - i.uv.y * 2.0, 10.0);
+    ray.Direction = float3(0.0, 0.0, -1.0);
+    ray.TMin = 0.0;
+    ray.TMax = 100.0;
+    RayQuery<RAY_FLAG_FORCE_OPAQUE> q;
+    q.TraceRayInline(t_scene, RAY_FLAG_NONE, 0xFF, ray);
+    while (q.Proceed()) {
+    }
+    if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT) return float4(0.0, 0.0, 0.0, 1.0);
+    return float4(1.0, q.CommittedTriangleFrontFace() ? 1.0 : 0.0, float(q.CommittedInstanceID()) / 255.0, 1.0);
+}
+#endif

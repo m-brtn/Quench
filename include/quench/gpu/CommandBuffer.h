@@ -84,7 +84,8 @@ enum class RayInstanceFlags : std::uint8_t {
 };
 QUENCH_FLAGS(RayInstanceFlags)
 
-// One instance of a top-level acceleration structure.
+// One instance of a top-level acceleration structure. Front faces (CommittedTriangleFrontFace()) are
+// counter-clockwise in object space, as the engine's meshes; a mirroring transform keeps them front-facing.
 struct RayInstance {
     const AccelerationStructure* bottomLevel = nullptr;
     // Object to world: the three rows of a 3 x 4 matrix.
