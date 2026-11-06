@@ -5,9 +5,10 @@
 #   tools/check.sh quick [--preset NAME] [--base REF] [LABEL...]
 #       A small change: format the changed C and C++ files (check only), an incremental build of the preset
 #       (default: release, where the captures are compared), and ctest of the labels the changed files map to
-#       (or of the LABELs given): core physics assets audio animation cook gpu app render hello demo. The changed
-#       files are those that differ from HEAD (from REF with --base) and the untracked ones. A change to a shared
-#       foundation (core, gpu, app, the build) is reported: it needs the full gate.
+#       (or of the LABELs given): core physics assets audio animation cook gpu app render hello demo, without the
+#       variants on Vulkan through MoltenVK (label vulkan; full and release run them). The changed files are those
+#       that differ from HEAD (from REF with --base) and the untracked ones. A change to a shared foundation (core,
+#       gpu, app, the build) is reported: it needs the full gate.
 #   tools/check.sh full         the steps format debug release asan tsan wasm ios new-game: the gate at the end of a
 #                               stage and for a change to a shared foundation
 #   tools/check.sh release      full, then the step package (tools/package_demo.sh, macOS): before a release
@@ -182,8 +183,8 @@ quick() {
         cmake --build --preset "$preset"
         local regex
         regex="^($(echo $labels | tr ' ' '|'))\$"
-        step "$preset: ctest -L '$regex'"
-        ctest --preset "$preset" -L "$regex" -j8 --output-on-failure
+        step "$preset: ctest -L '$regex' -LE '^vulkan\$'"
+        ctest --preset "$preset" -L "$regex" -LE '^vulkan$' -j8 --output-on-failure
     fi
     if [[ $shared -eq 1 ]]; then
         echo
@@ -192,7 +193,7 @@ quick() {
     fi
 }
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
 STEPS=()
 case "${1:-}" in
 -h | --help) usage; exit 0 ;;

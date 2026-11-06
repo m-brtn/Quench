@@ -1,7 +1,8 @@
 # `cmake -P` script run after a test executable is built: writes one add_test() per case it lists (`EXE --list`) into
 # OUTPUT, which CTest includes. Parameters: EXE, PREFIX, OUTPUT, WORKING_DIRECTORY, SKIP_RETURN_CODE and optionally
 # EMULATOR (CMAKE_CROSSCOMPILING_EMULATOR, Node.js for WebAssembly builds), ENVIRONMENT (NAME=value entries
-# separated by '|'), FAIL_REGEX (output that fails a case) and LABEL (the module's CTest label).
+# separated by '|'), FAIL_REGEX (output that fails a case) and LABEL (CTest labels separated by '|': the module's,
+# and vulkan for the variants on Vulkan through MoltenVK).
 cmake_minimum_required(VERSION 3.28)
 execute_process(COMMAND ${EMULATOR} ${EXE} --list OUTPUT_VARIABLE _out RESULT_VARIABLE _res)
 if(NOT _res EQUAL 0)
@@ -21,7 +22,8 @@ if(FAIL_REGEX)
     string(APPEND _properties " FAIL_REGULAR_EXPRESSION [=[${FAIL_REGEX}]=]")
 endif()
 if(LABEL)
-    string(APPEND _properties " LABELS [=[${LABEL}]=]")
+    string(REPLACE "|" ";" _labels "${LABEL}")
+    string(APPEND _properties " LABELS [=[${_labels}]=]")
 endif()
 string(REPLACE "\n" ";" _names "${_out}")
 set(_content "")

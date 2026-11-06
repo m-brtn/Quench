@@ -76,7 +76,8 @@ target_include_directories(quench_test_harness PUBLIC harness)
 target_compile_definitions(quench_test_harness PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
 # Every test has the label of the module it checks (ctest -L <label>; tools/check.sh quick picks them from the changed
-# files): core, physics, assets, audio, animation, cook, gpu, render, app, hello, demo.
+# files): core, physics, assets, audio, animation, cook, gpu, render, app, hello, demo. The variants on Vulkan through
+# MoltenVK also have the label vulkan: tools/check.sh quick leaves them out (-LE vulkan), full and release run them.
 # quench_add_test_executable(<name> PREFIX <ctest prefix> LABEL <label> SOURCES <file>... LIBS <target>...
 #                            [ENVIRONMENT <NAME=value>...])
 function(quench_add_test_executable name)
@@ -89,19 +90,20 @@ endfunction()
 
 # Registers every case of a test executable under PREFIX, run with the given environment. A second call with another
 # prefix runs the same cases again (another GPU driver, for example). A case whose output matches FAIL_REGEX fails.
-# quench_add_test_variant(<name> PREFIX <ctest prefix> LABEL <label> [ENVIRONMENT <NAME=value>...]
+# quench_add_test_variant(<name> PREFIX <ctest prefix> LABEL <label>... [ENVIRONMENT <NAME=value>...]
 #                         [FAIL_REGEX <regex>])
 function(quench_add_test_variant name)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "PREFIX;LABEL;FAIL_REGEX" "ENVIRONMENT")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "" "PREFIX;FAIL_REGEX" "LABEL;ENVIRONMENT")
     if(CMAKE_CROSSCOMPILING_EMULATOR MATCHES "simctl" AND arg_ENVIRONMENT)
         # simctl passes only SIMCTL_CHILD_ variables to the process, without the prefix.
         list(TRANSFORM arg_ENVIRONMENT PREPEND SIMCTL_CHILD_)
     endif()
     list(JOIN arg_ENVIRONMENT "|" environment)
+    list(JOIN arg_LABEL "|" labels)
     set(list_file ${CMAKE_CURRENT_BINARY_DIR}/${arg_PREFIX}_cases.cmake)
     add_custom_command(TARGET ${name} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:${name}> -DPREFIX=${arg_PREFIX} -DOUTPUT=${list_file}
-                -DWORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR} -DSKIP_RETURN_CODE=77 -DLABEL=${arg_LABEL}
+                -DWORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR} -DSKIP_RETURN_CODE=77 "-DLABEL=${labels}"
                 "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" "-DENVIRONMENT=${environment}"
                 "-DFAIL_REGEX=${arg_FAIL_REGEX}" -P ${CMAKE_CURRENT_SOURCE_DIR}/DiscoverTests.cmake
         VERBATIM)
@@ -243,7 +245,7 @@ if(NOT QUENCH_HEADLESS)
                 list(APPEND vulkan_environment DYLD_FALLBACK_LIBRARY_PATH=${layer_dir}:/usr/local/lib:/usr/lib)
             endif()
             # Without a debug messenger (SDL registers none) the layer prints its messages to stdout.
-            quench_add_test_variant(quench_gpu_device_tests PREFIX gpu_vulkan LABEL gpu
+            quench_add_test_variant(quench_gpu_device_tests PREFIX gpu_vulkan LABEL gpu vulkan
                 ENVIRONMENT ${vulkan_environment}
                 FAIL_REGEX "Validation (Error|Warning)")
         endif()
@@ -263,7 +265,7 @@ if(NOT QUENCH_HEADLESS)
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment)
     if(QUENCH_TEST_VULKAN_LOADER)
-        quench_add_test_variant(quench_render_tests PREFIX render_vulkan LABEL render
+        quench_add_test_variant(quench_render_tests PREFIX render_vulkan LABEL render vulkan
             ENVIRONMENT ${vulkan_environment}
             FAIL_REGEX "Validation (Error|Warning)")
     endif()
@@ -310,17 +312,21 @@ if(NOT QUENCH_HEADLESS)
         #                  [ENVIRONMENT <NAME=value>...] [FAIL_REGEX <regex>] PARTS <file>[:<golden>]...)
         # registers <prefix>_batch_<suffix> (the run, in captures/<prefix>_batch_<suffix>/) and per part
         # <prefix>_<file>_<suffix>: the part <file>.txt passed its checks and its capture <golden>.png matches
-        # tests/golden/<backend>/<device>/<golden>.png. All have the label <prefix>.
+        # tests/golden/<backend>/<device>/<golden>.png. All have the label <prefix>, and vulkan for the suffix vulkan.
         function(quench_add_batch prefix suffix)
             cmake_parse_arguments(PARSE_ARGV 2 arg "" "APP;SCRIPT;BACKEND;FAIL_REGEX" "ARGS;ENVIRONMENT;PARTS")
             set(batch ${prefix}_batch_${suffix})
+            set(labels ${prefix})
+            if(suffix STREQUAL "vulkan")
+                list(APPEND labels vulkan)
+            endif()
             set(dir ${capture_dir}/${batch})
             list(JOIN arg_ARGS "|" args)
             list(JOIN arg_ENVIRONMENT "|" environment)
             add_test(NAME ${batch} COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:${arg_APP}> "-DARGS=${args}"
                      -DSCRIPT=${arg_SCRIPT} "-DENVIRONMENT=${environment}" -DUSER_DIR=${dir} -DLOG=${dir}.log
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/RunBatch.cmake)
-            set_tests_properties(${batch} PROPERTIES FIXTURES_SETUP ${batch} LABELS ${prefix} COST ${app_run_cost})
+            set_tests_properties(${batch} PROPERTIES FIXTURES_SETUP ${batch} LABELS "${labels}" COST ${app_run_cost})
             if(arg_FAIL_REGEX)
                 set_tests_properties(${batch} PROPERTIES FAIL_REGULAR_EXPRESSION "${arg_FAIL_REGEX}")
             endif()
@@ -338,7 +344,7 @@ if(NOT QUENCH_HEADLESS)
                 add_test(NAME ${prefix}_${file}_${suffix} COMMAND ${CMAKE_COMMAND} -DLOG=${dir}.log -DPART=${file}.txt
                          ${capture_args} -P ${CMAKE_CURRENT_SOURCE_DIR}/CheckPart.cmake)
                 set_tests_properties(${prefix}_${file}_${suffix} PROPERTIES FIXTURES_REQUIRED ${batch}
-                                     LABELS ${prefix} SKIP_REGULAR_EXPRESSION "QUENCH_SKIP")
+                                     LABELS "${labels}" SKIP_REGULAR_EXPRESSION "QUENCH_SKIP")
             endforeach()
         endfunction()
 

@@ -169,7 +169,7 @@ build/debug/quench_cook --help
 
 Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...) with its
 module's label (`ctest -L animation`; labels: core, physics, assets, audio, animation, cook, gpu, app, render, hello,
-demo). A test executable runs one case by name (`build/debug/tests/quench_core_tests json_round_trip`), all cases
+demo; the variants on Vulkan through MoltenVK also have `vulkan`). A test executable runs one case by name (`build/debug/tests/quench_core_tests json_round_trip`), all cases
 without arguments, and lists them with `--list`. A case that cannot run in a build (threads in the single-threaded
 web build) calls `QUENCH_SKIP` and is reported as skipped, not passed.
 
@@ -206,8 +206,10 @@ All checks run locally; there is no CI (user decision, 2026-11-05). The gates ar
 decision, 2026-11-06); `tools/check.sh` runs them, offscreen:
 
 - **A change inside a module, an example or a test (the default): `tools/check.sh quick`.** The format of the
-  changed C and C++ files, an incremental build of `release` and `ctest -L` for the labels the changed files map to
-  (`tools/check.sh quick demo render` names them; `--preset debug` for assertions). Seconds, at most about a minute.
+ changed C and C++ files, an incremental build of `release` and `ctest -L` for the labels the changed files map to
+ (`tools/check.sh quick demo render` names them; `--preset debug` for assertions), without the variants on Vulkan
+ through MoltenVK (`gpu_vulkan.*`, `render_vulkan.*`, `hello_*_vulkan`, `demo_*_vulkan`: label `vulkan`, left out
+ with `-LE vulkan`; user decision, 2026-11-06; `full` and `release` run them). Seconds, at most about a minute.
   Look at a capture when its check fails or its golden image changes, not at all of them every time. Add the one step
   that can break where the change can: `tools/check.sh step asan` or `step tsan` (threaded code), `step wasm` (a
   headless module), `step ios` (platform code), `step new-game` (what a game's build uses: `cmake/QuenchGame.cmake`,
