@@ -40,8 +40,8 @@ struct OptionInfo {
     Kind kind;
     double min; // the range a value is kept in (Choice: the index, Flag: 0 or 1)
     double max;
-    std::array<const char*, 3> choices{}; // Choice: the names in settings.json, by value
-    std::array<const char*, 3> labels{};  // Choice: the names in the panel
+    std::array<const char*, 4> choices{}; // Choice: the names in settings.json, by value
+    std::array<const char*, 4> labels{};  // Choice: the names in the panel
 };
 
 using O = GraphicsOption;
@@ -64,9 +64,9 @@ constexpr std::array<OptionInfo, kGraphicsOptions> kOptions{{
      "Upscaling",
      Kind::Choice,
      0,
-     2,
-     {"bilinear", "spatial", "temporal"},
-     {"Bilinear", "MetalFX spatial", "MetalFX temporal"}},
+     3,
+     {"bilinear", "spatial", "temporal", "denoised"},
+     {"Bilinear", "MetalFX spatial", "MetalFX temporal", "MetalFX denoising"}},
     {O::SunShadows,
      "sun_shadows",
      "sun shadows",
@@ -103,6 +103,39 @@ constexpr std::array<OptionInfo, kGraphicsOptions> kOptions{{
     {O::OcclusionRays, "ao_rays", "occlusion rays", "AO rays", Kind::Integer, 1, 8},
     {O::OcclusionRadius, "ao_radius", "occlusion radius", "AO radius", Kind::Number, 0.05, 10},
     {O::OcclusionStrength, "ao_strength", "occlusion strength", "AO strength", Kind::Number, 0, 1},
+    {O::LocalShadows, "local_shadows", "local light shadows", "Local shadows", Kind::Integer, 0,
+     render::kMaxRayLocalShadows},
+    {O::Reflections,
+     "reflections",
+     "reflections",
+     "Reflections",
+     Kind::Choice,
+     0,
+     1,
+     {"sky", "rt"},
+     {"Sky", "Ray traced"}},
+    {O::ReflectionRoughness, "reflection_roughness", "reflection roughness", "Up to roughness", Kind::Number, 0, 1},
+    {O::IndirectLight,
+     "indirect",
+     "indirect light",
+     "Indirect light",
+     Kind::Choice,
+     0,
+     2,
+     {"sky", "probes", "rt"},
+     {"Sky", "Probe grid", "Ray traced"}},
+    {O::ProbeSpacing, "probe_spacing", "probe spacing", "Probe spacing", Kind::Number, 0.25, 16},
+    {O::RayDenoiser,
+     "denoiser",
+     "ray denoiser",
+     "Denoiser",
+     Kind::Choice,
+     0,
+     1,
+     {"spatial", "temporal"},
+     {"Spatial", "Temporal"}},
+    {O::PathTracer, "path_tracer", "path tracer", "Path tracer", Kind::Flag, 0, 1},
+    {O::PathBounces, "path_bounces", "path bounces", "Bounces", Kind::Integer, 1, 16},
     {O::Bloom, "bloom", "bloom", "Bloom", Kind::Flag, 0, 1},
     {O::BloomStrength, "bloom_strength", "bloom strength", "Strength", Kind::Number, 0, 1},
     {O::BloomThreshold, "bloom_threshold", "bloom threshold", "Threshold", Kind::Number, 0, 16},
@@ -140,6 +173,14 @@ void setValue(RenderSettings& s, GraphicsOption option, double v) {
     case O::OcclusionRays: s.occlusionRays = int(v); break;
     case O::OcclusionRadius: s.occlusionRadius = float(v); break;
     case O::OcclusionStrength: s.occlusionStrength = float(v); break;
+    case O::LocalShadows: s.localLightShadows = int(v); break;
+    case O::Reflections: s.reflections = render::Reflections(int(v)); break;
+    case O::ReflectionRoughness: s.reflectionRoughness = float(v); break;
+    case O::IndirectLight: s.indirectLight = render::IndirectLight(int(v)); break;
+    case O::ProbeSpacing: s.probeSpacing = float(v); break;
+    case O::RayDenoiser: s.rayDenoiser = render::RayDenoiser(int(v)); break;
+    case O::PathTracer: s.pathTracer = v != 0.0; break;
+    case O::PathBounces: s.pathBounces = int(v); break;
     case O::Bloom: s.bloom = v != 0.0; break;
     case O::BloomStrength: s.bloomStrength = float(v); break;
     case O::BloomThreshold: s.bloomThreshold = float(v); break;
@@ -322,6 +363,14 @@ double graphicsValue(const RenderSettings& s, GraphicsOption option) {
     case O::OcclusionRays: return double(s.occlusionRays);
     case O::OcclusionRadius: return double(s.occlusionRadius);
     case O::OcclusionStrength: return double(s.occlusionStrength);
+    case O::LocalShadows: return double(s.localLightShadows);
+    case O::Reflections: return double(int(s.reflections));
+    case O::ReflectionRoughness: return double(s.reflectionRoughness);
+    case O::IndirectLight: return double(int(s.indirectLight));
+    case O::ProbeSpacing: return double(s.probeSpacing);
+    case O::RayDenoiser: return double(int(s.rayDenoiser));
+    case O::PathTracer: return s.pathTracer ? 1.0 : 0.0;
+    case O::PathBounces: return double(s.pathBounces);
     case O::Bloom: return s.bloom ? 1.0 : 0.0;
     case O::BloomStrength: return double(s.bloomStrength);
     case O::BloomThreshold: return double(s.bloomThreshold);
@@ -519,8 +568,10 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
 
     if (header("Anti-aliasing and resolution")) {
         rows.row(O::AntiAliasing, [&] { return combo(O::AntiAliasing, int(s.antiAliasing)); });
-        if (e.upscaling == render::Upscaling::Temporal)
-            note("MetalFX temporal resolves in TAA's place, from TAA's jitter and motion", false);
+        if (e.upscaling == render::Upscaling::Temporal || e.upscaling == render::Upscaling::TemporalDenoised)
+            note("MetalFX resolves in TAA's place, from TAA's jitter and motion", false);
+        else if (e.pathTracer)
+            note("Not used: the path tracer's mean of jittered samples is the anti-aliasing", false);
         else if (e.antiAliasing != s.antiAliasing)
             note(std::format("-> {}: {}", antiAliasingName(e.antiAliasing),
                              reason("anti-aliasing", "the device lacks what it needs")),
@@ -533,6 +584,8 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
                          app.pixelHeight()),
              false);
         rows.row(O::Upscaling, [&] { return combo(O::Upscaling, int(s.upscaling)); });
+        if (e.upscaling == render::Upscaling::TemporalDenoised)
+            note("Denoises the traced effects as it scales up, from the G-buffer; the engine's denoiser is off", false);
         if (s.upscaling != e.upscaling) {
             if (s.upscaling == render::Upscaling::Spatial && caps.spatialUpscaling)
                 note("-> bilinear: spatial upscaling runs below render scale 1", true);
@@ -540,6 +593,14 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
                 note(std::format("-> bilinear: {}{}",
                                  reason("spatial upscaling", "not on this device (gpu::Caps::spatialUpscaling)"),
                                  metalHint),
+                     true);
+            else if (e.pathTracer)
+                note(std::format("-> {}: the path tracer accumulates its own samples", upscalingName(e.upscaling)),
+                     true);
+            else if (s.upscaling == render::Upscaling::TemporalDenoised)
+                note(std::format("-> {}: {}{}", upscalingName(e.upscaling),
+                                 reason("denoising upscaler", "not on this device (gpu::Caps::denoisedUpscaling)"),
+                                 e.upscaling == render::Upscaling::Bilinear ? metalHint : ""),
                      true);
             else
                 note(std::format("-> bilinear: {}{}",
@@ -610,6 +671,53 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
         rows.row(O::OcclusionStrength, [&] { return slider(s.occlusionStrength, 0.0f, 1.0f, "%.2f"); });
     }
 
+    if (header("Ray-traced lighting")) {
+        const std::string whyNot = caps.rayTracing ? std::string() : std::string(rayTracingWhyNot(caps));
+        rows.row(O::LocalShadows, [&] { return sliderInt(s.localLightShadows, 0, render::kMaxRayLocalShadows); });
+        if (s.localLightShadows > 0 && e.localLightShadows == 0)
+            note(std::format("-> unshadowed: {}", caps.rayTracing
+                                                      ? reason("ray-traced local light shadows", "no ray tracing here")
+                                                      : whyNot),
+                 true);
+        else if (e.localLightShadows > 0)
+            note(std::format("The {} nearest point and spot lights that cast shadows", e.localLightShadows), false);
+        rows.row(O::Reflections, [&] { return combo(O::Reflections, int(s.reflections)); });
+        if (s.reflections == render::Reflections::RayTraced && e.reflections != render::Reflections::RayTraced)
+            note(std::format("-> the sky's: {}",
+                             caps.rayTracing ? reason("ray-traced reflections", "no ray tracing here") : whyNot),
+                 true);
+        rows.row(O::ReflectionRoughness, [&] { return slider(s.reflectionRoughness, 0.0f, 1.0f, "%.2f"); });
+        if (e.reflections == render::Reflections::RayTraced)
+            note("Rougher surfaces fade into the sky's reflection", false);
+        rows.row(O::IndirectLight, [&] { return combo(O::IndirectLight, int(s.indirectLight)); });
+        if (s.indirectLight != render::IndirectLight::Sky && e.indirectLight == render::IndirectLight::Sky)
+            note(std::format("-> the sky's ambient light: {}",
+                             caps.rayTracing ? reason(s.indirectLight == render::IndirectLight::Probes
+                                                          ? "the probe grid"
+                                                          : "ray-traced indirect light",
+                                                      "no ray tracing here")
+                                             : whyNot),
+                 true);
+        else if (e.indirectLight != render::IndirectLight::Sky)
+            note(std::format("{} probes, 16 x 8 x 16 around the camera's focus", stats.probes), false);
+        rows.row(O::ProbeSpacing, [&] { return slider(s.probeSpacing, 0.5f, 8.0f, "%.2f m"); });
+        rows.row(O::RayDenoiser, [&] { return combo(O::RayDenoiser, int(s.rayDenoiser)); });
+        if (e.upscaling == render::Upscaling::TemporalDenoised)
+            note("Not used: MetalFX denoises (Upscaling)", false);
+        else if (s.rayDenoiser != e.rayDenoiser)
+            note(std::format("-> spatial: {}", reason("temporal ray denoiser", "no motion vectors here")), true);
+        rows.row(O::PathTracer, [&] { return checkbox(s.pathTracer); });
+        if (s.pathTracer && !e.pathTracer)
+            note(std::format("-> the real-time frame: {}",
+                             caps.rayTracing ? reason("path tracer", "no ray tracing here") : whyNot),
+                 true);
+        else if (e.pathTracer)
+            note(
+                std::format("A reference, not for play: {} samples so far; any change starts again", stats.pathSamples),
+                false);
+        rows.row(O::PathBounces, [&] { return sliderInt(s.pathBounces, 1, 16); });
+    }
+
     if (header("Bloom, tone and sky")) {
         rows.row(O::Bloom, [&] { return checkbox(s.bloom); });
         if (s.bloom && !e.bloom) note("Off: strength 0", false);
@@ -633,10 +741,13 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
     if (header("Display")) outputControls(app);
 
     if (header("GPU backend")) {
-        ImGui::TextWrapped(
-            "%s backend (%s, %s); ray tracing %s, MetalFX %s, GPU timing %s", gpu::backendName(caps.backend),
-            caps.driver.c_str(), caps.deviceName.c_str(), caps.rayTracing ? "yes" : "no",
-            caps.temporalUpscaling || caps.spatialUpscaling ? "yes" : "no", caps.gpuTiming ? "yes" : "no");
+        ImGui::TextWrapped("%s backend (%s, %s); ray tracing %s, MetalFX %s, GPU timing %s",
+                           gpu::backendName(caps.backend), caps.driver.c_str(), caps.deviceName.c_str(),
+                           caps.rayTracing ? "yes" : "no",
+                           caps.denoisedUpscaling                            ? "yes, with denoising"
+                           : caps.temporalUpscaling || caps.spatialUpscaling ? "yes"
+                                                                             : "no",
+                           caps.gpuTiming ? "yes" : "no");
         if (!caps.rayTracing) note(std::format("No ray tracing: {}", rayTracingWhyNot(caps)), false);
         relaunchButtons(app);
     }

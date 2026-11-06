@@ -1,67 +1,145 @@
 # Ray tracing and MetalFX costs (docs/performance.md), the ray tracing section on the native Metal backend:
 #   quench-demo --gpu-backend metal --frame-size 1920x1080 --script examples/demo/scenarios/raytracing_benchmark.txt
-# Each region 5 s with the sun turning and the character walking; the perf lines carry the GPU time per timed range
-# ("accel", "prepass", "raytrace" with "rays" and "denoise" in it, "shadows", "upscale", ...). On SDL GPU every
-# region measures the fallbacks (shadow maps, no occlusion, bilinear scaling).
+# Each region 4 s with the sun turning and the character walking; the perf lines carry the GPU time per timed range
+# ("accel", "prepass", "raytrace" with "rays", "denoise", "probes", "reflections" and "indirect" in it, "path",
+# "shadows", "upscale", ...). The first regions are those of stage 9 (sun shadows and occlusion only, at full size),
+# then each traced effect of stage 11 added to them, all of them, and the upscalers. On SDL GPU every region
+# measures the fallbacks (shadow maps, no occlusion, the sky's light, bilinear scaling).
 
 section raytracing
 until rt_ready == 1 5
+set upscaling bilinear
+set scale 1
+set local_shadows 0
+set reflections sky
+set indirect sky
 wait 1
 perf_begin rt_shadows_ao
-wait 5
+wait 4
 perf_end
-expect perf_frames >= 150
+expect perf_frames >= 120
 
 set ao none
 wait 1
 perf_begin rt_shadows
-wait 5
+wait 4
 perf_end
 
 set shadow_rays 1
 set shadow_softness 0
 wait 1
 perf_begin rt_hard_shadows
-wait 5
+wait 4
 perf_end
 
 set sun_shadows maps
 wait 1
 perf_begin shadow_maps
-wait 5
+wait 4
 perf_end
 
 set sun_shadows rt
 set shadow_rays 2
 set shadow_softness 1
 set ao rt
+set local_shadows 2
+wait 1
+perf_begin plus_lamp_shadows
+wait 4
+perf_end
+
+set local_shadows 0
+set reflections rt
+wait 1
+perf_begin plus_reflections
+wait 4
+perf_end
+
+set reflections sky
+set indirect probes
+wait 1
+perf_begin plus_probes
+wait 4
+perf_end
+
+set indirect rt
+wait 1
+perf_begin plus_indirect_rt
+wait 4
+perf_end
+
+set local_shadows 2
+set reflections rt
+set indirect probes
+wait 1
+perf_begin all_traced
+wait 4
+perf_end
+
+set denoiser spatial
+wait 1
+perf_begin all_spatial_denoiser
+wait 4
+perf_end
+
+set denoiser temporal
 set upscaling temporal
+set scale 0.67
+wait 1
+perf_begin all_temporal_067
+wait 4
+perf_end
+
+set upscaling denoised
+wait 1
+perf_begin all_denoised_067
+wait 4
+perf_end
+
+set scale 0.5
+wait 1
+perf_begin all_denoised_05
+wait 4
+perf_end
+
+set local_shadows 0
+set reflections sky
+set indirect sky
+set upscaling temporal
+set scale 1
 wait 1
 perf_begin temporal_1
-wait 5
+wait 4
 perf_end
 
 set scale 0.67
 wait 1
 perf_begin temporal_067
-wait 5
+wait 4
 perf_end
 
 set scale 0.5
 wait 1
 perf_begin temporal_05
-wait 5
+wait 4
 perf_end
 
 set upscaling spatial
 wait 1
 perf_begin spatial_05
-wait 5
+wait 4
 perf_end
 
 set upscaling bilinear
 wait 1
 perf_begin bilinear_05
-wait 5
+wait 4
+perf_end
+
+set scale 1
+set path_tracer 1
+wait 1
+perf_begin path_tracer
+wait 4
 perf_end
 quit

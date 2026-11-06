@@ -67,6 +67,16 @@ const char* antiAliasingName(render::AntiAliasing mode) {
     return "?";
 }
 
+const char* upscalingName(render::Upscaling mode) {
+    switch (mode) {
+    case render::Upscaling::Bilinear: return "bilinear";
+    case render::Upscaling::Spatial: return "MetalFX spatial";
+    case render::Upscaling::Temporal: return "MetalFX temporal";
+    case render::Upscaling::TemporalDenoised: return "MetalFX denoising";
+    }
+    return "?";
+}
+
 const char* rayTracingWhyNot(const gpu::Caps& caps) {
     if (caps.backend == gpu::Backend::SdlGpu)
         return caps.driver == "vulkan" ? "SDL GPU (here Vulkan through MoltenVK) has no acceleration structures or "
@@ -99,11 +109,19 @@ void effectsPanel(Context& c, const render::RenderSettings& settings, const rend
     ImGui::TextWrapped("Translucent shadows: %s, %u transmittance draws",
                        e.translucentShadows == render::TranslucentShadows::Map ? "transmittance map" : "dithered",
                        s.transmittanceDraws);
+    if (e.localLightShadows > 0 || e.reflections == render::Reflections::RayTraced ||
+        e.indirectLight != render::IndirectLight::Sky)
+        ImGui::TextWrapped("Traced lighting: %d local light shadows, reflections %s, indirect light %s (%u probes); "
+                           "%s denoiser",
+                           e.localLightShadows, e.reflections == render::Reflections::RayTraced ? "traced" : "sky",
+                           e.indirectLight == render::IndirectLight::RayTraced ? "traced"
+                           : e.indirectLight == render::IndirectLight::Probes  ? "probes"
+                                                                               : "sky",
+                           s.probes, e.rayDenoiser == render::RayDenoiser::Temporal ? "temporal" : "spatial");
+    if (e.pathTracer) ImGui::TextWrapped("Path tracer: %u samples", s.pathSamples);
     ImGui::TextWrapped("Anti-aliasing: %s", antiAliasingName(e.antiAliasing));
     if (settings.upscaling != render::Upscaling::Bilinear || e.upscaling != render::Upscaling::Bilinear)
-        ImGui::TextWrapped("Upscaling: %s", e.upscaling == render::Upscaling::Temporal  ? "MetalFX temporal"
-                                            : e.upscaling == render::Upscaling::Spatial ? "MetalFX spatial"
-                                                                                        : "bilinear");
+        ImGui::TextWrapped("Upscaling: %s", upscalingName(e.upscaling));
     ImGui::TextWrapped("Bloom: %s, sky: %s", e.bloom ? "on" : "off", settings.sky ? "on" : "off");
     ImGui::TextWrapped("Formats: HDR %s, depth %s", gpu::formatInfo(c.renderer.hdrFormat()).name,
                        gpu::formatInfo(c.renderer.depthFormat()).name);

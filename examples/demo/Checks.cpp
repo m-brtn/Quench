@@ -89,6 +89,29 @@ constexpr std::array kItems{
               "set upscaling temporal\nset scale 0.5"},
     CheckItem{"raytracing.fallback", "raytracing", "Fallback",
               "SDL GPU backend: the section says why there is no ray tracing and shows shadow maps instead.", ""},
+    CheckItem{"raytracing.reflections", "raytracing", "Reflections",
+              "Native Metal backend: the mirror shows the walking character and the scene behind the camera; the gold "
+              "spheres go from a sharp to a blurred reflection, left to right, without crawling noise. Traced "
+              "reflections off: only the blurred sky.",
+              ""},
+    CheckItem{"raytracing.indirect", "raytracing", "Indirect light",
+              "Native Metal backend, Indirect light Probe grid: the white block in the corner turns red toward the red "
+              "wall and green toward the green one; the glowing panel lights the ground in front of it. Move the sun "
+              "elevation: the light follows within a second, without blotches, leaks through the walls or flicker.",
+              "set turn_sun 0"},
+    CheckItem{"raytracing.lamps", "raytracing", "Lamp shadows",
+              "Native Metal backend, low sun: the spot behind the fence throws its diamonds onto the ground in front "
+              "of it, and the white block shadows the corner from the lamp. Lamp shadows 0: a plain glow.",
+              "set turn_sun 0\nset sun_elevation 6"},
+    CheckItem{"raytracing.denoising", "raytracing", "MetalFX denoising",
+              "Native Metal backend, Upscaling MetalFX denoising at 0.67 (the default where MetalFX runs): shadows, "
+              "reflections and indirect light are smooth, without smears behind the walker or the torus; compare "
+              "with MetalFX temporal and the Temporal denoiser.",
+              ""},
+    CheckItem{"raytracing.path_tracer", "raytracing", "Path tracer",
+              "Native Metal backend: the path tracer settles into a still, noise-free image within a few seconds; "
+              "turned off, the real-time image with the probe grid is about as bright.",
+              "set path_tracer 1"},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",

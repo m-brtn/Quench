@@ -217,7 +217,8 @@ void DemoGame::render(App& app, app::Frame& frame) {
                             .fovY = section.camera.fovFor(aspect),
                             .nearPlane = 0.1f,
                             .cut = m_cut,
-                            .time = section.sectionTime};
+                            .time = section.sectionTime,
+                            .probeCenter = section.camera.target};
     // The Graphics panel's exposure scales the section's own for this frame only.
     render::Scene& scene = currentScene();
     const render::Environment environment = scene.environment();
@@ -413,8 +414,43 @@ bool DemoGame::setRenderSetting(std::string_view name, std::string_view value) {
             s.upscaling = render::Upscaling::Spatial;
         else if (value == "temporal")
             s.upscaling = render::Upscaling::Temporal;
+        else if (value == "denoised")
+            s.upscaling = render::Upscaling::TemporalDenoised;
         else
             return false;
+    } else if (name == "local_shadows" && number) {
+        s.localLightShadows = std::clamp(int(*number), 0, render::kMaxRayLocalShadows);
+    } else if (name == "reflections") {
+        if (value == "sky")
+            s.reflections = render::Reflections::Sky;
+        else if (value == "rt")
+            s.reflections = render::Reflections::RayTraced;
+        else
+            return false;
+    } else if (name == "reflection_roughness" && number) {
+        s.reflectionRoughness = std::clamp(*number, 0.0f, 1.0f);
+    } else if (name == "indirect") {
+        if (value == "sky")
+            s.indirectLight = render::IndirectLight::Sky;
+        else if (value == "probes")
+            s.indirectLight = render::IndirectLight::Probes;
+        else if (value == "rt")
+            s.indirectLight = render::IndirectLight::RayTraced;
+        else
+            return false;
+    } else if (name == "probe_spacing" && number) {
+        s.probeSpacing = std::clamp(*number, 0.25f, 16.0f);
+    } else if (name == "denoiser") {
+        if (value == "spatial")
+            s.rayDenoiser = render::RayDenoiser::Spatial;
+        else if (value == "temporal")
+            s.rayDenoiser = render::RayDenoiser::Temporal;
+        else
+            return false;
+    } else if (name == "path_tracer" && flag) {
+        s.pathTracer = *flag;
+    } else if (name == "path_bounces" && number) {
+        s.pathBounces = std::clamp(int(*number), 1, 16);
     } else if (name == "bloom" && flag) {
         s.bloom = *flag;
     } else if (name == "bloom_strength" && number) {
@@ -582,6 +618,17 @@ std::optional<double> DemoGame::scenarioValue(std::string_view name) const {
     if (name == "ray_instances") return double(s.rayInstances);
     if (name == "ray_builds") return double(s.rayBuilds);
     if (name == "ray_refits") return double(s.rayRefits);
+    if (name == "ray_compactions") return double(s.rayCompactions);
+    if (name == "ray_top_refit") return s.rayTopRefit ? 1.0 : 0.0;
+    if (name == "ray_memory_mb") return double(s.rayMemoryBytes) / (1024.0 * 1024.0);
+    if (name == "hit_textures") return double(s.hitTextures);
+    if (name == "local_shadows") return double(e.localLightShadows);
+    if (name == "reflections") return double(int(e.reflections));
+    if (name == "indirect") return double(int(e.indirectLight));
+    if (name == "probes") return double(s.probes);
+    if (name == "denoiser") return double(int(e.rayDenoiser));
+    if (name == "path_tracer") return e.pathTracer ? 1.0 : 0.0;
+    if (name == "path_samples") return double(s.pathSamples);
     if (name == "fallbacks") return double(m_renderer->fallbacks().size());
     if (name == "camera_yaw") return double(glm::degrees(current().camera.yaw));
     if (name == "camera_pitch") return double(glm::degrees(current().camera.pitch));
@@ -773,15 +820,22 @@ std::string DemoGame::perfDetails(App& app) {
     const render::ActiveEffects& e = m_renderer->effects();
     std::string details = std::format(
         "section={} render={}x{} draws={} instances={} shadow_draws={} lights={} aa={} cascades={} skinned={} "
-        "sun_shadows={} ao={} upscaling={} ray_instances={}",
+        "sun_shadows={} ao={} upscaling={} ray_instances={} local_shadows={} reflections={} indirect={} denoiser={} "
+        "path_tracer={} ray_mb={:.1f}",
         current().id(), s.renderWidth, s.renderHeight, s.draws, s.instances, s.shadowDraws, s.lights,
         antiAliasingName(e.antiAliasing), e.shadowCascades, s.skinnedInstances,
         e.sunShadows == render::SunShadows::RayTraced ? "rt" : "maps",
         e.ambientOcclusion == render::AmbientOcclusion::RayTraced ? "rt" : "none",
-        e.upscaling == render::Upscaling::Temporal  ? "temporal"
-        : e.upscaling == render::Upscaling::Spatial ? "spatial"
-                                                    : "bilinear",
-        s.rayInstances);
+        e.upscaling == render::Upscaling::TemporalDenoised ? "denoised"
+        : e.upscaling == render::Upscaling::Temporal       ? "temporal"
+        : e.upscaling == render::Upscaling::Spatial        ? "spatial"
+                                                           : "bilinear",
+        s.rayInstances, e.localLightShadows, e.reflections == render::Reflections::RayTraced ? "rt" : "sky",
+        e.indirectLight == render::IndirectLight::RayTraced ? "rt"
+        : e.indirectLight == render::IndirectLight::Probes  ? "probes"
+                                                            : "sky",
+        e.rayDenoiser == render::RayDenoiser::Temporal ? "temporal" : "spatial", e.pathTracer ? 1 : 0,
+        double(s.rayMemoryBytes) / (1024.0 * 1024.0));
     const std::string section = currentReady() ? current().perfDetails() : std::string();
     if (!section.empty()) details += ' ' + section;
     return details;

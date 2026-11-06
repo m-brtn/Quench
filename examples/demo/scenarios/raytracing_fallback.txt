@@ -1,7 +1,8 @@
-# Ray tracing's fallbacks on SDL GPU (ctest: demo_raytracing_fallback_<backend>, a part of batch.txt): the section asks
-# for ray-traced shadows and ambient occlusion and for MetalFX, and gets the cascaded shadow maps, no occlusion and
-# bilinear scaling, and the renderer names each fallback (Renderer::fallbacks). The capture is taken at 2.5 s, as in
-# raytracing.txt.
+# Ray tracing's fallbacks on SDL GPU (ctest: demo_raytracing_fallback_<backend>, a part of batch.txt): the section
+# asks for ray-traced shadows, ambient occlusion, lamp shadows, reflections and indirect light, for MetalFX and the
+# path tracer, and gets the cascaded shadow maps, no occlusion, unshadowed lamps, the sky's reflections and ambient
+# light, bilinear scaling and the real-time frame, and the renderer names each fallback (Renderer::fallbacks). The
+# capture is taken at 2.5 s, as in raytracing.txt.
 section raytracing
 
 set dither 0
@@ -9,19 +10,30 @@ until rt_ready == 1 5
 wait 0.1
 expect sun_shadows == 0
 expect ambient_occlusion == 0
+expect local_shadows == 0
+expect reflections == 0
+expect indirect == 0
+expect probes == 0
 expect cascades == 3
 expect shadow_draws > 0
 expect ray_instances == 0
-expect fallbacks >= 2
-set upscaling temporal
+expect upscaling == 0
+expect render_scale == 1
+expect fallbacks >= 5
+set upscaling denoised
 set scale 0.5
 wait 0.05
 expect upscaling == 0
 expect render_scale == 0.5
-expect fallbacks >= 3
+expect fallbacks >= 6
 set upscaling spatial
 wait 0.05
 expect upscaling == 0
+set path_tracer 1
+wait 0.05
+expect path_tracer == 0
+expect fallbacks >= 6
+set path_tracer 0
 set upscaling bilinear
 set scale 1
 wait 0.05

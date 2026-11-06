@@ -1,7 +1,8 @@
-# Ray tracing on the native Metal backend (ctest: demo_raytracing_metal_native, a part of batch_native.txt): ray-traced
-# shadows and ambient occlusion replace the cascades, the shadow maps come back when asked, and MetalFX upscales at half
-# size. The capture is taken at 2.5 s with ray-traced shadows and occlusion at full size, the sun and the character
-# moving. The fallbacks on SDL GPU run raytracing_fallback.txt.
+# Ray tracing on the native Metal backend (ctest: demo_raytracing_native, a part of batch_native.txt): the traced
+# effects replace the shadow maps and the sky's light, the shadow maps come back when asked, MetalFX upscales (and
+# denoises: the section's default where MetalFX runs), the path tracer accumulates while the scene stands still. The
+# capture is taken at 2.5 s with every traced effect at full size (bilinear, the engine's temporal denoiser), the sun
+# and the character moving. The fallbacks on SDL GPU run raytracing_fallback.txt.
 section raytracing
 
 set dither 0
@@ -9,10 +10,20 @@ until rt_ready == 1 5
 wait 0.1
 expect sun_shadows == 1
 expect ambient_occlusion == 1
+expect local_shadows == 2
+expect reflections == 1
+expect indirect == 1
+expect probes == 2048
+expect denoiser == 1
+expect upscaling == 3
+expect render_scale >= 0.66
+expect render_scale <= 0.68
 expect cascades == 0
 expect shadow_draws == 0
-expect ray_instances >= 12
+expect ray_instances >= 19
 expect skinned_instances == 1
+expect hit_textures >= 1
+expect fallbacks == 0
 set sun_shadows maps
 set ao none
 wait 0.05
@@ -31,9 +42,20 @@ expect render_scale == 0.5
 set upscaling spatial
 wait 0.05
 expect upscaling == 1
+set indirect rt
+wait 0.05
+expect indirect == 2
+set indirect probes
+set path_tracer 1
+wait 0.1
+expect path_tracer == 1
+expect path_samples >= 5
+expect aa == 0
+set path_tracer 0
 set upscaling bilinear
 set scale 1
 wait 0.05
+expect path_tracer == 0
 expect upscaling == 0
 expect render_scale == 1
 expect sun_shadows == 1
