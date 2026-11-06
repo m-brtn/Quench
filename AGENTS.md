@@ -20,9 +20,11 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-06, version 0.7.0): stages 1 to 3, 5 and 7 of `docs/roadmap.md` are in place, stage 4 for
-TrailForge only, stage 6 except shader hot reload, stage 8 except retargeting, stage 9 except ray-traced reflections
-and indirect light: the CMake skeleton and presets,
+**Current state (2026-11-06, version 0.8.0): stages 1 to 3, 5, 7 and 10 of `docs/roadmap.md` are in place, stage 4
+for TrailForge only, stage 6 except shader hot reload, stage 8 except retargeting, stage 9 except ray-traced
+reflections and indirect light; the plan the user left (stages 6 to 10) has been worked through, apart from the
+remaining work listed at the end of this paragraph, the runs on the iPhone and the checks by eye and ear: the CMake
+skeleton and presets,
 `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
 library backend, worker thread priority, the job system `quench::JobSystem` on enkiTS), `quench_physics`
 (`PhysicsWorld` on Jolt, its jobs on the engine's job system), `quench_assets` (asset IDs, the `AssetManager` cache
@@ -34,9 +36,11 @@ ray query entries through DXC built from source) and the engine shader library i
 shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain compositions for HDR and compute;
 beside it, opt-in with `--gpu-backend metal`, a native Metal backend with GPU timestamps per pass, acceleration
 structures and ray queries, and MetalFX upscaling), `quench_app` and `quench_main` (SDL main callbacks,
-the game interface, input actions, ImGui, common flags, scenarios with points in window points, percent or names a
-game gives (`Game::scenarioPoint`), HDR display output (`--hdr auto|on|off`, an HDR tone curve up to the display's
-headroom, read every frame on Apple platforms; the UI at paper white; SDR captures), captures), `quench_render` (the
+the game interface, input actions, ImGui, common flags (`--orientation`, `--user-dir` among them), scenarios with
+points in window points, percent or names a game gives (`Game::scenarioPoint`), HDR display output (`--hdr
+auto|on|off`, an HDR tone curve up to the display's headroom, read every frame on Apple platforms; the UI at paper
+white; SDR captures), captures, perf regions a game starts (`App::beginPerf` / `endPerf`), the process's memory
+footprint, a relaunch with other arguments on desktops), `quench_render` (the
 retained scene: meshes, textures, materials, instances and lights by handle; the standard frame of cascaded sun
 shadows (cut-out shadows with holes, translucent tinted shadows through a transmittance map or dithered), the HDR
 pass with reversed depth, sky and atmosphere, height fog, bloom, ACES or AgX tone mapping and TAA or FXAA, with
@@ -51,16 +55,21 @@ and signal analysis), `quench_audio_device` (output through miniaudio, the iOS a
 cross-fades, events, root motion, masked and additive layers, two-bone and aim IK, look-at, foot placement, bone
 attachments, the update in parallel on the job system) and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons and clips).
-`examples/hello` is the minimal sample, `examples/demo` the engine demo (a section per feature, each with a scripted
-check and golden captures; `tools/package_demo.sh` packages it into `dist/`); `templates/game` and
+`examples/hello` is the minimal sample, `examples/demo` the engine demo (finished in stage 10: a section per feature,
+each in its own file with a scripted check and golden captures; one panel layout and one camera control for every
+section; a wide layout and a compact one for phones with touch-sized controls; a tour, a check mode over the checks
+waiting for a person (`checks.json` in the user directory, kept across launches) and a benchmark of every section
+(`benchmark.json`); About, versioned settings; `tools/package_demo.sh` packages it into `dist/`); `templates/game` and
 `tools/new_game.py` start a new game. Tests run on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator,
-on the user's iPhone (one signed test app; signed by the user's paid team; not yet with the stage 6 to 9 code) and,
+on the user's iPhone (one signed test app; signed by the user's paid team; not yet with the stage 6 to 10 code) and,
 for the headless modules, as WebAssembly under Node.js. HDR output was looked at on the iPhone (the user, 2026-11-05:
 "everything is fine"), never on a Mac display (this Mac's has no HDR range). Audio has run only on miniaudio's null
 backend and offline (mix checks by measurement); nobody has listened to it yet. Animation is checked by numbers and
 still captures; nobody has looked at it in motion yet. The native Metal backend, ray tracing and MetalFX ran on the
 Mac only (the native backend also in the iOS Simulator, without ray tracing or MetalFX); the default stays SDL GPU
-and shadow maps until they have run on the iPhone. TrailForge builds on the engine's
+and shadow maps until they have run on the iPhone. The demo's compact layout and touch controls were looked at in
+the iOS Simulator only. The checks waiting for a person (on the iPhone, by ear, in motion) are the demo's check mode
+(`docs/demo.md`, "Check mode on the iPhone"). TrailForge builds on the engine's
 `quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders its own passes through
 `quench_gpu` (not through `quench_render`),
 and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and captures; pinned
@@ -71,11 +80,12 @@ the asset system, the engine's audio or animation yet. No shader hot reload, AST
 normal maps in the standard surface, asset hot reload on a device (stage 6 remaining work), browser audio, HRTF,
 reverb or Vorbis (stage 7 remaining work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or
 blend shapes (stage 8 remaining work), ray-traced reflections, indirect light, bottom-level compaction, a top-level
-refit or the native backend as the default (stage 9 remaining work) yet.**
+refit or the native backend as the default (stage 9 remaining work) yet; what comes next is listed in
+`docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is
 built, `docs/architecture.md` the design with the native backend and ray tracing as built; the rest of `docs/` is
-design and plan beyond stage 9. Update this paragraph whenever that changes.
+design and plan beyond stage 10. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,

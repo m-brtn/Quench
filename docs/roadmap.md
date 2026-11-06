@@ -262,7 +262,7 @@ TODO for stage 9:
   run and before anyone watched the section in motion (decided without the user, 2026-11-06, as recommended); the
   release notes list both under "What was not verified".
 
-## Stage 10: engine demo
+## Stage 10: engine demo (done 2026-11-06 except the iPhone run, version 0.8.0)
 
 Requested by the user (2026-11-05). Started in stage 5 (user decision, 2026-11-05; it replaces the planned
 `examples/scene`): every stage adds its section, with a scripted check and golden captures, and ends with a packaged
@@ -278,7 +278,7 @@ and lights, shadows, sky and fog, post-processing, HDR output, physics, input, a
   machines, IK), ray tracing with its fallbacks, and the frame, CPU and GPU times.
 - Every section has a scripted check and a golden capture, so the demo is also a test of the engine.
 
-Finished on 2026-11-06 (not released; Mac and iOS Simulator only, the iPhone was away):
+Finished on 2026-11-06 and released as 0.8.0 (Mac and iOS Simulator only, the iPhone was away):
 
 - [x] A coverage audit in [Engine demo](demo.md#coverage), with the gaps that mattered filled: the job pool's
   activity and a job test, hot reload and streaming made visible (a reload note, the streaming rings), memory and
@@ -298,7 +298,39 @@ Finished on 2026-11-06 (not released; Mac and iOS Simulator only, the iPhone was
   first shown and switched without growth (checked by `demo_cycle`), a relaunch with the other GPU backend on the Mac.
 - [x] Each section in its own file behind one interface (`examples/demo/sections/`); the scenes render the same as
   before (every capture with the windows hidden identical to the stage 9 demo's, Metal and Vulkan through MoltenVK).
+- [x] Engine additions the demo needed, for any game: perf regions a game starts (`App::beginPerf` / `endPerf`),
+  the memory footprint and live GPU resources as scenario values, a relaunch with other arguments on desktops,
+  `--orientation` and `--user-dir`, `Renderer::fallbacks()`, `gpu::backendAvailable()`,
+  `quench_cook_assets(... FILES ...)`; Mac trackpad touches are no longer fingers.
 - [ ] The iPhone: the check mode, the layouts and the touch controls on the device (by the user).
+- [x] Version 0.8.0, release notes in [docs/releases/v0.8.0.md](releases/v0.8.0.md). Released before the iPhone run
+  (decided without the user, 2026-11-06, as recommended); the release notes list it under "What was not verified".
+
+## What is next
+
+The plan the user left (stages 6 to 10) has been worked through with version 0.8.0. What stays open, in the order
+it is useful (nothing of it is scheduled; the user decides):
+
+1. **The checks that need a person**, mostly on the iPhone, which has not run anything of 0.4.0 to 0.8.0: the
+   demo's check mode on both GPU backends (24 items: the cut-out and tinted shadows, the cascades, the sky and fog,
+   anti-aliasing, HDR on an HDR display, physics, the input devices, loading and streaming, the audio by ear,
+   animation in motion, ray tracing noise, MetalFX ghosting and the fallbacks, the frame rate and the layout on the
+   phone; [Engine demo](demo.md#check-mode-on-the-iphone)), the
+   device test app on both backends, the benchmark of every section at 120 Hz, the ray tracing benchmark, Core
+   Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes, background).
+2. **Defaults from those runs:** ray-traced shadows or shadow maps per device, and the native Metal backend as the
+   default on Apple platforms once it has run on the iPhone.
+3. **Remaining work of the stages:** shader hot reload, ASTC or Basis Universal textures, normal maps in the
+   standard surface and asset hot reload on a device (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7);
+   retargeting, 2D blend spaces, animation LOD, dual quaternion skinning and blend shapes (stage 8); ray-traced
+   reflections and indirect light, shadows of local lights by rays, bottom-level compaction and a top-level refit
+   (stage 9).
+4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
+   modules, the second game's migration; only when the user asks, with each game's own gates.
+5. **Known open questions:** one Xcode build of the demo left two licence files out of the app (not reproduced;
+   `tools/package_demo.sh` now checks the bundle's assets, a game's Xcode build does not); per-frame call counts and
+   profiles need a profiler the user has allowed on the Mac.
+6. Other modules when a game needs them and the later platforms when the user asks (below).
 
 ## Other modules (when a game needs them)
 
@@ -331,7 +363,7 @@ Priorities from the user's request of 2026-11-05.
 | IK and foot placement | P1 | 8 (done) |
 | Retargeting | P1 | 8 (not done) |
 | Bone attachments | P1 | 8 (done) |
-| Engine demo: interactive sections for every feature (added 2026-11-05) | after the stages | 10 (started in 5; each stage adds its section) |
+| Engine demo: interactive sections for every feature (added 2026-11-05) | after the stages | 10 (done; started in 5; not yet run on the iPhone in its finished form) |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under
