@@ -45,7 +45,8 @@ automated runs (no window on the screen, no input from real devices, `--onscreen
 parts (`include`) and points in window points, percent or names a game gives (`Game::scenarioPoint`), HDR display
 output (`--hdr auto|on|off`, an HDR tone curve up to the display's headroom, read every frame on Apple platforms; the UI at paper
 white; SDR captures), captures, perf regions a game starts (`App::beginPerf` / `endPerf`), the process's memory
-footprint, a relaunch with other arguments on desktops), `quench_render` (the
+footprint, the system's thermal state (read on Apple platforms), a frame rate limit (`App::setMaxFrameRate`,
+`--max-frame-rate`), a relaunch with other arguments on desktops), `quench_render` (the
 retained scene: meshes, textures, materials, instances and lights by handle; the standard frame of cascaded sun
 shadows (cut-out shadows with holes, translucent tinted shadows through a transmittance map or dithered), the HDR
 pass with reversed depth, sky and atmosphere, height fog, normal and emissive maps, bloom, ACES or AgX tone mapping
