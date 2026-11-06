@@ -275,7 +275,9 @@ trace use two lamp shadows, no traced reflections, no probe grid, half size with
 | native, the defaults with traced reflections, 20-40 s | nominal -> fair | 1200 | 16.666 / 16.779 | 1.857 / 2.180 | 15.336 | 15.236 | 1.484 | 2.508 | 5.492 | 2.871 | 1.326 |
 | SDL GPU, the fallback at the full size, 0-20 s | nominal -> fair | 1200 | 16.669 / 16.749 | 1.013 / 1.184 | 12.056 | | | | | | |
 
-The first region of each run has one long frame (708 and 725 ms), the PNG encoding of the capture just before it.
+The first region of each run has one long frame (708 and 725 ms), the PNG encoding of the capture just before it:
+a region counted the time from the frame before its first one (fixed after stage 12, 2026-11-06; on the M4 Pro, a
+1206 x 2622 capture just before a region: max 609.9 ms in it before, 10.3 ms after).
 Every frame made its 16.7 ms interval. In the second region of the defaults the GPU lowered its clock to fill the
 interval (every range about 1.9 times longer at the same work, the state nominal): time at that clock, not a cost.
 With traced reflections the first 20 s ran at 12.7 ms and the phone turned fair within 40 s; without them 7.9 ms and

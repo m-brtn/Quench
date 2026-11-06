@@ -429,9 +429,9 @@ void updateStats(AppState& s, double realDt, double cpuMs, int ticks) {
     }
     s.stats.cpuMs = cpuMs;
     s.stats.ticks = ticks;
+    s.lastFramePerf = s.perf ? s.perf->serial : 0;
     if (s.perf) {
         s.perf->thermalMax = std::max(s.perf->thermalMax, s.stats.thermal);
-        s.perf->frameMs.push_back(realDt * 1000.0);
         s.perf->cpuMs.push_back(cpuMs);
     }
 }
@@ -742,6 +742,10 @@ SDL_AppResult iterate(AppState& s) {
     // still renders: 60 Hz on a 120 Hz display renders every second refresh.
     if (s.maxFrameRate > 0.0 && !s.offscreen && realDt < 0.75 / s.maxFrameRate) return SDL_APP_CONTINUE;
     s.lastCounter = now;
+    // The last frame's time, counted in its own region: the time before a region's first frame (a capture's encoding
+    // just before perf_begin, for example) stays out of it, and its last frame is in.
+    if (s.perf && s.lastFramePerf == s.perf->serial) s.perf->frameMs.push_back(realDt * 1000.0);
+    s.lastFramePerf = 0;
 
     const bool minimized =
         !s.offscreen && (SDL_GetWindowFlags(s.window.get()) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) != 0;

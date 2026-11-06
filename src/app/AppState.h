@@ -56,6 +56,7 @@ struct ImGuiContextGuard {
 struct PerfRegion {
     std::string label;
     std::uint64_t serial = 0; // the frames' fences carry it (AppState::fencePerf)
+    // A frame's time runs from its start to the next frame's start, so it is added at the next frame's start.
     std::vector<double> frameMs;
     std::vector<double> cpuMs;
     // One sample per frame of the region, read when the frame's fence has signalled (later than the frame itself);
@@ -162,7 +163,8 @@ struct AppState {
     std::vector<std::unique_ptr<char[]>> textInputs; // TEXT_INPUT payloads stay alive until dispatched
     std::optional<PerfRegion> perf;
     std::uint64_t perfSerial = 0;
-    bool passTimingRequested = false;                       // App::requestPassTiming in this frame
+    std::uint64_t lastFramePerf = 0;  // the perf region of the last frame, whose time the next frame's start ends
+    bool passTimingRequested = false; // App::requestPassTiming in this frame
     std::map<std::string, double, std::less<>> perfValues;  // of the last finished region: perf_frame_avg, ...
     std::map<std::string, double, std::less<>> audioValues; // of the last audio_measure: audio_rms, ...
 

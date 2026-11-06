@@ -40,6 +40,10 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
 - **Perf regions count each frame's GPU time once, in its own region:** before, every frame repeated the last GPU
   time read (a frame read late, twice, or one of the previous region's). New values `perf_gpu_samples` and
   `perf_gpu_lost`; hello's batches check that no timed frame is lost (`perf.txt`, `hello_perf_<backend>`).
+- **Perf regions count each frame's time in its own region:** a frame's time (from its start to the next frame's
+  start) went into the region of the next frame, so a region's first sample was the frame before it: a capture
+  just before `perf_begin` put its PNG encoding into the region (708 ms on the iPhone 17, 610 ms on the M4 Pro at
+  1206 x 2622), and the region's last frame was not counted. The capture still stalls its own frame.
 
 ## Changes for games
 

@@ -196,7 +196,7 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `resize W H` | resize the window (points) |
 | `capture PATH` | capture the next frame; the script goes on once the file is written |
 | `hdr off\|on\|auto` | `App::setHdrMode`; the output changes at the start of the next frame |
-| `perf_begin LABEL`, `perf_end` | measure the frames in between, in real time; `perf_end` logs a `perf:` line (with the game's `Game::perfDetails` at the end) and sets the `perf_*` values |
+| `perf_begin LABEL`, `perf_end` | measure the frames in between, in real time; `perf_end` logs a `perf:` line (with the game's `Game::perfDetails` at the end) and sets the `perf_*` values. A frame's time runs from its start to the next frame's start: the frame before the region (a capture's encoding, for example) is not in it |
 | `max_frame_rate HZ` | `App::setMaxFrameRate` (0: the display's rate); value `max_frame_rate` |
 | `audio_measure S [MIN_HZ MAX_HZ]` | measure the newest S seconds (at most 4) of the mix: RMS per channel and of both, peak, and the strongest frequency between MIN_HZ and MAX_HZ (default 20 to 20000; a Hann-windowed FFT with interpolation between bins); logs a line and sets the `audio_rms*`, `audio_peak`, `audio_freq*` and `audio_measured` values. A script with this command keeps the last 4 s of the mix for it |
 
