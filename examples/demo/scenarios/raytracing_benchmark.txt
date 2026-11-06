@@ -1,0 +1,67 @@
+# Ray tracing and MetalFX costs (docs/performance.md), the ray tracing section on the native Metal backend:
+#   quench-demo --gpu-backend metal --frame-size 1920x1080 --script examples/demo/scenarios/raytracing_benchmark.txt
+# Each region 5 s with the sun turning and the character walking; the perf lines carry the GPU time per timed range
+# ("accel", "prepass", "raytrace" with "rays" and "denoise" in it, "shadows", "upscale", ...). On SDL GPU every
+# region measures the fallbacks (shadow maps, no occlusion, bilinear scaling).
+
+section raytracing
+until rt_ready == 1 5
+wait 1
+perf_begin rt_shadows_ao
+wait 5
+perf_end
+expect perf_frames >= 150
+
+set ao none
+wait 1
+perf_begin rt_shadows
+wait 5
+perf_end
+
+set shadow_rays 1
+set shadow_softness 0
+wait 1
+perf_begin rt_hard_shadows
+wait 5
+perf_end
+
+set sun_shadows maps
+wait 1
+perf_begin shadow_maps
+wait 5
+perf_end
+
+set sun_shadows rt
+set shadow_rays 2
+set shadow_softness 1
+set ao rt
+set upscaling temporal
+wait 1
+perf_begin temporal_1
+wait 5
+perf_end
+
+set scale 0.67
+wait 1
+perf_begin temporal_067
+wait 5
+perf_end
+
+set scale 0.5
+wait 1
+perf_begin temporal_05
+wait 5
+perf_end
+
+set upscaling spatial
+wait 1
+perf_begin spatial_05
+wait 5
+perf_end
+
+set upscaling bilinear
+wait 1
+perf_begin bilinear_05
+wait 5
+perf_end
+quit

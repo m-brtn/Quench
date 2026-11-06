@@ -6,8 +6,9 @@ sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#lay
 (see "Rendering" and [Render module](render.md)) and the engine demo ([Engine demo](demo.md)), and stage 6 apart from
 shader hot reload: the job system, `quench_assets` and `quench_cook` (see "Threads and jobs", "Assets" and
 [Jobs, assets and the cook](assets.md)), and stage 7: `quench_audio` and `quench_audio_device` (see "Audio" and
-[Audio](audio.md)), and the first half of stage 9: the native Metal backend and GPU timestamps per pass (see
-"Native Metal backend"; the ray tracing of the second half is designed in "Ray tracing design"); everything else here
+[Audio](audio.md)), and stage 9: the native Metal backend, GPU timestamps per pass, acceleration structures,
+ray-traced sun shadows and ambient occlusion, MetalFX upscaling (see "Native Metal backend" and "Ray tracing");
+everything else here
 describes the intended structure and the reasons for it. The binding rules
 are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
 
@@ -87,7 +88,8 @@ descriptor structs, and command recording. Backends:
 - **SDL GPU** (first, portable, the default): Metal on Apple platforms, Vulkan and D3D12 elsewhere; WebGPU only if SDL
   ships it.
 - **Metal** (native, since stage 9; Apple platforms): for what SDL GPU does not offer. Built and at parity with SDL
-  GPU's Metal driver (see "Native Metal backend"); GPU timestamps per pass so far, ray tracing and MetalFX to follow.
+  GPU's Metal driver (see "Native Metal backend"), with GPU timestamps per pass, acceleration structures and ray
+  queries, and MetalFX.
 
 Why a native backend at all: SDL GPU deliberately targets a roughly ten-year-old common feature set. In reply to a
 request for a ray tracing API, its maintainers stated that features missing from the API were omitted intentionally
@@ -130,6 +132,7 @@ checks that do not depend on the backend: the asserts below, live resource count
 - **`gpu::Caps`**: backend, driver, device name, shader format, and the differences found so far: `gpuTiming` (Metal
   only: on SDL GPU `SdlGpuTimingMetal.m` reads SDL's internal fence, as TrailForge does; the native backend reads the
   command buffer's GPU times), `gpuPassTiming` (native Metal backend only, see "GPU timestamps per pass"),
+  `rayTracing`, `spatialUpscaling` and `temporalUpscaling` (native Metal backend only, see "Ray tracing"),
   `depthClamp` (not in the iOS Simulator, where
   the SDL patch skips the depth clip mode), `depthBiasClamp` (not on SDL's Vulkan backend, which does not enable the
   device feature), `indirectDraw` (not in the iOS Simulator: its Metal device is GPU family Apple2), `bcTextures`,
@@ -186,8 +189,13 @@ Stage 9, first half (2026-11-06): `src/gpu/metal/` (`MetalDevice.mm`: device, re
   drawable is presented before the commit, as in SDL.
 - **Differences kept**: cube arrays are created with `layers / 6` cubes (SDL GPU passes the layer count to
   `arrayLength`, six times the memory); debug labels and groups only with `DeviceDesc::debug`, as in SDL.
-- **Not covered**: anything SDL GPU itself lacks (storage textures in compute, multiple command queues), and the
-  native features for which the backend exists apart from timestamps (ray tracing, MetalFX: second half of stage 9).
+- **Not covered**: anything SDL GPU itself lacks (storage textures in compute, multiple command queues). The native
+  features for which the backend exists are timestamps (below), acceleration structures with ray queries and MetalFX
+  (see "Ray tracing").
+- **SDL GPU's Vulkan mipmaps**: SDL 3.4.18's Vulkan driver halves both sides per mip level without stopping at 1, so
+  the last levels of a non-square texture were blits into an empty region (`VUID-vkCmdBlitImage-dstOffsets-12519`
+  with the demo's 128 x 64 fence texture). The SDL GPU backend blits those textures' levels itself, each side at
+  least 1 (`SdlGpuDevice::generateMipmaps`; `gpu_vulkan.generate_mipmaps` covers an 8 x 2 texture).
 - **Verified** (2026-11-06, Mac, M4 Pro, `MTL_DEBUG_LAYER=1`): every GPU device and render case
   (`gpu_metal_native.*`, `render_metal_native.*`), hello and all eleven demo captures against the Metal golden
   images, identical in Release (mean difference 0, no pixel different) and identical to SDL GPU's captures of the same
@@ -206,51 +214,72 @@ end of the vertex and fragment stages of a render pass, start and end of a compu
 is the union of those stage intervals: on Apple GPUs the vertex stage of a pass runs while the previous pass still
 shades fragments, so a range from first to last timestamp would count the wait, and the sum of the ranges may exceed
 the frame. The timestamp period is measured once against the CPU clock (1.0000 ns on the M4 Pro). The renderer times
-`upload`, `shadows`, `hdr`, `taa`, `bloom` and `tonemap` inside the app's `game` range; the app adds `ui` and `blit`
-([Performance](performance.md#gpu-time-per-pass)).
+`upload`, `accel`, `prepass`, `raytrace` (`rays`, `denoise`), `shadows`, `hdr`, `taa`, `upscale`, `bloom` and
+`tonemap` inside the app's `game` range; the app adds `ui` and `blit`
+([Performance](performance.md#gpu-time-per-pass)). MetalFX encodes passes of its own: in a range, a blit encoder
+before and one after them copy a texel (of the input, then of the output, so Metal orders them around MetalFX's
+work) and take the range's start and end timestamps at their own start (after the temporal scaler an end-of-encoder
+sample was not written; an empty encoder is dropped with its samples).
 
-## Ray tracing design
+Off unless read (stage 9, second half): `Device::setPassTiming(bool)`; a command buffer acquired while it is off
+records no ranges. Timing costs CPU time in every timed command buffer, measured 0.08 to 0.14 ms per frame in the demo
+(sample attachments, resolving, the app's bookkeeping). The app turns it on while something reads the ranges:
+`App::requestPassTiming()` in a frame (the demo's frame panel), a scenario's perf region, or `--gpu-pass-timing`
+([App shell](app.md#command-line-flags)). Without timing, the native backend's CPU time in the demo is that of SDL GPU
+within the noise (see [Performance](performance.md#measurements)).
 
-Second half of stage 9; design only, nothing of this is implemented. It builds on the native Metal backend and on the
-retained scene, and keeps the rules: effects are slots with fallbacks chosen by `gpu::Caps`, games do not change when
-a backend gains ray tracing, and no ray tracing type is backend-specific in a public header.
+## Ray tracing
 
-- **Capability**: `Caps::rayQuery` (device support for acceleration structures and ray queries in fragment and compute
-  shaders: `supportsRaytracing` on Metal; false on SDL GPU, which has no ray tracing, and on Vulkan through MoltenVK,
-  which exposes no ray tracing extension). No ray tracing pipelines (hit groups, shader tables) at first: inline ray
-  queries cover shadows, ambient occlusion and reflections that read material data from buffers, and they map to
-  Metal's `intersection_query`, Vulkan's `VK_KHR_ray_query` and DXR 1.1's `RayQuery` alike.
-- **`quench::gpu` surface** (sketch): `AccelerationStructure` (move-only, like `Buffer`), created from
-  `BottomLevelDesc` (vertex buffer, offset, stride, format `Float3`, vertex count, index buffer, index format, triangle
-  count, opaque flag, `allowUpdate`) or `TopLevelDesc` (instance capacity, `allowUpdate`); its sizes from
-  `Device::accelerationStructureSizes` (build, update and scratch bytes). Building is a pass:
-  `CommandBuffer::beginAccelerationStructurePass()` with `build(target, desc, scratch)`, `update(target, desc,
-  scratch)` (refit), `compact` later. Instances for the top level come from a buffer of `gpu::RayInstance`
-  (`mat3x4` transform, 24-bit user id, 8-bit mask, bottom level index), written by the CPU through a transfer buffer
-  or by a compute pass. Shaders get the top level as a binding like a storage buffer
-  (`RenderPass::bindAccelerationStructure(stage, slot, ...)`, `ComputePass::...`); on Metal the backend also marks the
-  bottom levels resident (`useResource` / `useHeap`).
-- **Bottom levels**: one per registered `render::Scene` mesh, built when the mesh is created (the vertex positions of
-  the engine's vertex format, `Float3` at offset 0), compacted after the first build, rebuilt only when the mesh is
-  replaced. Skinned meshes: one bottom level per skinned instance over the skinned vertex buffer of stage 8 (the
-  compute skinning output), refit every frame after the skinning pass, rebuilt every N frames or when the refit
-  degrades (bounding box growth), since refits lose quality as the pose moves away from the build pose.
-- **Top level**: rebuilt every frame from the visible-or-shadow-casting instances (a fast build: it is small next to
-  the bottom levels), with the instance's material index as the user id and masks for "casts shadows" and
-  "translucent"; a refit when only transforms changed is a later optimisation. The renderer owns it; games see only
-  the effect settings.
-- **Shaders**: HLSL `RaytracingAccelerationStructure` and `RayQuery`, compiled with DXC for the SPIR-V step (glslang
-  cannot, see "Shaders"), then SPIRV-Cross to MSL 3.0 as today; the acceleration structure takes a buffer slot after
-  the storage buffers. Entries with ray queries are only created where `Caps::rayQuery` holds, so the other backends
-  never compile them.
-- **Fallback slots** in `render::RenderSettings` and `render::ActiveEffects`: sun shadows `ShadowMaps | RayTraced`
-  (ray-traced shadows first: one ray per pixel towards the sun with a cone for soft edges, denoised by the TAA history;
-  shadow maps are the fallback and stay the default until the iPhone measurement), then reflections (`ScreenSpace`
-  or `RayTraced`), ambient occlusion and indirect light (`None`, screen-space later, or `RayTraced`). Without
-  `Caps::rayQuery` the renderer takes the fallback and reports it, as it does for TAA and depth clamp today.
-- **Verification**: the same golden-capture rule (ray-traced captures get their own goldens per backend and device,
-  with the fallback's capture unchanged); performance against shadow maps on the iPhone at 120 Hz with the per-pass
-  timestamps above.
+Stage 9, second half (2026-11-06). Built on the native Metal backend and the retained scene, and keeping the rules:
+effects are slots with fallbacks chosen by `gpu::Caps`, games do not change when a backend gains ray tracing, and no
+ray tracing type is backend-specific in a public header. The design written before it (inline ray queries, one bottom
+level per mesh, a top level per frame, refits for skinned instances, DXC for the SPIR-V step) held; the differences
+are noted below.
+
+- **Capability**: `Caps::rayTracing` (named `rayQuery` in the design): acceleration structures and ray queries in
+  fragment and compute shaders, `supportsRaytracing` and `supportsRaytracingFromRender` on Metal. False on SDL GPU
+  (no ray tracing; also Metal through SDL GPU), on Vulkan through MoltenVK (no ray tracing extension, see
+  [Roadmap](roadmap.md#stage-9-native-metal-backend-and-ray-tracing)), and in the iOS Simulator where its device
+  lacks them. No ray tracing pipelines (hit groups, shader tables): inline ray queries cover shadows, ambient
+  occlusion and reflections that read material data from buffers, and they map to Metal's `intersection_query`,
+  Vulkan's `VK_KHR_ray_query` and DXR 1.1's `RayQuery` alike.
+- **`quench::gpu` surface**: `AccelerationStructure` (move-only), created from `AccelerationStructureDesc` (level
+  `Bottom` with vertex and triangle counts and `allowRefit`, or `Top` with an instance capacity; the backend sizes
+  it, so there is no `accelerationStructureSizes` query and no scratch buffer in the API: the Metal backend keeps one
+  private scratch buffer that grows). Building is a pass, `CommandBuffer::beginAccelerationStructurePass()` with
+  `build(bottom, RayGeometry)` (float3 positions at an offset and stride in a vertex buffer, as the engine's vertex
+  format has them, and 32-bit indices), `refit(bottom, RayGeometry)` and `build(top, span<RayInstance>)` (3 x 4
+  transform, 24-bit id, 8-bit mask, `Opaque` or `NonOpaque`; the backend writes Metal's instance descriptors into a
+  pooled shared buffer, so the CPU writes no transfer buffer). Within a pass the Metal backend splits the encoder
+  before a top-level build, so the bottom levels built or refitted before it are complete. Shaders get the top level
+  with `RenderPass::bindAccelerationStructure(stage, slot, top)` or `ComputePass::bindAccelerationStructure`; the
+  backend marks the top level's bottom levels resident (`useResources`). No compaction (see
+  [Render module](render.md#limitations)).
+- **Bottom levels**: one per `render::Scene` mesh that casts shadows, built the first frame it is used and kept with
+  the mesh. Skinned instances: one bottom level each over the skinned vertex buffer of stage 8, refitted every frame
+  after the skinning pass and built again after 60 refits (no bounding-box check: a fixed count, staggered between
+  instances). Measured in the animation section with a crowd of 256 (259 characters) and ray-traced shadows: the
+  `accel` range (the top level included) 1.57 ms of GPU time per frame with refits, 5.12 ms with a temporary change
+  that built every frame ([Performance](performance.md#measurements)).
+- **Top level**: rebuilt every frame from the shadow-casting instances (skinned ones within `shadowDistance`), with
+  masks for opaque and translucent, and the instance id indexing a table of material data for the non-opaque ones.
+  The renderer owns it; games see only the effect settings.
+- **Shaders**: HLSL `RaytracingAccelerationStructure` and `RayQuery`, entries marked `:rayquery` in
+  `quench_add_shaders`, compiled by DXC (see "Shaders") and then SPIRV-Cross to MSL 3.0 as before; the acceleration
+  structure takes a buffer slot after the storage buffers (`ShaderResources::accelerationStructures`). The renderer
+  creates their pipelines only where `Caps::rayTracing` holds, so the other backends never load them.
+- **Fallback slots** in `render::RenderSettings` and `render::ActiveEffects`: `SunShadows::ShadowMaps | RayTraced`
+  (rays toward the sun's disc, a spatial blur and TAA; shadow maps are the fallback and stay the default until the
+  iPhone measurement), `AmbientOcclusion::None | RayTraced`; reflections and indirect light are not done (open).
+  Without the capability the renderer takes the fallback and logs why, as for TAA and depth clamp
+  ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)).
+- **MetalFX** (`Caps::spatialUpscaling`, `temporalUpscaling`; `Upscaler` from `UpscalerDesc`, `CommandBuffer::upscale`
+  with an `UpscaleDesc`; the output texture needs `TextureUsage::ShaderWrite`): the renderer's
+  `Upscaling::Spatial | Temporal`, with bilinear scaling in tone mapping as the fallback
+  ([Render module](render.md#upscaling)).
+- **Verification**: the golden-capture rule: the demo's ray tracing section has its own golden for the native
+  backend, and the fallback's goldens for Metal through SDL GPU and Vulkan through MoltenVK; readback tests compare
+  ray-traced shadows with shadow maps. Performance against shadow maps on the iPhone at 120 Hz is open.
 
 ## Rendering
 
@@ -312,7 +341,22 @@ shader interface) and uniform structs defined once in headers read by both C++ a
 Planned changes:
 
 - WGSL output for the web (from SPIR-V through Tint or naga) once SDL has a WebGPU backend.
-- Ray queries (tested 2026-11-06 on a compute kernel with one `RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>`,
+- Ray queries: done (below).
+
+Ray queries (stage 9): entries marked `<entry>:<stage>:rayquery` in `quench_add_shaders` are compiled by DXC
+(`cmake/QuenchDxc.cmake`: v1.9.2609, `01b62ad`, built from its pinned source archives once per machine into a tool
+cache; on Windows hosts the pinned release archive; `QUENCH_RAY_QUERY_DXC` names another one) with
+`-spirv -fspv-target-env=vulkan1.2 -HV 2021 -O3` and shader model 6.5; `quench_shaderc --dxc` runs it, validates the
+SPIR-V (Vulkan 1.2) and goes on as for glslang's output: reflection, SPIRV-Cross to MSL 3.0 (as every entry),
+metallib. DXIL comes from DXC on Windows hosts as before (`ps_6_5`). Without a DXC (the build failed, or
+`QUENCH_RAY_QUERY_SHADERS=OFF`) the entries are left out and the renderer falls back. glslang stays for every other
+entry (decided without the user, 2026-11-06): its output for the existing shaders is what every golden image was
+made with, DXC's HLSL rules differ in places that would need every shader and capture checked again (matrix
+packing, implicit conversions, its own legalization), and glslang is a library inside `quench_shaderc` where DXC is a
+27 MB executable and library built from source. Build cost of the pinned DXC on the M4 Pro: 135 s wall time (1146 s
+user), about 365 MB of scratch space at its peak, deleted afterwards, 27 MB kept (`dxc` and `libdxcompiler`), once per machine.
+
+The test before it (2026-11-06, a compute kernel with one `RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>`,
   `TraceRayInline`, `Proceed`, `CommittedStatus`, `CommittedRayT` and a `RaytracingAccelerationStructure` at
   `t0, space0`):
   - **glslang's HLSL front end: no.** Homebrew's glslangValidator 16.6.0 stops at the first line

@@ -136,7 +136,7 @@ MTLColorWriteMask writeMask(ColorWrite mask) {
 
 MetalStageCounts stageCounts(const ShaderBlob& blob) {
     return {blob.resources.samplers, blob.resources.storageTextures, blob.resources.storageBuffers,
-            blob.resources.uniformBuffers};
+            blob.resources.uniformBuffers, blob.resources.accelerationStructures};
 }
 
 bool isBc(TextureFormat format) {
@@ -169,6 +169,27 @@ CFStringRef compositionColorSpace(SwapchainComposition composition) {
 }
 
 } // namespace
+
+MTLPrimitiveAccelerationStructureDescriptor*
+metal::bottomLevelDescriptor(const RayGeometry* geometry, std::uint32_t triangleCount, bool allowRefit) {
+    MTLAccelerationStructureTriangleGeometryDescriptor* g =
+        [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
+    g.vertexFormat = MTLAttributeFormatFloat3;
+    g.indexType = MTLIndexTypeUInt32;
+    g.triangleCount = triangleCount;
+    g.opaque = YES; // instances decide (RayInstanceFlags)
+    if (geometry) {
+        g.vertexBuffer = static_cast<MetalBuffer*>(geometry->vertices.native)->handle;
+        g.vertexBufferOffset = geometry->vertexOffset;
+        g.vertexStride = geometry->vertexStride;
+        g.indexBuffer = static_cast<MetalBuffer*>(geometry->indices.native)->handle;
+        g.indexBufferOffset = geometry->indexOffset;
+    }
+    MTLPrimitiveAccelerationStructureDescriptor* d = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+    d.geometryDescriptors = @[ g ];
+    d.usage = allowRefit ? MTLAccelerationStructureUsageRefit : MTLAccelerationStructureUsageNone;
+    return d;
+}
 
 MTLPixelFormat metal::pixelFormat(TextureFormat format) {
     switch (format) {
@@ -279,6 +300,12 @@ Result<std::unique_ptr<DeviceImpl>> MetalDevice::create(const DeviceDesc& desc) 
             [device sampleTimestamps:&cpu gpuTimestamp:&impl->m_calibrationGpu];
             impl->m_calibrationCpu = std::chrono::steady_clock::now();
         }
+        // Ray queries in fragment shaders need ray tracing from render pipelines too.
+        caps.rayTracing = device.supportsRaytracing && device.supportsRaytracingFromRender;
+#if !QUENCH_PLATFORM_IOS_SIMULATOR
+        caps.spatialUpscaling = [MTLFXSpatialScalerDescriptor supportsDevice:device];
+        caps.temporalUpscaling = [MTLFXTemporalScalerDescriptor supportsDevice:device];
+#endif
 
         // Blit: the engine's shader (src/gpu/shaders/blit.hlsl) and SDL's two samplers.
         const ShaderBlob* blobs[] = {shaders::gpu_blit.find("fullscreen_vs"), shaders::gpu_blit.find("blit_2d_fs"),
@@ -407,6 +434,9 @@ Result<void*> MetalDevice::createTexture(const TextureDesc& desc) {
             usage |= MTLTextureUsageRenderTarget;
         if (any(desc.usage & (TextureUsage::Sampled | TextureUsage::GraphicsStorageRead)))
             usage |= MTLTextureUsageShaderRead;
+        // MetalFX writes its output from compute or render passes of its own (its outputTextureUsage).
+        if (any(desc.usage & TextureUsage::ShaderWrite))
+            usage |= MTLTextureUsageShaderWrite | MTLTextureUsageRenderTarget;
         d.usage = usage;
         id<MTLTexture> texture = [m_device newTextureWithDescriptor:d];
         if (!texture)
@@ -575,11 +605,89 @@ Result<void*> MetalDevice::createComputePipeline(const ComputePipelineDesc& desc
         pipeline->storageBuffers = blob.resources.storageBuffers;
         pipeline->readWriteStorageBuffers = blob.resources.readWriteStorageBuffers;
         pipeline->uniformBuffers = blob.resources.uniformBuffers;
+        pipeline->accelerationStructures = blob.resources.accelerationStructures;
         pipeline->threads =
             MTLSizeMake(blob.resources.threadCount[0], blob.resources.threadCount[1], blob.resources.threadCount[2]);
         QUENCH_ASSERT(pipeline->uniformBuffers <= metal::kUniformSlots, "more uniform blocks than the backend binds");
         return static_cast<void*>(pipeline.release());
     }
+}
+
+Result<void*> MetalDevice::createAccelerationStructure(const AccelerationStructureDesc& desc) {
+    @autoreleasepool {
+        MTLAccelerationStructureDescriptor* d = nil;
+        if (desc.level == AccelerationStructureLevel::Bottom) {
+            d = metal::bottomLevelDescriptor(nullptr, desc.triangleCount, desc.allowRefit);
+        } else {
+            MTLInstanceAccelerationStructureDescriptor* top = [MTLInstanceAccelerationStructureDescriptor descriptor];
+            top.instanceCount = desc.instanceCapacity;
+            top.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeUserID;
+            d = top;
+        }
+        const MTLAccelerationStructureSizes sizes = [m_device accelerationStructureSizesWithDescriptor:d];
+        id<MTLAccelerationStructure> handle =
+            [m_device newAccelerationStructureWithSize:sizes.accelerationStructureSize];
+        if (!handle)
+            return Error{std::format("cannot create {} of {} bytes", describe("acceleration structure", desc.name),
+                                     sizes.accelerationStructureSize)};
+        if (m_debug && !desc.name.empty()) handle.label = label(desc.name);
+        auto structure = std::make_unique<MetalAccelerationStructure>();
+        structure->handle = handle;
+        structure->level = desc.level;
+        structure->buildScratch = sizes.buildScratchBufferSize;
+        structure->refitScratch = sizes.refitScratchBufferSize;
+        structure->allowRefit = desc.allowRefit;
+        return static_cast<void*>(structure.release());
+    }
+}
+
+Result<void*> MetalDevice::createUpscaler(const UpscalerDesc& desc) {
+#if QUENCH_PLATFORM_IOS_SIMULATOR
+    (void)desc;
+    return Error{"no MetalFX in the iOS Simulator"};
+#else
+    @autoreleasepool {
+        auto upscaler = std::make_unique<MetalUpscaler>();
+        if (desc.type == UpscalerType::Spatial) {
+            MTLFXSpatialScalerDescriptor* d = [MTLFXSpatialScalerDescriptor new];
+            d.colorTextureFormat = metal::pixelFormat(desc.colorFormat);
+            d.outputTextureFormat = metal::pixelFormat(desc.outputFormat);
+            d.inputWidth = desc.inputWidth;
+            d.inputHeight = desc.inputHeight;
+            d.outputWidth = desc.outputWidth;
+            d.outputHeight = desc.outputHeight;
+            // Linear HDR scene values: MetalFX's perceptual mode expects display values.
+            d.colorProcessingMode = desc.hdrInput ? MTLFXSpatialScalerColorProcessingModeHDR
+                                                  : MTLFXSpatialScalerColorProcessingModePerceptual;
+            upscaler->spatial = [d newSpatialScalerWithDevice:m_device];
+            if (!upscaler->spatial) return Error{"cannot create a MetalFX spatial scaler"};
+        } else {
+            MTLFXTemporalScalerDescriptor* d = [MTLFXTemporalScalerDescriptor new];
+            d.colorTextureFormat = metal::pixelFormat(desc.colorFormat);
+            d.depthTextureFormat = metal::pixelFormat(desc.depthFormat);
+            d.motionTextureFormat = metal::pixelFormat(desc.motionFormat);
+            d.outputTextureFormat = metal::pixelFormat(desc.outputFormat);
+            d.inputWidth = desc.inputWidth;
+            d.inputHeight = desc.inputHeight;
+            d.outputWidth = desc.outputWidth;
+            d.outputHeight = desc.outputHeight;
+            // Created ready to run at full speed: the first frames are not slower than the rest.
+            d.requiresSynchronousInitialization = YES;
+            upscaler->temporal = [d newTemporalScalerWithDevice:m_device];
+            if (!upscaler->temporal) return Error{"cannot create a MetalFX temporal scaler"};
+            upscaler->temporal.depthReversed = desc.reversedDepth;
+        }
+        // TextureUsage::ShaderWrite gives an output these usages; Sampled gives the inputs ShaderRead.
+        const MTLTextureUsage outputUsage =
+            upscaler->spatial ? upscaler->spatial.outputTextureUsage : upscaler->temporal.outputTextureUsage;
+        constexpr MTLTextureUsage kOutputUsage =
+            MTLTextureUsageShaderWrite | MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        if ((outputUsage & ~kOutputUsage) != 0)
+            log::warning("gpu", "MetalFX wants output texture usage {:#x}; TextureUsage::ShaderWrite gives {:#x}",
+                         std::uint64_t(outputUsage), std::uint64_t(kOutputUsage));
+        return static_cast<void*>(upscaler.release());
+    }
+#endif
 }
 
 void MetalDevice::release(Kind kind, void* native) noexcept {
@@ -593,6 +701,8 @@ void MetalDevice::release(Kind kind, void* native) noexcept {
         case Kind::GraphicsPipeline: delete static_cast<MetalGraphicsPipeline*>(native); break;
         case Kind::ComputePipeline: delete static_cast<MetalComputePipeline*>(native); break;
         case Kind::Fence: delete static_cast<MetalFence*>(native); break;
+        case Kind::AccelerationStructure: delete static_cast<MetalAccelerationStructure*>(native); break;
+        case Kind::Upscaler: delete static_cast<MetalUpscaler*>(native); break;
         }
     }
 }

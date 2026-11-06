@@ -320,7 +320,12 @@ quench_shaderc runs on the build machine only and links these; their licence tex
 - SPIRV-Tools: Apache-2.0
 - SPIRV-Cross: Apache-2.0
 - SPIRV-Headers: MIT
-- DXC (Windows hosts only): University of Illinois/NCSA Open Source License
+- DXC: University of Illinois/NCSA Open Source License (its LICENSE.TXT; ThirdPartyNotices.txt lists the parts
+  under other permissive licences). On Windows hosts the release archive (cmake/ShaderToolchain.cmake); on other
+  hosts v1.9.2609 (commit 01b62ad47db7dee3dd33f90e7339cf9e860b3f93) built from source with its submodules
+  SPIRV-Headers (MIT), SPIRV-Tools (Apache-2.0) and DirectX-Headers (MIT) at the commits that tag records
+  (cmake/BuildDxc.cmake); it compiles only the shader entries that use ray queries. Both licence files are kept
+  next to the built dxc in the tool cache.
 
 quench_cook, the asset cooker (cmake/CookToolchain.cmake pins the first two; fastgltf pins and hash-checks the
 simdjson and simdutf files it downloads), links:

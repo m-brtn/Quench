@@ -12,6 +12,9 @@
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#if !QUENCH_PLATFORM_IOS_SIMULATOR // the Simulator's SDK has no MetalFX
+#import <MetalFX/MetalFX.h>
+#endif
 
 #include <SDL3/SDL_metal.h>
 
@@ -33,6 +36,9 @@ constexpr std::uint32_t kMaxVertexBuffers = 16;
 constexpr std::uint32_t kMaxSamplers = 16;
 constexpr std::uint32_t kMaxStorage = 8;
 constexpr std::uint32_t kUniformSlots = 4;
+constexpr std::uint32_t kMaxAccelerationStructures = 2;
+// Acceleration structure build scratch: offsets of the builds in one encoder are this far apart.
+constexpr NSUInteger kScratchAlignment = 256;
 // Uniform data is copied into 32 KB chunks at 256-byte offsets, as in SDL GPU.
 constexpr std::uint32_t kUniformChunkSize = 32768;
 constexpr std::uint32_t kUniformAlignment = 256;
@@ -43,6 +49,9 @@ constexpr std::uint32_t kFramesInFlight = 2;
 constexpr std::uint32_t kTimestampSamples = 512;
 
 MTLPixelFormat pixelFormat(TextureFormat format);
+// The descriptor of a bottom level: sizes only without geometry (for the sizes query).
+MTLPrimitiveAccelerationStructureDescriptor* bottomLevelDescriptor(const RayGeometry* geometry,
+                                                                   std::uint32_t triangleCount, bool allowRefit);
 
 } // namespace metal
 
@@ -79,6 +88,26 @@ struct MetalStageCounts {
     std::uint32_t storageTextures = 0;
     std::uint32_t storageBuffers = 0;
     std::uint32_t uniformBuffers = 0;
+    std::uint32_t accelerationStructures = 0; // at buffer indices after the storage buffers
+};
+
+struct MetalAccelerationStructure {
+    id<MTLAccelerationStructure> handle;
+    AccelerationStructureLevel level = AccelerationStructureLevel::Bottom;
+    NSUInteger buildScratch = 0;
+    NSUInteger refitScratch = 0;
+    bool allowRefit = false;
+    // Top level: the bottom levels of the last build, kept alive here and made resident where it is bound (shaders
+    // reach them through the top level only).
+    NSArray<id<MTLAccelerationStructure>>* bottomLevels = nil;
+    std::vector<__unsafe_unretained id<MTLResource>> residency;
+};
+
+struct MetalUpscaler {
+#if !QUENCH_PLATFORM_IOS_SIMULATOR
+    id<MTLFXSpatialScaler> spatial;
+    id<MTLFXTemporalScaler> temporal;
+#endif
 };
 
 struct MetalGraphicsPipeline {
@@ -101,6 +130,7 @@ struct MetalComputePipeline {
     std::uint32_t storageBuffers = 0;
     std::uint32_t readWriteStorageBuffers = 0;
     std::uint32_t uniformBuffers = 0;
+    std::uint32_t accelerationStructures = 0;
     MTLSize threads = MTLSizeMake(1, 1, 1);
 };
 
@@ -158,7 +188,7 @@ struct MetalUniformBinding {
     bool dirty = true;
 };
 
-enum class MetalPass : std::uint8_t { None, Render, Compute, Copy };
+enum class MetalPass : std::uint8_t { None, Render, Compute, Copy, AccelerationStructure };
 
 struct MetalCommandBuffer {
     id<MTLCommandBuffer> handle;
@@ -173,12 +203,17 @@ struct MetalCommandBuffer {
 
     std::vector<MetalWindow*> presents;
     std::shared_ptr<MetalTiming> timing;
+    // Top-level instance descriptors: shared buffers from the device's pool, returned when the GPU is done.
+    std::vector<id<MTLBuffer>> instanceBuffers;
 
     // The open pass.
     MetalPass pass = MetalPass::None;
     id<MTLRenderCommandEncoder> render;
     id<MTLComputeCommandEncoder> compute;
     id<MTLBlitCommandEncoder> blit;
+    id<MTLAccelerationStructureCommandEncoder> accel;
+    bool accelBottomBuilt = false; // a top-level build after it starts a new encoder (builds in one may overlap)
+    NSUInteger scratchOffset = 0;  // in the device's scratch buffer, for the builds of the open encoder
 
     // Render pass bindings, applied at the next draw.
     const MetalGraphicsPipeline* graphicsPipeline = nullptr;
@@ -196,6 +231,10 @@ struct MetalCommandBuffer {
     std::array<bool, 2> samplersDirty{};
     std::array<bool, 2> storageBuffersDirty{};
     std::array<bool, 2> storageTexturesDirty{};
+    // Vertex, fragment, compute.
+    std::array<std::array<const MetalAccelerationStructure*, metal::kMaxAccelerationStructures>, 3>
+        accelerationStructures{};
+    std::array<bool, 3> accelerationStructuresDirty{};
 
     // Compute pass bindings.
     const MetalComputePipeline* computePipeline = nullptr;
@@ -220,6 +259,8 @@ public:
     Result<void*> createTransferBuffer(const TransferBufferDesc& desc) override;
     Result<void*> createPipeline(const GraphicsPipelineDesc& desc) override;
     Result<void*> createComputePipeline(const ComputePipelineDesc& desc) override;
+    Result<void*> createAccelerationStructure(const AccelerationStructureDesc& desc) override;
+    Result<void*> createUpscaler(const UpscalerDesc& desc) override;
     void release(Kind kind, void* native) noexcept override;
     std::span<std::byte> map(void* transferBuffer, std::uint32_t size, bool cycle) override;
     void unmap(void* transferBuffer) override;
@@ -270,6 +311,13 @@ public:
     void bindComputeStorageBuffers(void* pass, std::uint32_t firstSlot, std::span<const BufferRef> buffers) override;
     void dispatch(void* pass, std::uint32_t groupsX, std::uint32_t groupsY, std::uint32_t groupsZ) override;
 
+    void* beginAccelerationStructurePass(void* commands) override;
+    void endAccelerationStructurePass(void* commands, void* pass) override;
+    void buildBottomLevel(void* pass, void* structure, const RayGeometry& geometry, bool refit) override;
+    void buildTopLevel(void* pass, void* structure, std::span<const RayInstance> instances) override;
+    void bindAccelerationStructure(void* pass, ShaderStage stage, std::uint32_t slot, void* structure) override;
+    void upscale(void* commands, void* upscaler, const UpscaleDesc& desc) override;
+
     void uploadToBuffer(void* pass, void* transferBuffer, std::uint32_t sourceOffset, const BufferRef& destination,
                         std::uint32_t destinationOffset, std::uint32_t size, bool cycle) override;
     void uploadToTexture(void* pass, void* transferBuffer, std::uint32_t sourceOffset, const TextureRegion& destination,
@@ -315,12 +363,23 @@ private:
     Result<void*> commit(MetalCommandBuffer& commands, bool fence);
     void resolve(MetalTiming& timing) const;
     Result<id<MTLRenderPipelineState>> blitPipeline(TextureFormat destination, bool array);
+    // Acceleration structure passes: an encoder (with timestamps when a range is open), scratch memory for one build
+    // of the open encoder, and shared memory for instance descriptors.
+    bool beginAccelerationEncoder(MetalCommandBuffer& commands);
+    NSUInteger scratch(MetalCommandBuffer& commands, NSUInteger size);
+    id<MTLBuffer> instanceBuffer(MetalCommandBuffer& commands, NSUInteger size);
 
     id<MTLDevice> m_device;
     id<MTLCommandQueue> m_queue;
     bool m_debug = false;
     id<MTLBuffer> m_zeroUniforms;
     std::vector<id<MTLBuffer>> m_uniformPool;
+    // Build scratch, private; grows when a build needs more (command buffers keep the old one alive). Encoders use
+    // it one after another: Metal tracks the hazard between them.
+    id<MTLBuffer> m_scratch;
+    std::vector<id<MTLBuffer>> m_instancePool;
+    // Two texels copied by the timestamp encoders around MetalFX's passes (upscale), private.
+    id<MTLBuffer> m_markerBuffer;
 
     // Every acquired command buffer until the GPU finished it (or it was cancelled), then the free list.
     std::vector<std::unique_ptr<MetalCommandBuffer>> m_live;

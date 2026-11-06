@@ -11,6 +11,10 @@
 // in set 2 and uniforms in set 3; compute read-only resources in set 0, read-write ones in set 1, uniforms in set 2.
 // DXIL is produced separately by DXC (Windows hosts only).
 //
+// Entries with ray queries (RayQuery, RaytracingAccelerationStructure), which glslang cannot parse, are compiled with
+// --dxc: DXC (shader model 6.5) emits SPIR-V 1.5 for Vulkan 1.2, which is validated and translated the same way. Their
+// acceleration structures take the buffer slots after the storage buffers (after the read-write ones in compute).
+//
 // QUENCH_ENTRY_<entry> and QUENCH_STAGE_VERTEX, QUENCH_STAGE_FRAGMENT or QUENCH_STAGE_COMPUTE are defined while
 // compiling. #include "x" resolves relative to the including file, then in the --include-dir directories in order.
 // --depfile writes the input and every included file as Make dependencies of the SPIR-V output; --reflect writes the
@@ -19,7 +23,7 @@
 //
 // Usage: quench_shaderc --input FILE.hlsl --entry NAME --stage vertex|fragment|compute --spirv OUT.spv
 //                       [--reflect OUT] [--msl OUT.metal] [--msl-platform macos|ios] [--include-dir DIR]...
-//                       [--depfile OUT.d]
+//                       [--depfile OUT.d] [--dxc PATH]
 
 #include <SPIRV/GlslangToSpv.h>
 #include <glslang/Public/ResourceLimits.h>
@@ -31,6 +35,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -45,7 +50,7 @@ namespace {
 namespace fs = std::filesystem;
 
 struct Args {
-    std::string input, entry, stage, spirvOut, reflectOut, mslOut, mslPlatform = "macos", depfileOut;
+    std::string input, entry, stage, spirvOut, reflectOut, mslOut, mslPlatform = "macos", depfileOut, dxc;
     std::vector<std::string> includeDirs;
 };
 
@@ -70,6 +75,8 @@ bool parseArgs(int argc, char** argv, Args& a) {
             a.includeDirs.push_back(v);
         else if (k == "--depfile")
             a.depfileOut = v;
+        else if (k == "--dxc")
+            a.dxc = v;
         else
             return false;
     }
@@ -181,20 +188,91 @@ bool compileHlsl(const Args& a, const std::string& source, Includer& includer, s
     return !spirv.empty();
 }
 
+// Runs glslang's preprocessor only, for the files a DXC-compiled entry includes (the depfile): it resolves #include
+// like DXC and needs no HLSL parser for what it skips.
+bool preprocessIncludes(const Args& a, const std::string& source, Includer& includer, std::string& log) {
+    const EShLanguage lang = a.stage == "vertex"     ? EShLangVertex
+                             : a.stage == "fragment" ? EShLangFragment
+                                                     : EShLangCompute;
+    glslang::TShader shader(lang);
+    std::string stageName = a.stage;
+    std::transform(stageName.begin(), stageName.end(), stageName.begin(), [](char c) { return char(c - 'a' + 'A'); });
+    const std::string preamble = "#define QUENCH_ENTRY_" + a.entry + " 1\n#define QUENCH_STAGE_" + stageName + " 1\n";
+    const char* text = source.c_str();
+    const char* name = a.input.c_str();
+    shader.setStringsWithLengthsAndNames(&text, nullptr, &name, 1);
+    shader.setPreamble(preamble.c_str());
+    shader.setEntryPoint(a.entry.c_str());
+    shader.setEnvInput(glslang::EShSourceHlsl, lang, glslang::EShClientVulkan, 100);
+    std::string output;
+    const auto messages = EShMessages(EShMsgReadHlsl);
+    if (!shader.preprocess(GetDefaultResources(), 100, ENoProfile, false, false, messages, &output, includer)) {
+        log = std::string(shader.getInfoLog()) + shader.getInfoDebugLog();
+        return false;
+    }
+    return true;
+}
+
+std::string quoteArg(const std::string& arg) {
+    std::string out = "\"";
+    for (const char c : arg) {
+        if (c == '"' || c == '\\' || c == '$' || c == '`') out += '\\';
+        out += c;
+    }
+    return out + "\"";
+}
+
+// DXC (a separate executable) -> SPIR-V 1.5 for Vulkan 1.2, shader model 6.5 (ray queries).
+bool compileDxc(const Args& a, std::vector<std::uint32_t>& spirv, std::string& log) {
+    const char* profile = a.stage == "vertex" ? "vs_6_5" : a.stage == "fragment" ? "ps_6_5" : "cs_6_5";
+    std::string stageName = a.stage;
+    std::transform(stageName.begin(), stageName.end(), stageName.begin(), [](char c) { return char(c - 'a' + 'A'); });
+    const std::string out = a.spirvOut + ".dxc";
+    const std::string errors = a.spirvOut + ".dxc.log";
+    std::string command = quoteArg(a.dxc) + " -nologo -spirv -fspv-target-env=vulkan1.2 -HV 2021 -O3 -T " + profile +
+                          " -E " + quoteArg(a.entry) + " -D QUENCH_ENTRY_" + a.entry + "=1 -D QUENCH_STAGE_" +
+                          stageName + "=1";
+    for (const std::string& dir : a.includeDirs) command += " -I " + quoteArg(dir);
+    command += " -Fo " + quoteArg(out) + " " + quoteArg(a.input) + " > " + quoteArg(errors) + " 2>&1";
+    const int status = std::system(command.c_str());
+    std::string text;
+    readText(errors, text);
+    std::error_code ec;
+    fs::remove(errors, ec);
+    if (status != 0) {
+        log = text.empty() ? "dxc failed (" + std::to_string(status) + "): " + command : text;
+        return false;
+    }
+    std::string bytes;
+    const bool read = readText(out, bytes);
+    fs::remove(out, ec);
+    if (!read || bytes.size() % 4 != 0 || bytes.empty()) {
+        log = "dxc wrote no SPIR-V";
+        return false;
+    }
+    spirv.resize(bytes.size() / 4);
+    std::memcpy(spirv.data(), bytes.data(), bytes.size());
+    return true;
+}
+
 // glslang leaves HLSL constructs (resources passed to functions, struct copies) that Vulkan rejects until the
-// SPIRV-Tools legalization passes have run (the same step glslangValidator and DXC perform).
-bool legalizeAndValidate(std::vector<std::uint32_t>& spirv, std::string& log) {
-    const spv_target_env env = SPV_ENV_VULKAN_1_0;
+// SPIRV-Tools legalization passes have run (the same step glslangValidator and DXC perform). DXC's output is legal
+// already and only validated.
+bool legalizeAndValidate(std::vector<std::uint32_t>& spirv, bool legalize, spv_target_env env, std::string& log) {
     auto consumer = [&log](spv_message_level_t, const char*, const spv_position_t& pos, const char* msg) {
         log += "  [" + std::to_string(pos.index) + "] " + msg + "\n";
     };
-    spvtools::Optimizer opt(env);
-    opt.SetMessageConsumer(consumer);
-    opt.RegisterLegalizationPasses();
-    std::vector<std::uint32_t> legal;
     spvtools::ValidatorOptions vopts;
     vopts.SetRelaxBlockLayout(true);
-    if (!opt.Run(spirv.data(), spirv.size(), &legal, vopts, true)) return false;
+    std::vector<std::uint32_t> legal;
+    if (legalize) {
+        spvtools::Optimizer opt(env);
+        opt.SetMessageConsumer(consumer);
+        opt.RegisterLegalizationPasses();
+        if (!opt.Run(spirv.data(), spirv.size(), &legal, vopts, true)) return false;
+    } else {
+        legal = spirv;
+    }
     spvtools::SpirvTools tools(env);
     tools.SetMessageConsumer(consumer);
     if (!tools.Validate(legal.data(), legal.size(), vopts)) return false;
@@ -259,6 +337,7 @@ void renameBlockTypes(std::vector<std::uint32_t>& spirv) {
 
 struct Slots {
     std::uint32_t uniformBuffers = 0, samplers = 0, storageBuffers = 0, readWriteStorageBuffers = 0;
+    std::uint32_t accelerationStructures = 0;
     std::uint32_t threads[3] = {1, 1, 1};
 };
 
@@ -335,6 +414,21 @@ bool mapResources(const Args& a, const std::vector<std::uint32_t>& spirv, Slots&
             slots.uniformBuffers + std::uint32_t(storage.size()) + std::uint32_t(i);
     slots.storageBuffers = std::uint32_t(storage.size());
     slots.readWriteStorageBuffers = std::uint32_t(writable.size());
+    std::vector<std::uint32_t> structures;
+    for (const auto& r : res.acceleration_structures) {
+        ok &= check(r, resourceSet, "acceleration structure");
+        structures.push_back(bindingOf(r));
+    }
+    std::sort(structures.begin(), structures.end());
+    for (std::size_t i = 0; i < structures.size(); ++i) {
+        if (bindings.count((resourceSet << 16) | structures[i])) {
+            log += "acceleration structure binding " + std::to_string(structures[i]) + " is also another resource's\n";
+            ok = false;
+        }
+        entry(resourceSet, structures[i]).msl_buffer =
+            slots.uniformBuffers + std::uint32_t(storage.size() + writable.size() + i);
+    }
+    slots.accelerationStructures = std::uint32_t(structures.size());
     if (compute)
         for (std::uint32_t i = 0; i < 3; ++i)
             slots.threads[i] = std::max(1u, compiler.get_execution_mode_argument(spv::ExecutionModeLocalSize, i));
@@ -372,7 +466,7 @@ int main(int argc, char** argv) {
     if (!parseArgs(argc, argv, a)) {
         std::fprintf(stderr, "usage: quench_shaderc --input FILE.hlsl --entry NAME --stage vertex|fragment|compute "
                              "--spirv OUT.spv [--reflect OUT] [--msl OUT.metal] [--msl-platform macos|ios] "
-                             "[--include-dir DIR]... [--depfile OUT.d]\n");
+                             "[--include-dir DIR]... [--depfile OUT.d] [--dxc PATH]\n");
         return 2;
     }
     std::string source;
@@ -382,11 +476,14 @@ int main(int argc, char** argv) {
     glslang::InitializeProcess();
     std::vector<std::uint32_t> spirv;
     std::string log;
-    const bool compiled = compileHlsl(a, source, includer, spirv, log);
+    const bool dxc = !a.dxc.empty();
+    const bool compiled = dxc ? preprocessIncludes(a, source, includer, log) && compileDxc(a, spirv, log)
+                              : compileHlsl(a, source, includer, spirv, log);
     glslang::FinalizeProcess();
-    if (!compiled) return fail(a, "HLSL compile failed\n" + log);
+    if (!compiled) return fail(a, std::string(dxc ? "DXC" : "HLSL") + " compile failed\n" + log);
     log.clear();
-    if (!legalizeAndValidate(spirv, log)) return fail(a, "SPIR-V legalization/validation failed\n" + log);
+    if (!legalizeAndValidate(spirv, !dxc, dxc ? SPV_ENV_VULKAN_1_2 : SPV_ENV_VULKAN_1_0, log))
+        return fail(a, "SPIR-V legalization/validation failed\n" + log);
     renameBlockTypes(spirv);
 
     Slots slots;
@@ -401,14 +498,14 @@ int main(int argc, char** argv) {
         return fail(a, "cannot write " + a.spirvOut);
     if (!a.mslOut.empty() && !writeText(a.mslOut, msl)) return fail(a, "cannot write " + a.mslOut);
     if (!a.reflectOut.empty()) {
-        const std::string reflect = "stage=" + a.stage + "\nsamplers=" + std::to_string(slots.samplers) +
-                                    "\nstorage_textures=0\nstorage_buffers=" + std::to_string(slots.storageBuffers) +
-                                    "\nuniform_buffers=" + std::to_string(slots.uniformBuffers) +
-                                    "\nreadwrite_storage_textures=0\nreadwrite_storage_buffers=" +
-                                    std::to_string(slots.readWriteStorageBuffers) +
-                                    "\nthreads_x=" + std::to_string(slots.threads[0]) +
-                                    "\nthreads_y=" + std::to_string(slots.threads[1]) +
-                                    "\nthreads_z=" + std::to_string(slots.threads[2]) + "\n";
+        const std::string reflect =
+            "stage=" + a.stage + "\nsamplers=" + std::to_string(slots.samplers) +
+            "\nstorage_textures=0\nstorage_buffers=" + std::to_string(slots.storageBuffers) +
+            "\nuniform_buffers=" + std::to_string(slots.uniformBuffers) +
+            "\nreadwrite_storage_textures=0\nreadwrite_storage_buffers=" +
+            std::to_string(slots.readWriteStorageBuffers) + "\nthreads_x=" + std::to_string(slots.threads[0]) +
+            "\nthreads_y=" + std::to_string(slots.threads[1]) + "\nthreads_z=" + std::to_string(slots.threads[2]) +
+            "\nacceleration_structures=" + std::to_string(slots.accelerationStructures) + "\n";
         if (!writeText(a.reflectOut, reflect)) return fail(a, "cannot write " + a.reflectOut);
     }
     if (!a.depfileOut.empty()) {

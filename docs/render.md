@@ -63,6 +63,9 @@ render, and switching cameras or scenes needs `View::cut`.
 
 `Renderer::render` records, in this order:
 
+0. **Ray tracing**, where ray-traced shadows or ambient occlusion run (below): the acceleration structures of the
+   shadow casters, a depth prepass of the opaque surfaces, a full-screen pass that traces from each pixel toward the
+   sun and over its hemisphere, and a depth-aware blur. The cascades of step 1 are then not drawn.
 1. **Shadow cascades** of the sun (standard depth, `Depth32Float` texture array): the view is split between linear and
    logarithmic distances up to `shadowDistance`, each cascade snapped to its texels; casters are culled per cascade.
    Solid casters write depth with their position only; cut-out ones run their surface and discard where it is cut
@@ -73,8 +76,8 @@ render, and switching cameras or scenes needs `View::cut`.
    horizon), then alpha-blended and additive surfaces back to front, then game `Transparent` passes.
 3. **Motion vectors and TAA**: camera motion from the depth, moved instances drawn again into an `Rg16Float` target;
    TAA with a Halton (2, 3) jitter over 8 frames, the history clipped to the variance box of the 3 x 3 neighbourhood
-   (YCoCg), then sharpening. Render scale below 1 renders the 3D
-   part smaller; tone mapping scales it to the target.
+   (YCoCg), then sharpening. Render scale below 1 renders the 3D part smaller; tone mapping scales it to the target,
+   or MetalFX does (below), whose temporal upscaler takes the place of TAA's resolve.
 4. Game `PostHdr` passes on the anti-aliased HDR image.
 5. **Bloom**: a threshold with a soft knee, a chain of downsamples and upsamples.
 6. **Tone mapping** into the target (ACES or AgX, exposure, vignette, dither; sRGB and UNORM targets get the same
@@ -149,6 +152,64 @@ same). The fallback (`TranslucentShadows::Dithered`, also selectable) dithers th
 4 x 4 ordered pattern and lets the shadow filter smooth it: grey and grainy, overlapping casters shadow like the most
 opaque one (their patterns coincide); the same test measures 0.504 at opacity 0.5.
 
+### Ray-traced shadows and ambient occlusion
+
+`RenderSettings::sunShadows = SunShadows::RayTraced` and `ambientOcclusion = AmbientOcclusion::RayTraced` run where
+`gpu::Caps::rayTracing` holds and the build has the ray query shaders (`cmake/QuenchDxc.cmake`): today the native
+Metal backend on a GPU with ray tracing, run on the Mac's M4 Pro only (the iPhone not yet). Elsewhere the frame
+takes shadow maps and no occlusion, with one log line that says why (`Renderer::effects()` tells which runs). The
+default stays shadow maps until the iPhone measurement ([Roadmap](roadmap.md#stage-9-native-metal-backend-and-ray-tracing)).
+
+- **Acceleration structures** (`src/render/RayTracing.cpp`, timed range `accel`): every instance that casts shadows is
+  in the top level, which is rebuilt every frame (instance mask 1: opaque and cut-out, 2: translucent). One bottom
+  level per mesh, built when a caster first uses it and kept with the mesh. A skinned instance within
+  `shadowDistance` of the camera has a bottom level of its own over the skinning pass's output, refitted every frame
+  and built again after 60 refits (the counts are staggered, so a crowd made in one frame does not rebuild in one
+  frame). Cut-out and translucent instances are non-opaque: a table per instance (offsets into a copy of their
+  meshes' positions, uvs and colors; the material's color, cutoff and texture 0, at most 8 textures) lets the shader
+  read the texel at a candidate hit. Bottom levels are not compacted.
+- **Rays** (`prepass`, then `raytrace` with `rays` and `denoise` in it): the opaque surfaces' depth at the render size
+  (cut-out ones discard where they are cut out), then `rt_shadow_fs` (`src/render/shaders/raytrace.hlsl`): per pixel
+  the position from the depth and a normal from its neighbours' depths, `shadowRays` rays (1..8, default 2) over the
+  sun's disc of `shadowSoftness` times `Environment::sunAngularRadius` (a Vogel disc, rotated per pixel and frame),
+  and `occlusionRays` rays (default 2), cosine-weighted over the hemisphere, up to `occlusionRadius` (1 m): occlusion
+  is `1 - occlusionStrength * mean(1 - distance / radius)`. A cut-out hit below its cutoff is passed through; a
+  translucent one multiplies the light by its transmittance as the transmittance map does
+  (`quenchTransmittanceOf`, each instance once per ray); translucent instances are not in the occlusion rays. The
+  result is an `Rgba8Unorm` mask: rgb the sun's transmittance, alpha the occlusion.
+- **Denoise** (`rt_denoise_fs`): depth-aware box blurs, 3 x 3 for soft shadows (none for hard ones, softness 0) and
+  5 x 5 for the occlusion; a neighbour whose view depth differs by more than 2 % does not count. TAA's history then
+  averages the per-frame rotations. Hard shadows without occlusion skip the pass. Decided without the user
+  (2026-11-06): a spatial blur plus TAA, no temporal filter of its own, because TAA already accumulates and the blur
+  costs 0.4 to 1.0 ms at 1080p ([Performance](performance.md#measurements)).
+- **Shading**: surfaces read the mask at their pixel (`quenchRayMask`, fragment texture and sampler 6 of
+  `Surface.hlsli`; `FrameUniforms::options.w`: bit 1 sun, bit 2 occlusion): the sun's direct light is multiplied by
+  its rgb, the ambient occlusion by its alpha. Game surfaces built on `Surface.hlsli` get both without changes.
+- **Tests** (`render_metal_native.*`, 960 x 540 or smaller targets): the same scene with rays and with maps, hard
+  shadows (`renderer_ray_traced_shadows_match_shadow_maps`): 317 shadowed and 598 lit pixels in both, images mean
+  0.93 apart (1.56 % of the pixels over 16 levels: the maps' filtered edges); after the caster moves, the shadow moves
+  and no bottom level is built again. Cut-out fence: mean 2.42, 2.61 %; translucent glass at opacity 0.5, the light
+  behind it: grey 0.504 (maps 0.497), red 0.504 / 0.280 / 0.280 (maps 0.497 / 0.280 / 0.280). A skinned caster: the
+  first frame builds 2 bottom levels, the next ones refit 1, and the shadow has the posed hole. Occlusion: 0.822 of
+  the open ground's light next to a box, 1.000 away from it and on its top.
+
+### Upscaling
+
+`RenderSettings::upscaling`, with `renderScale` (the native Metal backend has MetalFX: `gpu::Caps::spatialUpscaling`,
+`temporalUpscaling`; `gpu::CommandBuffer::upscale`, timed range `upscale`):
+
+- `Bilinear` (the default): tone mapping scales the smaller image up, as before.
+- `Spatial`: below scale 1, MetalFX's spatial scaler takes the anti-aliased HDR image (TAA or none) to the target size
+  before bloom and tone mapping.
+- `Temporal`: MetalFX's temporal scaler takes the jittered HDR image, the depth and the motion vectors in place of
+  TAA's resolve, also at scale 1 (anti-aliasing only). The jitter goes in as the image's shift in input pixels,
+  `(-jx, +jy)` of the projection's offset, and the motion scale as `(-width, -height)`; of the four sign choices this
+  one came out closest to the native frame in the test.
+- Without the capability: bilinear, with the anti-aliasing the settings ask for. After MetalFX the game's `PostHdr`
+  passes get the target-size image and no depth (`PassContext::depth` is empty).
+- Test (`render_metal_native.renderer_upscaling`, against native TAA at full size): spatial from 0.5 mean 1.63 (2.03 % of the
+  pixels over 16), temporal mean 1.15 (3.81 %).
+
 ### Fallbacks
 
 `Renderer::effects()` is what runs after the device check; `RenderSettings` is what the game asked for. The choice is
@@ -162,6 +223,10 @@ change is logged once:
 | Translucent shadows (transmittance) | a renderable, sampleable `Rgba16Float` array | dithered into the depth |
 | TAA | a sampleable scene depth and an `Rg16Float` target | FXAA |
 | HDR target | `Rgba16Float` | `Rg11b10Ufloat` |
+| Ray-traced sun shadows | `gpu::Caps::rayTracing`, the ray query shaders, a sampleable depth | shadow cascades |
+| Ray-traced ambient occlusion | the same | none |
+| Spatial upscaling (MetalFX) | `gpu::Caps::spatialUpscaling`, render scale below 1 | bilinear in tone mapping |
+| Temporal upscaling (MetalFX) | `gpu::Caps::temporalUpscaling` and TAA's inputs | bilinear, with TAA or FXAA |
 
 Shadow lookups use `Gather` on the depth texture and compare in the shader (1, 4 or 12 Poisson taps, each a bilinear
 2 x 2 comparison) instead of a comparison sampler: MoltenVK reports no `mutableComparisonSamplers`, and SDL GPU's
@@ -237,8 +302,10 @@ bytes).
 
 ## Settings
 
-`RenderSettings`: render scale (0.25..1), cascades (0..4), shadow map size, shadow distance, shadow filter (1, 4 or
-12 taps), translucent shadows (transmittance map or dithered), anti-aliasing (none, FXAA, TAA) and sharpening,
+`RenderSettings`: render scale (0.25..1) and upscaling (bilinear, MetalFX spatial or temporal), sun shadows (shadow
+maps or ray traced), cascades (0..4), shadow map size, shadow distance, shadow filter (1, 4 or 12 taps), translucent
+shadows (transmittance map or dithered), shadow rays and softness, ambient occlusion (none or ray traced) with its
+rays, radius and strength, anti-aliasing (none, FXAA, TAA) and sharpening,
 bloom (strength, threshold), sky on or off and the clear color, tone curve (ACES, AgX), vignette, dither.
 `setSettings` can be called every frame; the targets are recreated only when a size, the shadow map size or the set
 of active effects changes.
@@ -248,15 +315,17 @@ of active effects changes.
 `Renderer::stats()`: instances and draws in the HDR pass, culled instances, instances and draws in the shadow
 cascades and in their transmittance maps, moved instances (motion vectors), local lights used, the 3D resolution,
 pipelines created, and (stage 8) skinned instances and vertices posed this frame and the skinning pass's GPU time
-(`skinningGpuMs`, -1 where `Caps::gpuTiming` is false or before the first measurement). The demo shows them and its
-scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`, `moved`, `render_w`,
-`skinned_instances`, `skinned_vertices`).
+(`skinningGpuMs`, -1 where `Caps::gpuTiming` is false or before the first measurement), and (stage 9) the top
+level's instances and the bottom levels built and refitted this frame (`rayInstances`, `rayBuilds`, `rayRefits`).
+The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`, `moved`,
+`render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`).
 
 GPU time per pass (stage 9, where `gpu::Caps::gpuPassTiming`: the native Metal backend): `Renderer::render` wraps its
-passes in timed ranges of the command buffer it records into, `upload` (the instance and light buffers), `shadows`
-(the cascades and their transmittance maps), `hdr` (opaque, sky, transparent and the game's passes in them), `taa`
-(motion vectors and the resolve), `bloom` and `tonemap` (with FXAA and the overlay passes). A range whose effect is
-off records nothing; the game's `PostHdr` passes are in no range of the renderer. The app reads them per frame
+passes in timed ranges of the command buffer it records into, `upload` (the instance and light buffers), `accel`,
+`prepass` and `raytrace` (ray tracing; `rays` and `denoise` inside the last), `shadows` (the cascades and their
+transmittance maps), `hdr` (opaque, sky, transparent and the game's passes in them), `taa` (motion vectors and the
+resolve), `upscale` (MetalFX), `bloom` and `tonemap` (with FXAA and the overlay passes). A range whose effect is off
+records nothing; the game's `PostHdr` passes are in no range of the renderer. The app reads them per frame
 (`app::FrameStats::gpuPasses`, inside its `game` range); the skinning pass has its own command buffer and stays in
 `skinningGpuMs`. [Performance](performance.md#gpu-time-per-pass) has the numbers.
 
@@ -281,6 +350,17 @@ joints, a skin entry count other than the vertex count) is refused with an error
 pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; there is no CPU skinning fallback.
 
 ## Limitations
+
+- Ray tracing: the sun only (local lights cast no shadows of any kind), no reflections or indirect light yet. The
+  rays start from a normal made from the depth, not the shading normal, offset by 0.2 % of the view distance. Rays
+  read the standard surface's opacity (base color, texture 0 and vertex alpha; at most 8 textures), not a custom
+  surface's `surface_shadow_fs`, and `QUENCH_SURFACE_VERTEX` deformations are not in the acceleration structures.
+  Skinned casters further than `shadowDistance` cast no ray-traced shadow. The top level is rebuilt every frame and
+  bottom levels are not compacted (not cheap: a GPU round trip per structure and swapping it under live top levels;
+  decided without the user, 2026-11-06). At 1 ray per pixel without TAA the soft shadows and the occlusion are noisy.
+- MetalFX's temporal scaler cost about 2.1 ms of GPU time at a 1080p output in the demo (vsync, GPU clocks not
+  fixed), so a half-size frame with it was not much cheaper than a native one with TAA
+  ([Performance](performance.md#measurements)).
 
 - Translucent shadows: a caster is one layer (its faces toward the sun; double-sided materials both), with no
   thickness, absorption along the path, refraction or caustics. A receiver between two translucent casters that share

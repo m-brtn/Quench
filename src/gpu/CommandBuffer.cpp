@@ -19,6 +19,7 @@ CommandBuffer Device::acquireCommandBuffer() {
     if (!native) return commands;
     commands.m_device = m_impl.get();
     commands.m_native = native;
+    commands.m_timed = m_impl->caps.gpuPassTiming && m_impl->passTiming;
     return commands;
 }
 
@@ -37,7 +38,8 @@ CommandBuffer::~CommandBuffer() {
 CommandBuffer::CommandBuffer(CommandBuffer&& other) noexcept
     : m_device(std::exchange(other.m_device, nullptr)), m_native(std::exchange(other.m_native, nullptr)),
       m_passOpen(std::exchange(other.m_passOpen, false)),
-      m_swapchainAcquired(std::exchange(other.m_swapchainAcquired, false)) {
+      m_swapchainAcquired(std::exchange(other.m_swapchainAcquired, false)),
+      m_timed(std::exchange(other.m_timed, false)) {
     QUENCH_ASSERT(!m_passOpen, "a command buffer with an open pass must not move");
 }
 
@@ -49,6 +51,7 @@ CommandBuffer& CommandBuffer::operator=(CommandBuffer&& other) noexcept {
         m_native = std::exchange(other.m_native, nullptr);
         m_passOpen = std::exchange(other.m_passOpen, false);
         m_swapchainAcquired = std::exchange(other.m_swapchainAcquired, false);
+        m_timed = std::exchange(other.m_timed, false);
     }
     return *this;
 }
@@ -109,6 +112,33 @@ ComputePass CommandBuffer::beginComputePass(std::span<const StorageBufferWrite> 
     return pass;
 }
 
+AccelerationStructurePass CommandBuffer::beginAccelerationStructurePass() {
+    QUENCH_ASSERT(m_native, "beginAccelerationStructurePass on an empty command buffer");
+    QUENCH_ASSERT(!m_passOpen, "a pass is already open");
+    QUENCH_ASSERT(m_device->caps.rayTracing, "acceleration structures need Caps::rayTracing");
+    AccelerationStructurePass pass;
+    if (!m_device->caps.rayTracing) return pass;
+    pass.m_native = m_device->beginAccelerationStructurePass(m_native);
+    if (!pass.m_native) return pass;
+    pass.m_commands = this;
+    m_passOpen = true;
+    return pass;
+}
+
+void CommandBuffer::upscale(const Upscaler& upscaler, const UpscaleDesc& desc) {
+    QUENCH_ASSERT(m_native && !m_passOpen, "upscale needs a command buffer outside passes");
+    QUENCH_ASSERT(upscaler, "upscale with an empty upscaler");
+    [[maybe_unused]] const UpscalerDesc& u = upscaler.desc();
+    QUENCH_ASSERT(desc.color && desc.output, "upscale without a color input or an output");
+    QUENCH_ASSERT(desc.color.desc.width == u.inputWidth && desc.color.desc.height == u.inputHeight &&
+                      desc.output.desc.width == u.outputWidth && desc.output.desc.height == u.outputHeight,
+                  "upscale textures differ in size from the upscaler");
+    QUENCH_ASSERT(any(desc.output.desc.usage & TextureUsage::ShaderWrite), "the upscale output needs ShaderWrite");
+    QUENCH_ASSERT(u.type == UpscalerType::Spatial || (desc.depth && desc.motion),
+                  "temporal upscaling needs the depth and the motion");
+    m_device->upscale(m_native, Access::native(upscaler), desc);
+}
+
 void CommandBuffer::pushUniforms(ShaderStage stage, std::uint32_t slot, const void* data, std::uint32_t size) {
     QUENCH_ASSERT(m_native, "pushUniforms on an empty command buffer");
     QUENCH_ASSERT(slot < 4, "uniform slots are 0..3");
@@ -145,12 +175,12 @@ void CommandBuffer::insertDebugLabel(const char* text) { m_device->insertDebugLa
 
 void CommandBuffer::beginTiming(const char* name) {
     QUENCH_ASSERT(m_native && !m_passOpen, "beginTiming needs a command buffer outside passes");
-    if (m_device->caps.gpuPassTiming) m_device->beginTiming(m_native, name);
+    if (m_timed) m_device->beginTiming(m_native, name);
 }
 
 void CommandBuffer::endTiming() {
     QUENCH_ASSERT(m_native && !m_passOpen, "endTiming needs a command buffer outside passes");
-    if (m_device->caps.gpuPassTiming) m_device->endTiming(m_native);
+    if (m_timed) m_device->endTiming(m_native);
 }
 
 Result<void> CommandBuffer::submit() {
@@ -250,6 +280,16 @@ void RenderPass::bindStorageTextures(ShaderStage stage, std::uint32_t firstSlot,
     m_commands->m_device->bindStorageTextures(m_native, stage, firstSlot, textures);
 }
 
+void RenderPass::bindAccelerationStructure(ShaderStage stage, std::uint32_t slot,
+                                           const AccelerationStructure& topLevel) {
+    QUENCH_ASSERT(m_native, "bindAccelerationStructure outside a render pass");
+    QUENCH_ASSERT(stage != ShaderStage::Compute, "a render pass binds vertex or fragment resources");
+    QUENCH_ASSERT(slot < 2, "acceleration structure slots are 0..1");
+    QUENCH_ASSERT(topLevel && topLevel.desc().level == AccelerationStructureLevel::Top,
+                  "shaders trace rays against a top level");
+    m_commands->m_device->bindAccelerationStructure(m_native, stage, slot, Access::native(topLevel));
+}
+
 void RenderPass::pushUniforms(ShaderStage stage, std::uint32_t slot, const void* data, std::uint32_t size) {
     QUENCH_ASSERT(m_native, "pushUniforms outside a render pass");
     QUENCH_ASSERT(slot < 4, "uniform slots are 0..3");
@@ -314,6 +354,14 @@ void ComputePass::bindStorageBuffers(std::uint32_t firstSlot, std::span<const Bu
     QUENCH_ASSERT(m_native, "bindStorageBuffers outside a compute pass");
     QUENCH_ASSERT(buffers.size() <= 8, "at most 8 storage buffers");
     m_commands->m_device->bindComputeStorageBuffers(m_native, firstSlot, buffers);
+}
+
+void ComputePass::bindAccelerationStructure(std::uint32_t slot, const AccelerationStructure& topLevel) {
+    QUENCH_ASSERT(m_native, "bindAccelerationStructure outside a compute pass");
+    QUENCH_ASSERT(slot < 2, "acceleration structure slots are 0..1");
+    QUENCH_ASSERT(topLevel && topLevel.desc().level == AccelerationStructureLevel::Top,
+                  "shaders trace rays against a top level");
+    m_commands->m_device->bindAccelerationStructure(m_native, ShaderStage::Compute, slot, Access::native(topLevel));
 }
 
 void ComputePass::pushUniforms(std::uint32_t slot, const void* data, std::uint32_t size) {
@@ -387,6 +435,66 @@ void CopyPass::copy(const BufferRef& source, std::uint32_t sourceOffset, const B
 void CopyPass::copy(const TextureRegion& source, const TextureRegion& destination, bool cycle) {
     QUENCH_ASSERT(m_native, "copy outside a copy pass");
     m_commands->m_device->copyTexture(m_native, source, destination, cycle);
+}
+
+// ------------------------------------------------------------------ AccelerationStructurePass
+
+AccelerationStructurePass::AccelerationStructurePass(AccelerationStructurePass&& other) noexcept
+    : m_commands(std::exchange(other.m_commands, nullptr)), m_native(std::exchange(other.m_native, nullptr)) {}
+
+AccelerationStructurePass& AccelerationStructurePass::operator=(AccelerationStructurePass&& other) noexcept {
+    if (this != &other) {
+        end();
+        m_commands = std::exchange(other.m_commands, nullptr);
+        m_native = std::exchange(other.m_native, nullptr);
+    }
+    return *this;
+}
+
+void AccelerationStructurePass::end() {
+    if (!m_native) return;
+    m_commands->m_device->endAccelerationStructurePass(m_commands->m_native, std::exchange(m_native, nullptr));
+    m_commands->m_passOpen = false;
+    m_commands = nullptr;
+}
+
+namespace {
+
+[[maybe_unused]] bool fits(const AccelerationStructureDesc& desc, const RayGeometry& geometry) {
+    return geometry.vertices && geometry.indices && geometry.vertexCount <= desc.vertexCount &&
+           geometry.triangleCount <= desc.triangleCount && geometry.vertexStride >= 12 && geometry.indexOffset % 4 == 0;
+}
+
+} // namespace
+
+void AccelerationStructurePass::build(const AccelerationStructure& bottomLevel, const RayGeometry& geometry) {
+    QUENCH_ASSERT(m_native, "build outside an acceleration structure pass");
+    QUENCH_ASSERT(bottomLevel && bottomLevel.desc().level == AccelerationStructureLevel::Bottom,
+                  "build(geometry) needs a bottom level");
+    QUENCH_ASSERT(fits(bottomLevel.desc(), geometry), "geometry larger than the bottom level or incomplete");
+    m_commands->m_device->buildBottomLevel(m_native, Access::native(bottomLevel), geometry, false);
+}
+
+void AccelerationStructurePass::refit(const AccelerationStructure& bottomLevel, const RayGeometry& geometry) {
+    QUENCH_ASSERT(m_native, "refit outside an acceleration structure pass");
+    QUENCH_ASSERT(bottomLevel && bottomLevel.desc().level == AccelerationStructureLevel::Bottom &&
+                      bottomLevel.desc().allowRefit,
+                  "refit needs a bottom level created with allowRefit");
+    QUENCH_ASSERT(fits(bottomLevel.desc(), geometry), "geometry larger than the bottom level or incomplete");
+    m_commands->m_device->buildBottomLevel(m_native, Access::native(bottomLevel), geometry, true);
+}
+
+void AccelerationStructurePass::build(const AccelerationStructure& topLevel, std::span<const RayInstance> instances) {
+    QUENCH_ASSERT(m_native, "build outside an acceleration structure pass");
+    QUENCH_ASSERT(topLevel && topLevel.desc().level == AccelerationStructureLevel::Top,
+                  "build(instances) needs a top level");
+    QUENCH_ASSERT(instances.size() <= topLevel.desc().instanceCapacity, "more instances than the top level holds");
+    for ([[maybe_unused]] const RayInstance& instance : instances)
+        QUENCH_ASSERT(instance.bottomLevel && *instance.bottomLevel &&
+                          instance.bottomLevel->desc().level == AccelerationStructureLevel::Bottom &&
+                          instance.id < (1u << 24),
+                      "a top-level instance needs a bottom level and a 24-bit id");
+    m_commands->m_device->buildTopLevel(m_native, Access::native(topLevel), instances);
 }
 
 } // namespace quench::gpu

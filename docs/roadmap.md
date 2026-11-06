@@ -230,19 +230,36 @@ TODO for stage 9:
   MSL that runs: a kernel with one `RayQuery` hit a triangle at t = 1.0 on the M4 Pro under the Metal API validation
   layer. Not kept as a CTest: the build has no DXC on macOS yet.
 - [x] Design the `quench::gpu` surface for acceleration structures (one bottom level per registered mesh, a top level
-  per frame from the scene's instances, refit or rebuild) in [Architecture](architecture.md#ray-tracing-design), with
-  the fallback slots. Design only (2026-11-06); not implemented.
+  per frame from the scene's instances, refit or rebuild) in [Architecture](architecture.md#ray-tracing), with
+  the fallback slots (2026-11-06; built the same day, below).
 - [x] Native Metal backend of `quench::gpu` (`src/gpu/metal/`, selected with `--gpu-backend metal`; SDL GPU stays the
   default) and GPU timestamps per pass (`Caps::gpuPassTiming`), 2026-11-06 ([Architecture](architecture.md#graphics-layer)).
-- [ ] Measure ray-traced shadows against shadow maps on the iPhone at 120 Hz and pick the default per device.
-- [ ] MetalFX upscaling (spatial and temporal) as an option, and how it combines with the TAA of stage 5.
+- [x] DXC for the shader entries with ray queries (2026-11-06): v1.9.2609 built from its pinned source archives
+  once per machine (macOS has no DXC release binary; not the LunarG SDK); glslang stays for everything else
+  ([Architecture](architecture.md#shaders)).
+- [x] Acceleration structures in `quench::gpu` on the native Metal backend (`Caps::rayTracing`): a bottom level per
+  mesh, a top level per frame, refits for skinned instances (2026-11-06).
+- [x] Ray-traced sun shadows (fallback: shadow maps) with cut-out holes, translucent tints and posed skinned casters,
+  and ray-traced ambient occlusion (fallback: none) as `quench_render` slots (2026-11-06,
+  [Render module](render.md#ray-traced-shadows-and-ambient-occlusion)).
+- [x] MetalFX upscaling, spatial and temporal, on the native Metal backend; the temporal one replaces TAA's resolve;
+  fallback bilinear with TAA or FXAA (2026-11-06, [Render module](render.md#upscaling)).
+- [x] Per-pass GPU timing off unless something reads it (`Device::setPassTiming`, `App::requestPassTiming`,
+  `--gpu-pass-timing`); the native backend's CPU time without it checked against SDL GPU (2026-11-06,
+  [Performance](performance.md#measurements)).
+- [x] Demo section 11, "Ray tracing", with checks and golden images for the native backend and the fallbacks
+  (2026-11-06, [Engine demo](demo.md)).
+- [ ] Measure ray-traced shadows against shadow maps on the iPhone at 120 Hz and pick the default per device (the
+  default stays shadow maps and SDL GPU until then).
+- [ ] Ray-traced reflections (fallback: what exists, the sky reflection) and indirect light: open.
+- [ ] Bottom-level compaction and top-level refits: not done (the top level is rebuilt every frame).
 
 ## Stage 10: engine demo
 
 Requested by the user (2026-11-05). Started in stage 5 (user decision, 2026-11-05; it replaces the planned
 `examples/scene`): every stage adds its section, with a scripted check and golden captures, and ends with a packaged
 build of the demo in `dist/` (`tools/package_demo.sh`); stage 10 finishes and polishes it. Sections so far: materials
-and lights, shadows, sky and fog, post-processing, HDR output, physics, input, assets, audio, animation
+and lights, shadows, sky and fog, post-processing, HDR output, physics, input, assets, audio, animation, ray tracing
 ([Engine demo](demo.md)).
 
 - One app built with the engine (`examples/demo`, "Quench Demo") for the Mac and iOS: a menu of sections, each a

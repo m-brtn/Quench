@@ -63,6 +63,7 @@ public:
         m_sections.push_back(demo::makeAssetsSection());
         m_sections.push_back(demo::makeAudioSection());
         m_sections.push_back(demo::makeAnimationSection());
+        m_sections.push_back(demo::makeRayTracingSection());
         for (const std::unique_ptr<Section>& section : m_sections)
             if (Result<void> r = section->init(*m_context); !r)
                 return Error{std::format("section {}: {}", section->id(), r.error())};
@@ -72,7 +73,7 @@ public:
                                                   Binding::gamepad(GamepadButton::RightShoulder)});
         m_prev = input.addAction("prev_section", {*Binding::key("["), *Binding::key("PageUp"),
                                                   Binding::gamepad(GamepadButton::LeftShoulder)});
-        // Keys 1 to 9, then 0 for the tenth.
+        // Keys 1 to 9, then 0 for the tenth; later sections through the menu and [ ].
         for (std::size_t i = 0; i < m_sections.size() && i < 10; ++i)
             m_direct.push_back(
                 input.addAction(std::format("section_{}", i + 1), {*Binding::key(std::to_string((i + 1) % 10))}));
@@ -132,7 +133,8 @@ public:
         ImGui::SetNextWindowBgAlpha(0.8f);
         if (ImGui::Begin("Quench Demo", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
             for (std::size_t i = 0; i < m_sections.size(); ++i) {
-                const std::string label = std::format("{}  {}", (i + 1) % 10, m_sections[i]->title());
+                const std::string label = i < 10 ? std::format("{}  {}", (i + 1) % 10, m_sections[i]->title())
+                                                 : std::format("   {}", m_sections[i]->title());
                 if (ImGui::Selectable(label.c_str(), i == m_current)) select(i);
                 const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
                 m_menuPoints[i] = glm::vec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
@@ -237,6 +239,12 @@ public:
         if (name == "render_w") return double(s.renderWidth);
         if (name == "render_h") return double(s.renderHeight);
         if (name == "render_scale") return m_targetWidth > 0 ? double(s.renderWidth) / double(m_targetWidth) : 0.0;
+        if (name == "sun_shadows") return double(int(e.sunShadows));
+        if (name == "ambient_occlusion") return double(int(e.ambientOcclusion));
+        if (name == "upscaling") return double(int(e.upscaling));
+        if (name == "ray_instances") return double(s.rayInstances);
+        if (name == "ray_builds") return double(s.rayBuilds);
+        if (name == "ray_refits") return double(s.rayRefits);
         if (name == "camera_yaw") return double(glm::degrees(current().camera.yaw));
         if (name == "camera_pitch") return double(glm::degrees(current().camera.pitch));
         if (name == "camera_distance") return double(current().camera.distance);
@@ -295,9 +303,16 @@ public:
         const render::RenderStats& s = m_renderer->stats();
         const render::ActiveEffects& e = m_renderer->effects();
         std::string details = std::format(
-            "section={} render={}x{} draws={} instances={} shadow_draws={} lights={} aa={} cascades={} skinned={}",
+            "section={} render={}x{} draws={} instances={} shadow_draws={} lights={} aa={} cascades={} skinned={} "
+            "sun_shadows={} ao={} upscaling={} ray_instances={}",
             current().id(), s.renderWidth, s.renderHeight, s.draws, s.instances, s.shadowDraws, s.lights,
-            demo::antiAliasingName(e.antiAliasing), e.shadowCascades, s.skinnedInstances);
+            demo::antiAliasingName(e.antiAliasing), e.shadowCascades, s.skinnedInstances,
+            e.sunShadows == render::SunShadows::RayTraced ? "rt" : "maps",
+            e.ambientOcclusion == render::AmbientOcclusion::RayTraced ? "rt" : "none",
+            e.upscaling == render::Upscaling::Temporal  ? "temporal"
+            : e.upscaling == render::Upscaling::Spatial ? "spatial"
+                                                        : "bilinear",
+            s.rayInstances);
         const std::string section = current().perfDetails();
         if (!section.empty()) details += ' ' + section;
         return details;
@@ -362,6 +377,37 @@ private:
                 return false;
         } else if (name == "scale" && number) {
             s.renderScale = std::clamp(*number, 0.25f, 1.0f);
+        } else if (name == "sun_shadows") {
+            if (value == "maps")
+                s.sunShadows = render::SunShadows::ShadowMaps;
+            else if (value == "rt")
+                s.sunShadows = render::SunShadows::RayTraced;
+            else
+                return false;
+        } else if (name == "shadow_rays" && number) {
+            s.shadowRays = std::clamp(int(*number), 1, 8);
+        } else if (name == "shadow_softness" && number) {
+            s.shadowSoftness = std::max(*number, 0.0f);
+        } else if (name == "ao") {
+            if (value == "none")
+                s.ambientOcclusion = render::AmbientOcclusion::None;
+            else if (value == "rt")
+                s.ambientOcclusion = render::AmbientOcclusion::RayTraced;
+            else
+                return false;
+        } else if (name == "ao_rays" && number) {
+            s.occlusionRays = std::clamp(int(*number), 1, 8);
+        } else if (name == "ao_radius" && number) {
+            s.occlusionRadius = std::max(*number, 0.05f);
+        } else if (name == "upscaling") {
+            if (value == "bilinear")
+                s.upscaling = render::Upscaling::Bilinear;
+            else if (value == "spatial")
+                s.upscaling = render::Upscaling::Spatial;
+            else if (value == "temporal")
+                s.upscaling = render::Upscaling::Temporal;
+            else
+                return false;
         } else if (name == "bloom" && flag) {
             s.bloom = *flag;
         } else if (name == "bloom_strength" && number) {
@@ -455,6 +501,7 @@ private:
             else
                 ImGui::Text("CPU %.2f ms, GPU time n/a", stats.cpuMs);
             const gpu::Caps& caps = app.device().caps();
+            app.requestPassTiming();
             ImGui::Text("GPU backend %s, pass timing %s", gpu::backendName(caps.backend),
                         caps.gpuPassTiming ? "on" : "n/a");
             // GPU busy time per range and when it ran in the frame; nested ranges indented under theirs.
@@ -493,7 +540,7 @@ private:
 constexpr const char* kHelp =
     "quench_demo options:\n"
     "  --section ID   start in a section: materials, shadows, sky, post, hdr, physics, input, assets, audio,\n"
-    "                 animation\n";
+    "                 animation, raytracing\n";
 
 } // namespace
 

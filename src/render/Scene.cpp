@@ -92,9 +92,9 @@ Result<MeshId> Scene::addMesh(const MeshDesc& desc) {
                 const glm::vec3 c = (jointLo[joint] + jointHi[joint]) * 0.5f;
                 b = glm::vec4(c, std::max(b.w, glm::length(desc.vertices[v].position - c)));
             }
-        mesh.vertexCount = vertexCount;
         mesh.jointCount = desc.jointCount;
     }
+    mesh.vertexCount = vertexCount;
 
     gpu::Device& device = *m_impl->device;
     const std::span<const std::byte> vertexBytes = std::as_bytes(desc.vertices);

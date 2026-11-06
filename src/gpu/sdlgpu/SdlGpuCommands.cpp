@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL_error.h>
 
+#include <algorithm>
 #include <array>
 #include <string>
 
@@ -101,6 +102,34 @@ void SdlGpuDevice::pushUniforms(void* commands, ShaderStage stage, std::uint32_t
 }
 
 void SdlGpuDevice::generateMipmaps(void* commands, const TextureRef& texture) {
+    const TextureDesc& desc = texture.desc;
+    // SDL's Vulkan driver halves both sides per level without stopping at 1 (SDL 3.4.18), so the last levels of a
+    // non-square texture would be blits to an empty region: the levels are blitted here, each side at least 1.
+    if (caps.driver == "vulkan" && desc.width != desc.height && desc.type != TextureType::Texture3D) {
+        const std::uint32_t layers = desc.type == TextureType::Texture2D ? 1u : desc.layers;
+        for (std::uint32_t level = 1; level < desc.mipLevels; ++level)
+            for (std::uint32_t layer = 0; layer < layers; ++layer) {
+                SDL_GPUBlitInfo info{};
+                info.source = {sdl::texture(texture),
+                               level - 1,
+                               layer,
+                               0,
+                               0,
+                               std::max(desc.width >> (level - 1), 1u),
+                               std::max(desc.height >> (level - 1), 1u)};
+                info.destination = {sdl::texture(texture),
+                                    level,
+                                    layer,
+                                    0,
+                                    0,
+                                    std::max(desc.width >> level, 1u),
+                                    std::max(desc.height >> level, 1u)};
+                info.load_op = SDL_GPU_LOADOP_DONT_CARE;
+                info.filter = SDL_GPU_FILTER_LINEAR;
+                SDL_BlitGPUTexture(nativeCommands(commands), &info);
+            }
+        return;
+    }
     SDL_GenerateMipmapsForGPUTexture(nativeCommands(commands), sdl::texture(texture));
 }
 

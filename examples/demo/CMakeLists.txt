@@ -58,6 +58,7 @@ quench_add_game(quench_demo
         MaterialsSection.cpp
         PhysicsSection.cpp
         PostSection.cpp
+        RayTracingSection.cpp
         ShadowsSection.cpp
         SkySection.cpp)
 quench_configure_target(quench_demo)

@@ -20,7 +20,7 @@ struct ShaderCode {
 
 // Resource counts read from the compiled shader, in the order SDL GPU asks for them when a shader is created. The
 // storage counts of a compute shader are its read-only ones; the read-write ones and the thread group size exist
-// for compute shaders only.
+// for compute shaders only. Acceleration structures exist in ray query entries only (gpu::Caps::rayTracing).
 struct ShaderResources {
     std::uint32_t samplers;
     std::uint32_t storageTextures;
@@ -29,6 +29,7 @@ struct ShaderResources {
     std::uint32_t readWriteStorageTextures;
     std::uint32_t readWriteStorageBuffers;
     std::uint32_t threadCount[3]; // [numthreads(x, y, z)]
+    std::uint32_t accelerationStructures;
 };
 
 struct ShaderBlob {

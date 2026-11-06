@@ -87,6 +87,11 @@ void MetalCommandBuffer::resetPassState() {
     samplersDirty = {};
     storageBuffersDirty = {};
     storageTexturesDirty = {};
+    accel = nil;
+    accelBottomBuilt = false;
+    scratchOffset = 0;
+    for (auto& stage : accelerationStructures) stage.fill(nullptr);
+    accelerationStructuresDirty = {};
     computePipeline = nullptr;
     computeBuffers.fill(nil);
     computeWrites.fill(nil);
@@ -110,6 +115,8 @@ void MetalDevice::reclaim() {
                        c.handle.error ? c.handle.error.localizedDescription.UTF8String : "unknown error");
         for (id<MTLBuffer> chunk : c.uniformChunks) m_uniformPool.push_back(chunk);
         c.uniformChunks.clear();
+        for (id<MTLBuffer> buffer : c.instanceBuffers) m_instancePool.push_back(buffer);
+        c.instanceBuffers.clear();
         c.handle = nil;
         c.timing.reset();
         c.presents.clear();
@@ -459,6 +466,7 @@ void MetalDevice::bindPipeline(void* pass, void* pipeline) {
     c.samplersDirty = {true, true};
     c.storageBuffersDirty = {true, true};
     c.storageTexturesDirty = {true, true};
+    c.accelerationStructuresDirty[0] = c.accelerationStructuresDirty[1] = true;
     for (std::size_t s = 0; s < 2; ++s)
         for (MetalUniformBinding& binding : c.uniforms[s]) binding.dirty = true;
 }
@@ -560,6 +568,24 @@ void MetalDevice::flushGraphics(MetalCommandBuffer& c) {
                 [e setFragmentBuffers:c.storageBuffers[s].data() offsets:kZeroOffsets.data() withRange:range];
         }
         c.storageBuffersDirty[s] = false;
+        if (c.accelerationStructuresDirty[s] && n.accelerationStructures > 0) {
+            const MTLRenderStages stages = vertex ? MTLRenderStageVertex : MTLRenderStageFragment;
+            for (std::uint32_t i = 0; i < n.accelerationStructures && i < metal::kMaxAccelerationStructures; ++i) {
+                const MetalAccelerationStructure* as = c.accelerationStructures[s][i];
+                if (!as) continue;
+                const NSUInteger index = n.uniformBuffers + n.storageBuffers + i;
+                if (vertex)
+                    [e setVertexAccelerationStructure:as->handle atBufferIndex:index];
+                else
+                    [e setFragmentAccelerationStructure:as->handle atBufferIndex:index];
+                if (!as->residency.empty())
+                    [e useResources:as->residency.data()
+                              count:as->residency.size()
+                              usage:MTLResourceUsageRead
+                             stages:stages];
+            }
+        }
+        c.accelerationStructuresDirty[s] = false;
         for (std::uint32_t i = 0; i < n.uniformBuffers; ++i) {
             MetalUniformBinding& b = c.uniforms[s][i];
             if (!b.dirty) continue;
@@ -667,6 +693,7 @@ void MetalDevice::bindComputePipeline(void* pass, void* pipeline) {
                       offsets:kZeroOffsets.data()
                     withRange:NSMakeRange(p.uniformBuffers + p.storageBuffers, p.readWriteStorageBuffers)];
     c.computeBuffersDirty = true;
+    c.accelerationStructuresDirty[2] = true;
     for (MetalUniformBinding& binding : c.uniforms[2]) binding.dirty = true;
 }
 
@@ -683,6 +710,17 @@ void MetalDevice::flushCompute(MetalCommandBuffer& c) {
                       offsets:kZeroOffsets.data()
                     withRange:NSMakeRange(p.uniformBuffers, p.storageBuffers)];
     c.computeBuffersDirty = false;
+    if (c.accelerationStructuresDirty[2]) {
+        for (std::uint32_t i = 0; i < p.accelerationStructures && i < metal::kMaxAccelerationStructures; ++i) {
+            const MetalAccelerationStructure* as = c.accelerationStructures[2][i];
+            if (!as) continue;
+            [c.compute setAccelerationStructure:as->handle
+                                  atBufferIndex:p.uniformBuffers + p.storageBuffers + p.readWriteStorageBuffers + i];
+            if (!as->residency.empty())
+                [c.compute useResources:as->residency.data() count:as->residency.size() usage:MTLResourceUsageRead];
+        }
+        c.accelerationStructuresDirty[2] = false;
+    }
     for (std::uint32_t i = 0; i < p.uniformBuffers; ++i) {
         MetalUniformBinding& b = c.uniforms[2][i];
         if (!b.dirty) continue;
@@ -696,6 +734,231 @@ void MetalDevice::dispatch(void* pass, std::uint32_t groupsX, std::uint32_t grou
     flushCompute(c);
     [c.compute dispatchThreadgroups:MTLSizeMake(groupsX, groupsY, groupsZ)
               threadsPerThreadgroup:c.computePipeline->threads];
+}
+
+// ------------------------------------------------------------------ acceleration structures
+
+bool MetalDevice::beginAccelerationEncoder(MetalCommandBuffer& c) {
+    if (const std::int64_t first = timingSamples(c, 2); first >= 0) {
+        MTLAccelerationStructurePassDescriptor* d =
+            [MTLAccelerationStructurePassDescriptor accelerationStructurePassDescriptor];
+        d.sampleBufferAttachments[0].sampleBuffer = c.timing->samples;
+        d.sampleBufferAttachments[0].startOfEncoderSampleIndex = NSUInteger(first);
+        d.sampleBufferAttachments[0].endOfEncoderSampleIndex = NSUInteger(first + 1);
+        c.accel = [c.handle accelerationStructureCommandEncoderWithDescriptor:d];
+    } else {
+        c.accel = [c.handle accelerationStructureCommandEncoder];
+    }
+    c.accelBottomBuilt = false;
+    c.scratchOffset = 0;
+    if (!c.accel) log::error("gpu", "cannot begin a Metal acceleration structure pass");
+    return c.accel != nil;
+}
+
+void* MetalDevice::beginAccelerationStructurePass(void* commands) {
+    @autoreleasepool {
+        MetalCommandBuffer& c = commandsOf(commands);
+        if (!beginAccelerationEncoder(c)) return nullptr;
+        c.pass = MetalPass::AccelerationStructure;
+        return &c;
+    }
+}
+
+void MetalDevice::endAccelerationStructurePass(void*, void* pass) {
+    MetalCommandBuffer& c = commandsOf(pass);
+    [c.accel endEncoding];
+    c.resetPassState();
+}
+
+NSUInteger MetalDevice::scratch(MetalCommandBuffer& c, NSUInteger size) {
+    size = std::max<NSUInteger>((size + metal::kScratchAlignment - 1) & ~(metal::kScratchAlignment - 1),
+                                metal::kScratchAlignment);
+    if (!m_scratch || c.scratchOffset + size > m_scratch.length) {
+        // The builds already in the encoder keep the old buffer.
+        const NSUInteger length = std::max<NSUInteger>(size, m_scratch ? m_scratch.length * 2 : 1 << 20);
+        m_scratch = [m_device newBufferWithLength:length options:MTLResourceStorageModePrivate];
+        if (m_debug) m_scratch.label = @"acceleration structure scratch";
+        c.scratchOffset = 0;
+    }
+    const NSUInteger offset = c.scratchOffset;
+    c.scratchOffset += size;
+    return offset;
+}
+
+id<MTLBuffer> MetalDevice::instanceBuffer(MetalCommandBuffer& c, NSUInteger size) {
+    id<MTLBuffer> buffer = nil;
+    for (std::size_t i = 0; i < m_instancePool.size(); ++i)
+        if (m_instancePool[i].length >= size) {
+            buffer = m_instancePool[i];
+            m_instancePool[i] = m_instancePool.back();
+            m_instancePool.pop_back();
+            break;
+        }
+    if (!buffer) {
+        NSUInteger length = 4096;
+        while (length < size) length *= 2;
+        buffer = [m_device newBufferWithLength:length
+                                       options:MTLResourceStorageModeShared | MTLResourceCPUCacheModeWriteCombined];
+        if (!buffer) return nil;
+    }
+    c.instanceBuffers.push_back(buffer);
+    return buffer;
+}
+
+void MetalDevice::buildBottomLevel(void* pass, void* structure, const RayGeometry& geometry, bool refit) {
+    @autoreleasepool {
+        MetalCommandBuffer& c = commandsOf(pass);
+        MetalAccelerationStructure& as = *static_cast<MetalAccelerationStructure*>(structure);
+        MTLPrimitiveAccelerationStructureDescriptor* d =
+            metal::bottomLevelDescriptor(&geometry, geometry.triangleCount, as.allowRefit);
+        const NSUInteger offset = scratch(c, refit ? as.refitScratch : as.buildScratch);
+        if (refit)
+            [c.accel refitAccelerationStructure:as.handle
+                                     descriptor:d
+                                    destination:nil
+                                  scratchBuffer:m_scratch
+                            scratchBufferOffset:offset];
+        else
+            [c.accel buildAccelerationStructure:as.handle
+                                     descriptor:d
+                                  scratchBuffer:m_scratch
+                            scratchBufferOffset:offset];
+        c.accelBottomBuilt = true;
+    }
+}
+
+void MetalDevice::buildTopLevel(void* pass, void* structure, std::span<const RayInstance> instances) {
+    @autoreleasepool {
+        MetalCommandBuffer& c = commandsOf(pass);
+        MetalAccelerationStructure& as = *static_cast<MetalAccelerationStructure*>(structure);
+        if (c.accelBottomBuilt) {
+            // Builds in one encoder may run at the same time: the top level goes after the bottom levels it uses.
+            [c.accel endEncoding];
+            if (!beginAccelerationEncoder(c)) return;
+        }
+
+        // The distinct bottom levels, in first-use order; instances refer to them by index.
+        NSMutableArray<id<MTLAccelerationStructure>>* bottomLevels = [NSMutableArray array];
+        std::vector<const void*> natives;
+        std::vector<std::uint32_t> indices(instances.size());
+        for (std::size_t i = 0; i < instances.size(); ++i) {
+            const void* native = Access::native(*instances[i].bottomLevel);
+            auto found = std::find(natives.begin(), natives.end(), native);
+            if (found == natives.end()) {
+                natives.push_back(native);
+                [bottomLevels addObject:static_cast<const MetalAccelerationStructure*>(native)->handle];
+                found = natives.end() - 1;
+            }
+            indices[i] = std::uint32_t(found - natives.begin());
+        }
+
+        const NSUInteger bytes =
+            std::max<NSUInteger>(instances.size(), 1) * sizeof(MTLAccelerationStructureUserIDInstanceDescriptor);
+        id<MTLBuffer> buffer = instanceBuffer(c, bytes);
+        if (!buffer) {
+            log::error("gpu", "cannot allocate {} bytes of instance descriptors", bytes);
+            return;
+        }
+        auto* out = static_cast<MTLAccelerationStructureUserIDInstanceDescriptor*>(buffer.contents);
+        for (std::size_t i = 0; i < instances.size(); ++i) {
+            const RayInstance& in = instances[i];
+            MTLAccelerationStructureUserIDInstanceDescriptor& o = out[i];
+            for (int column = 0; column < 4; ++column)
+                for (int row = 0; row < 3; ++row)
+                    o.transformationMatrix.columns[column].elements[row] = in.transform[std::size_t(row * 4 + column)];
+            o.options = MTLAccelerationStructureInstanceOptionNone;
+            if (any(in.flags & RayInstanceFlags::Opaque)) o.options |= MTLAccelerationStructureInstanceOptionOpaque;
+            if (any(in.flags & RayInstanceFlags::NonOpaque))
+                o.options |= MTLAccelerationStructureInstanceOptionNonOpaque;
+            o.mask = in.mask;
+            o.intersectionFunctionTableOffset = 0;
+            o.accelerationStructureIndex = indices[i];
+            o.userID = in.id;
+        }
+
+        MTLInstanceAccelerationStructureDescriptor* d = [MTLInstanceAccelerationStructureDescriptor descriptor];
+        d.instancedAccelerationStructures = bottomLevels;
+        d.instanceCount = instances.size();
+        d.instanceDescriptorBuffer = buffer;
+        d.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeUserID;
+        const NSUInteger offset = scratch(c, as.buildScratch);
+        [c.accel buildAccelerationStructure:as.handle descriptor:d scratchBuffer:m_scratch scratchBufferOffset:offset];
+
+        as.bottomLevels = bottomLevels;
+        as.residency.clear();
+        for (id<MTLAccelerationStructure> bottom in bottomLevels) as.residency.push_back(bottom);
+    }
+}
+
+void MetalDevice::bindAccelerationStructure(void* pass, ShaderStage stage, std::uint32_t slot, void* structure) {
+    MetalCommandBuffer& c = commandsOf(pass);
+    const std::size_t s = stageIndex(stage);
+    c.accelerationStructures[s][slot] = static_cast<const MetalAccelerationStructure*>(structure);
+    c.accelerationStructuresDirty[s] = true;
+}
+
+// ------------------------------------------------------------------ upscaling
+
+void MetalDevice::upscale(void* commands, void* upscaler, const UpscaleDesc& desc) {
+#if QUENCH_PLATFORM_IOS_SIMULATOR
+    (void)commands;
+    (void)upscaler;
+    (void)desc;
+#else
+    @autoreleasepool {
+        MetalCommandBuffer& c = commandsOf(commands);
+        MetalUpscaler& u = *static_cast<MetalUpscaler*>(upscaler);
+        // MetalFX encodes passes of its own: in a timed range, blit encoders before and after them take the start
+        // and the end timestamp, each at its own start. Each copies a texel (an empty encoder is dropped, its
+        // samples never written): the first one of the input after the passes that drew it, the last one of the
+        // output once MetalFX wrote it. (After the temporal scaler, an end-of-encoder sample was not written.)
+        const std::int64_t first = timingSamples(c, 2);
+        if (first >= 0 && !m_markerBuffer) {
+            m_markerBuffer = [m_device newBufferWithLength:64 options:MTLResourceStorageModePrivate];
+            if (m_debug) m_markerBuffer.label = @"upscale timestamp texels";
+        }
+        const auto marker = [&](bool start, const TextureRef& texture) {
+            MTLBlitPassDescriptor* d = [MTLBlitPassDescriptor blitPassDescriptor];
+            d.sampleBufferAttachments[0].sampleBuffer = c.timing->samples;
+            d.sampleBufferAttachments[0].startOfEncoderSampleIndex = NSUInteger(start ? first : first + 1);
+            d.sampleBufferAttachments[0].endOfEncoderSampleIndex = MTLCounterDontSample;
+            id<MTLBlitCommandEncoder> blit = [c.handle blitCommandEncoderWithDescriptor:d];
+            const NSUInteger texel = NSUInteger(levelByteSize(texture.desc.format, 1, 1, 1));
+            [blit copyFromTexture:textureOf(texture).handle
+                             sourceSlice:0
+                             sourceLevel:0
+                            sourceOrigin:MTLOriginMake(0, 0, 0)
+                              sourceSize:MTLSizeMake(1, 1, 1)
+                                toBuffer:m_markerBuffer
+                       destinationOffset:start ? 0 : 32
+                  destinationBytesPerRow:texel
+                destinationBytesPerImage:texel];
+            [blit endEncoding];
+        };
+        if (first >= 0) marker(true, desc.color);
+        if (u.spatial) {
+            u.spatial.colorTexture = textureOf(desc.color).handle;
+            u.spatial.outputTexture = textureOf(desc.output).handle;
+            u.spatial.inputContentWidth = desc.color.desc.width;
+            u.spatial.inputContentHeight = desc.color.desc.height;
+            [u.spatial encodeToCommandBuffer:c.handle];
+        } else if (u.temporal) {
+            u.temporal.colorTexture = textureOf(desc.color).handle;
+            u.temporal.depthTexture = textureOf(desc.depth).handle;
+            u.temporal.motionTexture = textureOf(desc.motion).handle;
+            u.temporal.outputTexture = textureOf(desc.output).handle;
+            u.temporal.inputContentWidth = desc.color.desc.width;
+            u.temporal.inputContentHeight = desc.color.desc.height;
+            u.temporal.jitterOffsetX = desc.jitterX;
+            u.temporal.jitterOffsetY = desc.jitterY;
+            u.temporal.motionVectorScaleX = desc.motionScaleX;
+            u.temporal.motionVectorScaleY = desc.motionScaleY;
+            u.temporal.reset = desc.reset;
+            [u.temporal encodeToCommandBuffer:c.handle];
+        }
+        if (first >= 0) marker(false, desc.output);
+    }
+#endif
 }
 
 // ------------------------------------------------------------------ copy passes

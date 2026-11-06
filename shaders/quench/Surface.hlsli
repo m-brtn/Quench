@@ -2,9 +2,9 @@
 #define QUENCH_SURFACE_HLSLI
 
 // Surface shaders: how a material looks, written by the engine (the standard surface) or by a game, and lit by the
-// engine (sun with cascaded shadows, local lights, sky ambient and reflections, fog). A surface shader is one HLSL
-// file built with quench_add_shaders(... ENTRIES surface_vs:vertex surface_fs:fragment) and registered with
-// quench::render::Renderer::addSurface (docs/render.md):
+// engine (sun with cascaded or ray-traced shadows, local lights, sky ambient and reflections with ray-traced
+// occlusion where it runs, fog). A surface shader is one HLSL file built with quench_add_shaders(... ENTRIES
+// surface_vs:vertex surface_fs:fragment) and registered with quench::render::Renderer::addSurface (docs/render.md):
 //
 //   #include "quench/Surface.hlsli"
 //   #if defined(QUENCH_STAGE_FRAGMENT) // the material, the textures and the lighting exist in the fragment stage only
@@ -92,6 +92,10 @@ Texture2D<float4> quenchTexture3 : QUENCH_TEXTURE(4);
 SamplerState quenchSampler3 : QUENCH_SAMPLER(4);
 Texture2DArray<float4> quenchTransmittanceMap : QUENCH_TEXTURE(5);
 SamplerState quenchTransmittanceSampler : QUENCH_SAMPLER(5);
+// Ray-traced sun visibility (rgb) and ambient occlusion (a) at the render size (FrameUniforms::options.w); white where
+// nothing was traced (transparent surfaces, game passes that bind it so).
+Texture2D<float4> quenchRayMask : QUENCH_TEXTURE(6);
+SamplerState quenchRayMaskSampler : QUENCH_SAMPLER(6);
 
 // True when the material has texture n (MaterialDesc::textures); unset textures sample white.
 bool quenchHasTexture(int n) { return (uint(quenchMaterial.surface.w) & (1u << uint(n))) != 0u; }
@@ -112,14 +116,8 @@ QuenchSurface quenchStandardSurface(QuenchSurfaceInput i) {
     return s;
 }
 
-// The sun's light a translucent caster lets through: 1 - opacity, tinted toward the surface's hue (its albedo over
-// its brightest channel) as far as it is opaque. A grey surface of opacity a passes 1 - a in every channel.
-float3 quenchTransmittance(QuenchSurface s) {
-    const float a = saturate(s.opacity);
-    const float peak = max(s.albedo.r, max(s.albedo.g, s.albedo.b));
-    const float3 hue = peak > 1e-4 ? saturate(s.albedo / peak) : float3(1.0, 1.0, 1.0);
-    return (1.0 - a) * lerp(float3(1.0, 1.0, 1.0), hue, a);
-}
+// The sun's light a translucent caster lets through (quenchTransmittanceOf).
+float3 quenchTransmittance(QuenchSurface s) { return quenchTransmittanceOf(s.albedo, s.opacity); }
 
 // Diffuse irradiance from the sky hemisphere, blended with the ground bounce by the normal.
 float3 quenchAmbient(float3 N) {
@@ -148,7 +146,15 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     const float NdotV = max(dot(N, V), 1e-3);
     float shadow = 1.0;
     float3 color = float3(0.0, 0.0, 0.0);
-    if (quenchFrame.sunDir.w > 0.0) {
+    const uint rayTraced = uint(quenchFrame.options.w);
+    float4 rayMask = float4(1.0, 1.0, 1.0, 1.0);
+    [branch] if (rayTraced != 0u) {
+        rayMask = quenchRayMask.SampleLevel(quenchRayMaskSampler, i.pixel * quenchFrame.screen.zw, 0.0);
+    }
+    [branch] if (quenchFrame.sunDir.w > 0.0 && (rayTraced & 1u) != 0u) {
+        color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, quenchFrame.sunColor.rgb * rayMask.rgb);
+        shadow = luminance(rayMask.rgb);
+    } else if (quenchFrame.sunDir.w > 0.0) {
         shadow = shadowFactor(quenchShadowMap, quenchShadowSampler, i.world, i.normal);
         // Two calls, not one with a tinted radiance: merged, the compiler orders the products differently and frames
         // without translucent casters change by a few levels.
@@ -183,11 +189,12 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     }
     const float3 F0 = lerp(((float3)(0.04)), s.albedo, s.metallic);
     const float3 ambient = quenchAmbient(N);
-    color += ambient * s.albedo * (1.0 - s.metallic) * s.occlusion;
+    const float occlusion = (rayTraced & 2u) != 0u ? s.occlusion * rayMask.a : s.occlusion;
+    color += ambient * s.albedo * (1.0 - s.metallic) * occlusion;
     // Sun-shadowed areas see less of the bright sky in their reflection.
     const float3 R = reflect(-V, N);
     const float3 env = lerp(skyRadiance(R), ambient, saturate(s.roughness * 1.2)) * lerp(0.35, 1.0, shadow);
-    color += env * envBRDFApprox(F0, s.roughness, NdotV) * s.occlusion;
+    color += env * envBRDFApprox(F0, s.roughness, NdotV) * occlusion;
     return color + s.emissive;
 }
 #endif

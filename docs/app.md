@@ -44,7 +44,9 @@ game, [Jobs, assets and the cook](assets.md)), the audio system (`audio()`, crea
 time, frame and tick counters, frame statistics (`FrameStats`: frame time, CPU time until the submit without the wait
 for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`, and GPU time per timed range where
 `gpu::Caps::gpuPassTiming`: the app times `game` around `Game::render`, `ui` and `blit`, the renderer its passes inside
-`game`; [Performance](performance.md#gpu-time-per-pass)), the display output (`output()`, `hdrMode()`,
+`game`; [Performance](performance.md#gpu-time-per-pass); recorded only in frames that need them: a frame panel calls
+`requestPassTiming()` each frame it shows them, and a scenario's perf region and `--gpu-pass-timing` turn them on, so
+the ranges arrive a few frames later), the display output (`output()`, `hdrMode()`,
 `hdrSupported()`, `displayHeadroom()`, `displayPotentialHeadroom()`), and actions: `requestCapture`,
 `setPresentMode`, `setHdrMode`, text input,
 `quit(exitCode)`. `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
@@ -97,6 +99,7 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--gpu-backend NAME` | `sdl` (SDL GPU) or `metal` (the native Metal backend, [Architecture](architecture.md#native-metal-backend); Apple platforms, elsewhere SDL GPU with a warning); default `AppDesc::gpuBackend`, which reads the `QUENCH_GPU_BACKEND` environment variable and otherwise takes SDL GPU |
 | `--gpu-driver NAME` | SDL GPU's driver: `metal`, `vulkan` or `direct3d12` (the native backend has only `metal`) |
 | `--gpu-debug` | GPU validation (the backend's debug mode) |
+| `--gpu-pass-timing` | record the GPU time per pass in every frame (`gpu::Caps::gpuPassTiming`: the native Metal backend); without it only while the game asks (`App::requestPassTiming`) or a scenario's perf region runs, since recording costs CPU time ([Performance](performance.md#gpu-time-per-pass)) |
 | `--present-mode MODE` | `vsync`, `immediate` or `mailbox`; falls back to vsync where the window does not support it |
 | `--hdr MODE` | HDR output: `off` (SDR), `on` (wherever the GPU backend can composite the window in HDR) or `auto` (while the display reports HDR range); default `AppDesc::hdr`, normally off ([HDR output](#hdr-output)) |
 | `--hdr-headroom N` | peak of HDR output in multiples of paper white (1 to 1000) instead of the display's, for repeatable HDR runs |

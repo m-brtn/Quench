@@ -23,11 +23,14 @@ struct MeshEntry {
     glm::vec3 center{0.0f}; // bounding sphere in object space (skinned: of the bind pose)
     float radius = 0.0f;
     std::uint32_t users = 0; // instances
+    std::uint32_t vertexCount = 0;
     // Skinned meshes
     gpu::Buffer skin; // SkinVertex per vertex
-    std::uint32_t vertexCount = 0;
     std::uint32_t jointCount = 0;
     std::vector<glm::vec4> jointBounds; // per joint: the bind-pose sphere of the vertices it moves (w < 0: none)
+    // Ray tracing (gpu::Caps::rayTracing): the bottom level of a rigid mesh, built when it first casts a ray-traced
+    // shadow.
+    gpu::AccelerationStructure rayStructure;
 };
 
 struct TextureEntry {
@@ -50,6 +53,9 @@ struct InstanceEntry {
     bool posed = false;                 // the palette changed since the last render
     std::uint32_t skinnedOffset = 0;    // first vertex in the renderer's skinned vertex buffer of the last render
     std::uint64_t skinnedFrame = ~0ull; // the renderer's frame index of that render; ~0: none
+    // Ray tracing of a skinned instance: the bottom level of its pose, refitted every frame it is traced.
+    gpu::AccelerationStructure rayStructure;
+    std::uint32_t rayRefits = 0; // since its last build
 };
 
 struct LightEntry {

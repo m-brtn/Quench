@@ -32,6 +32,7 @@ struct DeviceImpl {
     virtual ~DeviceImpl() = default;
 
     Caps caps;
+    bool passTiming = false; // Device::setPassTiming
     std::atomic<std::int64_t> live{0};
     std::vector<WindowEntry> windows;
 
@@ -51,6 +52,12 @@ struct DeviceImpl {
     virtual Result<void*> createTransferBuffer(const TransferBufferDesc& desc) = 0;
     virtual Result<void*> createPipeline(const GraphicsPipelineDesc& desc) = 0;
     virtual Result<void*> createComputePipeline(const ComputePipelineDesc& desc) = 0;
+    // Backends without ray tracing or upscaling (Caps) keep these defaults; the front end does not call the
+    // commands below on them.
+    virtual Result<void*> createAccelerationStructure(const AccelerationStructureDesc&) {
+        return Error{"acceleration structures need Caps::rayTracing"};
+    }
+    virtual Result<void*> createUpscaler(const UpscalerDesc&) { return Error{"upscaling is not supported"}; }
     virtual void release(Kind kind, void* native) noexcept = 0;
     // Empty on failure (logged).
     virtual std::span<std::byte> map(void* transferBuffer, std::uint32_t size, bool cycle) = 0;
@@ -107,6 +114,14 @@ struct DeviceImpl {
     virtual void bindComputePipeline(void* pass, void* pipeline) = 0;
     virtual void bindComputeStorageBuffers(void* pass, std::uint32_t firstSlot, std::span<const BufferRef> buffers) = 0;
     virtual void dispatch(void* pass, std::uint32_t groupsX, std::uint32_t groupsY, std::uint32_t groupsZ) = 0;
+
+    // ---------------------------------------------------------------- ray tracing and upscaling (Caps)
+    virtual void* beginAccelerationStructurePass(void*) { return nullptr; }
+    virtual void endAccelerationStructurePass(void*, void*) {}
+    virtual void buildBottomLevel(void*, void*, const RayGeometry&, bool) {}
+    virtual void buildTopLevel(void*, void*, std::span<const RayInstance>) {}
+    virtual void bindAccelerationStructure(void*, ShaderStage, std::uint32_t, void*) {}
+    virtual void upscale(void*, void*, const UpscaleDesc&) {}
 
     // ---------------------------------------------------------------- copy passes
     virtual void uploadToBuffer(void* pass, void* transferBuffer, std::uint32_t sourceOffset,

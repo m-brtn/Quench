@@ -29,7 +29,8 @@ Audio (stage 7, see "Audio" below) has run only on the null backend and offline,
 and under Node.js; nothing was listened to, and the stage 7 code has not run on the iPhone. Animation and GPU
 skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator and (without rendering) under
 Node.js; not on the iPhone. The native Metal backend (stage 9, not the default; see "Native Metal backend" below)
-ran on the Mac and in the iOS Simulator; not on the iPhone.
+ran on the Mac and in the iOS Simulator; not on the iPhone. Its ray tracing and MetalFX (see "Hardware ray tracing"
+below) ran on the Mac only.
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
@@ -117,8 +118,8 @@ request for it there creates SDL GPU with a warning.
 
 | Where | Run so far |
 |---|---|
-| Mac, M4 Pro | `gpu_metal_native.*` and `render_metal_native.*` with the Metal API validation layer; hello and every demo section's capture identical to the Metal golden images in Release (2026-11-06); the four swapchain compositions created and presented; `Caps::gpuPassTiming` true (timestamp period 1.0000 ns); benchmarks in [Performance](performance.md#gpu-time-per-pass) |
-| iOS Simulator (iPhone 18 Pro Max) | `gpu_metal_native.*` and `render_metal_native.*` in `ios-sim-tests` (49 passed; the two window cases skipped as on SDL GPU: no app lifecycle in a test executable); `Caps::gpuPassTiming` false (the Simulator's GPU has no stage boundary sampling), no depth clamp, no indirect draws, as on SDL GPU there |
+| Mac, M4 Pro | `gpu_metal_native.*` and `render_metal_native.*` with the Metal API validation layer; hello and every demo section's capture identical to the Metal golden images in Release (2026-11-06); the four swapchain compositions created and presented; `Caps::gpuPassTiming` true (timestamp period 1.0000 ns); `Caps::rayTracing`, `spatialUpscaling` and `temporalUpscaling` true; the ray tracing section against its own golden image; benchmarks in [Performance](performance.md#measurements) |
+| iOS Simulator (iPhone 18 Pro Max) | `gpu_metal_native.*` and `render_metal_native.*` in `ios-sim-tests` (the two window cases skipped as on SDL GPU: no app lifecycle in a test executable; since the second half also the ray tracing and upscaling cases); `Caps::gpuPassTiming` false (the Simulator's GPU has no stage boundary sampling), no depth clamp, no indirect draws, as on SDL GPU there; `rayTracing`, `spatialUpscaling`, `temporalUpscaling` false |
 | iPhone 18 Pro Max | built (`ios-device-release`); not run (the phone was not available on 2026-11-06) |
 
 ## Audio
@@ -153,8 +154,9 @@ GPU skinning is a compute pass through SDL GPU, which has compute on all its bac
 ## Windows and Linux
 
 - Shader formats: SPIR-V (Vulkan) on both, DXIL (D3D12) on Windows. Today DXIL is compiled only on Windows hosts,
-  because only the Windows build of DXC is downloaded. DXC also exists for Linux and builds on macOS, so all formats
-  could be produced on a Mac.
+  because only the Windows build of DXC is downloaded for it. Since stage 9 DXC is built from source on macOS for
+  the ray query entries (SPIR-V; [Dependencies](dependencies.md#added-in-stage-9)), so all formats could be
+  produced on a Mac; DXIL from the Mac is not set up.
 - No hardware to run them; CI only builds and runs headless tests.
 
 ## Android
@@ -187,6 +189,16 @@ GPU skinning is a compute pass through SDL GPU, which has compute on all its bac
 
 ## Hardware ray tracing
 
-Available on both devices: Apple GPUs have hardware ray tracing from the M3 and the A17 Pro. Not available through SDL
-GPU (see [Architecture](architecture.md#graphics-layer)); planned through the native Metal backend. On the web there
-is no ray tracing API.
+Apple GPUs have hardware ray tracing from the M3 and the A17 Pro, so both devices have it. The engine uses it through
+the native Metal backend only (stage 9: acceleration structures, ray queries in fragment shaders,
+[Architecture](architecture.md#ray-tracing)); the renderer takes its fallbacks wherever `gpu::Caps::rayTracing` is
+false. MetalFX (spatial and temporal upscaling) likewise.
+
+| Where | `rayTracing` | MetalFX | Run so far |
+|---|---|---|---|
+| Mac, M4 Pro, native Metal backend | true | spatial and temporal | `gpu_metal_native.*` (`ray_tracing_caps`, `ray_query_instances`, `ray_query_refit`, `upscale_flat_color`), `render_metal_native.renderer_ray_traced_*` and `renderer_upscaling` under the Metal API validation layer; the demo's ray tracing section against its golden image; the benchmarks in [Performance](performance.md#measurements) |
+| Mac, SDL GPU (Metal, Vulkan through MoltenVK) | false | none | the fallbacks: `demo_raytracing_metal` and `demo_raytracing_vulkan` against their golden image. MoltenVK has no Vulkan ray tracing extension (checked at its tag `v1.4.2` and on `main`, 2026-11-06), so Vulkan through it always falls back |
+| iOS Simulator, native Metal backend | false (its Metal device does not report both `supportsRaytracing` and `supportsRaytracingFromRender`) | none (MetalFX is not in the Simulator's SDK; the engine does not link it there) | `ios-sim-tests`, 2026-11-06: `gpu_metal_native.ray_tracing_caps` reads 0, 0, 0 and creation fails as it should; the ray tracing and upscaling cases are skipped (263 tests, 22 skipped) |
+| iPhone 18 Pro Max (A20 Pro) | expected true, not checked | not checked | built (`ios-device-release`, with MetalFX linked); not run (the phone was not available on 2026-11-06) |
+
+On the web there is no ray tracing API; WebGPU has none so far.

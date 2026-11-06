@@ -101,7 +101,9 @@ How each backend is verified:
 
 Requirements: CMake 3.28+, Ninja, Xcode with its command line tools, and the Metal toolchain for precompiled
 metallibs (`xcodebuild -downloadComponent MetalToolchain`; without it the MSL source is embedded and compiled at
-startup). The first configure of every preset downloads the pinned dependencies.
+startup). The first configure of every preset downloads the pinned dependencies; the first configure with shaders on
+a machine also builds the pinned DXC from source for the ray query shaders (about 2 minutes, 27 MB kept in
+`~/Library/Caches/Quench`; `docs/dependencies.md`, "Added in stage 9").
 
 ```sh
 cmake --preset debug && cmake --build --preset debug && ctest --preset debug -j8   # also release, asan, tsan
@@ -129,6 +131,9 @@ xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_device_tests
 python3 tools/new_game.py "My Game" ../my-game
 # The engine demo (docs/demo.md), one section or the menu; its package for dist/ at the end of a stage
 build/release/examples/demo/quench-demo --section shadows   # --gpu-backend metal: the native Metal backend
+# Ray tracing and MetalFX options one by one on the native backend (docs/performance.md)
+build/release/examples/demo/quench-demo --frame-size 1920x1080 --gpu-backend metal --audio-device null \
+    --script examples/demo/scenarios/raytracing_benchmark.txt
 tools/package_demo.sh                    # --ios also builds a development-signed .ipa (ios-xcode, not installed)
 # The asset cooker (docs/assets.md); games and the demo cook at build time through quench_cook_assets()
 build/debug/quench_cook --help
@@ -158,7 +163,10 @@ capture at its end with `tests/golden/<backend>/<device>/demo_<section>.png`; `d
 navigation (`docs/demo.md`). The renderer's own cases are `render.*` and `render_vulkan.*`. The native Metal backend
 (`--gpu-backend metal`, not the default) is compared with the same `metal` golden images: `hello_metal_native`,
 `demo_animation_metal_native` and `demo_hdr_on_metal_native` (a subset of the demo, for the wall time; a change to
-`src/gpu/metal/` also runs every demo section with `--gpu-backend metal` against its golden image).
+`src/gpu/metal/` also runs every demo section with `--gpu-backend metal` against its golden image). The ray tracing
+section renders differently where ray tracing runs: `demo_raytracing_metal_native` has its own golden image
+(`demo_raytracing_native.png`), and `demo_raytracing_metal` and `demo_raytracing_vulkan` check the fallbacks
+(`demo_raytracing.png`).
 
 All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
 
@@ -447,7 +455,8 @@ README.md              short overview
 LICENSE                MIT licence of the engine; THIRD_PARTY_LICENSES: licences of the libraries it ships
 CMakeLists.txt         engine targets; CMakePresets.json: configure, build and test presets
 cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), CookToolchain (asset
-                       cooker pins), QuenchShaders (quench_add_shaders), QuenchCook (quench_cook_assets),
+                       cooker pins), QuenchDxc and BuildDxc (DXC for ray query shaders, built from source into a
+                       per-machine tool cache), QuenchShaders (quench_add_shaders), QuenchCook (quench_cook_assets),
                        EmbedShaders, QuenchTargets (warnings, include directories), QuenchGame (quench_add_game)
                        and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
 include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, gpu/, app/, render/
@@ -459,13 +468,14 @@ src/                   sources and internal headers per module (src/core/Platfor
                        (ozz-animation inside); src/gpu/Backend.h: the backend interface; src/gpu/sdlgpu/: the
                        SDL GPU backend; src/gpu/metal/: the native Metal backend (Objective-C++, ARC; Apple
                        platforms); src/gpu/shaders/: the backends' own shaders (blit); src/app/Main.cpp: quench_main;
-                       src/render/: the scene, SceneAssets, the frame modules and their shaders, GPU skinning)
+                       src/render/: the scene, SceneAssets, the frame modules and their shaders, GPU skinning,
+                       RayTracing: acceleration structures and ray-traced shadows and occlusion)
 shaders/quench/        the engine shader library (#include "quench/..."): BRDF, shadows, sky, fog, tone curves,
                        surface shaders; SceneUniforms.h, the uniform structs shared by C++ and HLSL
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
 examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input,
-                       assets, audio, animation), per section a scenario with a golden capture; smoke and benchmark
-                       scenarios; assets_src/ (procedural sources cooked at build time) and assets/ (files used as
+                       assets, audio, animation, ray tracing), per section a scenario with a golden capture; smoke
+                       and benchmark scenarios (raytracing_benchmark.txt: ray tracing and MetalFX options); assets_src/ (procedural sources cooked at build time) and assets/ (files used as
                        they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
@@ -482,7 +492,7 @@ tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a
 tools/format.sh        clang-format over the C and C++ sources (--check)
 tests/                 harness/, core/ (job system included), physics/, assets/, audio/ (mixer, streams, decoders,
                        device; data/: CC0 test sounds), animation/, cook/ (and CookCli.cmake), gpu/ (shader tests;
-                       GPU device tests and their shaders), app/, render/ (scene, scene assets, skinning and frame
+                       GPU device tests and their shaders; RayTracingTests: acceleration structures, MetalFX), app/, render/ (scene, scene assets, skinning and frame
                        tests), header check, RunCapture.cmake (capture checks); golden/ (reference captures)
 docs/                  documentation (index docs/README.md): architecture, app shell, jobs, assets and the cook,
                        audio, animation, render module, engine demo, performance, platforms, dependencies,

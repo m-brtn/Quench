@@ -48,6 +48,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             app/SdlLogTests.cpp
             gpu/DeviceTests.cpp
             gpu/GpuTest.cpp
+            gpu/RayTracingTests.cpp
             gpu/RenderTests.cpp
             gpu/WindowTests.cpp
             render/RenderMathTests.cpp
@@ -62,7 +63,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
     quench_add_shaders(quench_device_tests NAME render SOURCE gpu/shaders/render.hlsl
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
-                rects_vs:vertex scale_cs:compute)
+                rects_vs:vertex scale_cs:compute ray_fs:fragment:rayquery)
     quench_add_shaders(quench_device_tests NAME render_test SOURCE render/shaders/custom.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment)
@@ -200,13 +201,14 @@ if(NOT QUENCH_HEADLESS)
         SOURCES
             gpu/DeviceTests.cpp
             gpu/GpuTest.cpp
+            gpu/RayTracingTests.cpp
             gpu/RenderTests.cpp
             gpu/WindowTests.cpp
         LIBS quench_gpu SDL3::SDL3-static
         ENVIRONMENT ${gpu_environment})
     quench_add_shaders(quench_gpu_device_tests NAME render SOURCE gpu/shaders/render.hlsl
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
-                rects_vs:vertex scale_cs:compute)
+                rects_vs:vertex scale_cs:compute ray_fs:fragment:rayquery)
     target_compile_definitions(quench_gpu_device_tests PRIVATE
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
 
@@ -373,6 +375,20 @@ if(NOT QUENCH_HEADLESS)
                          ${capture_dir}/demo_audio_metal.wav ${capture_dir}/demo_audio_vulkan.wav)
                 set_tests_properties(demo_audio_metal demo_audio_vulkan PROPERTIES FIXTURES_SETUP demo_audio_wav)
                 set_tests_properties(demo_audio_wav_match PROPERTIES FIXTURES_REQUIRED demo_audio_wav)
+            endif()
+            # Ray tracing: ray-traced shadows and occlusion on the native Metal backend (its own golden image), the
+            # fallbacks (shadow maps, no occlusion, bilinear) on SDL GPU's Metal and Vulkan drivers.
+            set(demo_rt_args --window 960x540 --frame-size 960x540 --gpu-debug --present-mode immediate
+                --section raytracing --capture-at 2.5 --audio-device null)
+            quench_add_capture_test(demo_raytracing_metal_native IMAGE demo_raytracing_native BACKEND metal
+                APP quench_demo ARGS ${demo_rt_args} --script ${demo_scenarios}/raytracing.txt --gpu-backend metal
+                ENVIRONMENT MTL_DEBUG_LAYER=1)
+            quench_add_capture_test(demo_raytracing_metal IMAGE demo_raytracing BACKEND metal APP quench_demo
+                ARGS ${demo_rt_args} --script ${demo_scenarios}/raytracing_fallback.txt ENVIRONMENT MTL_DEBUG_LAYER=1)
+            if(QUENCH_TEST_VULKAN_LOADER)
+                quench_add_capture_test(demo_raytracing_vulkan IMAGE demo_raytracing BACKEND vulkan APP quench_demo
+                    ARGS ${demo_rt_args} --script ${demo_scenarios}/raytracing_fallback.txt --gpu-driver vulkan
+                    ENVIRONMENT ${vulkan_environment})
             endif()
             # An HDR extended-linear frame with a fixed headroom; the capture is the frame clipped at paper white.
             set(demo_hdr_args --window 960x540 --frame-size 960x540 --gpu-debug --present-mode immediate --section hdr

@@ -42,6 +42,7 @@ double App::alpha() const { return m_state.clock.alpha(); }
 bool App::deterministic() const { return m_state.options.deterministic() && !m_state.perf; }
 bool App::scripted() const { return !m_state.options.script.empty(); }
 const FrameStats& App::stats() const { return m_state.stats; }
+void App::requestPassTiming() { m_state.passTimingRequested = true; }
 
 WindowRect App::safeArea() const {
     SDL_Rect rect{};
@@ -141,6 +142,8 @@ void runScenario(AppState& s) {
 // Renders the frame. Returns false when the frame could not be recorded (logged). waitMs: the wait for a swapchain
 // texture; submitCounter: when recording ended (presenting may block in the submit, on Vulkan for example).
 bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
+    s.device->setPassTiming(s.options.gpuPassTiming || s.perf || s.passTimingRequested);
+    s.passTimingRequested = false;
     gpu::CommandBuffer commands = s.device->acquireCommandBuffer();
     if (!commands) return false;
     ImDrawData* drawData = ImGui::GetDrawData();

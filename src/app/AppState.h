@@ -139,6 +139,7 @@ struct AppState {
     glm::vec2 touchMouse{0.0f};                      // the mouse position SDL would synthesize from the scripted finger
     std::vector<std::unique_ptr<char[]>> textInputs; // TEXT_INPUT payloads stay alive until dispatched
     std::optional<PerfRegion> perf;
+    bool passTimingRequested = false;                       // App::requestPassTiming in this frame
     std::map<std::string, double, std::less<>> perfValues;  // of the last finished region: perf_frame_avg, ...
     std::map<std::string, double, std::less<>> audioValues; // of the last audio_measure: audio_rms, ...
 

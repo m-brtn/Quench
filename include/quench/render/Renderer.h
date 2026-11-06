@@ -42,13 +42,48 @@ enum class TranslucentShadows : std::uint8_t {
     Dithered,
 };
 
+// How the sun's shadows are made.
+enum class SunShadows : std::uint8_t {
+    // Cascaded shadow maps (shadowCascades, shadowMapSize, shadowDistance, shadowFilter, translucentShadows).
+    ShadowMaps,
+    // Rays from every pixel toward the sun's disc against the scene's casters (gpu::Caps::rayTracing; falls back to
+    // ShadowMaps): exact contact shadows, soft by the sun's angular size, cut-outs and translucent tints as the maps
+    // have them. docs/render.md, "Ray-traced shadows".
+    RayTraced,
+};
+
+// Ambient occlusion of the sky and ambient light.
+enum class AmbientOcclusion : std::uint8_t {
+    None,
+    RayTraced, // rays over the hemisphere of each pixel (gpu::Caps::rayTracing; falls back to None)
+};
+
+// How a frame rendered below the target's size (renderScale < 1) is scaled up.
+enum class Upscaling : std::uint8_t {
+    Bilinear, // in tone mapping
+    Spatial,  // MetalFX spatial upscaling after anti-aliasing (gpu::Caps::spatialUpscaling; else Bilinear)
+    // MetalFX temporal upscaling from the jittered frame, its depth and motion, in place of TAA's resolve (also at
+    // renderScale 1: anti-aliasing only). Needs TAA's inputs and gpu::Caps::temporalUpscaling; else Bilinear.
+    Temporal,
+};
+
 struct RenderSettings {
-    float renderScale = 1.0f; // 3D resolution relative to the target, 0.25..1 (tone mapping scales up)
-    int shadowCascades = 3;   // 0..kMaxCascades; 0: no sun shadows
+    float renderScale = 1.0f; // 3D resolution relative to the target, 0.25..1 (scaled up by `upscaling`)
+    Upscaling upscaling = Upscaling::Bilinear;
+    SunShadows sunShadows = SunShadows::ShadowMaps;
+    int shadowCascades = 3; // 0..kMaxCascades; 0: no sun shadows (also no ray-traced ones)
     std::uint32_t shadowMapSize = 2048;
-    float shadowDistance = 80.0f; // m: the far end of the last cascade
+    float shadowDistance = 80.0f; // m: the far end of the last cascade; ray-traced: skinned casters this near
     int shadowFilter = 2;         // 0: one tap, 1: four taps, 2: twelve Poisson taps
     TranslucentShadows translucentShadows = TranslucentShadows::Map;
+    // Ray-traced shadows: rays per pixel toward the sun's disc (1..8; the denoise pass and TAA average them), and
+    // the disc's size as a multiple of Environment::sunAngularRadius (0: hard shadows).
+    int shadowRays = 2;
+    float shadowSoftness = 1.0f;
+    AmbientOcclusion ambientOcclusion = AmbientOcclusion::None;
+    int occlusionRays = 2;        // 1..8 per pixel
+    float occlusionRadius = 1.0f; // m
+    float occlusionStrength = 1.0f;
     AntiAliasing antiAliasing = AntiAliasing::Taa;
     float sharpen = 0.25f; // after TAA, 0..1
     bool bloom = true;
@@ -66,11 +101,15 @@ struct RenderSettings {
 // What the renderer runs after the device fallbacks: an effect the device cannot run is replaced (TAA by FXAA) or
 // left out (shadows), with a log line when it changes.
 struct ActiveEffects {
-    int shadowCascades = 0;        // 0: no shadow maps (disabled, or no depth texture array the device can sample)
+    // RayTraced needs gpu::Caps::rayTracing and the ray query shaders in the build (cmake/QuenchDxc.cmake).
+    SunShadows sunShadows = SunShadows::ShadowMaps;
+    int shadowCascades = 0;        // 0: no shadow maps (disabled, ray traced, or no depth texture array to sample)
     bool shadowDepthClamp = false; // casters in front of the cascade are clamped, not clipped (gpu::Caps::depthClamp)
     // Map needs an Rgba16Float texture array the device can render to and sample; otherwise Dithered.
     TranslucentShadows translucentShadows = TranslucentShadows::Dithered;
-    AntiAliasing antiAliasing = AntiAliasing::None;
+    AmbientOcclusion ambientOcclusion = AmbientOcclusion::None;
+    AntiAliasing antiAliasing = AntiAliasing::None; // with Upscaling::Temporal: Taa's jitter, the upscaler resolves
+    Upscaling upscaling = Upscaling::Bilinear;
     bool bloom = false;
 
     friend bool operator==(const ActiveEffects&, const ActiveEffects&) = default;
@@ -107,7 +146,8 @@ struct PassContext {
     // LoadOp::Load. Overlay: the target.
     gpu::TextureRef color;
     // The scene depth (reversed: near 1, far 0). Shadow: the cascade's layer of the shadow map (standard depth).
-    // Sampled in PostHdr and Overlay where gpu::TextureUsage::Sampled is set in its desc.
+    // Sampled in PostHdr and Overlay where gpu::TextureUsage::Sampled is set in its desc. Empty in PostHdr with
+    // Upscaling::Spatial or Temporal (the image is at the target's size, the depth is not).
     gpu::TextureRef depth;
     gpu::TextureFormat colorFormat = gpu::TextureFormat::Invalid; // pipeline formats of `pass`
     gpu::TextureFormat depthFormat = gpu::TextureFormat::Invalid;
@@ -148,6 +188,10 @@ struct RenderStats {
     // GPU time of the latest skinning pass whose time is known (palette upload and compute, a few frames old);
     // -1: none yet, or no GPU timing on this device (gpu::Caps::gpuTiming).
     float skinningGpuMs = -1.0f;
+    // Ray tracing: instances in the top level, bottom levels built and refitted this frame.
+    std::uint32_t rayInstances = 0;
+    std::uint32_t rayBuilds = 0;
+    std::uint32_t rayRefits = 0;
 };
 
 class Renderer {

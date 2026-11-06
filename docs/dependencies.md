@@ -41,7 +41,7 @@ Build-time shader toolchain (host tools, not shipped in the binary):
 | SPIRV-Tools | `9a49b0883b9b635689a85b5647dbfcb223268151` | Apache-2.0 | legalization of glslang's HLSL output |
 | glslang | `168d452a4f460d24b588fed08477a81c44ee27a1` | BSD-3-Clause, BSD-2-Clause, MIT, Apache-2.0 | HLSL -> SPIR-V |
 | SPIRV-Cross | `6c09849fe88c48eaed08413aa022aaa136a3a057` | Apache-2.0 | SPIR-V -> MSL |
-| DXC | 1.9.2609 (`dxc_2026_09_29.zip`) | NCSA | HLSL -> DXIL, Windows hosts only |
+| DXC | 1.9.2609 (`dxc_2026_09_29.zip`; elsewhere built from source, see "Added in stage 9") | NCSA | HLSL -> DXIL on Windows hosts; HLSL -> SPIR-V for the entries with ray queries on every host |
 | `xcrun metal` | Xcode | Apple | MSL -> metallib |
 | Emscripten | 6.0.13 (Homebrew, not pinned) | MIT or NCSA; Apache-2.0 (with LLVM exception) parts | the `wasm-node` web check; needs Python 3.10+ |
 | Node.js | 26.13.0 (Homebrew, installed with Emscripten) | MIT | runs the WebAssembly tests |
@@ -131,6 +131,38 @@ only with asserts, so the engine wraps them in a container with a checksum. Even
 accumulation, foot placement and GPU skinning are the engine's own; ozz's `track_triggering_job` is not used (events
 are markers stored with each clip).
 
+## Added in stage 9
+
+DXC for the shader entries with ray queries ([Architecture](architecture.md#shaders)): a build-time host tool, not
+linked into or shipped with anything. glslang cannot parse `RayQuery` or `RaytracingAccelerationStructure`, and DXC
+publishes release binaries for Windows and Linux x86-64 only, so on macOS (and other non-Windows hosts) the engine
+builds the release tag from its source archives (`cmake/QuenchDxc.cmake`, `cmake/BuildDxc.cmake`), not from an SDK
+installed on the system (the LunarG Vulkan SDK ships a dxc; it is not used). On Windows hosts the release archive
+that `cmake/ShaderToolchain.cmake` already pins for DXIL is used.
+
+| Archive | Commit | SHA256 | Licence |
+|---|---|---|---|
+| DirectXShaderCompiler v1.9.2609 | `01b62ad47db7dee3dd33f90e7339cf9e860b3f93` | `c48c223df13ba425fd9beda9843754defbcd379a3811a6a0e590110be57168c7` | University of Illinois/NCSA (`LICENSE.TXT`; `ThirdPartyNotices.txt` lists parts under other permissive licences) |
+| SPIRV-Headers (its submodule at that tag) | `496543121ce6419f23d6fa5d7194ba66c36212d2` | `a9bb9c48713245eacf97cc539b6f1d45405a92d8813f8b82e635f0a085ee9898` | MIT |
+| SPIRV-Tools (its submodule at that tag) | `ef96ed763b43b59b33b31b362f09a02b729fa1c9` | `82c62146083fd558735a3171cf97cfc47903ca7d368482e87f94bd44883c0f00` | Apache-2.0 |
+| DirectX-Headers (its submodule at that tag) | `980971e835876dc0cde415e8f9bc646e64667bf7` | `b5a4b6d8806ff7f29f19879f83d015dbe8740676d4ca0b48647a789cc7773c4e` | MIT |
+
+The first configure on a machine that needs it (a build with shaders: not `headless`, not the web build) downloads
+the four archives, builds `dxc` and `libdxcompiler` with DXC's own CMake cache (`cmake/caches/PredefinedParams.cmake`,
+Release, no tests) and Ninja, and keeps only them with the two licence files in a per-machine tool cache
+(`QUENCH_TOOL_CACHE`; default `~/Library/Caches/Quench/dxc-1.9.2609-01b62ad` on macOS); every build tree and game on
+the machine shares it, and a file lock lets concurrent configures wait for one build. Measured on the M4 Pro
+(2026-11-06): 135 s of wall time (1146 s user, 95 s system), about 365 MB of scratch space at its peak (sources and
+build tree, deleted afterwards), 27 MB kept (`dxc` 0.6 MB, `libdxcompiler.dylib` 27.8 MB). `QUENCH_RAY_QUERY_DXC`
+names another dxc; with `QUENCH_RAY_QUERY_SHADERS=OFF`, or when the build fails (a warning), the ray query entries
+are left out and the renderer falls back as on a device without ray tracing. The iOS presets use the macOS DXC
+through `host-tools`' `quench_shaderc` like every other shader step. Neither game uses it, so no game pin is
+affected.
+
+glslang stays for every other entry (decided without the user, 2026-11-06): its SPIR-V of the existing shaders is
+what every golden image was made with; DXC's HLSL rules differ in places that would mean checking every shader and
+capture again; and glslang is a library inside `quench_shaderc` where DXC is a separate executable built from source.
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.
@@ -186,6 +218,7 @@ Already pinned and kept: Dear ImGui (diagnostics). miniaudio was pinned with sta
 - **glslang** (pinned commit): its configure step warns that `ENABLE_HLSL` is deprecated and that the HLSL front end
   will be removed in a future major release (KhronosGroup/glslang#4210). The pin keeps working. Before moving the
   glslang pin, check that the HLSL front end is still there; if it is gone, the SPIR-V path needs another HLSL
-  compiler on the Mac (DXC can emit SPIR-V; whether it builds and runs on macOS hosts is not checked yet).
+  compiler on the Mac: DXC builds and runs on macOS hosts and emits the SPIR-V of the ray query entries since stage
+  9 ("Added in stage 9"), so it is the candidate.
 - **SPIRV-Cross**: built from an archive without `.git`, its configure step picks up the git hash of the enclosing
   repository (the engine's or a game's) as its version string. Cosmetic; it does not affect the output.

@@ -138,6 +138,10 @@ if(NOT QUENCH_HEADLESS)
                                           src/gpu/metal/MetalDevice.mm)
         target_compile_options(quench_gpu PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
         target_link_libraries(quench_gpu PRIVATE "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+        # MetalFX (upscaling on the native Metal backend); the iOS Simulator's SDK does not have it.
+        if(NOT CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+            target_link_libraries(quench_gpu PRIVATE "-framework MetalFX")
+        endif()
     endif()
     quench_configure_target(quench_gpu)
     target_link_libraries(quench_gpu PUBLIC quench_core quench_gpu_shaders PRIVATE SDL3::SDL3-static quench_glm)
@@ -201,6 +205,7 @@ if(NOT QUENCH_HEADLESS)
         src/render/Effects.cpp
         src/render/MeshBuilder.cpp
         src/render/Projection.cpp
+        src/render/RayTracing.cpp
         src/render/Renderer.cpp
         src/render/Scene.cpp
         src/render/SceneAssets.cpp
@@ -208,13 +213,16 @@ if(NOT QUENCH_HEADLESS)
     quench_configure_target(quench_render)
     target_link_libraries(quench_render PUBLIC quench_core quench_assets quench_gpu quench_gpu_shaders quench_glm)
     quench_add_shaders(quench_render NAME render_frame SOURCE src/render/shaders/frame.hlsl
-        ENTRIES fullscreen_vs:vertex shadow_vs:vertex shadow_fs:fragment sky_fs:fragment velocity_fs:fragment
-                velocity_obj_vs:vertex velocity_skin_vs:vertex velocity_obj_fs:fragment taa_fs:fragment
-                bloom_down_fs:fragment
-                bloom_up_fs:fragment tonemap_fs:fragment fxaa_fs:fragment)
+        ENTRIES fullscreen_vs:vertex shadow_vs:vertex shadow_fs:fragment depth_vs:vertex sky_fs:fragment
+                velocity_fs:fragment velocity_obj_vs:vertex velocity_skin_vs:vertex velocity_obj_fs:fragment
+                taa_fs:fragment bloom_down_fs:fragment bloom_up_fs:fragment tonemap_fs:fragment fxaa_fs:fragment)
     quench_add_shaders(quench_render NAME render_standard SOURCE src/render/shaders/standard.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_fs:fragment surface_transmittance_fs:fragment)
     quench_add_shaders(quench_render NAME render_skin SOURCE src/render/shaders/skin.hlsl ENTRIES skin_cs:compute)
+    # Ray-traced shadows (gpu::Caps::rayTracing): rt_shadow_fs needs DXC (cmake/QuenchDxc.cmake); without it the set
+    # has rt_denoise_fs only and the renderer uses the shadow maps.
+    quench_add_shaders(quench_render NAME render_raytrace SOURCE src/render/shaders/raytrace.hlsl
+        ENTRIES rt_shadow_fs:fragment:rayquery rt_denoise_fs:fragment)
 
     # SDL main callbacks (src/app/Main.cpp): an object library, so the symbols land in the game executable.
     add_library(quench_main OBJECT src/app/Main.cpp)

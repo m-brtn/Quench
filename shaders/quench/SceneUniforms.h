@@ -44,7 +44,9 @@ struct QUENCH_ALIGN16 FrameUniforms {
                           // w: sun scattering (0..1)
     float4 fogColor;      // rgb: fog radiance away from the sun, w: maximum fog amount (0..1)
     float4 screen;        // xy: render size (pixels), zw: 1 / render size
-    float4 options;       // x: exposure, y: frame index, z: TAA jitter on (0/1), w: unused
+    // x: exposure, y: frame index, z: TAA jitter on (0/1), w: the ray-traced mask on fragment sampler 6 (bit 0: its
+    // rgb is the sun's visibility, in place of the shadow maps; bit 1: its alpha is the ambient occlusion; 0: unread)
+    float4 options;
     // Translucent casters (render::ShadowMode::Translucent) in the transmittance maps: x: the cascades that have them
     // (bit n: cascade n; 0: none, the maps are not read), y: 1 / transmittance map size, zw: unused.
     float4 shadowTransmittance;

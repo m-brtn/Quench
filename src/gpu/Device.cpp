@@ -214,6 +214,34 @@ Result<ComputePipeline> Device::createComputePipeline(const ComputePipelineDesc&
     return adopt<ComputePipeline>(m_impl.get(), *native);
 }
 
+Result<AccelerationStructure> Device::createAccelerationStructure(const AccelerationStructureDesc& desc) {
+    if (!m_impl->caps.rayTracing) return Error{std::format("no ray tracing on {}", m_impl->caps.deviceName)};
+    QUENCH_ASSERT(desc.level == AccelerationStructureLevel::Top ? desc.instanceCapacity > 0
+                                                                : desc.vertexCount > 0 && desc.triangleCount > 0,
+                  "empty acceleration structure");
+    Result<void*> native = m_impl->createAccelerationStructure(desc);
+    if (!native) return Error{native.error()};
+    AccelerationStructure structure = adopt<AccelerationStructure>(m_impl.get(), *native);
+    Access::info(structure) = desc;
+    Access::info(structure).name = {};
+    return structure;
+}
+
+Result<Upscaler> Device::createUpscaler(const UpscalerDesc& desc) {
+    const bool temporal = desc.type == UpscalerType::Temporal;
+    if (temporal ? !m_impl->caps.temporalUpscaling : !m_impl->caps.spatialUpscaling)
+        return Error{std::format("no {} upscaling on {}", temporal ? "temporal" : "spatial", m_impl->caps.deviceName)};
+    QUENCH_ASSERT(desc.inputWidth > 0 && desc.inputHeight > 0 && desc.outputWidth >= desc.inputWidth &&
+                      desc.outputHeight >= desc.inputHeight,
+                  "an upscaler's output is at least its input");
+    Result<void*> native = m_impl->createUpscaler(desc);
+    if (!native) return Error{native.error()};
+    Upscaler upscaler = adopt<Upscaler>(m_impl.get(), *native);
+    Access::info(upscaler) = desc;
+    Access::info(upscaler).name = {};
+    return upscaler;
+}
+
 // ------------------------------------------------------------------ convenience transfers
 
 Result<void> Device::upload(const BufferRef& destination, std::uint32_t offset, std::span<const std::byte> data) {
@@ -389,6 +417,9 @@ std::vector<GpuTiming> Device::gpuTimings(const Fence& fence) const {
     if (!m_impl->caps.gpuPassTiming || !isSignaled(fence)) return {};
     return m_impl->gpuTimings(Access::native(fence));
 }
+
+void Device::setPassTiming(bool enabled) { m_impl->passTiming = enabled; }
+bool Device::passTiming() const { return m_impl->passTiming && m_impl->caps.gpuPassTiming; }
 
 void Device::waitIdle() { m_impl->waitIdle(); }
 

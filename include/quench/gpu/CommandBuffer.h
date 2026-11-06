@@ -9,6 +9,7 @@
 #include <quench/gpu/ShaderBlob.h>
 #include <quench/gpu/Types.h>
 
+#include <array>
 #include <cstdint>
 #include <span>
 
@@ -76,6 +77,37 @@ struct BlitDesc {
     bool cycle = false;
 };
 
+enum class RayInstanceFlags : std::uint8_t {
+    None = 0,           // the geometry decides: opaque
+    Opaque = 1 << 0,    // hits are committed without the shader seeing them as candidates
+    NonOpaque = 1 << 1, // every hit is a candidate the shader commits or ignores (alpha tests, transmittance)
+};
+QUENCH_FLAGS(RayInstanceFlags)
+
+// One instance of a top-level acceleration structure.
+struct RayInstance {
+    const AccelerationStructure* bottomLevel = nullptr;
+    // Object to world: the three rows of a 3 x 4 matrix.
+    std::array<float, 12> transform{1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+    std::uint32_t id = 0; // what shaders read as CandidateInstanceID() / CommittedInstanceID(); 24 bits
+    std::uint8_t mask = 0xFF;
+    RayInstanceFlags flags = RayInstanceFlags::None;
+};
+
+// Upscaler inputs and output, sizes as the upscaler was created for. Temporal upscaling also takes the depth, the
+// motion and the projection's jitter of the frame.
+struct UpscaleDesc {
+    TextureRef color{};
+    TextureRef depth{};
+    TextureRef motion{};
+    TextureRef output{};  // TextureUsage::ShaderWrite
+    float jitterX = 0.0f; // how far the jitter moved the image, in input pixels (+x right, +y down)
+    float jitterY = 0.0f;
+    float motionScaleX = 1.0f; // turns the motion texture's values into input pixels toward the previous frame
+    float motionScaleY = 1.0f;
+    bool reset = false; // forget the history (camera cut, resize)
+};
+
 class RenderPass {
 public:
     RenderPass() = default;
@@ -103,6 +135,9 @@ public:
     }
     void bindStorageBuffers(ShaderStage stage, std::uint32_t firstSlot, std::span<const BufferRef> buffers);
     void bindStorageTextures(ShaderStage stage, std::uint32_t firstSlot, std::span<const TextureRef> textures);
+    // A top level for ray queries (Caps::rayTracing), slot n of the stage's acceleration structures (the
+    // shader's RaytracingAccelerationStructure registers in order, after its storage buffers).
+    void bindAccelerationStructure(ShaderStage stage, std::uint32_t slot, const AccelerationStructure& topLevel);
 
     // Uniform data for the following draws (also of later passes in this command buffer).
     void pushUniforms(ShaderStage stage, std::uint32_t slot, const void* data, std::uint32_t size);
@@ -182,6 +217,8 @@ public:
     void bindPipeline(const ComputePipeline& pipeline);
     // Read-only storage buffers (BufferUsage::ComputeStorageRead) in slot order after the shader's samplers.
     void bindStorageBuffers(std::uint32_t firstSlot, std::span<const BufferRef> buffers);
+    // A top level for ray queries (Caps::rayTracing), as RenderPass::bindAccelerationStructure.
+    void bindAccelerationStructure(std::uint32_t slot, const AccelerationStructure& topLevel);
     void pushUniforms(std::uint32_t slot, const void* data, std::uint32_t size);
     template <class T>
     void pushUniforms(std::uint32_t slot, const T& data) {
@@ -196,6 +233,34 @@ private:
     CommandBuffer* m_commands = nullptr;
     void* m_native = nullptr;
     bool m_pipelineBound = false;
+};
+
+// Builds and updates acceleration structures (Caps::rayTracing). A top level built in the pass sees the bottom
+// levels built or refitted before it in the same pass; later passes see all of them.
+class AccelerationStructurePass {
+public:
+    AccelerationStructurePass() = default;
+    ~AccelerationStructurePass() { end(); }
+    AccelerationStructurePass(AccelerationStructurePass&& other) noexcept;
+    AccelerationStructurePass& operator=(AccelerationStructurePass&& other) noexcept;
+    AccelerationStructurePass(const AccelerationStructurePass&) = delete;
+    AccelerationStructurePass& operator=(const AccelerationStructurePass&) = delete;
+
+    explicit operator bool() const { return m_native != nullptr; }
+    void end();
+
+    // A bottom level from its triangles (at most the counts it was created for).
+    void build(const AccelerationStructure& bottomLevel, const RayGeometry& geometry);
+    // Moves the vertices of a built bottom level (created with allowRefit): the same triangles, new positions.
+    // Faster than a build; the structure degrades when vertices move far from where it was built.
+    void refit(const AccelerationStructure& bottomLevel, const RayGeometry& geometry);
+    // A top level from instances of built bottom levels (at most instanceCapacity).
+    void build(const AccelerationStructure& topLevel, std::span<const RayInstance> instances);
+
+private:
+    friend class CommandBuffer;
+    CommandBuffer* m_commands = nullptr;
+    void* m_native = nullptr;
 };
 
 class CommandBuffer {
@@ -217,6 +282,8 @@ public:
     CopyPass beginCopyPass();
     // `writes`: the read-write storage buffers in slot order (at most 8).
     ComputePass beginComputePass(std::span<const StorageBufferWrite> writes);
+    // Caps::rayTracing.
+    AccelerationStructurePass beginAccelerationStructurePass();
 
     // Uniform data for the following draws (or dispatches: ShaderStage::Compute), outside a pass.
     void pushUniforms(ShaderStage stage, std::uint32_t slot, const void* data, std::uint32_t size);
@@ -230,6 +297,8 @@ public:
     void generateMipmaps(const TextureRef& texture);
     // Scaled copy between textures of any formats the GPU can render to. Outside passes.
     void blit(const BlitDesc& blit);
+    // Writes the upscaled frame into desc.output (Caps::spatialUpscaling or Caps::temporalUpscaling). Outside passes.
+    void upscale(const Upscaler& upscaler, const UpscaleDesc& desc);
 
     // Waits until the window's swapchain has a free texture and acquires it (a color target the size of the
     // window's pixels). Empty when the window is minimized or hidden: skip the drawing to it and submit anyway.
@@ -241,8 +310,9 @@ public:
     void popDebugGroup();
     void insertDebugLabel(const char* text);
 
-    // A range of passes whose GPU time Device::gpuTimings reports after submitWithFence (Caps::gpuPassTiming;
-    // without it these do nothing). Outside passes; ranges nest, the name is copied.
+    // A range of passes whose GPU time Device::gpuTimings reports after submitWithFence (Caps::gpuPassTiming, and
+    // Device::setPassTiming on when the command buffer was acquired; otherwise these do nothing). Outside passes;
+    // ranges nest, the name is copied.
     void beginTiming(const char* name);
     void endTiming();
 
@@ -256,10 +326,12 @@ private:
     friend class RenderPass;
     friend class CopyPass;
     friend class ComputePass;
+    friend class AccelerationStructurePass;
     detail::DeviceImpl* m_device = nullptr;
     void* m_native = nullptr;
     bool m_passOpen = false;
     bool m_swapchainAcquired = false;
+    bool m_timed = false; // beginTiming records ranges
 };
 
 } // namespace quench::gpu

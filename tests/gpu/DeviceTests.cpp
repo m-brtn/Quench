@@ -254,6 +254,24 @@ QUENCH_TEST(generate_mipmaps) {
     CHECK(l1[0].r == 255 && l1[2].r == 255 && l1[1].r == 0 && l1[3].r == 0, "level 1: %d %d / %d %d", l1[0].r, l1[1].r,
           l1[2].r, l1[3].r);
     CHECK(l2.r >= 126 && l2.r <= 129 && l2.a == 255, "level 2: %d alpha %d", l2.r, l2.a);
+
+    // Non-square: 8 x 2, the last levels 2 x 1 and 1 x 1 (SDL's Vulkan driver blits them to empty regions).
+    Result<Texture> wide = device.createTexture({.usage = TextureUsage::Sampled | TextureUsage::ColorTarget,
+                                                 .width = 8,
+                                                 .height = 2,
+                                                 .mipLevels = fullMipCount(8, 2),
+                                                 .name = "wide mips"});
+    REQUIRE(wide && wide->desc().mipLevels == 4, "wide texture");
+    std::vector<Rgba8> widePixels(16, Rgba8{200, 100, 50, 255});
+    REQUIRE(device.upload({.texture = *wide}, asBytes(widePixels)), "upload wide");
+    commands = device.acquireCommandBuffer();
+    commands.generateMipmaps(*wide);
+    REQUIRE(commands.submit(), "submit wide");
+    Result<std::vector<std::byte>> last = device.download({.texture = *wide, .mipLevel = 3});
+    REQUIRE(last && last->size() == 4, "download level 3");
+    const Rgba8 l3 = *reinterpret_cast<const Rgba8*>(last->data());
+    CHECK(std::abs(l3.r - 200) <= 2 && std::abs(l3.g - 100) <= 2 && l3.a == 255, "wide level 3: %d %d %d %d", l3.r,
+          l3.g, l3.b, l3.a);
 }
 
 QUENCH_TEST(blit_nearest) {
@@ -324,6 +342,21 @@ QUENCH_TEST(gpu_pass_timing) {
         pass.pushUniforms(ShaderStage::Fragment, 0, Color{1, 0, 0, 1});
         for (int i = 0; i < draws; ++i) pass.draw(3);
     };
+
+    // Off by default: a command buffer acquired before setPassTiming(true) records no ranges.
+    CHECK(!device.passTiming(), "pass timing on by default");
+    {
+        CommandBuffer untimed = device.acquireCommandBuffer();
+        untimed.beginTiming("off");
+        draw(untimed, 1);
+        untimed.endTiming();
+        Result<Fence> f = untimed.submitWithFence();
+        REQUIRE(f, "submit: %s", f.error().c_str());
+        device.wait(*f);
+        CHECK(device.gpuTimings(*f).empty(), "ranges recorded with pass timing off");
+    }
+    device.setPassTiming(true);
+    CHECK(device.passTiming() == device.caps().gpuPassTiming, "passTiming() %d", int(device.passTiming()));
 
     // Ranges "a" and "b" at the top level, "c" inside "b", "empty" without a pass (left out of the results).
     CommandBuffer commands = device.acquireCommandBuffer();

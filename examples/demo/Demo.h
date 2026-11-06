@@ -116,6 +116,7 @@ std::unique_ptr<Section> makeInputSection();
 std::unique_ptr<Section> makeAssetsSection();
 std::unique_ptr<Section> makeAudioSection();
 std::unique_ptr<Section> makeAnimationSection();
+std::unique_ptr<Section> makeRayTracingSection();
 
 // ---- helpers shared by the sections (Common.cpp)
 

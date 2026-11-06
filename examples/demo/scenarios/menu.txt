@@ -3,7 +3,7 @@
 
 wait 0.1
 expect section == 0
-expect sections == 10
+expect sections == 11
 tap ]
 until section == 1 1
 tap PageDown
@@ -32,10 +32,13 @@ gamepad button rightshoulder tap
 until section == 8 1
 gamepad button rightshoulder tap
 until section == 9 1
+# The eleventh section has no key; the shoulders reach it.
+gamepad button rightshoulder tap
+until section == 10 1
 gamepad button rightshoulder tap
 until section == 0 1
 gamepad button leftshoulder tap
-until section == 9 1
+until section == 10 1
 gamepad detach
 until gamepad == 0 2
 
@@ -44,11 +47,13 @@ until ui == 0 1
 tap H
 until ui == 1 1
 
-# Mouse and touch on the list: entry 2 (Shadows) and entry 4 (Post-processing).
+# Mouse and touch on the list: entry 2 (Shadows), entry 4 (Post-processing) and entry 11 (Ray tracing).
 click @menu:shadows
 until section == 1 1
 touch @menu:post
 until section == 3 1
+click @menu:raytracing
+until section == 10 1
 section physics
 expect section == 5
 quit

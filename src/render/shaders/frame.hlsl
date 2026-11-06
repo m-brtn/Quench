@@ -24,7 +24,8 @@ float2 clipToUv(float4 c) {
 // Solid casters without a cut-out: depth only. Cut-out and translucent casters run their surface in the cascades
 // (surface_shadow_fs and surface_transmittance_fs in quench/SurfaceEntries.hlsli).
 
-#if defined(QUENCH_ENTRY_shadow_vs) || defined(QUENCH_ENTRY_velocity_obj_vs) || defined(QUENCH_ENTRY_velocity_skin_vs)
+#if defined(QUENCH_ENTRY_shadow_vs) || defined(QUENCH_ENTRY_depth_vs) || defined(QUENCH_ENTRY_velocity_obj_vs) || \
+    defined(QUENCH_ENTRY_velocity_skin_vs)
 cbuffer QuenchDrawBlock : QUENCH_UNIFORM(1) {
     DrawUniforms draw;
 };
@@ -36,6 +37,16 @@ StructuredBuffer<InstanceData> instances : QUENCH_STORAGE(0);
 float4 shadow_vs(float3 position : TEXCOORD0, uint instance : SV_InstanceID) : SV_Position {
     const InstanceData inst = instances[uint(draw.info.x) + instance];
     return mul(quenchFrame.shadowViewProj[int(draw.info.y)], mul(inst.model, float4(position, 1.0)));
+}
+#endif
+
+#if defined(QUENCH_ENTRY_depth_vs)
+StructuredBuffer<InstanceData> instances : QUENCH_STORAGE(0);
+
+// The camera's depth of plain surfaces (the ray tracing prepass).
+float4 depth_vs(float3 position : TEXCOORD0, uint instance : SV_InstanceID) : SV_Position {
+    const InstanceData inst = instances[uint(draw.info.x) + instance];
+    return mul(quenchFrame.viewProj, mul(inst.model, float4(position, 1.0)));
 }
 #endif
 

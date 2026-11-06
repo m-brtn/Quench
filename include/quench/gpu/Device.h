@@ -53,6 +53,11 @@ struct Caps {
     bool indirectDraw = false;   // RenderPass::draw*Indirect (not in the iOS Simulator)
     bool bcTextures = false;     // BC1-BC7 can be sampled
     bool astcTextures = false;   // ASTC 4x4 can be sampled
+    // Acceleration structures and ray queries in fragment and compute shaders (native Metal backend on GPUs with
+    // ray tracing; not on SDL GPU, which has no acceleration structures).
+    bool rayTracing = false;
+    bool spatialUpscaling = false;  // UpscalerType::Spatial (MetalFX on the native Metal backend)
+    bool temporalUpscaling = false; // UpscalerType::Temporal (MetalFX on the native Metal backend)
 };
 
 // GPU time of one range of passes (CommandBuffer::beginTiming .. endTiming). A GPU overlaps passes (on Apple GPUs the
@@ -91,6 +96,10 @@ public:
     // The shaders are created from the blobs for the device's shader format and released after the pipeline.
     Result<GraphicsPipeline> createPipeline(const GraphicsPipelineDesc& desc);
     Result<ComputePipeline> createComputePipeline(const ComputePipelineDesc& desc);
+    // Caps::rayTracing; built in an AccelerationStructurePass.
+    Result<AccelerationStructure> createAccelerationStructure(const AccelerationStructureDesc& desc);
+    // Caps::spatialUpscaling or Caps::temporalUpscaling, by type.
+    Result<Upscaler> createUpscaler(const UpscalerDesc& desc);
 
     // Empty on failure (logged).
     CommandBuffer acquireCommandBuffer();
@@ -128,6 +137,11 @@ public:
     // unavailable (!Caps::gpuPassTiming), not yet signalled or without ranges. A range whose passes could not all be
     // timed (more passes than the backend samples per command buffer) is left out.
     std::vector<GpuTiming> gpuTimings(const Fence& fence) const;
+    // Per-pass timing costs CPU time in every timed command buffer (about 0.1 ms per frame in the engine demo), so it
+    // is off until something reads gpuTimings: command buffers acquired while it is on record their ranges
+    // (Caps::gpuPassTiming).
+    void setPassTiming(bool enabled);
+    bool passTiming() const;
     void waitIdle();
 
     // Live resources created by this device (leak checks).

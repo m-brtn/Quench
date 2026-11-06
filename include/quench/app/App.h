@@ -74,7 +74,8 @@ struct FrameStats {
     double gpuMs = -1.0; // last measured GPU time of a frame; -1 where unavailable (!gpu::Caps::gpuTiming)
     int ticks = 0;       // simulation ticks in the last frame
     // GPU time per timed range of passes of the last measured frame, in the order they began (gpu::Caps::gpuPassTiming;
-    // empty without it): the app's "game" (around Game::render, with the renderer's ranges inside), "ui" and "blit".
+    // empty without it, and unless App::requestPassTiming, a perf region or --gpu-pass-timing turned the ranges on a
+    // few frames before): the app's "game" (around Game::render, with the renderer's ranges inside), "ui" and "blit".
     std::vector<gpu::GpuTiming> gpuPasses;
 };
 
@@ -187,6 +188,10 @@ public:
     bool deterministic() const;
     bool scripted() const; // a --script scenario runs (games may start from defaults and keep user files untouched)
     const FrameStats& stats() const;
+    // FrameStats::gpuPasses is filled while something reads it: call this in every frame that shows the per-pass
+    // times (a frame panel). Also on during a scenario's perf region and with --gpu-pass-timing; otherwise the
+    // ranges are not recorded (gpu::Device::setPassTiming), which saves CPU time per frame.
+    void requestPassTiming();
     // The part of the window not covered by notches, rounded corners or system bars, in points.
     WindowRect safeArea() const;
 

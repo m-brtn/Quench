@@ -79,19 +79,35 @@ void effectsPanel(Context& c, const render::RenderSettings& settings) {
     ImGui::TextWrapped("%u x %u (scale %.2f), %u draws, %u instances", s.renderWidth, s.renderHeight,
                        double(settings.renderScale), s.draws, s.instances);
     ImGui::TextWrapped("Culled %u, local lights %u, shadow draws %u", s.culled, s.lights, s.shadowDraws);
-    ImGui::TextWrapped("Shadows: %d of %d cascades%s", e.shadowCascades, settings.shadowCascades,
-                       e.shadowCascades > 0 ? (e.shadowDepthClamp ? ", depth clamp" : ", no depth clamp (fallback)")
-                                            : "");
+    if (e.sunShadows == render::SunShadows::RayTraced)
+        ImGui::TextWrapped("Shadows: ray traced, %u instances in the top level", s.rayInstances);
+    else
+        ImGui::TextWrapped("Shadows: %d of %d cascades%s%s", e.shadowCascades, settings.shadowCascades,
+                           e.shadowCascades > 0 ? (e.shadowDepthClamp ? ", depth clamp" : ", no depth clamp (fallback)")
+                                                : "",
+                           settings.sunShadows != e.sunShadows ? " (fallback from ray tracing)" : "");
+    if (settings.ambientOcclusion != render::AmbientOcclusion::None ||
+        e.ambientOcclusion != render::AmbientOcclusion::None)
+        ImGui::TextWrapped("Ambient occlusion: %s", e.ambientOcclusion == render::AmbientOcclusion::RayTraced
+                                                        ? "ray traced"
+                                                        : "none (fallback)");
     ImGui::TextWrapped("Translucent shadows: %s%s, %u transmittance draws",
                        e.translucentShadows == render::TranslucentShadows::Map ? "transmittance map" : "dithered",
                        e.translucentShadows != settings.translucentShadows ? " (fallback)" : "", s.transmittanceDraws);
     ImGui::TextWrapped("Anti-aliasing: %s%s", antiAliasingName(e.antiAliasing),
                        e.antiAliasing != settings.antiAliasing ? " (fallback)" : "");
+    if (settings.upscaling != render::Upscaling::Bilinear || e.upscaling != render::Upscaling::Bilinear)
+        ImGui::TextWrapped("Upscaling: %s%s",
+                           e.upscaling == render::Upscaling::Temporal  ? "MetalFX temporal"
+                           : e.upscaling == render::Upscaling::Spatial ? "MetalFX spatial"
+                                                                       : "bilinear",
+                           e.upscaling != settings.upscaling ? " (fallback)" : "");
     ImGui::TextWrapped("Bloom: %s, sky: %s", e.bloom ? "on" : "off", settings.sky ? "on" : "off");
     ImGui::TextWrapped("Formats: HDR %s, depth %s", gpu::formatInfo(c.renderer.hdrFormat()).name,
                        gpu::formatInfo(c.renderer.depthFormat()).name);
-    ImGui::TextWrapped("Caps: depth clamp %s, GPU timing %s", caps.depthClamp ? "yes" : "no",
-                       caps.gpuTiming ? "yes" : "no");
+    ImGui::TextWrapped("Caps: depth clamp %s, GPU timing %s, ray tracing %s, MetalFX %s",
+                       caps.depthClamp ? "yes" : "no", caps.gpuTiming ? "yes" : "no", caps.rayTracing ? "yes" : "no",
+                       caps.temporalUpscaling ? "yes" : "no");
 }
 
 std::optional<bool> parseBool(std::string_view value) {

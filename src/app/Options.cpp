@@ -46,6 +46,8 @@ const char* optionsHelp() {
            "                       elsewhere SDL GPU)\n"
            "  --gpu-driver NAME    metal, vulkan or direct3d12 (SDL GPU's driver)\n"
            "  --gpu-debug          GPU validation (backend debug mode)\n"
+           "  --gpu-pass-timing    GPU time per pass in every frame (native Metal backend); otherwise only while the\n"
+           "                       game shows it or a scenario's perf region runs\n"
            "  --present-mode MODE  vsync, immediate or mailbox\n"
            "  --hdr MODE           HDR output: off (SDR), on (where the GPU backend supports it) or auto (while\n"
            "                       the display has HDR range); default: the game's choice, normally off\n"
@@ -169,6 +171,8 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
             options.hotReload = true;
         } else if (flag == "--gpu-debug" && !inlineValue) {
             options.gpuDebug = true;
+        } else if (flag == "--gpu-pass-timing" && !inlineValue) {
+            options.gpuPassTiming = true;
         } else if (flag == "--version" && !inlineValue) {
             options.printVersion = true;
         } else if ((flag == "--help" || flag == "-h") && !inlineValue) {

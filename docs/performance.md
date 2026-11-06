@@ -60,9 +60,15 @@ a claim rests on.
 With `gpu::Caps::gpuPassTiming` (the native Metal backend; SDL GPU has no timestamp queries, so it reports false and
 logs nothing of this) the frame's command buffer is timed per range of passes ([Architecture](architecture.md#gpu-timestamps-per-pass)):
 the app's `game` (around `Game::render`), `ui` and `blit`, and inside `game` the renderer's `upload` (its per-frame
-buffers), `shadows` (all cascades), `hdr` (the main pass with the sky), `taa`, `bloom` and `tonemap`. A range's time
-is its busy time: how long any stage of its passes ran, from timestamps at the stage boundaries. `perf_end` logs one
-more line after the perf line:
+buffers), `accel` (acceleration structure builds and refits), `prepass` (the depth prepass for the rays), `raytrace`
+(with `rays` and `denoise` inside), `shadows` (all cascades), `hdr` (the main pass with the sky), `taa`, `upscale`
+(MetalFX), `bloom` and `tonemap`; the ray tracing and MetalFX ranges only where those run. A range's time is its busy
+time: how long any stage of its passes ran, from timestamps at the stage boundaries.
+
+The ranges are recorded only while something reads them: a scenario's perf region, a frame panel that calls
+`App::requestPassTiming()` (the demo's menu and ray tracing windows) or `--gpu-pass-timing`
+([App shell](app.md#command-line-flags)). Recording costs CPU time in every frame (0.09 ms in the demo's shadows
+section and 0.14 ms in its ray tracing section, CPU p50, below). `perf_end` logs one more line after the perf line:
 
 ```
 perf: materials: GPU busy ms p50 per timed range: game 3.908, upload 0.006, shadows 0.344, hdr 2.070, taa 0.860, bloom 0.471, tonemap 0.269, ui 0.081, blit 0.113; top-level ranges: sum 4.143, span 4.106 = 99.5% of the frame's GPU time
@@ -113,6 +119,90 @@ GPU p50 15 ms as for the other sections. It is above the sections' budget of 2.0
 instances). No iPhone budget for it yet: it has not run on the phone.
 
 ## Measurements
+
+Stage 9 (second half: ray tracing, MetalFX, timing off unless read), 2026-11-06 08:21-08:49, Release, vsync, Mac,
+Apple M4 Pro, `--frame-size 1920x1080`, `--audio-device null`. The display paced at about 120 Hz (hello 1167 to 1199
+frames in 10 s, the demo 493 to 601 in 5 s). All values in milliseconds, medians of the runs.
+
+SDL GPU (the default) before and after, interleaved: `96a50e7` (the first half, its Release binaries in a temporary
+copy) against the working tree. The demo ran `96a50e7`'s `benchmark.txt` in both builds (the same regions; the new
+ray tracing region is measured below):
+
+| Run | Runs | CPU p50 | CPU p99 | GPU p50 |
+|---|---|---|---|---|
+| hello | 11 + 11 | 0.265 / 0.266 (+0.4 %) | 0.455 / 0.427 (-6.2 %) | 0.551 / 0.551 |
+| demo materials | 3 + 3 | 1.091 / 1.083 (-0.7 %) | 1.487 / 1.438 (-3.3 %) | 5.687 / 5.125 |
+| demo shadows | 3 + 3 | 0.982 / 0.991 (+0.9 %) | 1.315 / 1.337 (+1.7 %) | 5.375 / 5.732 |
+| demo sky | 3 + 3 | 0.949 / 0.917 (-3.4 %) | 1.269 / 1.256 (-1.0 %) | 5.575 / 3.539 |
+| demo post | 3 + 3 | 0.985 / 0.973 (-1.2 %) | 1.256 / 1.294 (+3.0 %) | 3.346 / 3.286 |
+| demo hdr | 3 + 3 | 0.897 / 0.859 (-4.2 %) | 1.234 / 1.153 (-6.6 %) | 2.739 / 4.171 |
+| demo hdr_on | 3 + 3 | 0.939 / 0.929 (-1.1 %) | 1.246 / 1.248 (+0.2 %) | 2.840 / 3.351 |
+| demo physics | 3 + 3 | 1.050 / 1.036 (-1.3 %) | 1.426 / 1.381 (-3.2 %) | 4.109 / 2.896 |
+| demo assets | 3 + 3 | 0.954 / 0.998 (+4.6 %) | 1.357 / 1.421 (+4.7 %) | 3.393 / 3.505 |
+| demo audio | 3 + 3 | 0.950 / 0.955 (+0.5 %) | 1.296 / 1.326 (+2.3 %) | 3.452 / 4.485 |
+| demo animation | 3 + 3 | 2.707 / 2.699 (-0.3 %) | 3.656 / 3.633 (-0.6 %) | 5.311 / 5.134 |
+
+Every row within 5 %: the SDL GPU path is unchanged (the renderer checks the new settings and skips the ray tracing
+and MetalFX work; hello does not use the renderer). The GPU p50 moves with the GPU clock run to run, as before.
+
+The native backend without timestamps against SDL GPU (the first half measured 6 to 11 % more CPU time on the native
+backend with timestamps on in every frame): the working tree, one section per process (`section`, `wait 1`, a 5 s
+region), interleaved, 3 + 3 runs:
+
+| Section | CPU p50 SDL GPU / native | CPU p99 SDL GPU / native | GPU p50 SDL GPU / native |
+|---|---|---|---|
+| materials | 1.094 / 1.033 (-5.6 %) | 1.510 / 1.423 (-5.8 %) | 5.509 / 5.286 |
+| shadows | 0.948 / 0.898 (-5.3 %) | 1.303 / 1.297 (-0.5 %) | 3.591 / 3.376 |
+| animation (crowd of 24) | 1.554 / 1.544 (-0.6 %) | 2.117 / 2.095 (-1.0 %) | 4.669 / 4.634 |
+
+Without timestamps the native backend's CPU time is that of SDL GPU or lower, within the noise; CPU profiles of the
+two (`sample` during the shadows section, one run each) showed the same distribution between the renderer, the
+encoders and the driver. Nothing in the backend needed a fix: the gap was the timestamps, which are now off unless read. Their
+cost when on, the native backend, one process per run, 3 + 3 runs:
+
+| Section | CPU p50 off / on | CPU p99 off / on | GPU p50 off / on |
+|---|---|---|---|
+| shadows | 0.909 / 0.999 (+0.09) | 1.188 / 1.405 | 3.375 / 3.389 |
+| raytracing | 1.311 / 1.455 (+0.14) | 1.871 / 2.011 | 6.160 / 6.223 |
+
+The ray tracing section on the native backend (`scenarios/raytracing_benchmark.txt`: the sun turning, the character
+walking, 12 instances in the top level; 3 runs) and, for the fallback rows, the same scenario on SDL GPU (1 run;
+every region there runs shadow maps with bilinear scaling at the region's render size). GPU busy time per range,
+medians of the runs:
+
+| Region | Render size | CPU p50 | CPU p99 | GPU p50 | accel | prepass | rays | denoise | shadows | hdr | taa | upscale |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| RT shadows (2 rays, softness 1) + RT AO (2 rays) | 1920 x 1080 | 1.420 | 2.003 | 6.184 | 0.446 | 0.040 | 3.075 | 0.972 | | 0.478 | 0.603 | |
+| RT shadows, no AO | 1920 x 1080 | 1.478 | 1.985 | 5.961 | 0.643 | 0.062 | 2.320 | 0.547 | | 0.711 | 0.878 | |
+| RT hard shadows (1 ray, softness 0) | 1920 x 1080 | 1.416 | 1.913 | 5.551 | 0.846 | 0.072 | 1.570 | | | 0.738 | 0.880 | |
+| Shadow maps (3 cascades) | 1920 x 1080 | 1.287 | 1.709 | 4.906 | | | | | 0.320 | 1.767 | 0.885 | |
+| RT + AO, MetalFX temporal, scale 1 | 1920 x 1080 | 1.217 | 1.918 | 6.513 | 0.380 | 0.034 | 2.296 | 0.836 | | 0.421 | 0.081 | 2.143 |
+| RT + AO, MetalFX temporal, scale 0.67 | 1286 x 724 | 1.321 | 2.014 | 6.056 | 0.603 | 0.037 | 1.774 | 0.526 | | 0.280 | 0.079 | 2.185 |
+| RT + AO, MetalFX temporal, scale 0.5 | 960 x 540 | 1.342 | 2.154 | 5.593 | 0.643 | 0.033 | 1.470 | 0.378 | | 0.215 | 0.068 | 2.089 |
+| RT + AO, MetalFX spatial, scale 0.5 | 960 x 540 | 1.566 | 2.134 | 4.604 | 0.645 | 0.034 | 1.396 | 0.381 | | 0.225 | 0.281 | 0.677 |
+| RT + AO, bilinear, scale 0.5 | 960 x 540 | 1.380 | 1.832 | 3.317 | 0.614 | 0.029 | 1.188 | 0.377 | | 0.216 | 0.264 | |
+| SDL GPU fallback (shadow maps) | 1920 x 1080 | 1.226 | 1.696 | 4.668 | | | | | | | | |
+| SDL GPU fallback, bilinear, scale 0.5 | 960 x 540 | 1.042 | 1.530 | 3.022 | | | | | | | | |
+
+Ray-traced shadows cost about 1 ms of GPU time per frame more than shadow maps at 1080p in this scene (5.6 to 6.0 ms
+against 4.9 ms; the frame's GPU time) and 0.1 to 0.2 ms more CPU time (the acceleration structure pass, the prepass
+and two more passes). The rays are the largest part: 1.6 ms for one hard shadow ray per pixel, 2.3 ms for two soft
+ones, 3.1 ms with two occlusion rays on top. The ranges of one run do not compare exactly across regions: the GPU
+clock follows the load (the same `hdr` pass reads 0.48 ms in the heaviest region and 0.74 ms in lighter ones), so
+the frame's GPU time is the number to compare. MetalFX's temporal scaler costs about 2.1 ms at a 1920 x 1080 output
+whatever the input size, more than the rays it saves at scale 0.67 or 0.5 here: in this scene it is a quality
+option (anti-aliasing and reconstruction in TAA's place, whose own pass drops to 0.07 ms), not a speed-up. The
+spatial scaler costs 0.68 ms. The section's CPU time stays within the demo's budget (2.0 ms p50, 3.5 ms p99) in
+every region.
+
+The demo benchmark's new `raytracing` region (`benchmark.txt`, one run per backend, 09:13-09:16): SDL GPU (the
+fallbacks) CPU p50 1.307, CPU p99 1.757, GPU p50 5.441; the native backend (rays and occlusion) CPU p50 1.426, CPU
+p99 1.958, GPU p50 6.202; within the demo's budget.
+
+Skinned bottom levels, the animation section with a crowd of 256 (259 characters) and ray-traced shadows on the
+native backend, one run each: the `accel` range 1.57 ms with refits (a build after every 60), 5.12 ms with a
+temporary change that built every bottom level every frame. With the counts not yet staggered, every character
+built again in the same frame once a second, and the region's CPU p99 read 4.4 ms; staggered, 3.8 ms.
 
 Stage 9 (first half: the native Metal backend and GPU timestamps), 2026-11-06 06:41-07:10, Release, vsync, Mac,
 Apple M4 Pro, `--frame-size 1920x1080`, `--audio-device null`, interleaved with the order rotated: `3a96779` (its

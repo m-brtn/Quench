@@ -13,6 +13,9 @@ struct DeviceSupport {
     bool sampledDepth = false;       // the scene depth format can be sampled (motion vectors, TAA)
     bool velocityTarget = false;     // Rg16Float can be rendered to and sampled
     bool transmittanceArray = false; // an Rgba16Float Texture2DArray that can be rendered to and sampled
+    bool rayTracing = false;         // gpu::Caps::rayTracing and the ray query shaders in the build
+    bool spatialUpscaling = false;   // gpu::Caps::spatialUpscaling
+    bool temporalUpscaling = false;  // gpu::Caps::temporalUpscaling
 };
 
 ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport& support);

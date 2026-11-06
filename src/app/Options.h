@@ -28,6 +28,7 @@ struct Options {
     std::optional<gpu::Backend> gpuBackend; // empty: AppDesc
     std::string gpuDriver;
     bool gpuDebug = false;
+    bool gpuPassTiming = false; // record per-pass GPU times every frame (FrameStats::gpuPasses)
     std::optional<gpu::PresentMode> presentMode;
     std::optional<HdrMode> hdr;
     float hdrHeadroom = 0.0f;  // > 0: the headroom of HDR output instead of the display's

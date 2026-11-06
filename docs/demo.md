@@ -23,17 +23,18 @@ ends with a packaged build of it in `dist/` (`tools/package_demo.sh`, below).
 | 8 | `assets` | Cooked assets loaded through the app's asset manager ([Jobs, assets and the cook](assets.md)): a row of models (a crate from a glTF with an external texture, a pillar from a GLB with embedded JPEG and PNG textures, a vertex-colored ball, a corrupt file and a missing one) shows the load states: gray boxes while loading, magenta on failure. Behind it a 6 x 5 grid of tiles, each with one of eight BC7 textures and a model, streams around a moving focus point | simulated latency, texture cache budget (unlimited, 64, 16, 4 KB), uploads per frame (8 MB, 16 KB, 1 byte), focus angle, moving focus, models on and off, hot reload, reload all; counts of ready, loading, failed, queued and in-flight assets, reloads, evictions, memory per type against its budget, streamed cells |
 | 9 | `audio` | The mixer and 3D sound ([Audio](audio.md)): a head with ears at the listener, facing the way the camera looks; an orange emitter circling it at ear height (a motor loop), a blue fly-by passing at speed (a siren, with Doppler), a green box that plays a tone the demo computes (a generator); streamed music A and B with a crossfade; all sounds procedural | emitters on and off, orbit and fly-by speed, tone frequency and position, attenuation model, minimum and maximum distance, Doppler scale; music off, A or B; per bus volume, mute and a peak meter; pause effects; a ping, a burst of 40 pings (voice stealing), a click or tap on the ground plays a ping there; voices, stolen and rejected sounds, underruns, clipped samples, mix time and the output device |
 | 10 (key 0) | `animation` | Skeletal animation ([Animation](animation.md)) of a procedural mannequin: the hero walks a circle by root motion with a speed blend of idle, walk and run, jumps, waves (a layer masked to the right arm), leans (an additive layer), turns its head toward the camera (look-at), holds a torch on its left hand (an attachment) and plays a step sound at each footstep event (a louder one at the jump's landing); two characters stand with foot placement on a ramp and across a 0.2 m step (rays into a Jolt world); a crowd walks in rings | speed, lean, jump (J, gamepad A), wave (K, gamepad X), restart; foot IK, look-at and footstep sound on and off; ramp angle (0 to 30 degrees), crowd size (0 to 512); the hero's state and transition, characters, joints, clip samples, ground rays, events, skinned instances and vertices, the update time and threads, the skinning GPU time |
+| 11 | `raytracing` | Ray tracing where `gpu::Caps` allow it ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)), on the native Metal backend (`--gpu-backend metal`): soft ray-traced sun shadows through a fence's diamond holes (cut-out), tinted amber by a spinning glass torus (translucent) and cast by the animation section's mannequin walking a circle (skinned, refitted every frame), ambient occlusion under a crate, a sphere and a column arch, the sun turning; MetalFX spatial and temporal upscaling. On SDL GPU (Metal or Vulkan through MoltenVK) the same scene with the fallbacks and a line saying why | sun shadows (shadow maps or ray traced), shadow rays, softness, ambient occlusion with its rays and radius, upscaling (bilinear, MetalFX spatial, MetalFX temporal) and render scale, each with the fallback it got; turn the sun, walk, sun elevation; the top level's instances, builds and refits (or the shadow draws), and outside deterministic runs the GPU time of the rays, the shadow maps, MetalFX and the frame |
 
 Every section has a "Frame and fallbacks" panel: the 3D resolution, draws, culled instances, lights, shadow draws,
-what runs after the device fallbacks (cascades, depth clamp, anti-aliasing), the HDR and depth formats and the device
-capabilities. The menu window shows the frame, CPU and GPU times and, outside deterministic runs, the GPU backend and,
+what runs after the device fallbacks (sun shadows, cascades, depth clamp, ambient occlusion, anti-aliasing,
+upscaling), the HDR and depth formats and the device capabilities (ray tracing, MetalFX). The menu window shows the frame, CPU and GPU times and, outside deterministic runs, the GPU backend and,
 where it has timestamps per pass (the native Metal backend: `--gpu-backend metal`), the GPU time of every timed range
 with where in the frame it ran ([Performance](performance.md#gpu-time-per-pass)).
 
 Common controls:
 
-- Sections: `]` / `[`, Page Down / Page Up, the digits 1 to 9 and 0 (the tenth, labelled "0" in the menu), the
-  gamepad shoulder buttons, a click or tap on the list. ImGui keyboard and gamepad navigation is on (the demo's keys
+- Sections: `]` / `[`, Page Down / Page Up, the digits 1 to 9 and 0 (the tenth, labelled "0" in the menu; the
+  eleventh has no key), the gamepad shoulder buttons, a click or tap on the list. ImGui keyboard and gamepad navigation is on (the demo's keys
   keep working while a window has focus).
 - Camera (all sections but input): drag with the left or right mouse button or one finger to orbit, the wheel or a
   pinch to zoom, the right stick and the triggers on a gamepad.
@@ -76,6 +77,8 @@ which makes its capture independent of when the loads finished.
 | `demo_audio_metal`, `demo_audio_vulkan` | the audio section with `--audio-capture` (offline mixing on the frame clock, the WAV next to the capture) and `scenarios/audio.txt`: every emitter, the tone, the crossfade to music B and a burst of 40 pings, no underruns or clipped samples; the frame at 1.65 s is compared with `demo_audio.png` |
 | `demo_audio_tone`, `demo_audio_flyby`, `demo_audio_music` | the checks on the mix itself (below), on the default backend only: `scenarios/audio_tone.txt`, `audio_flyby.txt` and `audio_music.txt` with `--audio-capture` and `--present-mode immediate`, no capture |
 | `demo_audio_wav_match` | (with Vulkan through MoltenVK) the WAV files of `demo_audio_metal` and `demo_audio_vulkan` are the same bytes: the offline mix does not depend on the GPU backend, which is why the mix checks run on one backend |
+| `demo_raytracing_metal_native` | the ray tracing section on `--gpu-backend metal` with `scenarios/raytracing.txt`: ray-traced shadows and occlusion run (no cascades, no shadow draws, at least 12 instances in the top level, the character skinned), shadow maps come back when asked, MetalFX temporal at scale 0.5 resolves in TAA's place, spatial runs, bilinear at scale 1 again; the frame at 2.5 s (rays and occlusion at full size, the sun and the character moving) is compared with `tests/golden/metal/<device>/demo_raytracing_native.png` |
+| `demo_raytracing_metal`, `demo_raytracing_vulkan` | the same section on SDL GPU with `scenarios/raytracing_fallback.txt`: the requests fall back (cascades, no occlusion, no top level, bilinear at scale 0.5); the frame at 2.5 s is compared with `demo_raytracing.png` |
 | `demo_menu` | `scenarios/menu.txt`: switching sections by keys, gamepad, a click and a tap on the list; hiding the windows |
 | `demo_version`, `demo_bad_section` | `--version` prints "Quench Demo <version>"; an unknown `--section` fails |
 
@@ -115,7 +118,9 @@ The scenarios turn dithering off (`set dither 0`), which keeps the golden PNGs a
 scenario can read: `section`, `sections`, `ui`, `aa` (0 none, 1 FXAA, 2 TAA, after fallbacks), `cascades`, `bloom`,
 `draws`, `instances`, `culled`, `shadow_draws`, `shadow_instances`, `transmittance_draws`, `translucent_shadows` (0
 transmittance map, 1 dithered, after fallbacks), `moved`, `lights`, `render_w`, `render_h`,
-`camera_yaw`, `camera_pitch`, `camera_distance`, `clicks`, `skinned_instances`, `skinned_vertices`, then the
+`camera_yaw`, `camera_pitch`, `camera_distance`, `clicks`, `skinned_instances`, `skinned_vertices`, `sun_shadows`
+(0 maps, 1 ray traced), `ambient_occlusion` (0 none, 1 ray traced), `upscaling` (0 bilinear, 1 spatial, 2 temporal),
+`render_scale`, `ray_instances`, `ray_builds`, `ray_refits` (all after fallbacks), then the
 section's own (for example `bodies`, `blasts`,
 `player_x`, `jumps`, `marker_draws`, `exposure`; the assets section's `assets_loading`, `assets_ready`,
 `assets_failed`, `assets_idle`, `assets_loads`, `assets_reloads`, `assets_evictions`, `showcase_ready`,
@@ -124,22 +129,24 @@ section's own (for example `bodies`, `blasts`,
 `anim_ready`, `anim_failed`, `anim_characters`, `anim_bound`, `anim_ground_rays`, `hero_state` (0 the blend, 1 the
 jump), `hero_transition`, `hero_look_at`, `hero_angle`, `footsteps`, `landings`, `crowd`, `held_distance`,
 `slope_pelvis`, and per stand and leg `slope_leg0_offset` (also `_reached`, `_grounded`; `slope` or `step`, leg 0
-or 1)). Game commands: `section ID`,
+or 1); the ray tracing section's `rt_ready`, `sun_azimuth`). Game commands: `section ID`,
 `camera YAW PITCH DISTANCE` (degrees, meters), `set NAME VALUE` (render settings: `aa none|fxaa|taa`,
 `tone aces|agx`, `cascades`, `shadow_size`, `shadow_filter`, `shadow_distance`, `translucent_shadows map|dithered`,
-`scale`, `bloom`, `bloom_strength`,
+`sun_shadows maps|rt`, `shadow_rays`, `shadow_softness`, `ao none|rt`, `ao_rays`, `ao_radius`,
+`upscaling bilinear|spatial|temporal`, `scale`, `bloom`, `bloom_strength`,
 `sky`, `dither`, `sharpen`, `vignette`; otherwise the section's options, for the assets section `latency SECONDS`,
 `texture_budget BYTES|unlimited`, `upload_budget BYTES|unlimited`, `focus_angle DEGREES`, `move_focus`, `reload`,
 `models`, `hot_reload`; for the audio section `orbit`, `flyby` (also restarts the pass), `tone`, `tone_hz`,
 `tone_x`, `tone_z`, `orbit_speed`, `flyby_speed`, `attenuation none|inverse|linear|exponential`, `min_distance`,
 `max_distance`, `doppler`, `music 0|1|2`, `bus_<name>` (volume), `mute_<name>`, `pause_effects`, `ping`,
 `burst N`; for the animation section `restart`, `speed`, `lean`, `jump`, `wave`, `foot_ik`, `look_at`,
-`footstep_sound`, `slope DEGREES`, `crowd N`).
+`footstep_sound`, `slope DEGREES`, `crowd N`; for the ray tracing section `turn_sun`, `walk`, `sun_azimuth`,
+`sun_elevation`).
 
 ## Benchmark
 
 `scenarios/benchmark.txt` measures the materials, shadows, sky, post-processing, HDR (in SDR, then with HDR output on),
-physics, assets, audio and animation sections for 5 s each in real time (budgets and numbers:
+physics, assets, audio, animation and ray tracing sections for 5 s each in real time (budgets and numbers:
 [Performance](performance.md)); the assets region streams with the moving focus and the default budgets, after the
 first loads have finished; the audio region plays the three emitters, the tone and the music; the animation region
 has a crowd of 256 (259 characters), and its perf line ends with the section's own times over its last 240 frames:
@@ -152,6 +159,11 @@ on miniaudio's null device thread, without sound):
 build/release/examples/demo/quench-demo --frame-size 1920x1080 --script examples/demo/scenarios/benchmark.txt \
     --audio-device null
 ```
+
+`scenarios/raytracing_benchmark.txt` measures the ray tracing section's options one by one, 5 s each: rays for
+shadows and occlusion, shadows alone, hard shadows (1 ray), shadow maps, then MetalFX temporal at scale 1, 0.67 and
+0.5, spatial and bilinear at 0.5. Run it with `--gpu-backend metal` (on SDL GPU every region measures the fallbacks);
+the perf lines carry the GPU time per timed range ([Performance](performance.md#measurements)).
 
 ## Packaged builds: `tools/package_demo.sh`
 

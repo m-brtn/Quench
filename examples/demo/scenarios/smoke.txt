@@ -2,7 +2,7 @@
 # the frame at 1.5 s (the HDR output section, in SDR).
 
 wait 0.2
-expect sections == 10
+expect sections == 11
 section materials
 wait 0.25
 expect draws > 0
@@ -35,4 +35,8 @@ expect audio_failed == 0
 section animation
 until anim_ready == 1 3
 expect anim_failed == 0
+# Ray tracing where the backend has it (the package's default, SDL GPU, takes the fallbacks); the character loads.
+section raytracing
+until rt_ready == 1 3
+expect draws > 0
 quit

@@ -76,6 +76,7 @@ enum class TextureUsage : std::uint8_t {
     ColorTarget = 1 << 1,
     DepthStencilTarget = 1 << 2,
     GraphicsStorageRead = 1 << 3,
+    ShaderWrite = 1 << 4, // written by GPU work outside render passes (CommandBuffer::upscale output)
 };
 QUENCH_FLAGS(TextureUsage)
 
@@ -265,6 +266,46 @@ struct GraphicsPipelineDesc {
 struct ComputePipelineDesc {
     const ShaderBlob* shader = nullptr;
     std::string_view name{};
+};
+
+// ------------------------------------------------------------------ ray tracing (Caps::rayTracing)
+
+enum class AccelerationStructureLevel : std::uint8_t {
+    Bottom, // triangles of one mesh, in object space
+    Top,    // instances of bottom levels; what shaders trace rays against
+};
+
+// The sizes an acceleration structure is created for; builds may use fewer vertices, triangles or instances.
+struct AccelerationStructureDesc {
+    AccelerationStructureLevel level = AccelerationStructureLevel::Bottom;
+    std::uint32_t vertexCount = 0;      // bottom level
+    std::uint32_t triangleCount = 0;    // bottom level
+    std::uint32_t instanceCapacity = 0; // top level
+    bool allowRefit = false;            // bottom level: AccelerationStructurePass::refit (deforming meshes)
+    std::string_view name{};            // not kept after creation
+};
+
+// ------------------------------------------------------------------ upscaling (Caps::spatialUpscaling,
+// Caps::temporalUpscaling)
+
+enum class UpscalerType : std::uint8_t {
+    Spatial,  // from one frame: after anti-aliasing
+    Temporal, // from the frame, its depth, motion and the jittered history: replaces temporal anti-aliasing
+};
+
+struct UpscalerDesc {
+    UpscalerType type = UpscalerType::Temporal;
+    TextureFormat colorFormat = TextureFormat::Rgba16Float;
+    TextureFormat outputFormat = TextureFormat::Rgba16Float;
+    TextureFormat depthFormat = TextureFormat::Depth32Float; // temporal
+    TextureFormat motionFormat = TextureFormat::Rg16Float;   // temporal
+    std::uint32_t inputWidth = 0;
+    std::uint32_t inputHeight = 0;
+    std::uint32_t outputWidth = 0;
+    std::uint32_t outputHeight = 0;
+    bool hdrInput = true;      // linear scene values above 1, not display values
+    bool reversedDepth = true; // temporal: near 1, far 0
+    std::string_view name{};   // not kept after creation
 };
 
 // ------------------------------------------------------------------ passes

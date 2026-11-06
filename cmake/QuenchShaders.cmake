@@ -14,6 +14,7 @@ if(NOT QUENCH_HOST_SHADERC AND NOT CMAKE_CROSSCOMPILING)
     include(${CMAKE_CURRENT_LIST_DIR}/ShaderToolchain.cmake)
 endif()
 set(QUENCH_SHADER_DXC "${QUENCH_DXC}" CACHE INTERNAL "")
+include(${CMAKE_CURRENT_LIST_DIR}/QuenchDxc.cmake)
 
 set(_metal_ok OFF)
 set(_metal_sdk macosx)
@@ -51,13 +52,15 @@ set(QUENCH_SHADER_METAL_SDK ${_metal_sdk} CACHE INTERNAL "")
 set(QUENCH_SHADER_METAL_TARGET ${_metal_target} CACHE INTERNAL "")
 set(QUENCH_SHADER_MSL_PLATFORM ${_msl_platform} CACHE INTERNAL "")
 
-# quench_add_shaders(<target> NAME <name> SOURCE <file.hlsl> ENTRIES <entry>:<vertex|fragment|compute>...
+# quench_add_shaders(<target> NAME <name> SOURCE <file.hlsl> ENTRIES <entry>:<vertex|fragment|compute>[:rayquery]...
 #                    [INCLUDE_DIRS <dir>...])
 #
 # Compiles each entry point with QUENCH_ENTRY_<entry> and QUENCH_STAGE_VERTEX, QUENCH_STAGE_FRAGMENT or
 # QUENCH_STAGE_COMPUTE defined and embeds the blobs into <target>. The generated header "<name>_shaders.h" declares the table as
 # quench::shaders::<name> (include/quench/gpu/ShaderBlob.h). #include resolves relative to the including file, then in
 # INCLUDE_DIRS, then in the engine shader library (shaders/); included files are tracked as dependencies.
+# Entries marked `rayquery` use ray queries: they are compiled with DXC (cmake/QuenchDxc.cmake; shader model 6.5,
+# SPIR-V for Vulkan 1.2) and left out of the table when no DXC is available (logged at configure).
 function(quench_add_shaders target)
     cmake_parse_arguments(PARSE_ARGV 1 arg "" "NAME;SOURCE" "ENTRIES;INCLUDE_DIRS")
     if(NOT arg_NAME OR NOT arg_SOURCE OR NOT arg_ENTRIES)
@@ -112,13 +115,31 @@ function(quench_add_shaders target)
     foreach(item IN LISTS arg_ENTRIES)
         string(REPLACE ":" ";" pair ${item})
         list(LENGTH pair pair_length)
-        if(NOT pair_length EQUAL 2)
-            message(FATAL_ERROR "quench_add_shaders: '${item}' is not <entry>:<stage>")
+        if(NOT pair_length EQUAL 2 AND NOT pair_length EQUAL 3)
+            message(FATAL_ERROR "quench_add_shaders: '${item}' is not <entry>:<stage>[:rayquery]")
         endif()
         list(GET pair 0 entry)
         list(GET pair 1 stage)
+        set(ray_query OFF)
+        if(pair_length EQUAL 3)
+            list(GET pair 2 flag)
+            if(NOT flag STREQUAL "rayquery")
+                message(FATAL_ERROR "quench_add_shaders: '${item}': the only entry flag is 'rayquery'")
+            endif()
+            set(ray_query ON)
+        endif()
         if(NOT entry MATCHES "^[A-Za-z_][A-Za-z0-9_]*$" OR NOT stage MATCHES "^(vertex|fragment|compute)$")
             message(FATAL_ERROR "quench_add_shaders: '${item}' is not <identifier>:<vertex|fragment|compute>")
+        endif()
+        set(dxc_args "")
+        set(dxc_depends "")
+        if(ray_query)
+            quench_ray_query_dxc(ray_query_dxc)
+            if(NOT ray_query_dxc)
+                continue()
+            endif()
+            set(dxc_args --dxc ${ray_query_dxc})
+            set(dxc_depends ${ray_query_dxc})
         endif()
         list(APPEND entries ${entry})
 
@@ -132,7 +153,8 @@ function(quench_add_shaders target)
             OUTPUT ${outs}
             COMMAND ${shaderc} --input ${source} --entry ${entry} --stage ${stage} --spirv ${gen_dir}/${entry}.spv
                     --reflect ${gen_dir}/${entry}.reflect ${msl_args} ${include_args} --depfile ${gen_dir}/${entry}.d
-            DEPENDS ${source} ${shaderc}
+                    ${dxc_args}
+            DEPENDS ${source} ${shaderc} ${dxc_depends}
             DEPFILE ${gen_dir}/${entry}.d
             COMMENT "Compiling ${source_name}:${entry} (${stage})"
             VERBATIM)
@@ -152,14 +174,19 @@ function(quench_add_shaders target)
         endif()
 
         if(QUENCH_SHADER_DXC)
+            # Shader model 6.5 for ray queries (DXR 1.1).
+            set(model 6_0)
+            if(ray_query)
+                set(model 6_5)
+            endif()
             if(stage STREQUAL "vertex")
-                set(profile vs_6_0)
+                set(profile vs_${model})
                 set(stage_define QUENCH_STAGE_VERTEX=1)
             elseif(stage STREQUAL "fragment")
-                set(profile ps_6_0)
+                set(profile ps_${model})
                 set(stage_define QUENCH_STAGE_FRAGMENT=1)
             else()
-                set(profile cs_6_0)
+                set(profile cs_${model})
                 set(stage_define QUENCH_STAGE_COMPUTE=1)
             endif()
             # DXC writes no depfile; depending on the SPIR-V output (rebuilt when an included file changes) reruns it

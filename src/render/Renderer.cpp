@@ -1,6 +1,7 @@
 #include <quench/render/Renderer.h>
 
 #include "Effects.h"
+#include "RayTracing.h"
 #include "SceneImpl.h"
 #include "shaders/PostUniforms.h"
 
@@ -9,6 +10,7 @@
 #include <quench/render/Projection.h>
 
 #include <render_frame_shaders.h>
+#include <render_raytrace_shaders.h>
 #include <render_skin_shaders.h>
 #include <render_standard_shaders.h>
 
@@ -42,6 +44,14 @@ constexpr std::uint32_t kVariants = 6;      // 3 blend modes x single / double s
 // shadows are soft, and a full-size Rgba16Float array would take twice the depth array's memory.
 constexpr std::uint32_t kTransmittanceScale = 2;
 constexpr float kTransmittanceBias = 2.0f; // in transmittance texels: receivers nearer behind a caster stay lit
+// Ray-traced shadows: how far rays toward the sun look (m), the ray origin's offset along the normal per meter of
+// view distance (the depth's precision and the normal reconstructed from it), and the denoise pass.
+constexpr float kRayShadowLength = 1000.0f;
+constexpr float kRayNormalOffset = 0.002f;
+// Soft sun shadows (a cone) are noisy in their penumbrae only; ambient occlusion is noisy everywhere.
+constexpr int kRayDenoiseShadowRadius = 1;    // pixels: a 3 x 3 box (0 for hard shadows)
+constexpr int kRayDenoiseOcclusionRadius = 2; // pixels: a 5 x 5 box
+constexpr float kRayDenoiseTolerance = 0.02f; // relative view depth: neighbours further apart are other surfaces
 
 constexpr gpu::VertexBufferLayout kVertexLayout{.slot = 0, .stride = sizeof(Vertex)};
 constexpr gpu::VertexAttribute kVertexAttributes[] = {
@@ -103,6 +113,9 @@ struct SurfaceEntry {
     bool maskFailed = false;
     std::array<gpu::GraphicsPipeline, 2> transmittancePipelines; // single / double sided
     std::array<bool, 2> transmittanceFailed{};
+    // The ray tracing prepass (camera depth): [doubleSided]; with shadowVertex, and of cut-out materials.
+    std::array<gpu::GraphicsPipeline, 2> depthPipelines, depthMaskPipelines;
+    std::array<bool, 2> depthFailed{}, depthMaskFailed{};
 };
 
 struct PassEntry {
@@ -119,8 +132,10 @@ struct Batch {
     const MaterialEntry* material = nullptr; // null: the pipeline reads no material (plain shadow casters)
     std::uint32_t first = 0;
     std::uint32_t count = 0;
-    gpu::BufferBinding vertices{}; // skinned: this frame's vertices; empty: the mesh's
-    gpu::BufferBinding previous{}; // skinned motion vectors: the previous frame's vertices
+    gpu::BufferBinding vertices{};                // skinned: this frame's vertices; empty: the mesh's
+    gpu::BufferBinding previous{};                // skinned motion vectors: the previous frame's vertices
+    const gpu::GraphicsPipeline* depth = nullptr; // the ray tracing prepass; null: not drawn there
+    bool depthMaterial = false;                   // the prepass pipeline reads the material (cut-outs)
 };
 
 struct SkinJob {
@@ -134,7 +149,9 @@ struct Item {
     float distance = 0.0f;
     std::uint32_t slot = 0; // instance slot
     const gpu::GraphicsPipeline* pipeline = nullptr;
-    bool material = true; // the pipeline reads the material
+    bool material = true;                         // the pipeline reads the material
+    const gpu::GraphicsPipeline* depth = nullptr; // the ray tracing prepass; null: not drawn there
+    bool depthMaterial = false;
 };
 
 struct Plane {
@@ -194,6 +211,8 @@ struct RendererImpl {
 
     gpu::GraphicsPipeline shadowPipeline, skyPipeline, velocityPipeline, velocityObjPipeline, velocitySkinPipeline,
         taaPipeline, bloomDownPipeline, bloomUpPipeline;
+    std::array<gpu::GraphicsPipeline, 2> depthPipelines; // the ray tracing prepass of plain surfaces: [doubleSided]
+    std::array<bool, 2> depthFailed{};
     gpu::ComputePipeline skinPipeline; // empty: skinned instances are drawn in their bind pose (logged at init)
     std::map<TextureFormat, gpu::GraphicsPipeline> tonemapPipelines, fxaaPipelines;
 
@@ -207,6 +226,9 @@ struct RendererImpl {
     TextureFormat targetLdrFormat = TextureFormat::Invalid;
     gpu::Texture hdr, depth, velocity, ldr, shadowMap;
     gpu::Texture transmittanceMap; // made when a frame first has translucent casters
+    gpu::Texture upscaled;         // Upscaling::Spatial and Temporal: the output-size image
+    gpu::Upscaler upscaler;
+    bool upscalerReset = true;
     std::array<gpu::Texture, 2> history;
     std::array<gpu::Texture, kBloomLevels> bloom;
     int bloomLevels = 0;
@@ -241,6 +263,11 @@ struct RendererImpl {
     std::vector<gpu::Fence> skinFences; // oldest first
     float skinningGpuMs = -1.0f;
 
+    // Ray tracing (SunShadows::RayTraced, AmbientOcclusion::RayTraced)
+    RayTracing rayTracing;
+    bool rayTracingTried = false;
+    std::vector<RayCaster> rayCasters;
+
     // Temporal state
     std::uint64_t frameIndex = 0;
     glm::mat4 prevViewProj{1.0f};
@@ -256,6 +283,7 @@ struct RendererImpl {
     const gpu::GraphicsPipeline* surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided);
     const gpu::GraphicsPipeline* surfaceMaskPipeline(SurfaceEntry& surface);
     const gpu::GraphicsPipeline* surfaceTransmittancePipeline(SurfaceEntry& surface, bool doubleSided);
+    const gpu::GraphicsPipeline* surfaceDepthPipeline(SurfaceEntry& surface, bool doubleSided, bool cutOut);
     const gpu::GraphicsPipeline* outputPipeline(std::map<TextureFormat, gpu::GraphicsPipeline>& cache,
                                                 const char* entry, TextureFormat format);
     bool ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32_t ow, std::uint32_t oh, TextureFormat ldrTarget);
@@ -313,6 +341,10 @@ Result<void> RendererImpl::init() {
     support.depthClamp = caps.depthClamp;
     support.velocityTarget = supports(velocityFormat, gpu::TextureType::Texture2D, targetSampled);
     support.transmittanceArray = supports(transmittanceFormat, gpu::TextureType::Texture2DArray, targetSampled);
+    support.rayTracing =
+        caps.rayTracing && support.sampledDepth && shaders::render_raytrace.find("rt_shadow_fs") != nullptr;
+    support.spatialUpscaling = caps.spatialUpscaling;
+    support.temporalUpscaling = caps.temporalUpscaling;
     if (!supports(ldrFormat, gpu::TextureType::Texture2D, targetSampled))
         return Error{"render: Rgba8Unorm cannot be rendered to and sampled"};
 
@@ -484,21 +516,38 @@ Result<void> RendererImpl::init() {
     if (!surfacePipeline(standard, variantOf(BlendMode::Opaque, false)))
         return Error{"render: the standard surface pipeline failed (logged)"};
     applySettings();
-    log::info("render", "HDR {}, depth {}{}, shadows {}, velocity {}, depth clamp {}, depth bias clamp {}",
+    log::info("render",
+              "HDR {}, depth {}{}, shadows {}, velocity {}, depth clamp {}, depth bias clamp {}, ray tracing {}, "
+              "upscaling {}",
               gpu::formatInfo(hdrFormat).name, gpu::formatInfo(depthFormat).name,
               support.sampledDepth ? " (sampled)" : "",
               support.shadowArray ? gpu::formatInfo(shadowFormat).name : "unsupported",
               support.velocityTarget ? "Rg16Float" : "unsupported", caps.depthClamp ? "yes" : "no",
-              caps.depthBiasClamp ? "yes" : "no");
+              caps.depthBiasClamp ? "yes" : "no", support.rayTracing ? "yes" : "no",
+              support.temporalUpscaling  ? "spatial, temporal"
+              : support.spatialUpscaling ? "spatial"
+                                         : "bilinear");
     return {};
 }
 
 void RendererImpl::applySettings() {
     const ActiveEffects next = selectEffects(settings, support);
     if (next == effects && effectsChosen) return;
-    if (settings.antiAliasing != next.antiAliasing)
+    const char* noRays = device->caps().rayTracing ? "this build has no ray query shaders (cmake/QuenchDxc.cmake)"
+                                                   : "the device has no ray tracing (gpu::Caps::rayTracing)";
+    if (settings.sunShadows == SunShadows::RayTraced && settings.shadowCascades > 0 &&
+        next.sunShadows != SunShadows::RayTraced)
+        log::warning("render", "ray-traced shadows: {}; shadow maps", noRays);
+    if (settings.ambientOcclusion == AmbientOcclusion::RayTraced && next.ambientOcclusion != settings.ambientOcclusion)
+        log::warning("render", "ray-traced ambient occlusion: {}; none", noRays);
+    if (settings.upscaling == Upscaling::Spatial && next.upscaling != Upscaling::Spatial && settings.renderScale < 1.0f)
+        log::warning("render", "spatial upscaling: not on this device (gpu::Caps::spatialUpscaling); bilinear");
+    if (settings.upscaling == Upscaling::Temporal && next.upscaling != Upscaling::Temporal)
+        log::warning("render", "temporal upscaling: not on this device (gpu::Caps::temporalUpscaling, TAA's inputs); "
+                               "bilinear");
+    if (settings.antiAliasing != next.antiAliasing && next.upscaling != Upscaling::Temporal)
         log::warning("render", "anti-aliasing: TAA needs a sampled depth buffer and Rg16Float targets; using FXAA");
-    if (settings.shadowCascades > 0 && next.shadowCascades == 0)
+    if (settings.shadowCascades > 0 && next.shadowCascades == 0 && next.sunShadows == SunShadows::ShadowMaps)
         log::warning("render", "shadows off: no depth texture array the device can sample and render to");
     if (next.shadowCascades > 0 && settings.translucentShadows != next.translucentShadows)
         log::warning("render", "translucent shadows: no {} texture array to render to; dithered into the depth map",
@@ -620,6 +669,41 @@ const gpu::GraphicsPipeline* RendererImpl::surfaceTransmittancePipeline(SurfaceE
     return &surface.transmittancePipelines[i];
 }
 
+// The ray tracing prepass: the camera's depth of opaque surfaces. Plain ones write it with the position only (or the
+// surface's vertex function); cut-out ones run the surface to discard, as in the cascades.
+const gpu::GraphicsPipeline* RendererImpl::surfaceDepthPipeline(SurfaceEntry& surface, bool doubleSided, bool cutOut) {
+    const std::size_t i = doubleSided ? 1 : 0;
+    const bool custom = surface.shadowVertex != nullptr;
+    gpu::GraphicsPipeline& out = cutOut   ? surface.depthMaskPipelines[i]
+                                 : custom ? surface.depthPipelines[i]
+                                          : depthPipelines[i];
+    bool& failed = cutOut ? surface.depthMaskFailed[i] : custom ? surface.depthFailed[i] : depthFailed[i];
+    if (out) return &out;
+    if (failed) return nullptr;
+    const std::string name =
+        std::format("surface {} depth ({}{})", cutOut || custom ? surface.name : "plain", cutOut ? "cut-out, " : "", i);
+    const bool full = cutOut || custom;
+    Result<gpu::GraphicsPipeline> p = createPipeline({
+        .vertexShader = full ? surface.vertex : shaders::render_frame.find("depth_vs"),
+        .fragmentShader = cutOut ? (surface.shadowFragment ? surface.shadowFragment : standard.shadowFragment)
+                                 : shaders::render_frame.find("shadow_fs"),
+        .vertexBuffers = {&kVertexLayout, 1},
+        .vertexAttributes = full ? std::span<const gpu::VertexAttribute>(kVertexAttributes)
+                                 : std::span<const gpu::VertexAttribute>(kPositionAttribute),
+        .rasterizer = {.cull = doubleSided ? gpu::CullMode::None : gpu::CullMode::Back},
+        .depth = {.test = true, .write = true},
+        .depthFormat = depthFormat,
+        .name = name,
+    });
+    if (!p) {
+        log::error("render", "pipeline '{}': {}", name, p.error());
+        failed = true;
+        return nullptr;
+    }
+    out = std::move(*p);
+    return &out;
+}
+
 const gpu::GraphicsPipeline* RendererImpl::outputPipeline(std::map<TextureFormat, gpu::GraphicsPipeline>& cache,
                                                           const char* entry, TextureFormat format) {
     if (auto it = cache.find(format); it != cache.end()) return it->second ? &it->second : nullptr;
@@ -641,8 +725,8 @@ bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32
     const bool sizeSame = rw == renderWidth && rh == renderHeight && ow == outputWidth && oh == outputHeight;
     const bool effectsSame = targetEffects.antiAliasing == effects.antiAliasing &&
                              targetEffects.shadowCascades == effects.shadowCascades &&
-                             targetEffects.bloom == effects.bloom && targetShadowSize == settings.shadowMapSize &&
-                             targetLdrFormat == ldrTarget;
+                             targetEffects.bloom == effects.bloom && targetEffects.upscaling == effects.upscaling &&
+                             targetShadowSize == settings.shadowMapSize && targetLdrFormat == ldrTarget;
     if (sizeSame && effectsSame && hdr) return true;
     if (sizeSame && effectsSame && targetsFailed) return false;
     hdr = {};
@@ -656,6 +740,9 @@ bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32
     bloom = {};
     bloomLevels = 0;
     historyValid = false;
+    upscaled = {};
+    upscaler = {};
+    upscalerReset = true;
     renderWidth = rw;
     renderHeight = rh;
     outputWidth = ow;
@@ -688,16 +775,47 @@ bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32
                                .height = rh,
                                .name = "render velocity"}))
             return false;
-        for (gpu::Texture& h : history)
-            if (!create(h,
+        if (effects.upscaling != Upscaling::Temporal)
+            for (gpu::Texture& h : history)
+                if (!create(
+                        h,
                         {.format = hdrFormat, .usage = targetSampled, .width = rw, .height = rh, .name = "render taa"}))
-                return false;
+                    return false;
     }
     if (effects.antiAliasing == AntiAliasing::Fxaa &&
         !create(ldr, {.format = ldrTarget, .usage = targetSampled, .width = ow, .height = oh, .name = "render ldr"}))
         return false;
+    if (effects.upscaling != Upscaling::Bilinear) {
+        const bool temporal = effects.upscaling == Upscaling::Temporal;
+        Result<gpu::Upscaler> u =
+            device->createUpscaler({.type = temporal ? gpu::UpscalerType::Temporal : gpu::UpscalerType::Spatial,
+                                    .colorFormat = hdrFormat,
+                                    .outputFormat = hdrFormat,
+                                    .depthFormat = depthFormat,
+                                    .motionFormat = velocityFormat,
+                                    .inputWidth = rw,
+                                    .inputHeight = rh,
+                                    .outputWidth = ow,
+                                    .outputHeight = oh,
+                                    .name = "render upscaler"});
+        if (!u) {
+            // Not for this size or format: the frame is scaled up in tone mapping from now on.
+            log::error("render", "{} upscaler {} x {} -> {} x {}: {}; bilinear", temporal ? "temporal" : "spatial", rw,
+                       rh, ow, oh, u.error());
+            (temporal ? support.temporalUpscaling : support.spatialUpscaling) = false;
+            return false;
+        }
+        upscaler = std::move(*u);
+        if (!create(upscaled, {.format = hdrFormat,
+                               .usage = targetSampled | TextureUsage::ShaderWrite,
+                               .width = ow,
+                               .height = oh,
+                               .name = "render upscaled"}))
+            return false;
+    }
     if (effects.bloom) {
-        std::uint32_t w = rw, h = rh;
+        const bool atOutput = effects.upscaling != Upscaling::Bilinear;
+        std::uint32_t w = atOutput ? ow : rw, h = atOutput ? oh : rh;
         for (int i = 0; i < kBloomLevels && std::min(w, h) >= 16; ++i) {
             w = std::max(1u, w / 2);
             h = std::max(1u, h / 2);
@@ -949,8 +1067,15 @@ void RendererImpl::buildBatches(const SceneImpl& scene, std::vector<Item>& items
         Batch* last = batches.empty() ? nullptr : &batches.back();
         if (!last || last->pipeline != item.pipeline || last->mesh != mesh || last->material != material ||
             skinnedVb.buffer || last->vertices.buffer)
-            last = &batches.emplace_back(
-                Batch{item.pipeline, mesh, material, std::uint32_t(instanceData.size()), 0, skinnedVb});
+            last = &batches.emplace_back(Batch{item.pipeline,
+                                               mesh,
+                                               material,
+                                               std::uint32_t(instanceData.size()),
+                                               0,
+                                               skinnedVb,
+                                               {},
+                                               item.depth,
+                                               item.depthMaterial});
         last->count++;
         instanceData.push_back({inst.desc.transform, normalMatrices[item.slot], inst.desc.color, inst.desc.custom});
     }
@@ -997,11 +1122,21 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     const auto rw = std::max(1u, std::uint32_t(std::lround(float(ow) * scale)));
     const auto rh = std::max(1u, std::uint32_t(std::lround(float(oh) * scale)));
     const bool sizeChanged = rw != renderWidth || rh != renderHeight;
-    if (!ensureTargets(rw, rh, ow, oh, hdrOut ? TextureFormat::Rgba16Float : ldrFormat)) return;
+    const TextureFormat ldrTarget = hdrOut ? TextureFormat::Rgba16Float : ldrFormat;
+    if (!ensureTargets(rw, rh, ow, oh, ldrTarget)) {
+        const ActiveEffects before = effects;
+        applySettings(); // an upscaler that could not be made: bilinear
+        if (effects == before || !ensureTargets(rw, rh, ow, oh, ldrTarget)) return;
+    }
     stats.renderWidth = rw;
     stats.renderHeight = rh;
+    // taa: the jittered projection and motion vectors; resolved by TAA or by the temporal upscaler.
     const bool taa = effects.antiAliasing == AntiAliasing::Taa;
+    const bool upscaling = effects.upscaling != Upscaling::Bilinear;
+    const bool taaResolve = taa && effects.upscaling != Upscaling::Temporal;
     const bool fxaa = effects.antiAliasing == AntiAliasing::Fxaa;
+    // The image after anti-aliasing and upscaling.
+    const std::uint32_t iw = upscaling ? ow : rw, ih = upscaling ? oh : rh;
     commands.pushDebugGroup("quench render");
 
     // ---- Camera
@@ -1093,7 +1228,21 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     }
     const glm::vec3 sunColor = sun ? sun->desc.color * sun->desc.intensity : glm::vec3(0.0f);
     const bool sunLights = std::max({sunColor.r, sunColor.g, sunColor.b}) > 0.0f;
-    const int cascades = sunLights && sun->desc.castsShadows && towardSun.y > -0.1f ? effects.shadowCascades : 0;
+    const bool sunShadows = sunLights && sun->desc.castsShadows && towardSun.y > -0.1f;
+    const int cascades = sunShadows ? effects.shadowCascades : 0;
+    const bool rayShadows = sunShadows && effects.sunShadows == SunShadows::RayTraced;
+    const bool rayOcclusion = effects.ambientOcclusion == AmbientOcclusion::RayTraced;
+    bool rayTraced = rayShadows || rayOcclusion;
+    if (rayTraced && !rayTracing.available()) {
+        if (!rayTracingTried) rayTracing.init(*device, pipelineCount);
+        rayTracingTried = true;
+        if (!rayTracing.available()) {
+            support.rayTracing = false;
+            applySettings();
+            rayTraced = false;
+        }
+    }
+    if (!rayTraced) rayTracing.releaseTargets();
     Cascades shadow;
     if (cascades > 0)
         shadow = computeCascades(view.view, view.fovY, aspect, view.nearPlane, towardSun,
@@ -1124,6 +1273,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     paletteData.clear();
     skinnedVertices = 0;
     skinnedOffsets.assign(slots, kNotSkinned);
+    rayCasters.clear();
     std::array<glm::vec2, kMaxCascades> lightScale{};
     std::array<float, kMaxCascades> lightScaleZ{};
     for (int c = 0; c < shadow.count; ++c) {
@@ -1135,7 +1285,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     for (std::uint32_t i = 0; i < slots; ++i) {
         InstanceEntry* inst = scene.instances.slot(i);
         if (!inst || !inst->desc.visible) continue;
-        const MeshEntry* mesh = scene.meshes.get(inst->desc.mesh);
+        MeshEntry* mesh = scene.meshes.get(inst->desc.mesh);
         const MaterialEntry* material = scene.materials.get(inst->desc.material);
         if (!mesh || !material) continue;
         const MaterialDesc& m = material->desc;
@@ -1154,6 +1304,11 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             if (pipeline) {
                 const bool skinnedHere = skinnedOffset(*inst, i, *mesh) != kNotSkinned;
                 Item item{0, glm::length(center - cameraPos), i, pipeline};
+                if (rayTraced && m.blend == BlendMode::Opaque) {
+                    const bool cutOut = m.alphaCutoff > 0.0f;
+                    item.depth = surfaceDepthPipeline(*surface, m.doubleSided, cutOut);
+                    item.depthMaterial = cutOut;
+                }
                 if (m.blend == BlendMode::Opaque) {
                     item.key = (std::uint64_t(surfaceIndex & 0xfff) << 52) | (std::uint64_t(variant) << 48) |
                                (std::uint64_t(inst->desc.material.index & 0xffffff) << 24) |
@@ -1168,6 +1323,14 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             ++stats.culled;
         }
         const ShadowMode shadowMode = shadowModeOf(m);
+        if (rayTraced && inst->desc.castsShadows && shadowMode != ShadowMode::None) {
+            // Every caster is in the top level; skinned ones only near the camera (they are posed for it).
+            const bool skinnedMesh = mesh->jointCount > 0 && skinPipeline;
+            if (!skinnedMesh || glm::length(center - cameraPos) - radius < settings.shadowDistance) {
+                if (skinnedMesh) skinnedOffset(*inst, i, *mesh);
+                rayCasters.push_back({i, inst, mesh, material, {}, shadowMode == ShadowMode::Translucent});
+            }
+        }
         if (cascades == 0 || !inst->desc.castsShadows || shadowMode == ShadowMode::None) continue;
         // Plain casters write depth with the position only; cut-out ones (and translucent ones dithered into the
         // depth) run the surface to discard; translucent ones go into the transmittance maps.
@@ -1203,6 +1366,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         }
     }
     if (!skin(commands)) std::fill(skinnedOffsets.begin(), skinnedOffsets.end(), kNotSkinned); // the bind pose
+    for (RayCaster& c : rayCasters) c.skinned = skinnedVerticesOf(c.slot);
     stats.skinnedInstances = std::uint32_t(skinJobs.size());
     stats.skinnedVertices = skinnedVertices;
     stats.skinningGpuMs = skinningGpuMs;
@@ -1257,7 +1421,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     }
     stats.instances = std::uint32_t(opaque.size() + transparent.size());
     stats.movedInstances = std::uint32_t(moved.size());
-    // Timed ranges (gpu::Caps::gpuPassTiming): upload, shadows, hdr, taa, bloom, tonemap.
+    // Timed ranges (gpu::Caps::gpuPassTiming): upload, accel, prepass, raytrace with rays and denoise (ray tracing),
+    // shadows, hdr, taa, upscale, bloom, tonemap.
     commands.beginTiming("upload");
     const bool buffers = ensureBuffers(commands);
     commands.endTiming();
@@ -1265,25 +1430,42 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         commands.popDebugGroup();
         return;
     }
+
+    // ---- 0. Ray tracing: the acceleration structures of the casters (skinned ones after the skinning pass)
+    bool rayMask = false;
+    if (rayTraced) {
+        RayTracingStats rs;
+        commands.beginTiming("accel");
+        rayMask = rayTracing.ensureTargets(rw, rh, depthFormat) && rayTracing.build(commands, scene, rayCasters, rs);
+        commands.endTiming();
+        stats.rayInstances = rs.instances;
+        stats.rayBuilds = rs.builds;
+        stats.rayRefits = rs.refits;
+    }
+    fu.options.w = rayMask ? float((rayShadows ? 1 : 0) | (rayOcclusion ? 2 : 0)) : 0.0f;
     commands.pushUniforms(kVertex, 0, fu);
     commands.pushUniforms(kFragment, 0, fu);
     commands.pushUniforms(kFragment, 1, lu);
 
-    // cascade: the shadow map layer the batches are drawn into; -1: the camera's passes.
+    // cascade: the shadow map layer the batches are drawn into; -1: the camera's passes. prepass: the batches'
+    // depth pipelines (the ray tracing prepass).
     const auto drawBatches = [&](gpu::RenderPass& pass, const std::vector<Batch>& batches, int cascade,
-                                 std::uint32_t& counter) {
+                                 std::uint32_t& counter, bool prepass = false) {
         const bool shadowPass = cascade >= 0;
         const gpu::GraphicsPipeline* pipeline = nullptr;
         const MaterialEntry* material = nullptr;
         const MeshEntry* mesh = nullptr;
         for (const Batch& b : batches) {
-            if (b.pipeline != pipeline) {
-                pass.bindPipeline(*b.pipeline);
-                pipeline = b.pipeline;
+            const gpu::GraphicsPipeline* batchPipeline = prepass ? b.depth : b.pipeline;
+            if (!batchPipeline) continue;
+            if (batchPipeline != pipeline) {
+                pass.bindPipeline(*batchPipeline);
+                pipeline = batchPipeline;
             }
-            if (b.material && b.material != material) {
-                bindMaterial(pass, scene, *b.material, shadowPass);
-                material = b.material;
+            const MaterialEntry* batchMaterial = prepass && !b.depthMaterial ? nullptr : b.material;
+            if (batchMaterial && batchMaterial != material) {
+                bindMaterial(pass, scene, *batchMaterial, shadowPass);
+                material = batchMaterial;
             }
             if (b.vertices.buffer) {
                 pass.bindVertexBuffer(0, b.vertices);
@@ -1304,6 +1486,36 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     };
     const gpu::BufferRef instances(instanceBuffer);
     const gpu::TextureSamplerBinding noShadowBinding{dummyShadow, shadowSampler};
+
+    // ---- 0. Ray tracing: the camera's depth of the opaque surfaces, traced toward the sun and over the hemisphere
+    if (rayMask) {
+        commands.beginTiming("prepass");
+        {
+            const gpu::DepthTarget dt{
+                .texture = rayTracing.depth(), .store = gpu::StoreOp::Store, .clearDepth = 0.0f, .cycle = true};
+            gpu::RenderPass pass = commands.beginRenderPass(std::span<const gpu::ColorTarget>{}, &dt);
+            if (pass) {
+                pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
+                pass.bindSampler(kFragment, 0, noShadowBinding);
+                std::uint32_t draws = 0;
+                drawBatches(pass, opaqueBatches, -1, draws, true);
+                pass.end();
+            }
+        }
+        commands.endTiming();
+        const float cone = std::clamp(env.sunAngularRadius * std::max(settings.shadowSoftness, 0.0f), 0.0f, 0.2f);
+        const shader::RayTracingUniforms ru{
+            glm::vec4(rayShadows ? float(std::clamp(settings.shadowRays, 1, 8)) : 0.0f, std::tan(cone),
+                      kRayShadowLength, kRayNormalOffset),
+            glm::vec4(rayOcclusion ? float(std::clamp(settings.occlusionRays, 1, 8)) : 0.0f,
+                      std::max(settings.occlusionRadius, 0.01f), std::clamp(settings.occlusionStrength, 0.0f, 1.0f),
+                      0.0f),
+            glm::vec4(cone > 0.0f && settings.shadowRays > 0 ? float(kRayDenoiseShadowRadius) : 0.0f,
+                      kRayDenoiseTolerance, rayOcclusion ? float(kRayDenoiseOcclusionRadius) : 0.0f, 0.0f)};
+        commands.beginTiming("raytrace");
+        rayTracing.trace(commands, ru, pointClamp, materialSampler, white);
+        commands.endTiming();
+    }
 
     // ---- 1. Sun shadow cascades (standard depth), then the transmittance of their translucent casters
     bool transmittanceCycled = false;
@@ -1369,13 +1581,18 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             const gpu::TextureSamplerBinding transmittanceBinding{
                 transmittanceMask != 0 ? gpu::TextureRef(transmittanceMap) : gpu::TextureRef(dummyTransmittance),
                 linearClamp};
-            const auto bindFrame = [&] {
+            // The ray-traced mask is the opaque surfaces' (the prepass depth): transparent ones read white.
+            const gpu::TextureSamplerBinding maskBinding{
+                rayMask ? gpu::TextureRef(rayTracing.mask()) : gpu::TextureRef(white), pointClamp};
+            const gpu::TextureSamplerBinding noMaskBinding{white, pointClamp};
+            const auto bindFrame = [&](bool opaqueSurfaces) {
                 pass.pushUniforms(kFragment, 1, lu);
                 pass.bindSampler(kFragment, 0, shadowBinding);
                 pass.bindSampler(kFragment, 5, transmittanceBinding);
+                pass.bindSampler(kFragment, 6, opaqueSurfaces ? maskBinding : noMaskBinding);
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
             };
-            bindFrame();
+            bindFrame(true);
             drawBatches(pass, opaqueBatches, -1, stats.draws);
             PassContext ctx{commands, &pass, fu, hdr, depth, hdrFormat, depthFormat, rw, rh, -1};
             runPasses(PassStage::Opaque, ctx, fu);
@@ -1384,7 +1601,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.draw(3);
             }
             if (!transparentBatches.empty()) {
-                bindFrame();
+                bindFrame(false);
                 drawBatches(pass, transparentBatches, -1, stats.draws);
             }
             runPasses(PassStage::Transparent, ctx, fu);
@@ -1423,7 +1640,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         const int write = historyIndex ^ 1;
         const gpu::ColorTarget color{
             .texture = history[std::size_t(write)], .load = gpu::LoadOp::DontCare, .cycle = true};
-        gpu::RenderPass pass = commands.beginRenderPass(color);
+        gpu::RenderPass pass = taaResolve ? commands.beginRenderPass(color) : gpu::RenderPass{};
         if (pass) {
             const shader::PostUniforms pu{glm::vec4(1.0f / float(rw), 1.0f / float(rh), float(rw), float(rh)),
                                           glm::vec4(reset ? 1.0f : 0.0f, kTaaCurrentWeight, 0.0f, 0.0f),
@@ -1439,16 +1656,48 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             pass.end();
         }
         commands.endTiming();
-        historyIndex = write;
-        historyValid = true;
-        image = history[std::size_t(write)];
+        if (taaResolve) {
+            historyIndex = write;
+            historyValid = true;
+            image = history[std::size_t(write)];
+        }
     } else {
         historyValid = false;
+    }
+    if (upscaling) {
+        gpu::UpscaleDesc u{.color = image, .output = upscaled};
+        if (effects.upscaling == Upscaling::Temporal) {
+            const glm::vec2 j = subpixelJitter(frameIndex);
+            u.depth = depth;
+            u.motion = velocity;
+            // The image's shift by the jitter in input pixels, y down (the projection offset moves it by -j.x, +j.y;
+            // the other signs measured worse against the native frame); the motion texture is current minus
+            // previous uv.
+            u.jitterX = -j.x;
+            u.jitterY = j.y;
+            u.motionScaleX = -float(rw);
+            u.motionScaleY = -float(rh);
+            u.reset = cut || upscalerReset;
+        }
+        commands.beginTiming("upscale");
+        commands.upscale(upscaler, u);
+        commands.endTiming();
+        upscalerReset = false;
+        image = upscaled;
     }
 
     // ---- 4. Game passes on the HDR image
     {
-        PassContext ctx{commands, nullptr, fu, image, depth, hdrFormat, depthFormat, rw, rh, -1};
+        PassContext ctx{commands,
+                        nullptr,
+                        fu,
+                        image,
+                        upscaling ? gpu::TextureRef{} : gpu::TextureRef(depth),
+                        hdrFormat,
+                        upscaling ? TextureFormat::Invalid : depthFormat,
+                        iw,
+                        ih,
+                        -1};
         runPasses(PassStage::PostHdr, ctx, fu);
     }
 
@@ -1499,9 +1748,10 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         const float targetMode = hdrOut ? 2.0f : isSrgb(outFormat) ? 1.0f : 0.0f;
         const HdrKnee knee = hdrKnee(settings.toneCurve);
         const shader::PostUniforms tu{
-            glm::vec4(1.0f / float(rw), 1.0f / float(rh), 0.0f, 0.0f),
-            glm::vec4(taa ? std::clamp(settings.sharpen, 0.0f, 1.0f) : 0.0f, bloomOn ? settings.bloomStrength : 0.0f,
-                      env.exposure, settings.toneCurve == ToneCurve::Agx ? 1.0f : 0.0f),
+            glm::vec4(1.0f / float(iw), 1.0f / float(ih), 0.0f, 0.0f),
+            glm::vec4(taaResolve && !upscaling ? std::clamp(settings.sharpen, 0.0f, 1.0f) : 0.0f,
+                      bloomOn ? settings.bloomStrength : 0.0f, env.exposure,
+                      settings.toneCurve == ToneCurve::Agx ? 1.0f : 0.0f),
             glm::vec4(settings.vignette, fxaa ? 1.0f : 0.0f, targetMode, settings.dither && !hdrOut ? 1.0f : 0.0f),
             hdrOut
                 ? glm::vec4(std::max(output.headroom, 1.0f), std::max(output.paperWhite, 1e-3f), knee.scene, knee.slope)

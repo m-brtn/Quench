@@ -20,7 +20,17 @@ namespace detail {
 struct DeviceImpl;
 struct Access;
 
-enum class Kind : std::uint8_t { Buffer, Texture, Sampler, TransferBuffer, GraphicsPipeline, ComputePipeline, Fence };
+enum class Kind : std::uint8_t {
+    Buffer,
+    Texture,
+    Sampler,
+    TransferBuffer,
+    GraphicsPipeline,
+    ComputePipeline,
+    Fence,
+    AccelerationStructure,
+    Upscaler,
+};
 
 void release(DeviceImpl* device, Kind kind, void* native) noexcept;
 
@@ -100,6 +110,19 @@ public:
 // Signalled when the GPU has finished a submitted command buffer (CommandBuffer::submitWithFence).
 class Fence : public detail::Resource<detail::Kind::Fence, detail::NoInfo> {};
 
+// Geometry for ray queries (Caps::rayTracing), built and updated in an AccelerationStructurePass. A top level keeps
+// the bottom levels of its last build in use: they must live as long as it is bound.
+class AccelerationStructure : public detail::Resource<detail::Kind::AccelerationStructure, AccelerationStructureDesc> {
+public:
+    const AccelerationStructureDesc& desc() const { return m_info; }
+};
+
+// Scales a frame to a larger output (Caps::spatialUpscaling, Caps::temporalUpscaling): CommandBuffer::upscale.
+class Upscaler : public detail::Resource<detail::Kind::Upscaler, UpscalerDesc> {
+public:
+    const UpscalerDesc& desc() const { return m_info; }
+};
+
 struct TextureRef {
     void* native = nullptr;
     TextureDesc desc{};
@@ -124,6 +147,18 @@ struct SamplerRef {
     SamplerRef() = default;
     SamplerRef(const Sampler& sampler);
     explicit operator bool() const { return native != nullptr; }
+};
+
+// Triangles of a bottom-level acceleration structure: float3 positions at vertexOffset + i * vertexStride (a
+// mesh's vertex buffer as it is) and 32-bit indices from indexOffset (bytes), relative to the first vertex.
+struct RayGeometry {
+    BufferRef vertices{};
+    std::uint32_t vertexOffset = 0;
+    std::uint32_t vertexStride = 12;
+    std::uint32_t vertexCount = 0;
+    BufferRef indices{};
+    std::uint32_t indexOffset = 0;
+    std::uint32_t triangleCount = 0;
 };
 
 namespace detail {

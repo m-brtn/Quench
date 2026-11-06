@@ -222,6 +222,8 @@ void SdlGpuDevice::release(Kind kind, void* native) noexcept {
         break;
     case Kind::ComputePipeline: SDL_ReleaseGPUComputePipeline(d, static_cast<SDL_GPUComputePipeline*>(native)); break;
     case Kind::Fence: SDL_ReleaseGPUFence(d, static_cast<SDL_GPUFence*>(native)); break;
+    case Kind::AccelerationStructure:
+    case Kind::Upscaler: QUENCH_ASSERT(false, "SDL GPU creates no acceleration structures or upscalers"); break;
     }
 }
 

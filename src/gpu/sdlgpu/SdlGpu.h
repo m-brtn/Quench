@@ -134,6 +134,7 @@ inline SDL_GPUTextureUsageFlags toSdl(TextureUsage usage) {
     if (any(usage & TextureUsage::ColorTarget)) flags |= SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
     if (any(usage & TextureUsage::DepthStencilTarget)) flags |= SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
     if (any(usage & TextureUsage::GraphicsStorageRead)) flags |= SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+    if (any(usage & TextureUsage::ShaderWrite)) flags |= SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
     return flags;
 }
 

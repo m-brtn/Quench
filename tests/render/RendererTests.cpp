@@ -13,6 +13,7 @@
 #include <glm/ext/matrix_transform.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -857,4 +858,311 @@ QUENCH_TEST(renderer_rejects_bad_skins) {
     bars.skin[3].weights = {65535, 0, 0, 0}; // a zero weight may name any joint
     CHECK(scene.addMesh(bars.desc()), "an unused joint index is ignored");
     CHECK(scene.meshCount() == 1, "%u meshes", scene.meshCount());
+}
+
+// ---------------------------------------------------------------- ray tracing and upscaling (native Metal backend)
+
+namespace {
+
+// Hard ray-traced shadows (one ray, no sun cone): comparable with the shadow maps pixel by pixel.
+RenderSettings rayTraced(RenderSettings s) {
+    s.sunShadows = SunShadows::RayTraced;
+    s.shadowRays = 1;
+    s.shadowSoftness = 0.0f;
+    return s;
+}
+
+// Without gpu::Caps::rayTracing the renderer keeps the shadow maps.
+bool rayTracingActive(gpu::Device& device, const Renderer& renderer) {
+    if (renderer.effects().sunShadows == SunShadows::RayTraced) return true;
+    CHECK(!device.caps().rayTracing, "ray tracing on the device, shadow maps in the renderer");
+    CHECK(renderer.effects().shadowCascades > 0, "the fallback has shadow maps");
+    return false;
+}
+
+// Mean absolute difference per channel (0..255) and the share of pixels with a channel more than 16 apart.
+struct ImageDiff {
+    double mean = 0.0;
+    double over16 = 0.0;
+};
+ImageDiff compare(const std::vector<Rgba8>& a, const std::vector<Rgba8>& b) {
+    ImageDiff d;
+    if (a.size() != b.size() || a.empty()) return {255.0, 1.0};
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const int dr = std::abs(a[i].r - b[i].r), dg = std::abs(a[i].g - b[i].g), db = std::abs(a[i].b - b[i].b);
+        d.mean += double(dr + dg + db) / 3.0;
+        if (std::max({dr, dg, db}) > 16) d.over16 += 1.0;
+    }
+    d.mean /= double(a.size());
+    d.over16 /= double(a.size());
+    return d;
+}
+
+} // namespace
+
+// An opaque box over the ground: the ray-traced shadow lies where the shadow map's does, and follows the box when it
+// moves (the top level is built every frame).
+QUENCH_TEST(renderer_ray_traced_shadows_match_shadow_maps) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().shadowCascades == 0) QUENCH_SKIP("no shadow maps on this device");
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    const InstanceId caster =
+        scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0, 1.5f, 0})});
+    addSun(scene, kSunDown); // the box's shadow falls 1.5 m toward +x
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const std::vector<Rgba8> maps = renderOnce(device, *renderer, scene, kTopView, *target);
+
+    renderer->setSettings(rayTraced(settings));
+    if (!rayTracingActive(device, *renderer)) QUENCH_SKIP("no ray tracing: shadow maps");
+    CHECK(renderer->effects().shadowCascades == 0, "no shadow maps with ray-traced shadows");
+    const std::vector<Rgba8> rays = renderOnce(device, *renderer, scene, kTopView, *target);
+    REQUIRE(rays.size() == kSize * kSize, "%zu pixels", rays.size());
+    const RenderStats& stats = renderer->stats();
+    CHECK(stats.rayInstances == 2 && stats.rayBuilds == 2 && stats.shadowDraws == 0,
+          "%u instances in the top level, %u bottom levels built, %u shadow draws", stats.rayInstances, stats.rayBuilds,
+          stats.shadowDraws);
+    const glm::ivec2 shadow = pixelOf(kTopView, {1.5f, 0, 0}), lit = pixelOf(kTopView, {-3.0f, 0, 0});
+    const ImageDiff d = compare(maps, rays);
+    std::printf("  shadow %d (maps %d), lit %d (maps %d); image: mean %.2f, %.2f%% over 16\n", sum(at(rays, shadow)),
+                sum(at(maps, shadow)), sum(at(rays, lit)), sum(at(maps, lit)), d.mean, d.over16 * 100.0);
+    CHECK(sum(at(rays, shadow)) * 10 < sum(at(rays, lit)) * 7, "the ray-traced shadow is darker: %d vs %d",
+          sum(at(rays, shadow)), sum(at(rays, lit)));
+    CHECK(std::abs(sum(at(rays, shadow)) - sum(at(maps, shadow))) <= 6 &&
+              std::abs(sum(at(rays, lit)) - sum(at(maps, lit))) <= 6,
+          "as the shadow maps: shadow %d vs %d, lit %d vs %d", sum(at(rays, shadow)), sum(at(maps, shadow)),
+          sum(at(rays, lit)), sum(at(maps, lit)));
+    // The shadow maps' edges are filtered over about a texel, the hard ray-traced ones are not.
+    CHECK(d.mean < 1.5 && d.over16 < 0.03, "image: mean %.2f, %.2f%% over 16", d.mean, d.over16 * 100.0);
+
+    // The box moves 2 m toward -z: the next frame's top level has it there.
+    scene.setTransform(caster, glm::translate(glm::mat4(1.0f), {0, 1.5f, -2.0f}));
+    const std::vector<Rgba8> moved = renderOnce(device, *renderer, scene, kTopView, *target);
+    REQUIRE(moved.size() == kSize * kSize, "%zu pixels", moved.size());
+    const glm::ivec2 newShadow = pixelOf(kTopView, {1.5f, 0, -2.0f});
+    CHECK(std::abs(sum(at(moved, shadow)) - sum(at(moved, lit))) * 20 < sum(at(moved, lit)) &&
+              sum(at(moved, newShadow)) * 10 < sum(at(moved, lit)) * 7,
+          "the shadow moved with the box: old place %d, new place %d, lit %d", sum(at(moved, shadow)),
+          sum(at(moved, newShadow)), sum(at(moved, lit)));
+    CHECK(renderer->stats().rayBuilds == 0, "no bottom level rebuilt for a move: %u", renderer->stats().rayBuilds);
+}
+
+// Cut-out holes and translucent tints in ray-traced shadows: as in the shadow maps.
+QUENCH_TEST(renderer_ray_traced_cutout_and_translucent_shadows) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.sky = false;
+    Result<Renderer> renderer = Renderer::create(device, rayTraced(settings));
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().shadowCascades == 0 && renderer->effects().sunShadows != SunShadows::RayTraced)
+        QUENCH_SKIP("no shadow maps on this device");
+    if (!rayTracingActive(device, *renderer)) QUENCH_SKIP("no ray tracing: shadow maps");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId panel = addMesh(scene, planeMesh(glm::vec2(1.0f)));
+    const std::vector<std::byte> cut = halfCutPixels();
+    Result<TextureId> texture = scene.addTexture({.width = 16, .height = 16, .pixels = cut, .mipmaps = false});
+    REQUIRE(texture, "%s", texture.error().c_str());
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.5f), .roughness = 0.9f})});
+    MaterialDesc fence{.alphaCutoff = 0.5f};
+    fence.textures[0] = *texture;
+    const InstanceId caster =
+        scene.addInstance({.mesh = panel, .material = scene.addMaterial(fence), .transform = kPanelPlace});
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const glm::ivec2 hole = pixelOf(kTopView, {1.5f, 0, 0.3f}), solid = pixelOf(kTopView, {2.5f, 0, 0.3f}),
+                     lit = pixelOf(kTopView, {-3.0f, 0, 0.3f});
+
+    const auto both = [&](const char* what) {
+        std::array<std::vector<Rgba8>, 2> images;
+        for (int i = 0; i < 2; ++i) {
+            renderer->setSettings(i == 0 ? settings : rayTraced(settings));
+            images[std::size_t(i)] = renderOnce(device, *renderer, scene, kTopView, *target);
+            images[std::size_t(i)].resize(kSize * kSize);
+        }
+        // The shadow maps' edges are filtered over about a texel, the hard ray-traced ones are not.
+        const ImageDiff d = compare(images[0], images[1]);
+        std::printf("  %s: image mean %.2f, %.2f%% over 16\n", what, d.mean, d.over16 * 100.0);
+        CHECK(d.mean < 3.0 && d.over16 < 0.04, "%s: image mean %.2f, %.2f%% over 16", what, d.mean, d.over16 * 100.0);
+        return images;
+    };
+    std::array<std::vector<Rgba8>, 2> images = both("cut-out");
+    const std::vector<Rgba8>& rays = images[1];
+    const int l = sum(at(rays, lit));
+    CHECK(sum(at(rays, solid)) * 10 < l * 7, "the solid half shadows: %d vs lit %d", sum(at(rays, solid)), l);
+    CHECK(std::abs(sum(at(rays, hole)) - l) * 20 < l, "light passes the holes: %d vs lit %d", sum(at(rays, hole)), l);
+    CHECK(renderer->stats().rayInstances == 2, "%u instances in the top level", renderer->stats().rayInstances);
+
+    // Translucent: the transmittance of the shadow maps, (1 - a) * lerp(1, hue, a).
+    MaterialDesc glass{.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 0.5f), .blend = BlendMode::AlphaBlend};
+    const MaterialId glassMaterial = scene.addMaterial(glass);
+    scene.setInstanceMaterial(caster, glassMaterial);
+    scene.setVisible(caster, false);
+    renderer->setSettings(rayTraced(settings));
+    const std::vector<Rgba8> without = renderOnce(device, *renderer, scene, kTopView, *target);
+    scene.setVisible(caster, true);
+    const glm::vec3 open = sceneValue(at(without, solid));
+    for (const glm::vec4 color : {glm::vec4(0.5f, 0.5f, 0.5f, 0.5f), glm::vec4(0.9f, 0.1f, 0.1f, 0.5f)}) {
+        glass.baseColor = color;
+        scene.setMaterial(glassMaterial, glass);
+        images = both(color.g > 0.2f ? "translucent grey" : "translucent red");
+        const glm::vec3 t = sceneValue(at(images[1], solid)) / open;
+        const glm::vec3 m = sceneValue(at(images[0], solid)) / open;
+        std::printf("  transmitted %.3f %.3f %.3f (maps %.3f %.3f %.3f)\n", double(t.r), double(t.g), double(t.b),
+                    double(m.r), double(m.g), double(m.b));
+        const glm::vec3 hue = glm::vec3(color) / std::max({color.r, color.g, color.b});
+        const glm::vec3 expected = (1.0f - color.a) * glm::mix(glm::vec3(1.0f), hue, color.a);
+        CHECK(glm::all(glm::lessThan(glm::abs(t - expected), glm::vec3(0.06f))),
+              "transmitted %.3f %.3f %.3f, expected %.3f %.3f %.3f", double(t.r), double(t.g), double(t.b),
+              double(expected.r), double(expected.g), double(expected.b));
+    }
+}
+
+// A skinned panel posed away from its bind place: the ray-traced shadow is where the pose puts it, its bottom level
+// refitted every frame.
+QUENCH_TEST(renderer_ray_traced_skinned_shadows) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.sky = false;
+    Result<Renderer> renderer = Renderer::create(device, rayTraced(settings));
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!rayTracingActive(device, *renderer)) QUENCH_SKIP("no ray tracing: shadow maps");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.5f), .roughness = 0.9f})});
+    const MeshData plane = planeMesh(glm::vec2(1.0f));
+    const std::vector<SkinVertex> skin(plane.vertices.size()); // every vertex on joint 0
+    Result<MeshId> panel = scene.addMesh({plane.vertices, plane.indices, "skinned panel", skin, 1});
+    REQUIRE(panel, "%s", panel.error().c_str());
+    const std::vector<std::byte> cut = halfCutPixels();
+    Result<TextureId> texture = scene.addTexture({.width = 16, .height = 16, .pixels = cut, .mipmaps = false});
+    REQUIRE(texture, "%s", texture.error().c_str());
+    MaterialDesc fence{.alphaCutoff = 0.5f};
+    fence.textures[0] = *texture;
+    const InstanceId caster =
+        scene.addInstance({.mesh = *panel, .material = scene.addMaterial(fence), .transform = kPanelPlace});
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const glm::ivec2 hole = pixelOf(kTopView, {1.5f, 0, -2.5f}), solid = pixelOf(kTopView, {2.5f, 0, -2.5f}),
+                     bindPlace = pixelOf(kTopView, {2.5f, 0, 0.3f}), lit = pixelOf(kTopView, {-3.0f, 0, -2.5f});
+    for (int frame = 0; frame < 3; ++frame) {
+        // Toward -z by 2.5 m over three frames: the last frame's pose is the checked one.
+        const std::array<glm::mat4, 1> posed{
+            glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, -2.5f + 0.5f * float(2 - frame)})};
+        scene.setJointPalette(caster, posed, frame == 0);
+        const std::vector<Rgba8> pixels = renderOnce(device, *renderer, scene, kTopView, *target);
+        REQUIRE(pixels.size() == kSize * kSize, "%zu pixels", pixels.size());
+        const RenderStats& stats = renderer->stats();
+        CHECK(frame == 0 ? stats.rayBuilds == 2 && stats.rayRefits == 0 : stats.rayBuilds == 0 && stats.rayRefits == 1,
+              "frame %d: %u built, %u refitted", frame, stats.rayBuilds, stats.rayRefits);
+        if (frame < 2) continue;
+        const int l = sum(at(pixels, lit));
+        std::printf("  posed: solid %d, hole %d, bind place %d, lit %d\n", sum(at(pixels, solid)),
+                    sum(at(pixels, hole)), sum(at(pixels, bindPlace)), l);
+        CHECK(sum(at(pixels, solid)) * 10 < l * 7, "the posed solid half shadows: %d vs lit %d", sum(at(pixels, solid)),
+              l);
+        CHECK(std::abs(sum(at(pixels, hole)) - l) * 20 < l, "light passes the posed holes: %d vs lit %d",
+              sum(at(pixels, hole)), l);
+        CHECK(std::abs(sum(at(pixels, bindPlace)) - l) * 20 < l, "no shadow at the bind place: %d vs lit %d",
+              sum(at(pixels, bindPlace)), l);
+    }
+}
+
+// Ray-traced ambient occlusion: the ground darkens next to a box standing on it, not far from it.
+QUENCH_TEST(renderer_ray_traced_ambient_occlusion) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.ambientOcclusion = AmbientOcclusion::RayTraced;
+    settings.occlusionRays = 8;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().ambientOcclusion != AmbientOcclusion::RayTraced) {
+        CHECK(!device.caps().rayTracing, "ray tracing on the device, unused by the renderer");
+        QUENCH_SKIP("no ray tracing: no ambient occlusion");
+    }
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyAmbient = e.groundAmbient = glm::vec3(1.0f); // ambient light only
+    scene.setEnvironment(e);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 1.0f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0, 0.5f, 0})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // 0.1 m and 2 m from the box's side (the camera sees the ground beside its top), the box's top.
+    const glm::ivec2 near = pixelOf(kTopView, {0.6f, 0, 0}), far = pixelOf(kTopView, {2.5f, 0, 0}),
+                     top = pixelOf(kTopView, {0.0f, 1.0f, 0.0f});
+    const std::vector<Rgba8> on = renderOnce(device, *renderer, scene, kTopView, *target);
+    REQUIRE(on.size() == kSize * kSize, "%zu pixels", on.size());
+    settings.ambientOcclusion = AmbientOcclusion::None;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> off = renderOnce(device, *renderer, scene, kTopView, *target);
+    REQUIRE(off.size() == kSize * kSize, "%zu pixels", off.size());
+    const float nearRatio = sceneValue(at(on, near)).g / sceneValue(at(off, near)).g;
+    const float farRatio = sceneValue(at(on, far)).g / sceneValue(at(off, far)).g;
+    const float topRatio = sceneValue(at(on, top)).g / sceneValue(at(off, top)).g;
+    std::printf("  ambient light with occlusion: %.3f next to the box, %.3f away, %.3f on its top\n", double(nearRatio),
+                double(farRatio), double(topRatio));
+    CHECK(nearRatio < 0.9f, "occluded next to the box: %.3f", double(nearRatio));
+    CHECK(std::abs(farRatio - 1.0f) < 0.03f && std::abs(topRatio - 1.0f) < 0.03f,
+          "open ground and the box's top are not occluded: %.3f, %.3f", double(farRatio), double(topRatio));
+}
+
+// MetalFX at half the target's size: the upscaled frame is close to the one rendered at full size.
+QUENCH_TEST(renderer_upscaling) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.antiAliasing = AntiAliasing::Taa;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.6f)));
+    scene.addInstance({.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.3f, 0.5f, 0.3f, 1)})});
+    scene.addInstance({.mesh = box,
+                       .material = scene.addMaterial({.baseColor = glm::vec4(0.8f, 0.2f, 0.1f, 1.0f)}),
+                       .transform = glm::translate(glm::mat4(1.0f), {0, 0.6f, 0})});
+    addSun(scene, glm::vec3(-0.3f, -1.0f, -0.5f));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 2.0f, 4.0f), glm::vec3(0, 0.4f, 0));
+    const auto settle = [&] {
+        std::vector<Rgba8> pixels;
+        for (int frame = 0; frame < 8; ++frame) pixels = renderOnce(device, *renderer, scene, view, *target);
+        return pixels;
+    };
+    const std::vector<Rgba8> native = settle();
+    for (const Upscaling upscaling : {Upscaling::Spatial, Upscaling::Temporal}) {
+        const char* name = upscaling == Upscaling::Spatial ? "spatial" : "temporal";
+        RenderSettings s = settings;
+        s.renderScale = 0.5f;
+        s.upscaling = upscaling;
+        renderer->setSettings(s);
+        if (renderer->effects().upscaling != upscaling) {
+            CHECK(!(upscaling == Upscaling::Spatial ? device.caps().spatialUpscaling : device.caps().temporalUpscaling),
+                  "%s upscaling on the device, bilinear in the renderer", name);
+            continue;
+        }
+        const std::vector<Rgba8> scaled = settle();
+        CHECK(renderer->stats().renderWidth == kSize / 2, "%s: render width %u", name, renderer->stats().renderWidth);
+        const ImageDiff d = compare(native, scaled);
+        std::printf("  %s at half size: mean %.2f, %.2f%% over 16\n", name, d.mean, d.over16 * 100.0);
+        CHECK(d.mean < 4.0 && d.over16 < 0.12, "%s: mean %.2f, %.2f%% over 16", name, d.mean, d.over16 * 100.0);
+    }
+    if (renderer->effects().upscaling == Upscaling::Bilinear) QUENCH_SKIP("no upscaling on this device");
 }

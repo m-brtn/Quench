@@ -90,6 +90,48 @@ QUENCH_TEST(effects_fall_back_by_device_support) {
     CHECK(!e.bloom && e.antiAliasing == AntiAliasing::None, "off stays off");
 }
 
+QUENCH_TEST(effects_ray_tracing_and_upscaling_fall_back) {
+    using quench::render::detail::selectEffects;
+    RenderSettings s;
+    s.shadowCascades = 3;
+    s.sunShadows = SunShadows::RayTraced;
+    s.ambientOcclusion = AmbientOcclusion::RayTraced;
+    s.antiAliasing = AntiAliasing::Fxaa;
+    s.upscaling = Upscaling::Temporal;
+    s.renderScale = 0.5f;
+    const quench::render::detail::DeviceSupport maps{.shadowArray = true,
+                                                     .depthClamp = true,
+                                                     .sampledDepth = true,
+                                                     .velocityTarget = true,
+                                                     .transmittanceArray = true};
+    quench::render::detail::DeviceSupport full = maps;
+    full.rayTracing = full.spatialUpscaling = full.temporalUpscaling = true;
+
+    ActiveEffects e = selectEffects(s, full);
+    CHECK(e.sunShadows == SunShadows::RayTraced && e.shadowCascades == 0 &&
+              e.ambientOcclusion == AmbientOcclusion::RayTraced,
+          "ray-traced shadows replace the cascades");
+    CHECK(e.upscaling == Upscaling::Temporal && e.antiAliasing == AntiAliasing::Taa,
+          "temporal upscaling takes TAA's jitter and motion");
+    e = selectEffects(s, maps);
+    CHECK(e.sunShadows == SunShadows::ShadowMaps && e.shadowCascades == 3 &&
+              e.ambientOcclusion == AmbientOcclusion::None,
+          "without ray tracing: the cascades, no ambient occlusion");
+    CHECK(e.upscaling == Upscaling::Bilinear && e.antiAliasing == AntiAliasing::Fxaa,
+          "without MetalFX: bilinear, the antialiasing asked for");
+
+    quench::render::detail::DeviceSupport noVelocity = full;
+    noVelocity.velocityTarget = false;
+    CHECK(selectEffects(s, noVelocity).upscaling == Upscaling::Bilinear, "temporal upscaling needs motion vectors");
+    s.upscaling = Upscaling::Spatial;
+    CHECK(selectEffects(s, full).upscaling == Upscaling::Spatial, "spatial below full size");
+    s.renderScale = 1.0f;
+    CHECK(selectEffects(s, full).upscaling == Upscaling::Bilinear, "nothing to upscale at full size");
+    s.shadowCascades = 0;
+    e = selectEffects(s, full);
+    CHECK(e.sunShadows == SunShadows::ShadowMaps && e.shadowCascades == 0, "shadowCascades 0: no sun shadows");
+}
+
 QUENCH_TEST(cascades_cover_the_view) {
     const glm::mat4 view = glm::lookAt(glm::vec3(3, 2, 8), glm::vec3(0, 1, 0), glm::vec3(0, 1, 0));
     const glm::vec3 sun = glm::normalize(glm::vec3(0.4f, 0.8f, 0.3f));

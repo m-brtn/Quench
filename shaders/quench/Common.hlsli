@@ -47,6 +47,15 @@ float phaseHG(float mu, float g) {
     return (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5);
 }
 
+// The sun's light a translucent surface lets through: 1 - opacity, tinted toward its hue (its albedo over its
+// brightest channel) as far as it is opaque. A grey surface of opacity a passes 1 - a in every channel.
+float3 quenchTransmittanceOf(float3 albedo, float opacity) {
+    const float a = saturate(opacity);
+    const float peak = max(albedo.r, max(albedo.g, albedo.b));
+    const float3 hue = peak > 1e-4 ? saturate(albedo / peak) : float3(1.0, 1.0, 1.0);
+    return (1.0 - a) * lerp(float3(1.0, 1.0, 1.0), hue, a);
+}
+
 // The sRGB transfer function and its inverse.
 float3 linearToSrgb(float3 c) {
     c = max(c, 0.0);

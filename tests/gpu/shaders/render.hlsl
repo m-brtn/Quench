@@ -91,3 +91,23 @@ void scale_cs(uint3 id : SV_DispatchThreadID) {
     b_out[id.x] = b_a[id.x] * u_params.x + b_b[id.x] + float(id.x);
 }
 #endif
+
+// Rays down the -z axis from z = 10 through the target (x, y in -1..1): r 1 on a hit, g the instance id / 255, b the
+// distance / 20 (gpu::Caps::rayTracing; compiled by DXC).
+#ifdef QUENCH_ENTRY_ray_fs
+RaytracingAccelerationStructure t_scene : register(t0, space2);
+
+float4 ray_fs(FullscreenOut i) : SV_Target0 {
+    RayDesc ray;
+    ray.Origin = float3(i.uv.x * 2.0 - 1.0, 1.0 - i.uv.y * 2.0, 10.0);
+    ray.Direction = float3(0.0, 0.0, -1.0);
+    ray.TMin = 0.0;
+    ray.TMax = 100.0;
+    RayQuery<RAY_FLAG_FORCE_OPAQUE> q;
+    q.TraceRayInline(t_scene, RAY_FLAG_NONE, 0xFF, ray);
+    while (q.Proceed()) {
+    }
+    if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT) return float4(0.0, 0.0, 0.0, 1.0);
+    return float4(1.0, float(q.CommittedInstanceID()) / 255.0, q.CommittedRayT() / 20.0, 1.0);
+}
+#endif
