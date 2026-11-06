@@ -2,8 +2,9 @@
 # batch_native.txt, so that no other capture moves in the batch's frame sequence): the drive starts eased, the lamps
 # move on their clock, both stand still while the path tracer runs and go on after it, Pause all stops both, and a
 # camera move from elsewhere hands the camera to the free one. The capture is taken while both move, 3 s after a set
-# start, at the section's defaults: the denoisers and the upscaler in motion. tunnel_motion_fallback.txt checks the
-# same on SDL GPU without the capture.
+# start, at the section's defaults: the denoisers and the upscaler in motion. The start is a camera cut (the drive
+# jumps onto the loop), so the capture does not depend on how many frames the waits for loads took before it.
+# tunnel_motion_fallback.txt checks the same on SDL GPU without the capture.
 section tunnel
 reset_section
 

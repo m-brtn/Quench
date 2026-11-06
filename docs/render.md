@@ -67,7 +67,10 @@ renderer->render(scene, {.view = camera, .fovY = fov, .nearPlane = 0.1f, .time =
 
 The scene is retained so that later backends can build from it (ray tracing: acceleration structures from the meshes
 and instances, stage 9). One `render()` per scene and frame: motion vectors are measured from the scene's previous
-render, and switching cameras or scenes needs `View::cut`.
+render, and switching cameras or scenes needs `View::cut`. A cut (also one the renderer makes itself: a new size, a
+camera that jumped more than 6 m or turned more than about 25 degrees) restarts the TAA and upscaler jitter, the
+shaders' per-frame noise and the probe rays' rotation, so a frame depends only on the frames since the last cut, not
+on how many were rendered before it (in a scripted run, the frames spent waiting for loads in real time).
 
 ## The frame
 

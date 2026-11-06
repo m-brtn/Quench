@@ -85,6 +85,13 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   in the iOS Simulator (7 of 39), where the list is a sheet; the scenario now opens the sheet first (35 of 35 in
   the Simulator and in the Mac's batches). Scripted gamepad input works in the Simulator now (hello's `input.txt`
   14 of 14, the demo's `physics.txt` 18 of 18 and `input.txt` 22 of 22).
+- **The demo's tunnel motion capture on the native backend failed now and then** (mean 0.39 to 0.52 against the
+  golden image): the TAA and upscaler jitter, the shaders' noise and the probe rays followed the renderer's count of
+  all frames, and in a batch the waits for loads in real time (`until`) took 1 to 5 frames more or fewer under
+  load, so the capture had another noise phase. These sequences now restart at every camera cut (`View::cut`, or
+  the renderer's own), and the tunnel's drive start is a cut: 13 runs of the native batch, 3 of them beside 14
+  busy processes with the capture 1 to 5 frames off, gave the same captures byte for byte. 29 golden images of the
+  demo changed (edges only, by the jitter phase).
 
 ## Changes for games
 
@@ -113,6 +120,9 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   changes. It also builds `surface_basic_fs:fragment` and passes it as **`SurfaceDesc::basicFragmentShader`**
   (new, after `fragmentShader`) to skip those paths where a frame does not need them; `QUENCH_SURFACE_FULL` is 0
   in that entry, for code of its own around area lights or anisotropy. Without it nothing changes.
+- **A camera cut restarts the jitter and noise sequences** (`View::cut`, and the renderer's own cuts: a new size, a
+  jump of more than 6 m, a turn of more than about 25 degrees): a game's frames right after a cut have the same
+  jitter and noise as after any other cut. A game that sets `cut` every frame gets the same noise every frame.
 - **`app::PerfReport::gpuSamples`** (and the perf line's sample count) is the number of frames whose GPU time was
   read, a few less than `frames` (the frames in flight at the end), where it equalled `frames` before; GPU times of
   a region come only from its own frames. **`PerfReport::processCpu`** and **`cpuPerformanceShare`** are new, at its

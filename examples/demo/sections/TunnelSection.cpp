@@ -612,7 +612,10 @@ public:
             m_driveSpeed = std::clamp(*number, 0.2f, 4.0f);
         } else if (name == "drive_position" && number) {
             m_drivePosition = m_loop.wrap(*number);
-            if (m_drive) placeCamera();
+            if (m_drive) {
+                placeCamera();
+                cameraCut = true;
+            }
         } else if (name == "limit_60hz" && flag) {
             m_limit60 = *flag;
             applyFrameLimit(c);
@@ -723,12 +726,15 @@ private:
         m_driven = camera;
     }
 
-    // The drive starts from rest (eased) where it stopped.
+    // The drive starts from rest (eased) where it stopped; the camera jumps onto the loop.
     void setDrive(bool drive) {
         m_drive = drive;
         m_driveVelocity = 0.0f;
         m_driven.reset();
-        if (drive) placeCamera();
+        if (drive) {
+            placeCamera();
+            cameraCut = true;
+        }
     }
 
     void applyGroup(std::size_t g) {

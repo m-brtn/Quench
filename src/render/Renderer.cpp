@@ -325,6 +325,9 @@ struct RendererImpl {
 
     // Temporal state
     std::uint64_t frameIndex = 0;
+    // Frames since the last cut: the jitter, the shaders' noise and the probe rays follow it, so a frame depends only
+    // on the frames since the cut, not on how many came before (in scripted runs, waits for loads in real time).
+    std::uint64_t sequenceIndex = 0;
     glm::mat4 prevViewProj{1.0f};
     glm::vec3 prevCameraPos{0.0f}, prevCameraFwd{0.0f, 0.0f, -1.0f};
     bool prevValid = false;
@@ -1342,9 +1345,10 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     const glm::vec3 cameraFwd = -glm::normalize(glm::vec3(invView[2]));
     const bool cut = view.cut || !prevValid || sizeChanged || glm::length(cameraPos - prevCameraPos) > 6.0f ||
                      glm::dot(cameraFwd, prevCameraFwd) < 0.9f;
+    if (cut) sequenceIndex = 0;
     glm::mat4 projJ = proj;
     if (taa) {
-        const glm::vec2 j = subpixelJitter(frameIndex);
+        const glm::vec2 j = subpixelJitter(sequenceIndex);
         projJ[2][0] += j.x * 2.0f / float(rw);
         projJ[2][1] += j.y * 2.0f / float(rh);
     }
@@ -1371,7 +1375,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     fu.fogParams = glm::vec4(std::max(env.fogDensity, 0.0f), std::max(env.fogFalloff, 0.0f), env.fogBaseHeight,
                              std::clamp(env.fogSunScatter, 0.0f, 1.0f));
     fu.fogColor = glm::vec4(env.fogColor, std::clamp(env.fogMaxAmount, 0.0f, 1.0f));
-    fu.options = glm::vec4(env.exposure, float(frameIndex % 1024), taa ? 1.0f : 0.0f, 0.0f);
+    fu.options = glm::vec4(env.exposure, float(sequenceIndex % 1024), taa ? 1.0f : 0.0f, 0.0f);
 
     const std::array<Plane, 5> planes = frustumPlanes(fu.viewProj);
     const LightEntry* sun = nullptr;
@@ -1843,7 +1847,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     shader::RayHitUniforms hu{};
     hu.params =
         glm::vec4(std::clamp(settings.reflectionRoughness, 0.05f, 1.0f), kRayNormalOffset, kRayLightLength, 0.0f);
-    hu.rotation = frameRotation(frameIndex);
+    hu.rotation = frameRotation(sequenceIndex);
     bool denoiseInputs = false; // the denoising upscaler's G-buffer inputs are written
     if (denoisedUpscale && !(rayMask && !pathFrame)) denoiseInputs = rayTracing.writeDenoiseInputs(commands, false);
     if (rayMask && !pathFrame) {
@@ -2080,7 +2084,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     if (upscaling) {
         gpu::UpscaleDesc u{.color = image, .output = upscaled};
         if (effects.upscaling == Upscaling::Temporal || effects.upscaling == Upscaling::TemporalDenoised) {
-            const glm::vec2 j = subpixelJitter(frameIndex);
+            const glm::vec2 j = subpixelJitter(sequenceIndex);
             u.depth = depth;
             u.motion = velocity;
             // The image's shift by the jitter in input pixels, y down (the projection offset moves it by -j.x, +j.y;
@@ -2236,6 +2240,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     prevCameraFwd = cameraFwd;
     prevValid = true;
     ++frameIndex;
+    ++sequenceIndex;
     for (std::uint32_t i = 0; i < slots; ++i) {
         InstanceEntry* inst = scene.instances.slot(i);
         if (!inst) continue;

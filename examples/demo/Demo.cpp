@@ -218,7 +218,7 @@ void DemoGame::render(App& app, app::Frame& frame) {
     const render::View view{.view = section.camera.view(),
                             .fovY = section.camera.fovFor(aspect),
                             .nearPlane = 0.1f,
-                            .cut = m_cut,
+                            .cut = m_cut || section.cameraCut,
                             .time = section.sectionTime,
                             .probeCenter = section.camera.target};
     // The Graphics panel's exposure scales the section's own for this frame only.
@@ -234,6 +234,7 @@ void DemoGame::render(App& app, app::Frame& frame) {
     if (exposure != 1.0f) scene.setEnvironment(environment);
     m_targetWidth = frame.width;
     m_cut = false;
+    section.cameraCut = false;
 }
 
 void DemoGame::shutdown(App& app) {

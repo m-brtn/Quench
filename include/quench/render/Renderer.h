@@ -235,8 +235,9 @@ struct View {
     glm::mat4 view{1.0f};   // world -> view (right-handed, looking down -z; glm::lookAt)
     float fovY = 1.0f;      // vertical field of view (radians)
     float nearPlane = 0.1f; // m
-    bool cut = false;       // a camera cut: no motion from the previous frame, the TAA history restarts
-    double time = 0.0;      // seconds, for animated surfaces (FrameUniforms::cameraPos.w)
+    // A camera cut: no motion from the previous frame; the TAA history, the jitter and the noise sequences restart.
+    bool cut = false;
+    double time = 0.0; // seconds, for animated surfaces (FrameUniforms::cameraPos.w)
     // The center of the probe grid (IndirectLight::Probes and RayTraced); unset: the camera. A camera high above
     // the ground (top-down, strategy) sets the point it looks at, so the grid covers the ground.
     std::optional<glm::vec3> probeCenter{};

@@ -124,6 +124,8 @@ public:
     // Seconds the section has been shown since it was made: its animations and surface shaders run on it, so that a
     // picture does not depend on when the section was first shown (a scripted check in a batch of them).
     double sectionTime = 0.0;
+    // Set when the section moved the camera by a jump: the next frame is a camera cut (render::View::cut).
+    bool cameraCut = false;
 };
 
 using SectionFactory = std::unique_ptr<Section> (*)();
