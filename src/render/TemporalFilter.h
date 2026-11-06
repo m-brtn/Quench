@@ -37,6 +37,8 @@ public:
     bool ready() const { return static_cast<bool>(m_atrous); }
     bool ensureTargets(std::uint32_t width, std::uint32_t height);
     void release();
+    // A frame without run(): the next run starts without history.
+    void invalidate() { m_valid = false; }
 
     // Filters `signal` into `output` (render size, the filter's format); temporal: through the history first.
     void run(gpu::CommandBuffer& commands, const gpu::Texture& signal, const gpu::Texture& output,

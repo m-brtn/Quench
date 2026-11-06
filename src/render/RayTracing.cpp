@@ -643,9 +643,9 @@ void RayTracing::filter(gpu::CommandBuffer& commands, TemporalFilter& f, const g
 void RayTracing::traceShadows(gpu::CommandBuffer& commands, const shader::RayTracingUniforms& uniforms,
                               const shader::LightUniforms& lights, const FilterInputs& inputs, RayFiltering filtering) {
     const bool local = uniforms.local.x > 0.0f && m_local;
-    // Nothing to blur (hard shadows, no occlusion, no local lights): the rays write the mask directly.
+    // Nothing to filter in the sun's mask (hard shadows, no occlusion): the rays write it directly.
     const bool soft = uniforms.denoise.x > 0.0f || uniforms.denoise.z > 0.0f;
-    const bool rawMask = filtering == RayFiltering::Raw || (filtering == RayFiltering::Spatial && !soft);
+    const bool rawMask = filtering == RayFiltering::Raw || !soft;
     commands.beginTiming("rays");
     std::array<gpu::ColorTarget, 2> targets{
         gpu::ColorTarget{.texture = rawMask ? m_mask : m_raw, .load = gpu::LoadOp::DontCare, .cycle = true},
@@ -672,11 +672,13 @@ void RayTracing::traceShadows(gpu::CommandBuffer& commands, const shader::RayTra
     commands.endTiming();
     if (filtering == RayFiltering::Raw) return;
     commands.beginTiming("denoise");
-    if (filtering == RayFiltering::Temporal) {
+    if (!soft) {
+        m_maskFilter.invalidate();
+    } else if (filtering == RayFiltering::Temporal) {
         // Sun penumbrae and occlusion: a short history (moving casters), clamped; two a-trous passes.
         filter(commands, m_maskFilter, m_raw, m_mask, inputs,
                {.maxHistory = 16.0f, .clampGamma = 1.5f, .steps = 2, .planeTolerance = uniforms.denoise.y}, filtering);
-    } else if (soft) {
+    } else {
         const gpu::ColorTarget color{.texture = m_mask, .load = gpu::LoadOp::DontCare, .cycle = true};
         if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
             const gpu::TextureSamplerBinding samplers[] = {{m_raw, *m_samplers.point}, {depth(), *m_samplers.point}};
