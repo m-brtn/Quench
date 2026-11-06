@@ -250,7 +250,10 @@ struct RenderStats {
     std::uint32_t movedInstances = 0; // instances drawn into the motion vectors
     std::uint32_t lights = 0;         // local lights used this frame
     std::uint32_t areaLights = 0;     // of them, area lights (at most 8)
-    std::uint32_t renderWidth = 0;    // the 3D resolution
+    // Lights with ray-traced shadows (RenderSettings::localLightShadows) that took a channel another light, or none,
+    // had in the previous frame: the channel's history was another light's shadow.
+    std::uint32_t localShadowChanges = 0;
+    std::uint32_t renderWidth = 0; // the 3D resolution
     std::uint32_t renderHeight = 0;
     std::uint32_t pipelines = 0;        // pipelines created so far
     std::uint32_t skinnedInstances = 0; // skinned instances posed on the GPU this frame (drawn in view or shadows)

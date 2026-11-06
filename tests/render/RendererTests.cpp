@@ -1399,9 +1399,16 @@ QUENCH_TEST(renderer_ray_traced_local_light_shadows) {
     const glm::ivec2 shadow = pixelOf(kTopView, {0.0f, 0, 0}), lit = pixelOf(kTopView, {-3.0f, 0, 0});
     const std::vector<Rgba8> traced = settle(device, *renderer, scene, kTopView, *target, 4);
     REQUIRE(traced.size() == kSize * kSize, "%zu pixels", traced.size());
+    CHECK(renderer->stats().localShadowChanges == 0, "the light kept its channel: %u changes",
+          renderer->stats().localShadowChanges);
     settings.localLightShadows = 0;
     renderer->setSettings(settings);
     const std::vector<Rgba8> open = settle(device, *renderer, scene, kTopView, *target, 2);
+    settings.localLightShadows = 1;
+    renderer->setSettings(settings);
+    (void)renderOnce(device, *renderer, scene, kTopView, *target);
+    CHECK(renderer->stats().localShadowChanges == 1, "the light took a free channel: %u changes",
+          renderer->stats().localShadowChanges);
     std::printf("  behind the box %d (unshadowed %d), in the open %d (unshadowed %d)\n", sum(at(traced, shadow)),
                 sum(at(open, shadow)), sum(at(traced, lit)), sum(at(open, lit)));
     CHECK(sum(at(traced, shadow)) * 4 < sum(at(traced, lit)), "shadowed behind the box: %d vs %d",

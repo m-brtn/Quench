@@ -316,6 +316,8 @@ struct RendererImpl {
     PathTracer pathTracer;
     bool pathTracerTried = false;
     bool targetVelocity = false; // the velocity target was made (TAA, or the temporal ray denoiser)
+    // The light (scene slot + 1, 0: none) of each local shadow channel in the previous frame.
+    std::array<std::uint32_t, QUENCH_RT_LOCAL_SHADOWS> shadowChannels{};
 
     // Temporal state
     std::uint64_t frameIndex = 0;
@@ -1355,6 +1357,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         shader::LocalLight light;
         bool shadows = false; // LightDesc::castsShadows
         bool area = false;
+        std::uint32_t key = 0; // scene slot + 1
     };
     std::vector<Candidate> candidates;
     for (std::uint32_t i = 0; i < scene.lights.capacity(); ++i) {
@@ -1385,7 +1388,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             local.cone = glm::vec4(f.half.x, 0.0f, f.half.y, 0.0f);
             local.shape = glm::vec4(f.tangent, float(i + 1));
             candidates.push_back(
-                {std::max(0.0f, glm::length(l.position - cameraPos) - reach), local, l.castsShadows, true});
+                {std::max(0.0f, glm::length(l.position - cameraPos) - reach), local, l.castsShadows, true, i + 1});
             continue;
         }
         if (l.range <= 0.0f || !sphereVisible(planes, l.position, l.range)) continue;
@@ -1395,7 +1398,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         const float cosOuter = std::cos(l.outerAngle), cosInner = std::cos(std::min(l.innerAngle, l.outerAngle));
         local.direction = glm::vec4(dir, cosOuter);
         local.cone = glm::vec4(1.0f / std::max(cosInner - cosOuter, 1e-4f), 0.0f, std::max(l.sourceRadius, 0.0f), 0.0f);
-        candidates.push_back({std::max(0.0f, glm::length(l.position - cameraPos) - l.range), local, l.castsShadows});
+        candidates.push_back(
+            {std::max(0.0f, glm::length(l.position - cameraPos) - l.range), local, l.castsShadows, false, i + 1});
     }
     std::stable_sort(candidates.begin(), candidates.end(),
                      [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
@@ -1466,11 +1470,16 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     if (!pathTracing) pathTracer.release();
     // Local lights with ray-traced shadows: the nearest ones that cast shadows, one channel each.
     int channels = 0;
+    std::array<std::uint32_t, QUENCH_RT_LOCAL_SHADOWS> owners{};
     for (std::size_t i = 0; i < lightCount && channels < localShadows; ++i) {
         shader::LocalLight& l = lu.lights[i];
         if (int(l.color.w) == 0 || !candidates[i].shadows) continue;
+        owners[std::size_t(channels)] = candidates[i].key;
         l.cone.y = float(++channels);
     }
+    for (std::size_t c = 0; c < owners.size(); ++c)
+        if (owners[c] != 0 && owners[c] != shadowChannels[c]) ++stats.localShadowChanges;
+    shadowChannels = owners;
     localShadows = channels;
     bool rayTraced = anyTraced();
     // Hits are shaded (not only tested for shadows): every visible instance is in the top level, with its material.

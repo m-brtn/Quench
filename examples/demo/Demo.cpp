@@ -609,6 +609,7 @@ std::optional<double> DemoGame::scenarioValue(std::string_view name) const {
     if (name == "moved") return double(s.movedInstances);
     if (name == "lights") return double(s.lights);
     if (name == "area_lights") return double(s.areaLights);
+    if (name == "local_shadow_changes") return double(s.localShadowChanges);
     if (name == "skinned_instances") return double(s.skinnedInstances);
     if (name == "skinned_vertices") return double(s.skinnedVertices);
     if (name == "render_w") return double(s.renderWidth);
