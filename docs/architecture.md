@@ -7,7 +7,9 @@ sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#lay
 shader hot reload: the job system, `quench_assets` and `quench_cook` (see "Threads and jobs", "Assets" and
 [Jobs, assets and the cook](assets.md)), and stage 7: `quench_audio` and `quench_audio_device` (see "Audio" and
 [Audio](audio.md)), and stage 9: the native Metal backend, GPU timestamps per pass, acceleration structures,
-ray-traced sun shadows and ambient occlusion, MetalFX upscaling (see "Native Metal backend" and "Ray tracing");
+ray-traced sun shadows and ambient occlusion, MetalFX upscaling (see "Native Metal backend" and "Ray tracing"), and
+stage 11: ray-traced local light shadows, reflections and indirect light, a probe grid, the engine's temporal
+denoiser, MetalFX's denoising upscaler and a reference path tracer (see "Ray tracing");
 everything else here
 describes the intended structure and the reasons for it. The binding rules
 are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
@@ -132,7 +134,8 @@ checks that do not depend on the backend: the asserts below, live resource count
 - **`gpu::Caps`**: backend, driver, device name, shader format, and the differences found so far: `gpuTiming` (Metal
   only: on SDL GPU `SdlGpuTimingMetal.m` reads SDL's internal fence, as TrailForge does; the native backend reads the
   command buffer's GPU times), `gpuPassTiming` (native Metal backend only, see "GPU timestamps per pass"),
-  `rayTracing`, `spatialUpscaling` and `temporalUpscaling` (native Metal backend only, see "Ray tracing"),
+  `rayTracing`, `spatialUpscaling`, `temporalUpscaling` and `denoisedUpscaling` (native Metal backend only, see
+  "Ray tracing"),
   `depthClamp` (not in the iOS Simulator, where
   the SDL patch skips the depth clip mode), `depthBiasClamp` (not on SDL's Vulkan backend, which does not enable the
   device feature), `indirectDraw` (not in the iOS Simulator: its Metal device is GPU family Apple2), `bcTextures`,
@@ -214,8 +217,8 @@ end of the vertex and fragment stages of a render pass, start and end of a compu
 is the union of those stage intervals: on Apple GPUs the vertex stage of a pass runs while the previous pass still
 shades fragments, so a range from first to last timestamp would count the wait, and the sum of the ranges may exceed
 the frame. The timestamp period is measured once against the CPU clock (1.0000 ns on the M4 Pro). The renderer times
-`upload`, `accel`, `prepass`, `raytrace` (`rays`, `denoise`), `shadows`, `hdr`, `taa`, `upscale`, `bloom` and
-`tonemap` inside the app's `game` range; the app adds `ui` and `blit`
+`upload`, `accel`, `prepass`, `raytrace` (`rays`, `denoise`, `probes`, `reflections`, `indirect`), `path`, `shadows`,
+`hdr`, `taa`, `upscale`, `bloom` and `tonemap` inside the app's `game` range; the app adds `ui` and `blit`
 ([Performance](performance.md#gpu-time-per-pass)). MetalFX encodes passes of its own: in a range, a blit encoder
 before and one after them copy a texel (of the input, then of the output, so Metal orders them around MetalFX's
 work) and take the range's start and end timestamps at their own start (after the temporal scaler an end-of-encoder
@@ -241,7 +244,8 @@ are noted below.
   (no ray tracing; also Metal through SDL GPU), on Vulkan through MoltenVK (no ray tracing extension, see
   [Roadmap](roadmap.md#stage-9-native-metal-backend-and-ray-tracing)), and in the iOS Simulator where its device
   lacks them. No ray tracing pipelines (hit groups, shader tables): inline ray queries cover shadows, ambient
-  occlusion and reflections that read material data from buffers, and they map to Metal's `intersection_query`,
+  occlusion, reflections and indirect light that read material data from buffers (stage 11 kept it), and they map
+  to Metal's `intersection_query`,
   Vulkan's `VK_KHR_ray_query` and DXR 1.1's `RayQuery` alike.
 - **`quench::gpu` surface**: `AccelerationStructure` (move-only), created from `AccelerationStructureDesc` (level
   `Bottom` with vertex and triangle counts and `allowRefit`, or `Top` with an instance capacity; the backend sizes
@@ -253,33 +257,56 @@ are noted below.
   pooled shared buffer, so the CPU writes no transfer buffer). Within a pass the Metal backend splits the encoder
   before a top-level build, so the bottom levels built or refitted before it are complete. Shaders get the top level
   with `RenderPass::bindAccelerationStructure(stage, slot, top)` or `ComputePass::bindAccelerationStructure`; the
-  backend marks the top level's bottom levels resident (`useResources`). No compaction (see
-  [Render module](render.md#limitations)).
+  backend marks the top level's bottom levels resident (`useResources`). Stage 11 added `refit(top, instances)` (a
+  top level created with `allowRefit`; the backend builds instead when the bottom levels differ from the last
+  build), compaction (`queryCompactedSize(bottom)` in a pass, `Device::compactedSize(bottom)` once the command
+  buffer has completed, a bottom level created with `AccelerationStructureDesc::compactedSize` and
+  `copyAndCompact(source, destination)`) and `AccelerationStructure::bytes()`.
 - **Bottom levels**: one per `render::Scene` mesh that casts shadows, built the first frame it is used and kept with
-  the mesh. Skinned instances: one bottom level each over the skinned vertex buffer of stage 8, refitted every frame
+  the mesh, compacted the frame after (stage 11; the copy replaces it before the top level is built). Skinned
+  instances: one bottom level each over the skinned vertex buffer of stage 8, refitted every frame
   after the skinning pass and built again after 60 refits (no bounding-box check: a fixed count, staggered between
-  instances). Measured in the animation section with a crowd of 256 (259 characters) and ray-traced shadows: the
-  `accel` range (the top level included) 1.57 ms of GPU time per frame with refits, 5.12 ms with a temporary change
-  that built every frame ([Performance](performance.md#measurements)).
-- **Top level**: rebuilt every frame from the shadow-casting instances (skinned ones within `shadowDistance`), with
-  masks for opaque and translucent, and the instance id indexing a table of material data for the non-opaque ones.
-  The renderer owns it; games see only the effect settings.
+  instances), not compacted. Measured in the animation section with a crowd of 256 (259 characters) and ray-traced
+  shadows: the `accel` range (the top level included) 1.57 ms of GPU time per frame with refits, 5.12 ms with a
+  temporary change that built every frame ([Performance](performance.md#measurements)).
+- **Top level**: from the shadow-casting instances (skinned ones within `shadowDistance`), with masks for opaque and
+  translucent, and the instance id indexing a table (`RayInstanceData`) of every instance's vertex and index offsets
+  and material data. Refitted while the same bottom levels come in the same order, built again otherwise and after
+  30 refits (stage 11; stage 9 rebuilt it every frame). The renderer owns it; games see only the effect settings.
+- **Hit shading** (stage 11): inline ray queries, not hit groups: a fragment pass per effect traces, and on a hit
+  reads the triangle's vertices from a copy of the meshes' vertex and index data, the material's values and its
+  textures from two 2D texture arrays (base color, metallic-roughness and emissive copied once at 256 x 256), and
+  shades it with the standard surface's BRDF (`src/render/shaders/RayHit.hlsli`). One shading for every surface keeps
+  the passes few and the shaders known when the pipelines are made; a surface shader's own shading is not run for
+  rays (the cost of hit groups or callable shaders, which inline queries do not have, against the demo's one custom
+  surface: decided without the user, 2026-11-06).
 - **Shaders**: HLSL `RaytracingAccelerationStructure` and `RayQuery`, entries marked `:rayquery` in
   `quench_add_shaders`, compiled by DXC (see "Shaders") and then SPIRV-Cross to MSL 3.0 as before; the acceleration
   structure takes a buffer slot after the storage buffers (`ShaderResources::accelerationStructures`). The renderer
   creates their pipelines only where `Caps::rayTracing` holds, so the other backends never load them.
 - **Fallback slots** in `render::RenderSettings` and `render::ActiveEffects`: `SunShadows::ShadowMaps | RayTraced`
-  (rays toward the sun's disc, a spatial blur and TAA; shadow maps are the fallback and stay the default until the
-  iPhone measurement), `AmbientOcclusion::None | RayTraced`; reflections and indirect light are not done (open).
-  Without the capability the renderer takes the fallback and logs why, as for TAA and depth clamp
-  ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)).
-- **MetalFX** (`Caps::spatialUpscaling`, `temporalUpscaling`; `Upscaler` from `UpscalerDesc`, `CommandBuffer::upscale`
-  with an `UpscaleDesc`; the output texture needs `TextureUsage::ShaderWrite`): the renderer's
-  `Upscaling::Spatial | Temporal`, with bilinear scaling in tone mapping as the fallback
+  (shadow maps are the fallback and stay the default until the user has looked at the traced ones on the iPhone),
+  `AmbientOcclusion::None | RayTraced`, and since stage 11 `localLightShadows` (unshadowed without rays),
+  `Reflections::Sky | RayTraced`, `IndirectLight::Sky | Probes | RayTraced` (the sky's ambient values without rays),
+  `RayDenoiser::Spatial | Temporal` and `pathTracer`. Without the capability the renderer takes the fallback and logs
+  why, as for TAA and depth clamp ([Render module](render.md#fallbacks)). The screen-space fallbacks the design
+  names (SSR, GTAO, Ashfall's bounce light) are not built: a device without ray tracing gets the sky's values.
+- **Denoising** (stage 11): the engine's own filters (a spatial one and, the default, a temporal one with
+  reprojection, a neighbourhood clamp, anti-lag and a-trous passes; [Render module](render.md#denoising)) run
+  everywhere ray tracing does; MetalFX's temporal denoised scaler replaces them and TAA where `denoisedUpscaling`
+  holds and the game picks `Upscaling::TemporalDenoised` (user decision, 2026-11-06: both, the engine's for older
+  OS versions, devices without MetalFX's, the TAA and FXAA paths and future backends).
+- **MetalFX** (`Caps::spatialUpscaling`, `temporalUpscaling`, `denoisedUpscaling`; `Upscaler` from `UpscalerDesc`,
+  `CommandBuffer::upscale` with an `UpscaleDesc`; the output texture needs `TextureUsage::ShaderWrite`): the
+  renderer's `Upscaling::Spatial | Temporal | TemporalDenoised`, with bilinear scaling in tone mapping as the fallback
   ([Render module](render.md#upscaling)).
+- **Path tracer** (stage 11): a progressive reference in the same fragment-pass form, reusing the hit shading and
+  the acceleration structures; not a game feature ([Render module](render.md#path-tracer)).
 - **Verification**: the golden-capture rule: the demo's ray tracing section has its own golden for the native
   backend, and the fallback's goldens for Metal through SDL GPU and Vulkan through MoltenVK; readback tests compare
-  ray-traced shadows with shadow maps. Performance against shadow maps on the iPhone at 120 Hz is open.
+  ray-traced shadows with shadow maps, the probe grid and the traced indirect light with the sky's light in a
+  furnace, the path tracer with a uniform sky, the denoisers with many-ray references. Performance of the stage 11
+  effects on the iPhone is open.
 
 ## Rendering
 

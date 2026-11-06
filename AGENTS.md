@@ -20,22 +20,25 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-06, version 0.8.0): stages 1 to 3, 5, 7 and 10 of `docs/roadmap.md` are in place, stage 4
-for TrailForge only, stage 6 except shader hot reload, stage 8 except retargeting, stage 9 except ray-traced
-reflections and indirect light; the plan the user left (stages 6 to 10) has been worked through, apart from the
-remaining work listed at the end of this paragraph, the runs on the iPhone and the checks by eye and ear: the CMake
+**Current state (2026-11-06, version 0.9.0): stages 1 to 3, 5, 7, 9 and 10 of `docs/roadmap.md` are in place, stage
+4 for TrailForge only, stage 6 except shader hot reload, stage 8 except retargeting, stage 11 (full ray tracing)
+except its runs on the iPhone; the plan the user left (stages 6 to 10) and stage 11 have been worked through, apart
+from the remaining work listed at the end of this paragraph, the runs on the iPhone and the checks by eye and ear:
+the CMake
 skeleton and presets,
 `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
 library backend, worker thread priority, the job system `quench::JobSystem` on enkiTS), `quench_physics`
 (`PhysicsWorld` on Jolt, its jobs on the engine's job system), `quench_assets` (asset IDs, the `AssetManager` cache
 with reference counts, placeholders, budgets, loads on jobs, a per-frame upload budget, hot reload on the Mac,
-streaming by distance; KTX2 textures and cooked `.qmodel` models, version 2 with skins), `quench_cook` (the host
-tool: glTF, GLB, PNG, JPEG, KTX2 to BC7 or RGBA8 KTX2 with mips and meshoptimizer models; sounds; skeletons and clips
+streaming by distance; KTX2 textures and cooked `.qmodel` models, version 3 with skins and MikkTSpace tangents in a
+64-byte vertex), `quench_cook` (the host
+tool: glTF, GLB, PNG, JPEG, KTX2 to BC7 or RGBA8 KTX2 with mips and meshoptimizer models with tangents; sounds; skeletons and clips
 from glTF; `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
 ray query entries through DXC built from source) and the engine shader library in `shaders/quench/` (uniform structs
 shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain compositions for HDR and compute;
 beside it, opt-in with `--gpu-backend metal`, a native Metal backend with GPU timestamps per pass, acceleration
-structures and ray queries, and MetalFX upscaling), `quench_app` and `quench_main` (SDL main callbacks,
+structures with top-level refits and compaction, ray queries, and MetalFX upscaling and denoising), `quench_app`
+and `quench_main` (SDL main callbacks,
 the game interface, input actions, ImGui, common flags (`--orientation`, `--user-dir` among them), offscreen
 automated runs (no window on the screen, no input from real devices, `--onscreen` to show one), scenarios with
 parts (`include`) and points in window points, percent or names a game gives (`Game::scenarioPoint`), HDR display
@@ -44,10 +47,14 @@ white; SDR captures), captures, perf regions a game starts (`App::beginPerf` / `
 footprint, a relaunch with other arguments on desktops), `quench_render` (the
 retained scene: meshes, textures, materials, instances and lights by handle; the standard frame of cascaded sun
 shadows (cut-out shadows with holes, translucent tinted shadows through a transmittance map or dithered), the HDR
-pass with reversed depth, sky and atmosphere, height fog, bloom, ACES or AgX tone mapping and TAA or FXAA, with
-fallbacks by device capability; where `gpu::Caps` allow it, ray-traced sun shadows and ambient occlusion and MetalFX
-upscaling, falling back to shadow maps, no occlusion and bilinear scaling; game passes and surface shaders; GPU
-skinning by compute; `SceneAssets` puts asset textures and models into the scene),
+pass with reversed depth, sky and atmosphere, height fog, normal and emissive maps, bloom, ACES or AgX tone mapping
+and TAA or FXAA, with fallbacks by device capability; where `gpu::Caps` allow it, ray-traced sun shadows and ambient
+occlusion and MetalFX upscaling, and since stage 11 ray-traced shadows of up to 4 local lights, reflections,
+indirect light by a probe grid (DDGI-like) or per-pixel rays, the engine's temporal denoiser (the default; a spatial
+one), MetalFX's denoising upscaler and a reference path tracer, falling back to shadow maps, no occlusion,
+unshadowed local lights, the sky's reflection and ambient light and bilinear scaling; game passes and surface
+shaders (with a G-buffer entry for the rays); GPU skinning by compute; `SceneAssets` puts asset textures and models
+into the scene),
 `quench_audio` (headless: a float stereo 48 kHz mixer, buses with volume, mute, pause and meters, sounds as an asset
 type, streamed music with crossfades, game-generated sources, 3D sound with Doppler and voice stealing, WAV writing
 and signal analysis), `quench_audio_device` (output through miniaudio, the iOS audio session; `App::audio()`,
@@ -72,8 +79,11 @@ ray tracing and MetalFX ran on the Mac and on the iPhone (2026-11-06: the device
 120 Hz; ray-traced shadows with occlusion 8.0 ms GPU p50 there, over the phone's 7.5 ms budget; numbers only,
 nobody has looked at them on the phone yet), the native backend also in the iOS Simulator (without ray tracing or
 MetalFX); builds of the Xcode generator compiled its Objective-C++ without ARC until 2026-11-06, so the 0.8.0 iOS
-package crashes on the native backend (the default SDL GPU backend works there). The default stays SDL GPU and
-shadow maps until the user has looked at them on the iPhone. The demo's compact layout and touch controls were
+package crashes on the native backend (the default SDL GPU backend works there). The stage 11 effects (0.9.0) ran
+on the Mac only: the iPhone was not available at the end of the stage, so its device tests, ray tracing benchmark
+and iPhone defaults (planned: render scale 0.67 or 0.5 with MetalFX) are pending, and nobody has looked at the new
+effects in motion. The default stays SDL GPU and shadow maps, every stage 11 effect off, until the user has looked
+at them on the iPhone. The demo's compact layout and touch controls were
 looked at in the iOS Simulator only. The checks waiting for a person (on the iPhone, by ear, in motion) are the demo's check mode
 (`docs/demo.md`, "Check mode on the iPhone"). TrailForge builds on the engine's
 `quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders its own passes through
@@ -83,20 +93,20 @@ and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scen
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No shader hot reload, ASTC or Basis Universal textures,
-normal maps in the standard surface, asset hot reload on a device (stage 6 remaining work), browser audio, HRTF,
-reverb or Vorbis (stage 7 remaining work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or
-blend shapes (stage 8 remaining work), ray-traced reflections, indirect light, bottom-level compaction, a top-level
-refit or the native backend as the default (stage 9 remaining work) yet; what comes next is listed in
-`docs/roadmap.md`, "What is next".**
+asset hot reload on a device (stage 6 remaining work), browser audio, HRTF, reverb or Vorbis (stage 7 remaining
+work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
+work), the native backend as the default, the `accel` timing split into `blas` / `tlas`, normal maps or custom
+surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
+ray tracing (stage 9 and 11 remaining work) yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is
 built, `docs/architecture.md` the design with the native backend and ray tracing as built; the rest of `docs/` is
-design and plan beyond stage 10. Update this paragraph whenever that changes.
+design and plan beyond stage 11. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,
-Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer and bc7enc_rdo's BC7 decoder
-(assets), miniaudio (sound decoding and device output), ozz-animation (the animation runtime and the offline library
+Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer, bc7enc_rdo's BC7 decoder and
+mikktspace (assets), miniaudio (sound decoding and device output), ozz-animation (the animation runtime and the offline library
 that builds skeletons and clips); the cooker adds fastgltf and stb_image at build time. Pins, planned additions and
 their licences: `docs/dependencies.md`.
 
@@ -496,28 +506,30 @@ cmake/                 Dependencies (runtime pins), ShaderToolchain (shader comp
                        cooker pins), QuenchDxc and BuildDxc (DXC for ray query shaders, built from source into a
                        per-machine tool cache), QuenchShaders (quench_add_shaders), QuenchCook (quench_cook_assets),
                        EmbedShaders, QuenchTargets (warnings, include directories), QuenchGame (quench_add_game)
-                       and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
+                       and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator;
+                       MikkTSpaceRotate: a shift by 32 in MikkTSpace masked)
 include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
                        src/core/Jobs.cpp: the job system; src/physics/JoltJobSystem: Jolt's jobs on it;
-                       src/assets/: the asset manager, KTX2, cooked models, streaming; src/audio/: the mixer,
+                       src/assets/: the asset manager, KTX2, cooked models, tangents, streaming; src/audio/: the mixer,
                        decoders, streams, the device and the iOS audio session (AudioSessionApple.m);
                        src/animation/: skeletons, clips, graphs, the character update, IK, the animation system
                        (ozz-animation inside); src/gpu/Backend.h: the backend interface; src/gpu/sdlgpu/: the
                        SDL GPU backend; src/gpu/metal/: the native Metal backend (Objective-C++, ARC; Apple
                        platforms); src/gpu/shaders/: the backends' own shaders (blit); src/app/Main.cpp: quench_main;
                        src/render/: the scene, SceneAssets, the frame modules and their shaders, GPU skinning,
-                       RayTracing: acceleration structures and ray-traced shadows and occlusion)
+                       RayTracing: acceleration structures, hit data, the probe grid and the traced effects;
+                       TemporalFilter: the temporal denoiser; PathTracer: the reference path tracer)
 shaders/quench/        the engine shader library (#include "quench/..."): BRDF, shadows, sky, fog, tone curves,
-                       surface shaders; SceneUniforms.h, the uniform structs shared by C++ and HLSL
+                       surface shaders, the probe grid; SceneUniforms.h, the uniform structs shared by C++ and HLSL
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
 examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input,
                        assets, audio, animation, ray tracing), one file each in sections/ behind Demo.h's Section
                        interface; the app around them (DemoGame.h: the layouts in Ui.cpp, the camera in Camera.cpp,
                        the tour, check and benchmark modes in Modes.cpp and Checks.cpp, the settings); per section a
                        scenario with a golden capture, scenarios for the menu, the modes, the settings and the
-                       switch cycle; smoke and benchmark scenarios (raytracing_benchmark.txt: ray tracing and
-                       MetalFX options); assets_src/ (procedural sources cooked at build time) and assets/ (files
+                       switch cycle; smoke and benchmark scenarios (raytracing_benchmark.txt: ray tracing,
+                       denoising and MetalFX options); assets_src/ (procedural sources cooked at build time) and assets/ (files
                        used as they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler

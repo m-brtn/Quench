@@ -63,9 +63,12 @@ a claim rests on.
 With `gpu::Caps::gpuPassTiming` (the native Metal backend; SDL GPU has no timestamp queries, so it reports false and
 logs nothing of this) the frame's command buffer is timed per range of passes ([Architecture](architecture.md#gpu-timestamps-per-pass)):
 the app's `game` (around `Game::render`), `ui` and `blit`, and inside `game` the renderer's `upload` (its per-frame
-buffers), `accel` (acceleration structure builds and refits), `prepass` (the depth prepass for the rays), `raytrace`
-(with `rays` and `denoise` inside), `shadows` (all cascades), `hdr` (the main pass with the sky), `taa`, `upscale`
-(MetalFX), `bloom` and `tonemap`; the ray tracing and MetalFX ranges only where those run. A range's time is its busy
+buffers), `accel` (acceleration structure builds, refits and compactions), `prepass` (the depth prepass for the
+rays, with the G-buffer, the motion vectors and the denoising upscaler's inputs where those are needed), `raytrace`
+(with `rays` (sun, occlusion and local light shadows), `denoise`, `probes`, `reflections` and `indirect` inside; the
+last two include their own filters), `path` (the path tracer), `shadows` (all cascades), `hdr` (the main pass with
+the sky), `taa`, `upscale` (MetalFX), `bloom` and `tonemap`; the ray tracing and MetalFX ranges only where those
+run. A range's time is its busy
 time: how long any stage of its passes ran, from timestamps at the stage boundaries.
 
 The ranges are recorded only while something reads them: a scenario's perf region, a frame panel that calls
@@ -130,6 +133,81 @@ crowd (51 skinned characters, `--benchmark-all` on 2026-11-06, below) stays with
 (CPU p50 1.47 ms, CPU p99 1.77 ms).
 
 ## Measurements
+
+Stage 11 (ray-traced lighting), 2026-11-06 17:20-18:00, Release, Mac, Apple M4 Pro, `--frame-size 1920x1080`,
+`--audio-device null`, on the screen. The display ran at 60 Hz in this session. Nothing of stage 11 has run on the
+iPhone yet.
+
+**The cost of each effect.** `raytracing_benchmark.txt` on the native backend with `--present-mode immediate`
+(17:47-17:49, one run; the build before the hard-shadow change below): unpaced, the GPU at its full clock. With vsync
+at 60 Hz the GPU clock follows the load and the ranges of light regions read up to four times longer (`rays` of
+`rt_shadows_ao`: 8.02 ms at 60 Hz, 1.88 ms unpaced), so the 60 Hz runs (17:28-17:29, stage 10 and stage 11, one each)
+give no costs. Offscreen perf regions were tried first and dropped: their GPU timings lagged behind the region or
+were missing (9 of 19 regions without a sample in a per-process run; an open question, not examined). GPU busy time
+per range, medians over 4 s regions, in milliseconds; `game` is the renderer's whole frame, "frame" the interval
+between frames (unpaced: the throughput):
+
+| Region | Render size | Frames | Frame p50 | CPU p50 | game | rays | denoise | probes | reflections | indirect | hdr | taa | upscale |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Shadow maps (3 cascades) | 1920 x 1080 | 1371 | 3.24 | 0.606 | 2.106 | | | | | | 1.144 | 0.469 | |
+| RT hard shadows (1 ray) | 1920 x 1080 | 1182 | 3.54 | 1.091 | 2.580 | 0.625 | 0.817 | | | | 0.481 | 0.298 | |
+| RT shadows (2 rays, soft) | 1920 x 1080 | 1159 | 3.71 | 1.078 | 3.026 | 0.994 | 0.825 | | | | 0.436 | 0.299 | |
+| RT shadows + AO (2 rays each): the base below | 1920 x 1080 | 1052 | 3.80 | 1.052 | 4.122 | 1.877 | 0.833 | | | | 0.423 | 0.300 | |
+| base + 2 lamp shadows | 1920 x 1080 | 540 | 7.20 | 1.215 | 7.652 | 4.444 | 1.666 | | | | 0.431 | 0.298 | |
+| base + reflections | 1920 x 1080 | 901 | 4.48 | 1.156 | 4.803 | 1.670 | 0.822 | | 0.861 | | 0.427 | 0.298 | |
+| base + probe grid | 1920 x 1080 | 671 | 5.87 | 1.166 | 6.587 | 1.700 | 0.826 | 1.110 | | | 1.565 | 0.302 | |
+| base + per-pixel indirect | 1920 x 1080 | 472 | 8.52 | 1.539 | 8.905 | 1.885 | 0.831 | 1.117 | | 3.584 | 0.464 | 0.310 | |
+| all (lamps, reflections, probes), temporal denoiser | 1920 x 1080 | 380 | 10.57 | 1.624 | 11.038 | 4.726 | 1.666 | 1.110 | 0.910 | | 1.578 | 0.300 | |
+| all, spatial denoiser | 1920 x 1080 | 416 | 9.70 | 1.499 | 10.360 | 4.494 | 1.220 | 1.112 | 0.697 | | 1.573 | 0.354 | |
+| all, MetalFX temporal at 0.67 | 1286 x 724 | 591 | 6.80 | 1.135 | 7.335 | 2.111 | 0.774 | 1.118 | 0.471 | | 0.766 | | 1.268 |
+| all, MetalFX denoising at 0.67 | 1286 x 724 | 355 | 10.91 | 0.446 | 14.529 | 2.096 | | 1.212 | 0.346 | | 0.797 | 0.044 | 6.232 |
+| all, MetalFX denoising at 0.5 | 960 x 540 | 447 | 8.96 | 1.201 | 9.468 | 1.696 | | 1.484 | 0.268 | | 0.616 | 0.040 | 4.324 |
+| base, MetalFX temporal at 1 | 1920 x 1080 | 789 | 4.99 | 0.910 | 5.559 | 1.654 | 0.818 | | | | 0.407 | | 1.757 |
+| base, MetalFX temporal at 0.67 | 1286 x 724 | 1179 | 3.21 | 0.557 | 3.609 | 0.940 | 0.385 | | | | 0.206 | | 1.272 |
+| base, MetalFX temporal at 0.5 | 960 x 540 | 1195 | 3.46 | 0.600 | 2.629 | 0.603 | 0.226 | | | | 0.140 | | 1.247 |
+| base, MetalFX spatial at 0.5 | 960 x 540 | 1170 | 3.50 | 1.149 | 2.381 | 0.770 | 0.322 | | | | 0.225 | 0.118 | 0.392 |
+| base, bilinear at 0.5 | 960 x 540 | 1265 | 3.15 | 1.003 | 1.847 | 0.766 | 0.318 | | | | 0.243 | 0.113 | |
+| Path tracer (`path` 10.919) | 1920 x 1080 | 355 | 11.30 | 1.265 | 11.982 | | | | | | | | |
+
+What each effect adds to the base at 1080p (the `game` difference): two lamp shadows +3.5 ms (their rays +2.6 ms,
+their filter +0.8 ms); reflections +0.7 ms (0.86 ms in their range with the filter); the probe grid +2.5 ms (1.1 ms
+for 2048 probes of 64 rays, and 1.1 ms more in the main pass, which samples the probe atlases per pixel); per-pixel
+indirect light +4.8 ms (3.6 ms of rays and filter over the probes). Everything the demo turns on by default costs
+11.0 ms at full size (about 95 frames per second), 7.3 ms at render scale 0.67 with MetalFX temporal and the
+engine's denoiser. MetalFX's denoising upscaler costs 6.2 ms at 0.67 and 4.3 ms at 0.5 (it replaces the engine's
+denoiser, 1.7 ms here, and TAA): on the M4 Pro it is the dearest way to the same frame, so the demo's default is
+MetalFX temporal with the engine's denoiser (the MetalFX denoising row at 0.67 also read 2.9 ms of `bloom` against
+0.2 ms elsewhere and 0.45 ms of CPU p50; cause not examined, the row at 0.5 is clean). MetalFX temporal costs 1.25 to 1.76 ms at a 1080p output, spatial 0.39 ms. The path tracer takes 10.9 ms
+per frame. The temporal denoiser also filtered hard shadows without occlusion (0.82 ms in `rt_hard_shadows`); it no
+longer does (`19d9a6f`, not measured again). The frame's GPU time (its command buffer's start to end) is not in the
+table: unpaced, it is longer than the busy ranges in the heavier regions (6.34 against 4.21 ms in the base, 19.4
+against 11.1 ms with everything), gaps while frames queue, not examined.
+
+**SDL GPU before and after** (the 5 % rule): `db5f4cd` (stage 10's code with the quick-tier change, its Release
+binaries in `/tmp/quench-base`) against the stage 11 tree, interleaved, vsync at 60 Hz, medians of the runs:
+
+| Run | Runs | CPU p50 | CPU p99 | GPU p50 |
+|---|---|---|---|---|
+| hello | 10 + 10 | 0.398 / 0.511 (+28.2 %) | 0.681 / 0.681 (-0.1 %) | 0.547 / 0.548 |
+| hello, the first five pairs (`db5f4cd` first) | 5 + 5 | 0.355 / 0.443 (+24.8 %) | 0.667 / 0.679 (+1.8 %) | 0.547 / 0.547 |
+| hello, the last five pairs (stage 11 first) | 5 + 5 | 0.529 / 0.525 (-0.8 %) | 0.683 / 0.703 (+2.9 %) | 0.548 / 0.548 |
+| demo hdr (focused) | 5 + 5 | 1.199 / 1.159 (-3.3 %) | 1.580 / 1.552 (-1.8 %) | 10.754 / 10.913 |
+| demo assets (focused) | 5 + 5 | 1.321 / 1.306 (-1.1 %) | 1.760 / 1.840 (+4.5 %) | 12.228 / 12.554 |
+| demo post (focused) | 5 + 5 | 1.169 / 1.207 (+3.3 %) | 1.642 / 1.648 (+0.4 %) | 11.721 / 11.948 |
+
+hello's CPU p50 is bimodal per run in this session in both builds (0.153 to 0.535 ms; `db5f4cd` 0.275 to 0.535,
+stage 11 0.153 to 0.534) and rose through the session; its p99 is steady (0.654 to 0.739) and the same in both
+builds. With the order reversed the two builds read the same; hello does not use `quench_render`, the SDL GPU
+backend did not change, and the GPU layer's front end changed only in functions hello does not call (refits,
+compaction, the denoised upscaler). The complete demo benchmark, 2 + 2 runs per order (17:24-17:38),
+gave CPU p50 between -12.2 % (materials) and +21.1 % (post) per section, with sections flipping sign with the order
+(shadows +15.3 % and -1.9 %, animation +14.6 % and -3.1 %); hdr, assets and post read above 5 % in both orders and
+were measured again on their own (one section per process, five pairs, order alternating, 17:56-18:00): the focused
+rows, within 5 %. The ray tracing section's SDL GPU region (its fallbacks) read +4.8 % and +8.8 %; its scene has
+about ten more objects and two lamps since stage 11, so that region measures different content. The GPU p50 at 60 Hz
+reads 1.5 to 2.7 % higher in the new build in the focused rows (and in most sections of the complete runs): the
+64-byte vertex and the standard surface's normal and emissive maps are the likely part, at a clock that follows the
+load; not measured at full clock.
 
 The iPhone baseline of the stage 9 and 10 code, 2026-11-06 14:55-15:05: `48964e1` (0.8.0 with the demo's Graphics
 panel) built by `ios-xcode` with ARC forced on (`-DCMAKE_XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC=YES`; without it the

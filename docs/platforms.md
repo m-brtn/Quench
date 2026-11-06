@@ -10,7 +10,7 @@ Android and the web are later targets; the portability rules in [AGENTS.md](../A
 
 ## Status
 
-The engine (version 0.8.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+The engine (version 0.9.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers). Its GPU tests render offscreen and check the pixels read back on Metal (Apple M4 Pro, with the
 Metal API validation layer), on Vulkan through MoltenVK on the same Mac (with the Khronos validation layer; a test of
 the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables
@@ -36,7 +36,9 @@ skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator, 
 and the demo's benchmark, 2026-11-06) and (without rendering) under Node.js. The native Metal backend (stage 9, not
 the default; see "Native Metal backend" below) ran on the Mac, in the iOS Simulator and on the iPhone (2026-11-06;
 it crashes in builds of the Xcode generator before the ARC fix of that day, the 0.8.0 iOS package among them). Its
-ray tracing and MetalFX (see "Hardware ray tracing" below) ran on the Mac and the iPhone.
+ray tracing and MetalFX (see "Hardware ray tracing" below) ran on the Mac and the iPhone; the stage 11 effects
+(0.9.0: local light shadows, reflections, indirect light, the temporal denoiser, MetalFX denoising, the path
+tracer) on the Mac only so far.
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
@@ -214,13 +216,15 @@ GPU skinning is a compute pass through SDL GPU, which has compute on all its bac
 Apple GPUs have hardware ray tracing from the M3 and the A17 Pro, so both devices have it. The engine uses it through
 the native Metal backend only (stage 9: acceleration structures, ray queries in fragment shaders,
 [Architecture](architecture.md#ray-tracing)); the renderer takes its fallbacks wherever `gpu::Caps::rayTracing` is
-false. MetalFX (spatial and temporal upscaling) likewise.
+false. MetalFX (spatial and temporal upscaling, and since stage 11 the temporal denoised scaler) likewise. Stage 11
+added local light shadows, reflections, indirect light, the temporal denoiser and the path tracer on the same
+capability ([Render module](render.md#ray-traced-lighting)); they ran on the Mac only so far.
 
 | Where | `rayTracing` | MetalFX | Run so far |
 |---|---|---|---|
-| Mac, M4 Pro, native Metal backend | true | spatial and temporal | `gpu_metal_native.*` (`ray_tracing_caps`, `ray_query_instances`, `ray_query_refit`, `upscale_flat_color`), `render_metal_native.renderer_ray_traced_*` and `renderer_upscaling` under the Metal API validation layer; the demo's ray tracing section against its golden image; the benchmarks in [Performance](performance.md#measurements) |
+| Mac, M4 Pro, native Metal backend | true | spatial, temporal and temporal denoised | `gpu_metal_native.*` (`ray_tracing_caps`, `ray_query_instances`, `ray_query_refit`, `ray_query_front_faces`, `ray_query_top_level_refit`, `ray_query_compaction`, `upscale_flat_color`, `upscale_denoised_flat_color`), `render_metal_native.renderer_ray_traced_*`, `renderer_upscaling`, `renderer_denoised_upscaling`, `renderer_path_tracer_furnace`, `renderer_indirect_light_*`, `renderer_temporal_ray_denoiser` and `renderer_ray_tracing_refit_and_compaction` under the Metal API validation layer; the demo's ray tracing section against its golden image; the benchmarks in [Performance](performance.md#measurements) |
 | Mac, SDL GPU (Metal, Vulkan through MoltenVK) | false | none | the fallbacks: `demo_raytracing_metal` and `demo_raytracing_vulkan` against their golden image. MoltenVK has no Vulkan ray tracing extension (checked at its tag `v1.4.2` and on `main`, 2026-11-06), so Vulkan through it always falls back |
 | iOS Simulator, native Metal backend | false (its Metal device does not report both `supportsRaytracing` and `supportsRaytracingFromRender`) | none (MetalFX is not in the Simulator's SDK; the engine does not link it there) | `ios-sim-tests`, 2026-11-06: `gpu_metal_native.ray_tracing_caps` reads 0, 0, 0 and creation fails as it should; the ray tracing and upscaling cases are skipped (263 tests, 22 skipped) |
-| iPhone 18 Pro Max (A20 Pro), native Metal backend | true (`supportsRaytracing` and `supportsRaytracingFromRender`; GPU family Apple11, Metal 4) | spatial and temporal (the device also supports the temporal denoised scaler and frame interpolation, which the engine does not use) | 2026-11-06: the device test app on the native backend (`ray_tracing_caps`, `ray_query_instances`, `ray_query_refit`, `upscale_flat_color`, the renderer's ray-traced and upscaling cases) under the Metal API validation layer; the demo's ray tracing section and its benchmark at 1320 x 2868 and 120 Hz: RT shadows with occlusion 8.0 ms GPU p50, over the phone's 7.5 ms budget ([Performance](performance.md#measurements)); not looked at on the screen yet |
+| iPhone 18 Pro Max (A20 Pro), native Metal backend | true (`supportsRaytracing` and `supportsRaytracingFromRender`; GPU family Apple11, Metal 4) | spatial and temporal (the device also supports the temporal denoised scaler, which the engine uses since stage 11 (not run there yet), and frame interpolation, which it does not use) | 2026-11-06, the stage 10 code: the device test app on the native backend (`ray_tracing_caps`, `ray_query_instances`, `ray_query_refit`, `upscale_flat_color`, the renderer's ray-traced and upscaling cases) under the Metal API validation layer; the demo's ray tracing section and its benchmark at 1320 x 2868 and 120 Hz: RT shadows with occlusion 8.0 ms GPU p50, over the phone's 7.5 ms budget ([Performance](performance.md#measurements)); not looked at on the screen yet |
 
 On the web there is no ray tracing API; WebGPU has none so far.

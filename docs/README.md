@@ -1,13 +1,14 @@
 # Quench documentation
 
-Stages 1 to 3, 5, 7 and 10 of the [Roadmap](roadmap.md) are implemented, stage 4 (games on the engine) for one
-game, stage 6 except shader hot reload, stage 8 except retargeting and stage 9 except ray-traced reflections and
-indirect light (version 0.8.0): the core and physics modules, the job system, the asset system and the asset
+Stages 1 to 3, 5, 7, 9, 10 and 11 of the [Roadmap](roadmap.md) are implemented (stage 11 except the iPhone runs),
+stage 4 (games on the engine) for one game, stage 6 except shader hot reload and stage 8 except retargeting
+(version 0.9.0): the core and physics modules, the job system, the asset system and the asset
 cooker, the GPU layer over SDL GPU (and a native Metal backend with GPU timestamps per pass, acceleration structures
 and MetalFX; not the default yet), the app shell with HDR display output, the render module (a retained scene and
-the standard frame with cut-out and translucent shadows, GPU skinning, and on the native backend ray-traced sun
-shadows and ambient occlusion and MetalFX upscaling, with shadow maps and bilinear scaling as the fallbacks; not yet
-run on the iPhone), audio (the mixer, 3D sound, device output, offline captures; not yet run on the iPhone or
+the standard frame with cut-out and translucent shadows, normal and emissive maps, GPU skinning, and on the native
+backend ray-traced shadows of the sun and local lights, ambient occlusion, reflections, indirect light with a probe
+grid, the engine's temporal denoiser, MetalFX upscaling and denoising and a reference path tracer, with shadow maps,
+the sky's light and bilinear scaling as the fallbacks; the stage 11 effects not yet run on the iPhone), audio (the mixer, 3D sound, device output, offline captures; not yet run on the iPhone or
 listened to), animation (skeletons and clips, state machines, blending, events, root motion, IK and foot placement;
 not yet run on the iPhone or looked at in motion by the user), the sample, the engine demo (finished in stage 10,
 with a tour, a check mode and a benchmark of every section; its compact layout not yet on the iPhone) and the game

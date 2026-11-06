@@ -256,8 +256,8 @@ TODO for stage 9:
   on Apple platforms.
 - [ ] Look at the ray tracing section in motion (noise and ghosting with 1 and 2 shadow rays, with MetalFX
   temporal): by the user, on the Mac and the iPhone.
-- [ ] Ray-traced reflections (fallback: what exists, the sky reflection) and indirect light: open.
-- [ ] Bottom-level compaction and top-level refits: not done (the top level is rebuilt every frame).
+- [x] Ray-traced reflections (fallback: what exists, the sky reflection) and indirect light: done in stage 11 (below).
+- [x] Bottom-level compaction and top-level refits: done in stage 11 (below).
 - [x] Version 0.7.0, release notes in [docs/releases/v0.7.0.md](releases/v0.7.0.md). Released before the iPhone
   run and before anyone watched the section in motion (decided without the user, 2026-11-06, as recommended); the
   release notes list both under "What was not verified".
@@ -306,7 +306,7 @@ Finished on 2026-11-06 and released as 0.8.0 (Mac and iOS Simulator only, the iP
 - [x] Version 0.8.0, release notes in [docs/releases/v0.8.0.md](releases/v0.8.0.md). Released before the iPhone run
   (decided without the user, 2026-11-06, as recommended); the release notes list it under "What was not verified".
 
-## Stage 11: full ray tracing (in progress since 2026-11-06, target version 0.9.0)
+## Stage 11: full ray tracing (done 2026-11-06 except the iPhone runs and the checks by eye, version 0.9.0)
 
 Requested by the user on 2026-11-06. Order: foundations, the reference path tracer and the temporal denoiser come
 before reflections and indirect light (1-sample effects need temporal accumulation, and the path tracer is their
@@ -322,45 +322,62 @@ scaler.
 - [x] Normal and emissive maps in the standard surface (slots 2 and 3) with MikkTSpace tangents in the vertex
   (`.qmodel` version 3, a 64-byte vertex; the cook generates tangents where a glTF has none; `computeTangents`
   for procedural meshes); `SceneAssets` maps both textures (2026-11-06).
-- [ ] G-buffer prepass when ray tracing runs (normal + roughness, base color + metallic); motion vectors before the
-  HDR pass.
-- [ ] Hit material access for every instance (`RayHit.hlsli`) with the material textures.
-- [ ] Counter-clockwise front-face flag in the Metal backend, with a test.
-- [ ] Split `accel` timing into `blas` / `tlas`; TLAS refit when only transforms change; BLAS compaction;
-  `rayMemoryBytes` stat.
-- [ ] Reference path tracer (progressive, next event estimation, furnace test).
-- [ ] Temporal ray denoiser (SVGF-like; `RenderSettings::rayDenoiser`), first on sun shadows and AO.
-- [ ] Ray-traced shadows for up to 4 local lights (`localLightShadows`, `LightDesc::sourceRadius`); no fallback
-  (spot and point shadow maps later).
-- [ ] Ray-traced reflections with hit lighting and a roughness cut-off; sky fallback (no SSR this stage).
-- [ ] Indirect light: DDGI-like probes, then per-pixel; sky ambient fallback.
-- [ ] MetalFX temporal denoised scaler (`Caps::denoisedUpscaling`, `UpscalerType::TemporalDenoised`); exposure
-  passed to the MetalFX temporal scalers.
-- [ ] Demo: the ray tracing scene grows (mirror, roughness strip, colored corner, emissive panel, shadowed local
-  lights), graphics panel options, scenarios and golden captures (native, the fallbacks on Metal and on Vulkan
-  through MoltenVK), benchmark regions per effect, check mode items.
-- [ ] Per-pass GPU costs at 1080p on the M4 Pro and on the user's iPhone in `docs/performance.md`.
-- [ ] Full test tier, `tools/package_demo.sh --ios`, release notes `docs/releases/v0.9.0.md`.
+- [x] G-buffer prepass when ray tracing needs it (normal + roughness, base color + metallic, from a surface's
+  `surface_gbuffer_fs` or the standard surface); motion vectors in the prepass for the temporal denoiser and MetalFX
+  (2026-11-06, [Render module](render.md#ray-traced-lighting)).
+- [x] Hit material access for every instance (`RayHit.hlsli`): the triangle, the material's values and its base
+  color, metallic-roughness and emissive textures in 256 x 256 texture arrays (no normal maps in hits).
+- [x] Counter-clockwise front faces through mirroring transforms in the Metal backend, with a test
+  (`ray_query_front_faces`).
+- [x] Top-level refit when only transforms change, bottom-level compaction, `rayMemoryBytes`, `rayCompactions`,
+  `rayTopRefit` (2026-11-06).
+- [ ] Split the `accel` timing into `blas` / `tlas`: not done (one `accel` range with builds, refits, compactions and
+  the top level).
+- [x] Reference path tracer: progressive, next event estimation toward the sun and one local light, furnace test,
+  restarts on any change including a new skinned pose ([Render module](render.md#path-tracer)).
+- [x] Temporal ray denoiser (SVGF-like without the variance estimate, with anti-lag; `RenderSettings::rayDenoiser`,
+  the default) on every traced signal ([Render module](render.md#denoising)).
+- [x] Ray-traced shadows for up to 4 local lights (`localLightShadows`, `LightDesc::sourceRadius`); fallback
+  unshadowed (spot and point shadow maps later, open).
+- [x] Ray-traced reflections with hit lighting and a roughness cut-off; sky fallback (no SSR this stage).
+- [x] Indirect light: DDGI-like probes (16 x 8 x 16, 64 rays each per frame), then per-pixel rays; sky ambient
+  fallback; furnace test against the sky's light.
+- [x] MetalFX temporal denoised scaler (`Caps::denoisedUpscaling`, `UpscalerType::TemporalDenoised`,
+  `Upscaling::TemporalDenoised`); exposure passed to the MetalFX temporal scalers.
+- [x] Demo: the ray tracing scene grew (mirror, roughness strip, colored corner, emissive panel, shadowed lamps), the
+  Graphics panel's "Ray-traced lighting" options, scenarios and golden captures (native, the fallbacks on Metal and
+  on Vulkan through MoltenVK), benchmark regions per effect, five check mode items (29 in all).
+- [x] Per-pass GPU costs at 1080p on the M4 Pro in `docs/performance.md`.
+- [ ] The same on the user's iPhone, the device test app on both backends with the stage 11 code, and the iPhone
+  defaults chosen from them (render scale 0.67 or 0.5 with MetalFX, user decision): pending, the phone was not
+  available at the end of the stage.
+- [ ] Look at the effects in motion (noise, lag of the temporal denoiser, MetalFX denoising, reflections and
+  probe light while the sun turns): by the user, on the Mac and the iPhone (the demo's check mode).
+- [x] Full test tier, `tools/package_demo.sh` (macOS), release notes [docs/releases/v0.9.0.md](releases/v0.9.0.md);
+  `--ios` not built (no phone at the end of the stage).
 
 ## What is next
 
-The plan the user left (stages 6 to 10) has been worked through with version 0.8.0. What stays open, in the order
-it is useful (nothing of it is scheduled; the user decides):
+The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, and stage 11 with 0.9.0. What
+stays open, in the order it is useful (nothing of it is scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone, which has not run anything of 0.4.0 to 0.8.0: the
-   demo's check mode on both GPU backends (24 items: the cut-out and tinted shadows, the cascades, the sky and fog,
-   anti-aliasing, HDR on an HDR display, physics, the input devices, loading and streaming, the audio by ear,
-   animation in motion, ray tracing noise, MetalFX ghosting and the fallbacks, the frame rate and the layout on the
-   phone; [Engine demo](demo.md#check-mode-on-the-iphone)), the
-   device test app on both backends, the benchmark of every section at 120 Hz, the ray tracing benchmark, Core
-   Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes, background).
-2. **Defaults from those runs:** ray-traced shadows or shadow maps per device, and the native Metal backend as the
-   default on Apple platforms once it has run on the iPhone.
-3. **Remaining work of the stages:** shader hot reload, ASTC or Basis Universal textures, normal maps in the
-   standard surface and asset hot reload on a device (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7);
-   retargeting, 2D blend spaces, animation LOD, dual quaternion skinning and blend shapes (stage 8); ray-traced
-   reflections and indirect light, shadows of local lights by rays, bottom-level compaction and a top-level refit
-   (stage 9).
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (29 items:
+   the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
+   input devices, loading and streaming, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
+   and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
+   the frame rate and the layout on the phone; [Engine demo](demo.md#check-mode-on-the-iphone)), the device test
+   app on both backends with the 0.9.0 code, the benchmark of every section at 120 Hz, the ray tracing benchmark
+   with the stage 11 regions, Core Audio output on the Mac, the audio session on the iPhone (silent switch,
+   interruptions, routes, background).
+2. **Defaults from those runs:** the stage 11 effects and the render scale with MetalFX per device (the plan: 0.67
+   or 0.5 on the iPhone), ray-traced shadows or shadow maps, and the native Metal backend as the default on Apple
+   platforms (it ran the device tests and the benchmarks on the iPhone on 2026-11-06; the user has not looked at it
+   there yet).
+3. **Remaining work of the stages:** shader hot reload, ASTC or Basis Universal textures and asset hot reload on a
+   device (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
+   dual quaternion skinning and blend shapes (stage 8); the `accel` timing split into `blas` / `tlas`, normal maps
+   and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
+   devices without ray tracing, a denser or cascaded probe grid (stage 11).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** one Xcode build of the demo left two licence files out of the app (not reproduced;
@@ -400,6 +417,7 @@ Priorities from the user's request of 2026-11-05.
 | Retargeting | P1 | 8 (not done) |
 | Bone attachments | P1 | 8 (done) |
 | Engine demo: interactive sections for every feature (added 2026-11-05) | after the stages | 10 (done; started in 5; not yet run on the iPhone in its finished form) |
+| Full ray tracing: reflections, indirect light, local light shadows, denoising, a path tracer (added 2026-11-06) | after the stages | 11 (done; not yet run on the iPhone or looked at in motion) |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under

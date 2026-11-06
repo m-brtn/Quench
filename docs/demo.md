@@ -45,7 +45,7 @@ first visit. Leaving a section removes its render passes; its scene stays.
 | 8 | `assets` | Cooked assets loaded through the app's asset manager ([Jobs, assets and the cook](assets.md)): a row of models (a crate from a glTF with an external texture, a pillar from a GLB with embedded JPEG and PNG textures, a vertex-colored ball, a corrupt file and a missing one) shows the load states: gray boxes while loading, magenta on failure. Behind it a 6 x 5 grid of tiles, each with one of eight BC7 textures and a model, streams around a moving focus point | simulated latency, texture cache budget (unlimited, 64, 16, 4 KB), uploads per frame (8 MB, 16 KB, 1 byte), focus angle, moving focus, models on and off, hot reload, reload all; counts of ready, loading, failed, queued and in-flight assets, reloads, evictions, memory per type against its budget, streamed cells |
 | 9 | `audio` | The mixer and 3D sound ([Audio](audio.md)): a head with ears at the listener, facing the way the camera looks; an orange emitter circling it at ear height (a motor loop), a blue fly-by passing at speed (a siren, with Doppler), a green box that plays a tone the demo computes (a generator); streamed music A and B with a crossfade; all sounds procedural | emitters on and off, orbit and fly-by speed, tone frequency and position, attenuation model, minimum and maximum distance, Doppler scale; music off, A or B; per bus volume, mute and a peak meter; pause effects; a ping, a burst of 40 pings (voice stealing), a click or tap on the ground plays a ping there; voices, stolen and rejected sounds, underruns, clipped samples, mix time and the output device |
 | 10 | `animation` | Skeletal animation ([Animation](animation.md)) of a procedural mannequin: the hero walks a circle by root motion with a speed blend of idle, walk and run, jumps, waves (a layer masked to the right arm), leans (an additive layer), turns its head toward the camera (look-at), holds a torch on its left hand (an attachment) and plays a step sound at each footstep event (a louder one at the jump's landing); two characters stand with foot placement on a ramp and across a 0.2 m step (rays into a Jolt world); a crowd walks in rings | speed, lean, jump (J, gamepad A), wave (K, gamepad X), restart; foot IK, look-at and footstep sound on and off; ramp angle (0 to 30 degrees), crowd size (0 to 512); the hero's state and transition, characters, joints, clip samples, ground rays, events, skinned instances and vertices, the update time and threads, the skinning GPU time |
-| 11 | `raytracing` | Ray tracing where `gpu::Caps` allow it ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)), on the native Metal backend (`--gpu-backend metal`): soft ray-traced sun shadows through a fence's diamond holes (cut-out), tinted amber by a spinning glass torus (translucent) and cast by the animation section's mannequin walking a circle (skinned, refitted every frame), ambient occlusion under a crate, a sphere and a column arch, the sun turning; MetalFX spatial and temporal upscaling. On SDL GPU (Metal or Vulkan through MoltenVK) the same scene with the fallbacks and a line saying why | sun shadows (shadow maps or ray traced), shadow rays, softness, ambient occlusion with its rays and radius, upscaling (bilinear, MetalFX spatial, MetalFX temporal) and render scale, each with the fallback it got; turn the sun, walk, sun elevation; the top level's instances, builds and refits (or the shadow draws), and outside deterministic runs the GPU time of the rays, the shadow maps, MetalFX and the frame |
+| 11 | `raytracing` | Ray tracing where `gpu::Caps` allow it ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)), on the native Metal backend (`--gpu-backend metal`): soft ray-traced sun shadows through a fence's diamond holes (cut-out), tinted amber by a spinning glass torus (translucent) and cast by the animation section's mannequin walking a circle (skinned, refitted every frame), ambient occlusion under a crate and a column; since stage 11 ([Ray-traced lighting](render.md#ray-traced-lighting)) a framed mirror and five gold spheres from roughness 0.02 to 0.48 (traced reflections), a red and green corner with a white block (light bounced by the probe grid), a lamp in the corner and a spot behind the fence (lamp shadows, the spot throws the fence's holes forward), a warm emissive panel that lights the ground through the probes; MetalFX temporal upscaling with the engine's temporal denoiser at render scale 0.67 where the device has MetalFX (MetalFX denoising costs about three times as much on the M4 Pro and is a choice in the panel), MetalFX spatial upscaling, the engine's denoisers, and the path tracer as a reference (it stops the sun, the torus and the walk). On SDL GPU (Metal or Vulkan through MoltenVK) the same scene with the fallbacks and a line saying why | sun shadows (shadow maps or ray traced), shadow rays, softness, ambient occlusion with its rays and radius, lamp shadows, reflections, indirect light (sky, probes, rays), the denoiser, upscaling (bilinear, MetalFX spatial, temporal, denoising) and render scale, the path tracer, each with the fallback it got; turn the sun, walk, sun elevation; the top level's instances, builds, refits and compactions (or the shadow draws), the hit textures, probes and path samples, and outside deterministic runs the GPU time of the rays, denoising, probes, reflections, indirect light, the path tracer, the shadow maps, MetalFX and the frame |
 
 Every section's panel has the same parts in this order: the controls, the section's numbers ("Stats"), the
 "Frame and fallbacks" header (the scene's counts, the 3D resolution, draws, culled instances, lights, shadow draws,
@@ -77,7 +77,7 @@ What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks
 | Hot reload (Mac) | assets | the hot reload switch, "Reload all", and a note "Assets reloaded: N" over the scene (added) |
 | Audio | audio | buses, 3D sound, Doppler, a generator, streamed music with a crossfade, voice stealing, meters |
 | Animation | animation | blending, state machine, layers, IK, foot placement, attachments, events, root motion, a crowd on the job system, GPU skinning |
-| Ray tracing, MetalFX | raytracing | ray-traced shadows and occlusion, MetalFX spatial and temporal, each with its fallback and the reason |
+| Ray tracing, MetalFX | raytracing | ray-traced sun and lamp shadows, occlusion, reflections, the probe grid and per-pixel indirect light, the spatial and temporal denoisers, MetalFX spatial, temporal and denoising, the path tracer, each with its fallback and the reason |
 | The job system | the Performance panel | threads and pending jobs, a job test (256 items on the pool, its time and the items per thread) (added); physics, animation and loads run on it |
 | Frame, CPU and GPU times | the Performance panel | fps, frame, CPU and GPU time, a frame-time graph (added), the GPU time per pass on the native Metal backend; hidden in deterministic runs (captures) |
 | Memory and GPU resources | the Performance panel | the process's memory and the live GPU resources, the section's load and switch times (added) |
@@ -143,9 +143,10 @@ count of fallbacks, "Use section defaults" (gives every option back) and how man
 
 | Group | Options (keys in `settings.json`) |
 |---|---|
-| Anti-aliasing and resolution | anti-aliasing `aa` (none, FXAA, TAA), sharpen `sharpen` (0 to 1), render scale `scale` (0.25 to 1), upscaling `upscaling` (bilinear, MetalFX spatial, MetalFX temporal) |
+| Anti-aliasing and resolution | anti-aliasing `aa` (none, FXAA, TAA), sharpen `sharpen` (0 to 1), render scale `scale` (0.25 to 1), upscaling `upscaling` (bilinear, MetalFX spatial, MetalFX temporal, MetalFX denoising) |
 | Sun shadows | `sun_shadows` (shadow maps, ray traced), `cascades` (0 to 4), map size `shadow_size` (512 to 4096), `shadow_distance` (m), filter `shadow_filter` (1, 4, 12 taps), translucent shadows `translucent_shadows` (transmittance map, dithered), shadow rays `shadow_rays` (1 to 8), softness `shadow_softness` (times the sun's angular radius) |
 | Ambient occlusion | `ao` (none, ray traced), rays `ao_rays` (1 to 8), radius `ao_radius` (m), strength `ao_strength` (0 to 1) |
+| Ray-traced lighting | lamp shadows `local_shadows` (0 to 4 lights), reflections `reflections` (sky, ray traced), their roughness limit `reflection_roughness`, indirect light `indirect` (sky, probes, ray traced), probe spacing `probe_spacing` (m), denoiser `denoiser` (spatial, temporal), path tracer `path_tracer` (on, off) and its bounces `path_bounces` (1 to 16) |
 | Bloom, tone and sky | bloom `bloom` (on, off), `bloom_strength`, `bloom_threshold`, tone curve `tone` (ACES, AgX), `exposure` (a factor on each section's own exposure, 0.25 to 4), `vignette` (0 to 1), `dither` (on, off), `sky` (on, off) |
 | Display | HDR output (off, auto, on) and the present mode (vsync, immediate, mailbox): the same controls and values as in Settings, with the output in use (HDR, headroom, paper white) and a line when a present mode is not there for the window |
 | GPU backend | the backend, driver and device with ray tracing, MetalFX and GPU timing, why there is no ray tracing where there is none; on the Mac the relaunch with the other backend (as in About) |
@@ -157,7 +158,8 @@ the device's fallbacks and why, from `Renderer::effects()` and the reasons of `R
 the option works now (in gray: sharpen only after TAA without MetalFX, MetalFX temporal in TAA's place, the 3D
 resolution of the render scale, spatial upscaling only below render scale 1, 0 cascades turn the ray-traced shadows
 off too, map size and filter only for shadow maps, rays and softness only for ray-traced shadows, bloom off at
-strength 0, no dither in HDR output).
+strength 0, no dither in HDR output, MetalFX denoising in place of TAA and the engine's denoiser, the path tracer in
+place of the real-time frame).
 
 Options the panel does not set keep each section's values, and a section still changes them (the shadows section's
 turning sun, the sky section's day). Where a section changes an option the panel sets, the panel's value is the one
@@ -174,7 +176,7 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
 
 - **Tour** (`--tour [SECONDS]`, default 8; the Tour button takes the Tour time of the settings): every section in turn for
   SECONDS each, round and round, from the current one. Any key, click, touch, button or stick stops it.
-- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 24
+- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 29
   items, one at a time: it switches to the item's section, sets it up (a camera, a setting) and says what to look at
   or listen to. OK, Problem or Skip, with a note, marks the item and goes to the next; the arrows go back and
   forward, End stops. Every mark is written to `checks.json` in the user directory at once, with the backend and the
@@ -183,8 +185,9 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
   cascades (shadows), the day and fog (sky), anti-aliasing (post), HDR on an HDR display (hdr), the bodies
   (physics), the devices (input), loading and streaming (assets), panning, Doppler, the tone without clicks, the
   music's crossfade, the buses and the pings (audio, by ear), feet that do not slide, footsteps in sync, layers and
-  look-at, foot placement and the crowd (animation), noise, MetalFX ghosting and the fallback (raytracing), the frame
-  rate and the layout on the device.
+  look-at, foot placement and the crowd (animation), noise, MetalFX ghosting and the fallback, and since stage 11
+  the reflections, the bounced light, the lamp shadows, MetalFX denoising in motion and the path tracer against the
+  real-time frame (raytracing), the frame rate and the layout on the device.
 - **Benchmark** (`--benchmark-all [SECONDS]`, default 5; the Benchmark button: 5 s): every section measured in turn
   as `scenarios/benchmark.txt` measures it: a warm-up of a second (or SECONDS, if shorter) and until the section's
   assets are in (at most 6 s), then a perf region of SECONDS in real time (`App::beginPerf` .. `endPerf`). One report
@@ -340,13 +343,13 @@ elements stay where they are what is checked. The menu and the layouts have capt
 | `assets` | below | `demo_assets.png` at 1.5 s: the scene with the section's overlay (each model's load state, the streaming rings, the reload note), which is what the section shows |
 | `audio` | every emitter, the tone, the crossfade to music B and a burst of 40 pings, no underruns or clipped samples (the mix runs offline on the frame clock, as in every offscreen run) | `demo_audio.png` at 1.65 s: the scene |
 | `animation` | below | `demo_animation.png` at 2.4 s: the scene |
-| `raytracing` (native batch) | ray-traced shadows and occlusion run (no cascades, no shadow draws, at least 12 instances in the top level, the character skinned), shadow maps come back when asked, MetalFX temporal at scale 0.5 resolves in TAA's place, spatial runs, bilinear at scale 1 again | `demo_raytracing_native.png` at 2.5 s (rays and occlusion at full size, the sun and the character moving): the scene |
-| `raytracing_fallback` (Metal, Vulkan) | the requests fall back (cascades, no occlusion, no top level, bilinear at scale 0.5), and the renderer lists the fallbacks | `demo_raytracing.png` at 2.5 s: the scene |
+| `raytracing` (native batch) | the section's defaults run: ray-traced sun shadows and occlusion, 2 lamp shadows, reflections, the probe grid (2048 probes), the temporal denoiser, MetalFX temporal at scale 0.67 in TAA's place (no cascades, no shadow draws, at least 19 instances in the top level, the character skinned, a material texture in the hit arrays, no fallbacks); MetalFX denoising runs when asked; shadow maps come back when asked; MetalFX temporal at scale 0.5 resolves in TAA's place, spatial runs; per-pixel indirect light runs; the path tracer adds samples in TAA's place; bilinear at scale 1 again | `demo_raytracing_native.png` at 2.5 s (every traced effect at full size with the engine's temporal denoiser, the sun and the character moving): the scene |
+| `raytracing_fallback` (Metal, Vulkan) | every request falls back (cascades, no occlusion, no top level, unshadowed lamps, the sky's reflections and light, no probes, bilinear for MetalFX denoising and spatial at scale 0.5, the real-time frame for the path tracer), and the renderer lists the fallbacks (at least 5, then 6) | `demo_raytracing.png` at 2.5 s: the scene |
 | `ui` | the wide layout with its windows | `demo_ui.png`: the materials section with the menu, its panel and the caption |
 | `compact_portrait`, `compact_landscape` | `compact.txt` in a phone-sized frame (400 x 720 and 720 x 320 points): the compact layout, the bar's arrows, the menu sheet, About and its licences, the controls sheet | `demo_compact_portrait.png`, `demo_compact_landscape.png`: the controls sheet over the materials section |
 | `menu` | switching sections by keys, gamepad, a click and a tap on the list; the menu by Tab, the arrows and Enter and by the D-pad, A and B; hiding the windows | none |
 | `audio_tone`, `audio_flyby`, `audio_music` | the checks on the mix itself (below) | none |
-| `cycle` (the Metal batches) | every section three times (created or reset, switched, reset), with the memory, the live GPU resources, the scene's instances and the error count marked after the first round: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 32 MB; no instance more; no new error) | none |
+| `cycle` (the Metal batches) | every section three times (created or reset, switched, reset), with the live GPU resources, the scene's instances and the error count marked after the first round and the memory after the second: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 32 MB in the third round; no instance more; no new error). The memory is marked a round later since stage 11: after the first round alone it swung between -24 and +47 MB on the native backend, where the ray tracing section's filter histories come and go | none |
 
 The cycle does not run on Vulkan through MoltenVK: there the memory grows by hundreds of MB in the reset round (459
 MB in the batch with the validation layer, 2026-11-06; the cycle never ran on Vulkan before the batches), which is
@@ -466,10 +469,16 @@ The benchmark mode (`--benchmark-all`, above) measures every section the same wa
 (shown by default, as in the scenario), and writes the numbers as JSON; the scenario stays the reference for comparisons in the devlog, with its own regions (HDR on,
 the crowd of 256).
 
-`scenarios/raytracing_benchmark.txt` measures the ray tracing section's options one by one, 5 s each: rays for
-shadows and occlusion, shadows alone, hard shadows (1 ray), shadow maps, then MetalFX temporal at scale 1, 0.67 and
-0.5, spatial and bilinear at 0.5. Run it with `--onscreen --gpu-backend metal` (on SDL GPU every region measures the
-fallbacks); the perf lines carry the GPU time per timed range ([Performance](performance.md#measurements)).
+`scenarios/raytracing_benchmark.txt` measures the ray tracing section's options one by one, 4 s each after a second
+to settle (since stage 11; 5 s before), at render scale 1 with TAA unless named: rays for shadows and occlusion
+(`rt_shadows_ao`), shadows alone, hard shadows (1 ray), shadow maps; then one stage 11 effect after another on top
+of shadows and occlusion: lamp shadows, reflections, the probe grid, per-pixel indirect light; everything traced
+with the temporal denoiser (`all_traced`), with the spatial one, with MetalFX temporal at 0.67, with MetalFX
+denoising at 0.67 and 0.5; MetalFX temporal at 1, 0.67 and 0.5, spatial and bilinear at 0.5 over shadows and
+occlusion; and the path tracer. Run it with `--onscreen --gpu-backend metal` (on SDL GPU every region measures the
+fallbacks); the perf lines carry the GPU time per timed range ([Performance](performance.md#measurements)). For the
+cost of each effect add `--present-mode immediate`: with vsync the GPU's clock follows the load, and light regions
+read slower per range than they are (the stage 11 costs in [Performance](performance.md) come from such a run).
 
 ## Packaged builds: `tools/package_demo.sh`
 
