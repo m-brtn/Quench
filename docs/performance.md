@@ -67,8 +67,12 @@ to false for `immediate` on macOS. A hypothesis, not checked: the window server 
 refresh when it composites the window (which display, full screen or not, the window's position), so `immediate` is
 unpaced only sometimes. Each `perf:` line now says what the frames waited for: `wait ms p50 .. p95 ..` (the wait
 for the swapchain texture, left out of the CPU time; offscreen, for the oldest frame in flight), the present mode in
-use and the display's rate (`perf_wait_p50`, `perf_present_mode`, `perf_display_hz`). A paced `immediate` run shows
-a wait of about the display's interval less the CPU time.
+use and the display's rate (`perf_wait_p50`, `perf_present_mode`, `perf_display_hz`). A paced run shows a wait of
+about the display's interval less the CPU time (vsync at 60 Hz: 16.13 to 16.15 ms with a CPU p50 of 0.41 ms). On
+2026-11-07 both backends ran `immediate` unpaced on the same display (one run each, [below](#on-the-screen-after-the-bug-packages)):
+the frames then wait about 2.7 to 2.8 ms (p50) for a drawable, which holds the rate at 358 to 381 frames per second
+while the GPU needs 0.55 ms. No paced `immediate` run has been seen since the wait is reported, so the hypothesis is still
+not checked.
 
 ## Comparing runs
 
@@ -172,6 +176,40 @@ crowd (51 skinned characters, `--benchmark-all` on 2026-11-06, below) stays with
 (CPU p50 1.47 ms, CPU p99 1.77 ms).
 
 ## Measurements
+
+### On the screen after the bug packages
+
+2026-11-07 00:00-00:06, Release, Mac (Mac mini, Apple M4 Pro), its one display (the LG UltraFine 5K at 60 Hz; no
+second display to compare), `--onscreen --frame-size 1920x1080 --audio-device null`, nothing else running.
+
+**`--present-mode immediate`**, hello's `benchmark.txt`, one run per backend: unpaced on both. SDL GPU (Metal driver):
+3806 frames in 10 s, frame p50 3.067 ms, wait p50 2.805 / p95 3.711 ms, CPU p50 0.231 ms, GPU p50 0.547 ms. Native
+Metal: 3583 frames, frame p50 2.912 ms (p99 16.692, max 23.584), wait p50 2.676 / p95 3.863 ms, CPU p50 0.227 ms,
+GPU p50 0.549 ms.
+
+**Vsync, before and after the bug packages of 2026-11-06** (`1ae3117`, the 0.9.0 release, against `1ef1f1c`), hello's
+`benchmark.txt` on SDL GPU, runs in the order before, after, after, before:
+
+| Build | Frames | Frame p50 | Frame max | CPU p50 | CPU p99 | GPU p50 | GPU p95 |
+|---|---|---|---|---|---|---|---|
+| `1ae3117` | 601, 600 | 16.661, 16.650 | 17.848, 18.357 | 0.405, 0.402 | 0.567, 0.575 | 0.551, 0.552 | 0.945, 0.945 |
+| `1ef1f1c` | 600, 600 | 16.663, 16.666 | 32.914, 17.541 | 0.407, 0.408 | 0.533, 0.515 | 0.552, 0.551 | 0.945, 0.946 |
+
+CPU p50 +1.0% and p99 -8.2% (means of the two runs), GPU unchanged; one interval missed in the first run after (the
+32.9 ms frame). The new wait: p50 16.148 and 16.131 ms, p95 16.529 and 16.461 ms.
+
+**MetalFX denoising** in `raytracing_benchmark.txt` on the native backend with `--present-mode immediate`, one run
+(the whole table's conditions of [Stage 11 on the Mac](#stage-11-on-the-mac-and-earlier-runs)): the anomaly of
+2026-11-06 came back, in the other region. At 0.67 the ranges after the upscaler read as elsewhere (`upscale` 6.387,
+`bloom` 0.240 ms); at 0.5 `bloom` read 2.454 ms, `tonemap` 0.389, `ui` 0.229 and `blit` 0.276 (0.07 to 0.22 ms in
+every other region), `probes` 1.683 (1.14 to 1.15 ms elsewhere, 1.240 at 0.67), and the region's `game` 12.705 ms was
+longer than the 0.67 region's 11.884. No other upscaler shows it. A hypothesis, not checked: part of MetalFX's
+denoising work runs outside the `upscale` range (its end marker waits only for the output texture) and overlaps
+the passes after it and the next frame's first ones, so it lands in their ranges; which region shows it changes from
+run to run. Not an ordering error: `bloom` reads the output texture, which Metal's hazard tracking waits for. Read
+the denoising upscaler's cost from the frame interval (unpaced): 11.317 ms at 0.67 and 9.225 ms at 0.5, against
+6.912 ms with MetalFX temporal at 0.67. Its CPU p50 at 0.67 was low again (0.496 ms; 0.446 on 2026-11-06) with 26%
+of the process's CPU time on performance cores, not explained by the share alone.
 
 ### The tunnel
 
@@ -550,9 +588,9 @@ engine's denoiser. MetalFX's denoising upscaler costs 6.2 ms at 0.67 and 4.3 ms 
 denoiser, 1.7 ms here, and TAA): on the M4 Pro it is the dearest way to the same frame, so the demo's default is
 MetalFX temporal with the engine's denoiser (the MetalFX denoising row at 0.67 also read 2.9 ms of `bloom` against
 0.2 ms elsewhere and 0.45 ms of CPU p50, the row at 0.5 clean. Offscreen after stage 12, three regions of MetalFX
-denoising at 0.67 read `bloom` 0.231 and 0.317 ms, `upscale` 6.29 to 7.50 ms: not reproduced there; the run above
-was in a window, with the GPU times of that day's code, which repeated samples. The CPU p50 is the scheduler's:
-[CPU time and the cores](#cpu-time-and-the-cores)). MetalFX temporal costs 1.25 to 1.76 ms at a 1080p output, spatial 0.39 ms. The path tracer takes 10.9 ms
+denoising at 0.67 read `bloom` 0.231 and 0.317 ms, `upscale` 6.29 to 7.50 ms: not reproduced there. In a window
+again on 2026-11-07 the region at 0.5 read it instead: [On the screen after the bug
+packages](#on-the-screen-after-the-bug-packages)). MetalFX temporal costs 1.25 to 1.76 ms at a 1080p output, spatial 0.39 ms. The path tracer takes 10.9 ms
 per frame. The temporal denoiser also filtered hard shadows without occlusion (0.82 ms in `rt_hard_shadows`); it no
 longer does (`19d9a6f`, not measured again). The frame's GPU time (its command buffer's start to end) is not in the
 table: unpaced, it is longer than the busy ranges in the heavier regions (6.34 against 4.21 ms in the base, 19.4
