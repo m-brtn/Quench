@@ -15,24 +15,28 @@ and thread sanitizers). Its GPU tests render offscreen and check the pixels read
 Metal API validation layer), on Vulkan through MoltenVK on the same Mac (with the Khronos validation layer; a test of
 the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables
 run through `simctl spawn`) and on the user's iPhone 18 Pro Max (A20 Pro GPU, iOS 27, Metal with the API validation
-layer; all cases in one signed app, `quench_device_tests`, launched through `devicectl`; last run with the stage 5
-code, 2026-11-05). The sample `hello` runs on the Mac (Metal, and Vulkan through MoltenVK, with capture checks against
+layer; all cases in one signed app, `quench_device_tests`, launched through `devicectl`; last run 2026-11-06 with
+the stage 10 code on SDL GPU and on the native Metal backend). The sample `hello` runs on the Mac (Metal, and Vulkan through MoltenVK, with capture checks against
 golden images), in the iOS Simulator and on the iPhone at 120 Hz; on the iPhone the picture, touch input and rotation
 were checked by the user (report of 2026-11-05). The engine demo runs on the Mac (with capture checks on both
 backends), in the iOS Simulator and on the iPhone at 120 Hz, where every section's check passed in portrait and the
 user looked at every section, HDR output on and off included (report of 2026-11-05; the seven sections of version
 0.3.0; the Assets section of 0.4.0, the Audio section of 0.5.0, the Animation section and the new shadows in the
 Materials section of 0.6.0, the Ray tracing section and the native backend of 0.7.0, the compact layout, touch
-controls and modes of 0.8.0 not yet; the compact layout was looked at in the iOS Simulator). The headless modules
+controls and modes of 0.8.0 not yet; the compact layout was looked at in the iOS Simulator). On 2026-11-06 the
+0.8.0 demo ran its benchmark of every section on the iPhone on both backends at 120 Hz, and the ray tracing
+benchmark on the native backend ([Performance](performance.md#measurements)); numbers only, nobody looked at the
+screen. The headless modules
 also pass as single-threaded WebAssembly under Node.js (Emscripten 6.0.13; the cases that need threads are skipped
 there).
 Nothing of the engine has run in a browser.
-Audio (stage 7, see "Audio" below) has run only on the null backend and offline, on the Mac, in the iOS Simulator
-and under Node.js; nothing was listened to, and the stage 7 code has not run on the iPhone. Animation and GPU
-skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator and (without rendering) under
-Node.js; not on the iPhone. The native Metal backend (stage 9, not the default; see "Native Metal backend" below)
-ran on the Mac and in the iOS Simulator; not on the iPhone. Its ray tracing and MetalFX (see "Hardware ray tracing"
-below) ran on the Mac only.
+Audio (stage 7, see "Audio" below) has run only on the null backend and offline, on the Mac, in the iOS Simulator,
+on the iPhone (the device test app, 2026-11-06) and under Node.js; nothing was listened to. Animation and GPU
+skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator, on the iPhone (the device test app
+and the demo's benchmark, 2026-11-06) and (without rendering) under Node.js. The native Metal backend (stage 9, not
+the default; see "Native Metal backend" below) ran on the Mac, in the iOS Simulator and on the iPhone (2026-11-06;
+it crashes in builds of the Xcode generator before the ARC fix of that day, the 0.8.0 iOS package among them). Its
+ray tracing and MetalFX (see "Hardware ray tracing" below) ran on the Mac and the iPhone.
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
@@ -75,7 +79,9 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   [App shell](app.md#ios-runs).
 - iPhone 18 Pro Max (A20 Pro GPU), engine device tests 2026-11-05: `gpu::Caps` metallib, gpuTiming, depthClamp,
   depthBiasClamp, indirectDraw, bcTextures and astcTextures all true. `bcTextures` is SDL's answer to a format query
-  for BC1 and BC7; no BC7 texture has been sampled on the device yet.
+  for BC1 and BC7. On 2026-11-06 a BC7 texture was sampled on the device for the first time:
+  `render.scene_assets_texture_states` passed there on both backends with the texture kept as `Bc7Srgb` (not decoded
+  on the CPU) and read back in its color; the native backend reports the same caps plus `gpuPassTiming`.
 - Phones run at 60 Hz unless Info.plist sets `CADisableMinimumFrameDurationOnPhone` (`quench_add_game()` does); with
   it hello runs at 120 Hz on the iPhone 18 Pro Max.
 - The app bundle is read-only and SDL's UIKit delegate keeps the process alive after `SDL_main` returns: the device
@@ -86,8 +92,8 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   work; test executables without `SDL_main` call `SDL_SetMainReady()` first.
 - Stage 6 in the Simulator (2026-11-05): without BC textures, cooked BC7 textures are decoded to RGBA8 on the CPU at
   load (`render.scene_assets_texture_states` checks the format and the pixels there); the cooked demo assets are made
-  by the `host-tools` `quench_cook` and bundled by the iOS presets. Not run on the iPhone yet (needs the user's
-  approval), so BC7 sampling on the device is still unchecked.
+  by the `host-tools` `quench_cook` and bundled by the iOS presets. On the iPhone (2026-11-06) they are sampled as
+  BC7 (see above; the demo logs "BC7 sampled, ASTC sampled" there).
 
 ## HDR output
 
@@ -122,7 +128,21 @@ request for it there creates SDL GPU with a warning.
 |---|---|
 | Mac, M4 Pro | `gpu_metal_native.*` and `render_metal_native.*` with the Metal API validation layer; hello and every demo section's capture identical to the Metal golden images in Release (2026-11-06); the four swapchain compositions created and presented; `Caps::gpuPassTiming` true (timestamp period 1.0000 ns); `Caps::rayTracing`, `spatialUpscaling` and `temporalUpscaling` true; the ray tracing section against its own golden image; benchmarks in [Performance](performance.md#measurements) |
 | iOS Simulator (iPhone 18 Pro Max) | `gpu_metal_native.*` and `render_metal_native.*` in `ios-sim-tests` (the two window cases skipped as on SDL GPU: no app lifecycle in a test executable; since the second half also the ray tracing and upscaling cases); `Caps::gpuPassTiming` false (the Simulator's GPU has no stage boundary sampling), no depth clamp, no indirect draws, as on SDL GPU there; `rayTracing`, `spatialUpscaling`, `temporalUpscaling` false |
-| iPhone 18 Pro Max | built (`ios-device-release`); not run (the phone was not available on 2026-11-06) |
+| iPhone 18 Pro Max | `quench_device_tests` with the Metal API validation layer, 2026-11-06: 198 cases, 196 passed, 0 failed, 2 skipped (as on SDL GPU: the read-only bundle, the opt-in audio output), the window cases and the ray tracing and upscaling cases included; `Caps::gpuPassTiming`, `rayTracing`, `spatialUpscaling`, `temporalUpscaling` true; the demo's smoke run (15 of 15) and benchmarks ([Performance](performance.md#measurements)); not looked at on the screen yet. Builds of the Xcode generator before that day's fix crash at the first copy pass (see below) |
+
+- **ARC in Xcode builds** (found on the iPhone, fixed 2026-11-06). The backend's Objective-C++ keeps Metal objects as
+  strong members of plain C++ structs and needs ARC. It was enabled only by `-fobjc-arc` under
+  `$<COMPILE_LANGUAGE:OBJCXX>`, which the Xcode generator drops; Ninja builds (the Mac, the Simulator,
+  `ios-device-release`) had it, the `ios-xcode` builds that go onto the iPhone did not. There the command buffer
+  from `[m_queue commandBuffer]` was freed with its autorelease pool, and the first copy pass crashed with
+  `EXC_BAD_ACCESS` (the device tests at `buffer_round_trip`, the demo in `Renderer::create`). The 0.8.0 iOS package
+  (`tools/package_demo.sh --ios`) has this crash with `--gpu-backend metal`; on the default SDL GPU backend it works.
+  Since the fix `quench_configure_target` sets `-fobjc-arc` and `XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC` on every
+  engine target, and every engine Objective-C(++) file stops with `#error` when it is compiled without ARC.
+- **The window cases once failed on the iPhone** (2026-11-06, the first native run after the phone was unlocked):
+  the drawable in portrait (440 x 956), the window in landscape (956 x 440), in every frame. SDL GPU passed them 5 s
+  later, and the native backend 2 minutes later; both read the size from the same `CAMetalLayer` of SDL's Metal
+  view. Not reproduced; a run with the phone held in landscape is open.
 
 ## Audio
 
@@ -135,7 +155,7 @@ engine compiles only Core Audio and null on Apple platforms, and no device I/O i
 |---|---|---|
 | Mac | Core Audio (miniaudio, frameworks linked at build time) | tests on the null backend and offline (`audio.*`, `audio_device.null_device`, the demo's audio check with `--audio-capture`); the default output not opened by any test (`audio_device.default_output` is opt-in), not listened to |
 | iOS Simulator | Core Audio; the engine sets the `AVAudioSession` category and activates the session when a real output opens (the null backend leaves the session alone) | `ios-sim-tests`: the audio cases, `audio_device.null_device` and `audio_device.audio_session_category` (sets the playback and ambient categories, reads them back and reads the route); no test opened a real output, so activation, interruptions and route changes did not run; not listened to |
-| iPhone | as in the Simulator | built (`ios-device-release`); not run with the stage 7 code. Needs the user: what plays with the Ring/Silent switch on silent (the default `Ambient` category is silenced), interruptions (a call, Siri, an alarm), route changes (headphones, Bluetooth), background and foreground |
+| iPhone | as in the Simulator | the device test app, 2026-11-06: the audio cases, `audio_device.null_device` and `audio_device.audio_session_category` (route: the speaker) passed on both GPU backends; the demo's audio section on the null backend; no real output opened, not listened to. Needs the user: what plays with the Ring/Silent switch on silent (the default `Ambient` category is silenced), interruptions (a call, Siri, an alarm), route changes (headphones, Bluetooth), background and foreground |
 | Web | none (built with `MA_NO_DEVICE_IO`) | the mixer, decoders and analysis under Node.js (`wasm-node`, single-threaded; the thread stress case is skipped). Browser output needs a device backend (miniaudio's Web Audio one or SDL's audio) and starts only after a user gesture: not built |
 | Windows, Linux, Android | miniaudio's defaults for the platform (not configured or built yet) | nothing |
 
@@ -149,7 +169,7 @@ GPU skinning is a compute pass through SDL GPU, which has compute on all its bac
 |---|---|
 | Mac | `animation.*`, the cook cases, the render cases (Metal, and Vulkan through MoltenVK with the validation layer), the demo's Animation section and its captures on both; also under the sanitizers |
 | iOS Simulator | `ios-sim-tests`: `animation.*` and the render cases with skinning (Metal in the Simulator) |
-| iPhone | built (`ios-device-release`); not run. Needs the user: the Animation section at 120 Hz, the crowd's update and skinning times |
+| iPhone | the device test app, 2026-11-06: `animation.*` and the render cases with skinning, on both GPU backends; the demo's Animation section (51 skinned characters) in the benchmark at 120 Hz, CPU p50 1.47 ms ([Performance](performance.md#measurements)). Needs the user: the section in motion; not run: the crowd of 256 |
 | Web | `animation.*` under Node.js (`wasm-node`, single-threaded); no rendering |
 | Windows, Linux, Android | nothing |
 
@@ -201,6 +221,6 @@ false. MetalFX (spatial and temporal upscaling) likewise.
 | Mac, M4 Pro, native Metal backend | true | spatial and temporal | `gpu_metal_native.*` (`ray_tracing_caps`, `ray_query_instances`, `ray_query_refit`, `upscale_flat_color`), `render_metal_native.renderer_ray_traced_*` and `renderer_upscaling` under the Metal API validation layer; the demo's ray tracing section against its golden image; the benchmarks in [Performance](performance.md#measurements) |
 | Mac, SDL GPU (Metal, Vulkan through MoltenVK) | false | none | the fallbacks: `demo_raytracing_metal` and `demo_raytracing_vulkan` against their golden image. MoltenVK has no Vulkan ray tracing extension (checked at its tag `v1.4.2` and on `main`, 2026-11-06), so Vulkan through it always falls back |
 | iOS Simulator, native Metal backend | false (its Metal device does not report both `supportsRaytracing` and `supportsRaytracingFromRender`) | none (MetalFX is not in the Simulator's SDK; the engine does not link it there) | `ios-sim-tests`, 2026-11-06: `gpu_metal_native.ray_tracing_caps` reads 0, 0, 0 and creation fails as it should; the ray tracing and upscaling cases are skipped (263 tests, 22 skipped) |
-| iPhone 18 Pro Max (A20 Pro) | expected true, not checked | not checked | built (`ios-device-release`, with MetalFX linked); not run (the phone was not available on 2026-11-06) |
+| iPhone 18 Pro Max (A20 Pro), native Metal backend | true (`supportsRaytracing` and `supportsRaytracingFromRender`; GPU family Apple11, Metal 4) | spatial and temporal (the device also supports the temporal denoised scaler and frame interpolation, which the engine does not use) | 2026-11-06: the device test app on the native backend (`ray_tracing_caps`, `ray_query_instances`, `ray_query_refit`, `upscale_flat_color`, the renderer's ray-traced and upscaling cases) under the Metal API validation layer; the demo's ray tracing section and its benchmark at 1320 x 2868 and 120 Hz: RT shadows with occlusion 8.0 ms GPU p50, over the phone's 7.5 ms budget ([Performance](performance.md#measurements)); not looked at on the screen yet |
 
 On the web there is no ray tracing API; WebGPU has none so far.

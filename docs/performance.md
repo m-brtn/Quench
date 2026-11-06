@@ -116,12 +116,74 @@ not twice the measured 6.1 ms, because twice would allow frames longer than the 
 In the Mac runs of 20:32-20:34 the frame p95 was above 1.1 intervals (18.33 ms) in most sections, up to 18.85 ms,
 with frame p50 16.67 ms: presentation jitter outside the budget, not a missed interval in the p95; cause not checked.
 
+The iPhone baseline of 2026-11-06 (below; every section, both backends) stays within the iPhone budget in every
+section but one: the ray tracing section on the native backend reads 8.07 ms GPU p50 (RT shadows with occlusion),
+over the 7.5 ms. It is left over budget, as a known item for the ray tracing work; it still makes the 120 Hz
+interval. The phone's GPU p50 does not go below about 6 ms (below), so the budget catches growth above that, not
+below.
+
 The demo's `animation` region (a crowd of 256, 259 characters; since stage 8) is a load test and has its own Mac
 budget, at about twice the medians of the runs of 2026-11-06 04:22-04:34 below: CPU p50 5.5 ms, CPU p99 7.5 ms,
 GPU p50 15 ms as for the other sections. It is above the sections' budget of 2.0 and 3.5 ms (they have a few dozen
-instances). No iPhone budget for it yet: it has not run on the phone.
+instances). No iPhone budget for it yet: the crowd of 256 has not run on the phone. The section with its default
+crowd (51 skinned characters, `--benchmark-all` on 2026-11-06, below) stays within the sections' iPhone budget there
+(CPU p50 1.47 ms, CPU p99 1.77 ms).
 
 ## Measurements
+
+The iPhone baseline of the stage 9 and 10 code, 2026-11-06 14:55-15:05: `48964e1` (0.8.0 with the demo's Graphics
+panel) built by `ios-xcode` with ARC forced on (`-DCMAKE_XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC=YES`; without it the
+native backend crashed there, [Platforms](platforms.md#native-metal-backend)), Release, vsync, iPhone 18 Pro Max
+(A20 Pro GPU, iOS 27), native size 1320 x 2868 (portrait), 120 Hz, `--audio-device null`, launched through
+`devicectl`, no validation layer. The benchmark of every section (`--benchmark-all`, 5 s each), one run per backend:
+
+| Section | Frames SDL GPU / native | CPU p50 SDL GPU / native | CPU p99 SDL GPU / native | GPU p50 SDL GPU / native |
+|---|---|---|---|---|
+| materials | 601 / 600 | 0.872 / 0.909 | 1.354 / 1.224 | 6.063 / 6.034 |
+| shadows | 601 / 601 | 0.697 / 0.719 | 0.988 / 0.965 | 6.095 / 6.037 |
+| sky | 601 / 601 | 0.662 / 0.665 | 0.908 / 0.859 | 6.099 / 6.085 |
+| post | 600 / 600 | 0.672 / 0.708 | 0.956 / 0.994 | 6.031 / 6.000 |
+| hdr | 601 / 600 | 0.633 / 0.781 | 0.854 / 1.073 | 6.018 / 6.048 |
+| physics | 600 / 600 | 0.688 / 0.771 | 0.938 / 1.146 | 6.013 / 6.047 |
+| input | 600 / 600 | 0.672 / 0.671 | 0.919 / 0.829 | 6.068 / 6.024 |
+| assets | 600 / 601 | 0.802 / 0.815 | 1.129 / 1.196 | 6.041 / 5.997 |
+| audio | 601 / 601 | 0.680 / 0.705 | 0.951 / 0.896 | 6.042 / 6.063 |
+| animation (51 skinned characters) | 601 / 600 | 1.465 / 1.435 | 1.773 / 1.710 | 5.999 / 6.045 |
+| raytracing | 601 / 600 | 1.038 / 1.011 | 1.374 / 1.365 | 6.135 / 8.069 |
+
+All values in milliseconds. Frame p50 8.33 ms in every section, frame p99 at most 9.02 ms (SDL GPU animation),
+frame max at most 13.66 ms (native hdr). On SDL GPU the ray tracing section runs its fallbacks (shadow maps). Below
+about 6 ms the phone's GPU time does not go down: every section reads 6.0 to 6.2 ms whatever its work (also at
+render scale 0.5 below), probably because the GPU clock follows the load (not verified), so the phone's GPU times
+compare only above that floor.
+
+The ray tracing section on the native backend (`scenarios/raytracing_benchmark.txt`, 5 s regions). The first four
+rows come from the first run (14:59); from MetalFX temporal on, that run switched sections (probably real touches;
+the build had no input isolation), so those rows come from a second run of the same regions (15:02-15:03) that
+checked the section after each one. GPU busy time per range:
+
+| Region | Render size | Frames | CPU p50 | GPU p50 | accel | rays | denoise | shadows | hdr | taa | upscale |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| RT shadows (2 rays, softness 1) + RT AO (2 rays) | 1320 x 2868 | 601 | 0.524 | 8.015 | 0.180 | 3.574 | 1.381 | | 0.811 | 1.252 | |
+| RT shadows, no AO | 1320 x 2868 | 601 | 0.502 | 6.215 | 0.245 | 2.525 | 0.555 | | 0.817 | 1.254 | |
+| RT hard shadows (1 ray, softness 0) | 1320 x 2868 | 601 | 0.521 | 6.128 | 0.285 | 2.595 | | | 0.999 | 1.351 | |
+| Shadow maps (3 cascades) | 1320 x 2868 | 600 | 0.565 | 6.131 | | | | 0.453 | 2.587 | 1.820 | |
+| RT + AO, MetalFX temporal, scale 1 | 1320 x 2868 | 493 | 1.283 | 10.817 | 0.294 | 3.578 | 1.383 | | 0.836 | 0.187 | 3.503 |
+| RT + AO, MetalFX temporal, scale 0.67 | 884 x 1922 | 601 | 1.294 | 6.231 | 0.186 | 1.549 | 0.638 | | 0.376 | 0.088 | 2.761 |
+| RT + AO, MetalFX temporal, scale 0.5 | 660 x 1434 | 601 | 1.356 | 6.104 | 0.278 | 1.228 | 0.548 | | 0.333 | 0.092 | 2.836 |
+| RT + AO, MetalFX spatial, scale 0.5 | 660 x 1434 | 600 | 1.319 | 6.125 | 0.358 | 1.573 | 0.696 | | 0.428 | 0.624 | 1.309 |
+| RT + AO, bilinear, scale 0.5 | 660 x 1434 | 601 | 1.072 | 6.052 | 0.513 | 2.358 | 0.865 | | 0.537 | 0.729 | |
+| RT + AO again, at the end of the second run | 1320 x 2868 | 601 | 1.005 | 7.870 | 0.178 | 3.425 | 1.384 | | 0.810 | 1.266 | |
+
+All values in milliseconds. Ray-traced shadows with occlusion cost 8.0 ms of GPU time at the native size: over the
+phone's budget of 7.5 ms (below), but within the 8.33 ms of the 120 Hz display (601 frames, frame p99 8.66 ms).
+Without occlusion, with hard shadows and with shadow maps the frame sits at the 6 ms floor, so their differences
+cannot be read there. MetalFX's temporal scaler costs about 3.5 ms at the phone's output size; at scale 1 the frame
+grows to 10.8 ms and the section drops to about 99 fps (493 frames in 5 s, frame p99 19.19 ms); at 0.67 and 0.5 it
+stays at 120 Hz. The spatial scaler costs 1.3 ms. The last row, about 4 minutes after the first, shows no thermal
+drift (7.870 against 8.015 ms). The CPU time differs between the two runs (0.50 to 0.57 ms in the first, 1.0 to
+1.36 ms in the second); not looked into, both within the budget. A few frames of each path under the Metal API
+validation layer (15:06): no validation message.
 
 Stage 9 (second half: ray tracing, MetalFX, timing off unless read), 2026-11-06 08:21-08:49, Release, vsync, Mac,
 Apple M4 Pro, `--frame-size 1920x1080`, `--audio-device null`. The display paced at about 120 Hz (hello 1167 to 1199

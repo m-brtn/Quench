@@ -63,14 +63,18 @@ section; a wide layout and a compact one for phones with touch-sized controls; a
 waiting for a person (`checks.json` in the user directory, kept across launches) and a benchmark of every section
 (`benchmark.json`); About, versioned settings; `tools/package_demo.sh` packages it into `dist/`); `templates/game` and
 `tools/new_game.py` start a new game. Tests run on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator,
-on the user's iPhone (one signed test app; signed by the user's paid team; not yet with the stage 6 to 10 code) and,
-for the headless modules, as WebAssembly under Node.js. HDR output was looked at on the iPhone (the user, 2026-11-05:
-"everything is fine"), never on a Mac display (this Mac's has no HDR range). Audio has run only on miniaudio's null
-backend and offline (mix checks by measurement); nobody has listened to it yet. Animation is checked by numbers and
-still captures; nobody has looked at it in motion yet. The native Metal backend, ray tracing and MetalFX ran on the
-Mac only (the native backend also in the iOS Simulator, without ray tracing or MetalFX); the default stays SDL GPU
-and shadow maps until they have run on the iPhone. The demo's compact layout and touch controls were looked at in
-the iOS Simulator only. The checks waiting for a person (on the iPhone, by ear, in motion) are the demo's check mode
+on the user's iPhone (one signed test app; signed by the user's paid team; with the stage 10 code on both backends
+since 2026-11-06) and, for the headless modules, as WebAssembly under Node.js. HDR output was looked at on the
+iPhone (the user, 2026-11-05: "everything is fine"), never on a Mac display (this Mac's has no HDR range). Audio has
+run only on miniaudio's null backend and offline (mix checks by measurement); nobody has listened to it yet.
+Animation is checked by numbers and still captures; nobody has looked at it in motion yet. The native Metal backend,
+ray tracing and MetalFX ran on the Mac and on the iPhone (2026-11-06: the device tests, the demo's benchmarks at
+120 Hz; ray-traced shadows with occlusion 8.0 ms GPU p50 there, over the phone's 7.5 ms budget; numbers only,
+nobody has looked at them on the phone yet), the native backend also in the iOS Simulator (without ray tracing or
+MetalFX); builds of the Xcode generator compiled its Objective-C++ without ARC until 2026-11-06, so the 0.8.0 iOS
+package crashes on the native backend (the default SDL GPU backend works there). The default stays SDL GPU and
+shadow maps until the user has looked at them on the iPhone. The demo's compact layout and touch controls were
+looked at in the iOS Simulator only. The checks waiting for a person (on the iPhone, by ear, in motion) are the demo's check mode
 (`docs/demo.md`, "Check mode on the iPhone"). TrailForge builds on the engine's
 `quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders its own passes through
 `quench_gpu` (not through `quench_render`),
