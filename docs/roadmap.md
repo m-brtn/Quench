@@ -97,8 +97,10 @@ code may be moved), verified with the engine's tests and the engine demo; no ver
   one section per rendering feature (stage 10), its golden captures and `tools/package_demo.sh`.
 - Changed: "every module moved with capture comparisons in the game it comes from" became the engine's own captures
   (the games are not switched). Switching TrailForge's renderer to `quench_render` is later work, when the user asks.
+- Done later: cut-out shadows of alpha-tested materials and translucent, tinted shadows of alpha-blended ones
+  (0.6.0, after the user's report from the iPhone); motion vectors of skinned meshes (stage 8).
 - Not done, remaining: Ashfall's screen-space occlusion, bounce light, reflections and sun shafts (optional modules);
-  cut-out shadows of alpha-tested materials; normal maps; motion vectors for vertex-deformed surfaces; quality
+  normal maps; motion vectors for other vertex-deformed surfaces (custom vertex shaders); quality
   presets; GPU timing per pass; HDR seen on a Mac HDR display (this Mac's display has no HDR range; on the iPhone the
   user looked at the demo's HDR section, on and off, on 2026-11-05: "everything is fine"); PQ encoding for `Hdr10`
   output; auto exposure; scripted gamepad input in the iOS Simulator (the virtual gamepad does not attach there, so
@@ -165,7 +167,7 @@ the user was away: the decisions are in the devlog of 2026-11-06 ("decided witho
   2026-11-06, as recommended); they are listed as not verified in the release notes.
 - Done: version 0.5.0, release notes in [docs/releases/v0.5.0.md](releases/v0.5.0.md).
 
-## Stage 8: animation (done 2026-11-06 except retargeting and the checks in motion and on the iPhone; not released)
+## Stage 8: animation (done 2026-11-06 except retargeting and the checks in motion and on the iPhone, version 0.6.0)
 
 Requested as P0 (skinning, state machines, blending, events) and P1 (partial and additive blending, IK and foot
 placement, retargeting, attachments) by the user (2026-11-05). Written for the engine: neither game has skeletal
@@ -188,7 +190,10 @@ the user"). Described in [Animation](animation.md).
   scripted check and golden captures for Metal and Vulkan through MoltenVK; a benchmark region with 256 characters.
 - Not done, remaining: retargeting (clips bind to the skeleton they were cooked for), 2D blend spaces, animation
   LOD, dual quaternion skinning, blend shapes; the check in motion by the user (foot sliding, blend pops, IK) and on
-  the iPhone.
+  the iPhone. The release went ahead before those checks (decided without the user, 2026-11-06, as recommended);
+  the release notes list them as not verified.
+- Done: version 0.6.0 (with the cut-out and translucent shadows), release notes in
+  [docs/releases/v0.6.0.md](releases/v0.6.0.md).
 
 ## Stage 9: native Metal backend and ray tracing
 
