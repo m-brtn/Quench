@@ -5,8 +5,9 @@ What has run where, the GPU backend and shader format per platform, and the know
 
 ## Priorities
 
-macOS and iOS first: the available hardware is a Mac with an Apple M4 Pro and an iPhone 18 Pro Max. Windows, Linux,
-Android and the web are later targets; the portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
+macOS and iOS first: the available hardware is a Mac with an Apple M4 Pro and two iPhones, an iPhone 18 Pro Max (A20
+Pro) and, since 2026-11-06, an iPhone 17 (A19). Windows, Linux, Android and the web are later targets; the
+portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
@@ -36,9 +37,21 @@ skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator, 
 and the demo's benchmark, 2026-11-06) and (without rendering) under Node.js. The native Metal backend (stage 9, not
 the default; see "Native Metal backend" below) ran on the Mac, in the iOS Simulator and on the iPhone (2026-11-06;
 it crashes in builds of the Xcode generator before the ARC fix of that day, the 0.8.0 iOS package among them). Its
-ray tracing and MetalFX (see "Hardware ray tracing" below) ran on the Mac and the iPhone; the stage 11 effects
+ray tracing and MetalFX (see "Hardware ray tracing" below) ran on the Mac and both iPhones; the stage 11 effects
 (0.9.0: local light shadows, reflections, indirect light, the temporal denoiser, MetalFX denoising, the path
-tracer) on the Mac only so far.
+tracer) on the Mac and the iPhone 17 (2026-11-06: the device tests and the costs, numbers only; nobody looked at
+the screen), not on the iPhone 18 Pro Max.
+
+The iPhone 17 (A19 GPU, GPU family Apple10, iOS 27.0.1, 1206 x 2622 at 120 Hz) ran the stage 9 and 10 code
+(`5aea212`, 2026-11-06 16:49-18:01: the device tests on both backends, every section's benchmark, the ray tracing
+benchmark and ten minutes of ray tracing) and the stage 11 code (18:27-18:56: the device tests on both backends, the
+costs of the stage 11 effects, the ray tracing section's phone defaults for a minute at 120 and at 60 Hz;
+[Performance](performance.md#stage-11-on-the-iphone)). It has the same `gpu::Caps` as the iPhone 18 Pro Max (ray
+tracing, MetalFX spatial, temporal and the denoised scaler); its GPU and CPU are slower (ray-traced shadows with
+occlusion at the native size: about 100 frames per second cold against 120; CPU about 1.5 times), its recommended
+working set is 5461 MB (8192 MB on the A20 Pro), and under sustained ray tracing it lowers its clocks within a
+minute (about 1.6 times every GPU range from the second minute on; serious after a 65 s benchmark, 5 to 11 minutes
+back to nominal).
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
@@ -86,6 +99,13 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   on the CPU) and read back in its color; the native backend reports the same caps plus `gpuPassTiming`.
 - Phones run at 60 Hz unless Info.plist sets `CADisableMinimumFrameDurationOnPhone` (`quench_add_game()` does); with
   it hello runs at 120 Hz on the iPhone 18 Pro Max.
+- A lower frame rate (`App::setMaxFrameRate`, `--max-frame-rate`): SDL's main callbacks on iOS are called by a
+  display link at the display's rate, and the app lets the callbacks pass that come too early. On the iPhone 17 at
+  60 Hz (2026-11-06): 1200 frames in each of three 20 s regions, frame p99 16.76 ms.
+- The thermal state (`app::ThermalState`, `NSProcessInfo`'s `thermalState`): read every 0.5 s, logged on a change
+  and in the perf lines. On the iPhone 17 (2026-11-06) it read serious after the stage 10 baseline's ten minutes of
+  ray tracing and came back to nominal 5 to 11 minutes after a load; with the phone on its cable it also read fair
+  before any demo had run.
 - The app bundle is read-only and SDL's UIKit delegate keeps the process alive after `SDL_main` returns: the device
   test app calls `std::exit`, and file tests that write next to the executable skip there.
 - The iOS Simulator's Metal device (engine GPU tests, 2026-11-05) reports GPU family Apple2 only, no BC textures
@@ -131,6 +151,7 @@ request for it there creates SDL GPU with a warning.
 | Mac, M4 Pro | `gpu_metal_native.*` and `render_metal_native.*` with the Metal API validation layer; hello and every demo section's capture identical to the Metal golden images in Release (2026-11-06); the four swapchain compositions created and presented; `Caps::gpuPassTiming` true (timestamp period 1.0000 ns); `Caps::rayTracing`, `spatialUpscaling` and `temporalUpscaling` true; the ray tracing section against its own golden image; benchmarks in [Performance](performance.md#measurements) |
 | iOS Simulator (iPhone 18 Pro Max) | `gpu_metal_native.*` and `render_metal_native.*` in `ios-sim-tests` (the two window cases skipped as on SDL GPU: no app lifecycle in a test executable; since the second half also the ray tracing and upscaling cases); `Caps::gpuPassTiming` false (the Simulator's GPU has no stage boundary sampling), no depth clamp, no indirect draws, as on SDL GPU there; `rayTracing`, `spatialUpscaling`, `temporalUpscaling` false |
 | iPhone 18 Pro Max | `quench_device_tests` with the Metal API validation layer, 2026-11-06: 198 cases, 196 passed, 0 failed, 2 skipped (as on SDL GPU: the read-only bundle, the opt-in audio output), the window cases and the ray tracing and upscaling cases included; `Caps::gpuPassTiming`, `rayTracing`, `spatialUpscaling`, `temporalUpscaling` true; the demo's smoke run (15 of 15) and benchmarks ([Performance](performance.md#measurements)); not looked at on the screen yet. Builds of the Xcode generator before that day's fix crash at the first copy pass (see below) |
+| iPhone 17 (A19) | `quench_device_tests` with the Metal API validation layer, 2026-11-06: the stage 10 code 198 cases, 196 passed, 0 failed, 2 skipped; the stage 11 code 215 cases, 213 passed, 0 failed, 2 skipped (on SDL GPU 193 passed, 22 skipped: the ray tracing and MetalFX cases); the same caps as the iPhone 18 Pro Max; the demo's benchmarks and ray tracing runs ([Performance](performance.md#stage-11-on-the-iphone)); not looked at on the screen |
 
 - **ARC in Xcode builds** (found on the iPhone, fixed 2026-11-06). The backend's Objective-C++ keeps Metal objects as
   strong members of plain C++ structs and needs ARC. It was enabled only by `-fobjc-arc` under
@@ -218,7 +239,7 @@ the native Metal backend only (stage 9: acceleration structures, ray queries in 
 [Architecture](architecture.md#ray-tracing)); the renderer takes its fallbacks wherever `gpu::Caps::rayTracing` is
 false. MetalFX (spatial and temporal upscaling, and since stage 11 the temporal denoised scaler) likewise. Stage 11
 added local light shadows, reflections, indirect light, the temporal denoiser and the path tracer on the same
-capability ([Render module](render.md#ray-traced-lighting)); they ran on the Mac only so far.
+capability ([Render module](render.md#ray-traced-lighting)); they ran on the Mac and the iPhone 17.
 
 | Where | `rayTracing` | MetalFX | Run so far |
 |---|---|---|---|
@@ -226,5 +247,6 @@ capability ([Render module](render.md#ray-traced-lighting)); they ran on the Mac
 | Mac, SDL GPU (Metal, Vulkan through MoltenVK) | false | none | the fallbacks: `demo_raytracing_metal` and `demo_raytracing_vulkan` against their golden image. MoltenVK has no Vulkan ray tracing extension (checked at its tag `v1.4.2` and on `main`, 2026-11-06), so Vulkan through it always falls back |
 | iOS Simulator, native Metal backend | false (its Metal device does not report both `supportsRaytracing` and `supportsRaytracingFromRender`) | none (MetalFX is not in the Simulator's SDK; the engine does not link it there) | `ios-sim-tests`, 2026-11-06: `gpu_metal_native.ray_tracing_caps` reads 0, 0, 0 and creation fails as it should; the ray tracing and upscaling cases are skipped (263 tests, 22 skipped) |
 | iPhone 18 Pro Max (A20 Pro), native Metal backend | true (`supportsRaytracing` and `supportsRaytracingFromRender`; GPU family Apple11, Metal 4) | spatial and temporal (the device also supports the temporal denoised scaler, which the engine uses since stage 11 (not run there yet), and frame interpolation, which it does not use) | 2026-11-06, the stage 10 code: the device test app on the native backend (`ray_tracing_caps`, `ray_query_instances`, `ray_query_refit`, `upscale_flat_color`, the renderer's ray-traced and upscaling cases) under the Metal API validation layer; the demo's ray tracing section and its benchmark at 1320 x 2868 and 120 Hz: RT shadows with occlusion 8.0 ms GPU p50, over the phone's 7.5 ms budget ([Performance](performance.md#measurements)); not looked at on the screen yet |
+| iPhone 17 (A19), native Metal backend | true (GPU family Apple10, Metal 4) | spatial, temporal and temporal denoised | 2026-11-06: the stage 10 code's device tests and ray tracing benchmark (RT shadows with occlusion about 100 frames per second cold at 1206 x 2622, 10.2 ms busy), and the stage 11 code's device tests (215 cases, 0 failed) and every stage 11 effect at the native size and scaled ([Performance](performance.md#stage-11-on-the-iphone)): everything traced 34.4 ms, 13.4 ms at 0.5 with MetalFX spatial; MetalFX temporal 3.6 ms and spatial 1.1 ms at 0.5, MetalFX denoising 15.0 ms at 0.67; the demo's phone defaults 117 frames per second cold, 60 Hz held for a minute; not looked at on the screen |
 
 On the web there is no ray tracing API; WebGPU has none so far.

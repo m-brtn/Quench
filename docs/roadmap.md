@@ -306,7 +306,7 @@ Finished on 2026-11-06 and released as 0.8.0 (Mac and iOS Simulator only, the iP
 - [x] Version 0.8.0, release notes in [docs/releases/v0.8.0.md](releases/v0.8.0.md). Released before the iPhone run
   (decided without the user, 2026-11-06, as recommended); the release notes list it under "What was not verified".
 
-## Stage 11: full ray tracing (done 2026-11-06 except the iPhone runs and the checks by eye, version 0.9.0)
+## Stage 11: full ray tracing (done 2026-11-06 except the checks by eye and the iPhone 18 Pro Max, version 0.9.0)
 
 Requested by the user on 2026-11-06. Order: foundations, the reference path tracer and the temporal denoiser come
 before reflections and indirect light (1-sample effects need temporal accumulation, and the path tracer is their
@@ -348,9 +348,23 @@ scaler.
   Graphics panel's "Ray-traced lighting" options, scenarios and golden captures (native, the fallbacks on Metal and
   on Vulkan through MoltenVK), benchmark regions per effect, five check mode items (29 in all).
 - [x] Per-pass GPU costs at 1080p on the M4 Pro in `docs/performance.md`.
-- [ ] The same on the user's iPhone, the device test app on both backends with the stage 11 code, and the iPhone
-  defaults chosen from them (render scale 0.67 or 0.5 with MetalFX, user decision): pending, the phone was not
-  available at the end of the stage.
+- [x] The same on an iPhone, the device test app on both backends with the stage 11 code, and the phone defaults
+  chosen from them (2026-11-06, on the iPhone 17 (A19); [Performance](performance.md#stage-11-on-the-iphone)): the
+  device tests 215 cases on each backend, 0 failed; every effect costs 2.8 to 3.1 times the M4 Pro's 1080p frame at
+  the phone's 1.5 times the pixels, everything 34.4 ms at the native size; the ray tracing section's defaults on
+  phones and tablets that trace (`App::mobile()`): sun and lamp shadows, occlusion and reflections without the probe
+  grid, render scale 0.5 (not 0.67) with MetalFX spatial (temporal costs three times as much there), at 60 Hz
+  (held for a minute at the nominal thermal state; at the display's rate 117 frames per second cold, fair after
+  34 s). The iPhone 18 Pro Max has not run the stage 11 code.
+- [x] The system's thermal state (`app::ThermalState`: frame stats, perf lines, the scenario value `thermal_state`,
+  the demo's Performance panel, About and `benchmark.json`) and a frame rate limit (`App::setMaxFrameRate`,
+  `--max-frame-rate`, the scenario command `max_frame_rate`), 2026-11-06. The engine does not react to the thermal
+  state by itself.
+- [x] Xcode builds copy re-cooked assets into the app (found on the iPhone: the demo's mannequin stayed in the old
+  model format): the merged `assets/` folder is touched when a file in it changes, and `<game>_assets` is built
+  first ([App shell](app.md#ios-runs)).
+- [ ] The phone defaults on the iPhone 18 Pro Max, a ten-minute run at 60 Hz, and whether that phone should start
+  at 120 Hz.
 - [ ] Look at the effects in motion (noise, lag of the temporal denoiser, MetalFX denoising, reflections and
   probe light while the sun turns): by the user, on the Mac and the iPhone (the demo's check mode).
 - [x] Full test tier, `tools/package_demo.sh` (macOS), release notes [docs/releases/v0.9.0.md](releases/v0.9.0.md);
@@ -365,14 +379,18 @@ stays open, in the order it is useful (nothing of it is scheduled; the user deci
    the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
    input devices, loading and streaming, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
    and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
-   the frame rate and the layout on the phone; [Engine demo](demo.md#check-mode-on-the-iphone)), the device test
-   app on both backends with the 0.9.0 code, the benchmark of every section at 120 Hz, the ray tracing benchmark
-   with the stage 11 regions, Core Audio output on the Mac, the audio session on the iPhone (silent switch,
-   interruptions, routes, background).
-2. **Defaults from those runs:** the stage 11 effects and the render scale with MetalFX per device (the plan: 0.67
-   or 0.5 on the iPhone), ray-traced shadows or shadow maps, and the native Metal backend as the default on Apple
-   platforms (it ran the device tests and the benchmarks on the iPhone on 2026-11-06; the user has not looked at it
-   there yet).
+   the frame rate and the layout on the phone; [Engine demo](demo.md#check-mode-on-the-iphone)), on the iPhone 18
+   Pro Max the device test app on both backends with the 0.9.0 code and the stage 11 ray tracing runs (done on the
+   iPhone 17), Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes,
+   background).
+2. **Defaults from those runs:** the ray tracing section's phone defaults are chosen (stage 11, on the iPhone 17);
+   open: ray-traced shadows or shadow maps in the other sections, and the native Metal backend as the default on
+   Apple platforms (it ran the device tests and the benchmarks on both iPhones on 2026-11-06; the user has not looked
+   at it there yet). Recommended, not built: a game-level reaction to the thermal state (opt-in, for example 60 Hz
+   or a lower render scale from serious on, with hysteresis and the player's choice first); the engine reports the
+   state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
+   a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
+   render scale).
 3. **Remaining work of the stages:** shader hot reload, ASTC or Basis Universal textures and asset hot reload on a
    device (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
    dual quaternion skinning and blend shapes (stage 8); the `accel` timing split into `blas` / `tlas`, normal maps
@@ -380,9 +398,11 @@ stays open, in the order it is useful (nothing of it is scheduled; the user deci
    devices without ray tracing, a denser or cascaded probe grid (stage 11).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
-5. **Known open questions:** one Xcode build of the demo left two licence files out of the app (not reproduced;
-   `tools/package_demo.sh` now checks the bundle's assets, a game's Xcode build does not); per-frame call counts and
-   profiles need a profiler the user has allowed on the Mac.
+5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. An
+   Xcode build of a game still copies a change merged by that build into the app only with the next build (Xcode
+   decides when the build starts; probably what left the licence files out of one stage 10 build, not reproduced
+   then); building `<game>_assets` first avoids it ([App shell](app.md#ios-runs)). The Xcode build also cooks every
+   asset and copies the whole folder in every build (about a second for the demo).
 6. Other modules when a game needs them and the later platforms when the user asks (below).
 
 ## Other modules (when a game needs them)

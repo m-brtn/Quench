@@ -22,8 +22,9 @@ skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`
 
 **Current state (2026-11-06, version 0.9.0): stages 1 to 3, 5, 7, 9 and 10 of `docs/roadmap.md` are in place, stage
 4 for TrailForge only, stage 6 except shader hot reload, stage 8 except retargeting, stage 11 (full ray tracing)
-except its runs on the iPhone; the plan the user left (stages 6 to 10) and stage 11 have been worked through, apart
-from the remaining work listed at the end of this paragraph, the runs on the iPhone and the checks by eye and ear:
+except its runs on the iPhone 18 Pro Max; the plan the user left (stages 6 to 10) and stage 11 have been worked
+through, apart from the remaining work listed at the end of this paragraph, the stage 11 runs on the iPhone 18 Pro
+Max and the checks by eye and ear:
 the CMake
 skeleton and presets,
 `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
@@ -70,20 +71,21 @@ section; a wide layout and a compact one for phones with touch-sized controls; a
 waiting for a person (`checks.json` in the user directory, kept across launches) and a benchmark of every section
 (`benchmark.json`); About, versioned settings; `tools/package_demo.sh` packages it into `dist/`); `templates/game` and
 `tools/new_game.py` start a new game. Tests run on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator,
-on the user's iPhone (one signed test app; signed by the user's paid team; with the stage 10 code on both backends
-since 2026-11-06) and, for the headless modules, as WebAssembly under Node.js. HDR output was looked at on the
+on the user's iPhones (one signed test app; signed by the user's paid team; on both backends, 2026-11-06: the stage
+10 code on the iPhone 18 Pro Max and the iPhone 17, the stage 11 code on the iPhone 17) and, for the headless modules, as WebAssembly under Node.js. HDR output was looked at on the
 iPhone (the user, 2026-11-05: "everything is fine"), never on a Mac display (this Mac's has no HDR range). Audio has
 run only on miniaudio's null backend and offline (mix checks by measurement); nobody has listened to it yet.
 Animation is checked by numbers and still captures; nobody has looked at it in motion yet. The native Metal backend,
-ray tracing and MetalFX ran on the Mac and on the iPhone (2026-11-06: the device tests, the demo's benchmarks at
-120 Hz; ray-traced shadows with occlusion 8.0 ms GPU p50 there, over the phone's 7.5 ms budget; numbers only,
-nobody has looked at them on the phone yet), the native backend also in the iOS Simulator (without ray tracing or
-MetalFX); builds of the Xcode generator compiled its Objective-C++ without ARC until 2026-11-06, so the 0.8.0 iOS
-package crashes on the native backend (the default SDL GPU backend works there). The stage 11 effects (0.9.0) ran
-on the Mac only: the iPhone was not available at the end of the stage, so its device tests, ray tracing benchmark
-and iPhone defaults (planned: render scale 0.67 or 0.5 with MetalFX) are pending, and nobody has looked at the new
-effects in motion. The default stays SDL GPU and shadow maps, every stage 11 effect off, until the user has looked
-at them on the iPhone. The demo's compact layout and touch controls were
+ray tracing and MetalFX ran on the Mac and on both iPhones (2026-11-06: the device tests, the demo's benchmarks at
+120 Hz; ray-traced shadows with occlusion 8.0 ms GPU p50 on the iPhone 18 Pro Max, over the phone's 7.5 ms budget,
+about 100 frames per second on the iPhone 17; numbers only, nobody has looked at them on a phone yet), the native
+backend also in the iOS Simulator (without ray tracing or MetalFX); builds of the Xcode generator compiled its
+Objective-C++ without ARC until 2026-11-06, so the 0.8.0 iOS package crashes on the native backend (the default SDL
+GPU backend works there). The stage 11 effects (0.9.0) ran on the Mac and on the iPhone 17 (2026-11-06: the device
+tests on both backends, 0 failed; the cost of each effect, about 3 times the M4 Pro's; the demo's ray tracing
+section defaults on phones chosen from them: half size with MetalFX spatial, no probe grid, 60 Hz), not on the
+iPhone 18 Pro Max, and nobody has looked at the new effects in motion. The default stays SDL GPU and shadow maps,
+every stage 11 effect off, until the user has looked at them on the iPhone. The demo's compact layout and touch controls were
 looked at in the iOS Simulator only. The checks waiting for a person (on the iPhone, by ear, in motion) are the demo's check mode
 (`docs/demo.md`, "Check mode on the iPhone"). TrailForge builds on the engine's
 `quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders its own passes through

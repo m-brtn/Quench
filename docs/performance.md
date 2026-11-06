@@ -129,7 +129,10 @@ The iPhone baseline of 2026-11-06 (below; every section, both backends) stays wi
 section but one: the ray tracing section on the native backend reads 8.07 ms GPU p50 (RT shadows with occlusion),
 over the 7.5 ms. It is left over budget, as a known item for the ray tracing work; it still makes the 120 Hz
 interval. The phone's GPU p50 does not go below about 6 ms (below), so the budget catches growth above that, not
-below.
+below. Since stage 11 the section runs at 60 Hz on phones that trace, with lighter defaults
+([Stage 11 on the iPhone](#stage-11-on-the-iphone)): its budget there is the 60 Hz interval, not the table's. The
+iPhone 17 (A19, 2026-11-06, below) has no budget of its own: it holds 120 Hz in every other section, with CPU p50
+about 1.5 times the iPhone 18 Pro Max's (up to 1.8 ms, within the 2.0 ms).
 
 The demo's `animation` region (a crowd of 256, 259 characters; since stage 8) is a load test and has its own Mac
 budget, at about twice the medians of the runs of 2026-11-06 04:22-04:34 below: CPU p50 5.5 ms, CPU p99 7.5 ms,
@@ -140,9 +143,130 @@ crowd (51 skinned characters, `--benchmark-all` on 2026-11-06, below) stays with
 
 ## Measurements
 
+### Stage 11 on the iPhone
+
+iPhone 17 (A19 GPU, iOS 27.0.1), 2026-11-06 18:42-18:56: Release (`ios-xcode`), the native size 1206 x 2622 in
+portrait, 120 Hz, the native Metal backend with vsync, `--audio-device null`, launched through `devicectl`, no
+validation layer, on its cable (probably charging). The iPhone 18 Pro Max was not available: nothing of stage 11 has
+run on it. Nobody looked at the screen.
+
+**The cost of each effect** (`scenarios/raytracing_phone.txt`, 18:42-18:45, one run, the code of `91a6c2f`): 4 s
+regions in four groups, each group started at the nominal thermal state (the run waited for it at 20 frames per
+second on the cheapest frame); the state of each region is in the table. Frames above the 8.33 ms display interval
+run the GPU at its full clock, so their busy times are costs; at 120 frames per second (481 in 4 s) the clock follows
+the load and the ranges read longer than they cost (the A19's plateau is about 5.6 to 5.9 ms, see the baseline
+below). GPU busy time per range, medians, ms; `game` is the renderer's whole frame:
+
+| Region | Render size | Thermal | Frames / 4 s | Frame p50 | CPU p50 | game | rays | denoise | probes | reflections | indirect | hdr | taa | upscale |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| RT shadows + AO (2 rays each): the base | 1206 x 2622 | nominal | 352 | 11.17 | 1.236 | 11.604 | 4.319 | 2.688 | | | | 1.463 | 1.314 | |
+| base + 2 lamp shadows | 1206 x 2622 | nominal | 199 | 22.25 | 1.742 | 20.737 | 10.540 | 5.338 | | | | 1.472 | 1.376 | |
+| base + reflections | 1206 x 2622 | nominal | 254 | 16.62 | 1.805 | 16.231 | 4.084 | 2.926 | | 3.976 | | 1.686 | 1.384 | |
+| base + probe grid | 1206 x 2622 | nominal | 202 | 22.31 | 1.728 | 20.514 | 4.627 | 3.031 | 3.325 | | | 5.695 | 1.690 | |
+| base + per-pixel indirect | 1206 x 2622 | nominal | 150 | 25.01 | 1.918 | 27.250 | 4.698 | 3.256 | 3.408 | | 10.496 | 1.711 | 1.500 | |
+| all (lamps, reflections, probes), temporal denoiser | 1206 x 2622 | nominal -> fair | 118 | 33.34 | 2.077 | 34.370 | 11.127 | 6.034 | 3.525 | 4.517 | | 5.557 | 1.478 | |
+| shadow maps (3 cascades), nothing traced | 1206 x 2622 | fair | 481 | 8.34 | 1.434 | 6.199 | | | | | | 2.866 | 1.750 | |
+| all, MetalFX temporal at 0.67 | 808 x 1757 | nominal | 201 | 19.11 | 0.290 | 18.859 | 4.311 | 2.425 | 2.948 | 1.618 | | 2.154 | | 4.035 |
+| all, MetalFX denoising at 0.67 | 808 x 1757 | nominal | 145 | 25.92 | 0.262 | 28.008 | 4.712 | | 3.045 | 1.257 | | 2.263 | 0.129 | 14.957 |
+| all, MetalFX temporal at 0.5 | 603 x 1311 | nominal | 269 | 13.89 | 2.085 | 15.287 | 2.887 | 1.531 | 3.189 | 1.030 | | 1.424 | | 3.611 |
+| all, MetalFX spatial at 0.5 | 603 x 1311 | nominal | 305 | 11.40 | 2.175 | 13.432 | 2.982 | 1.546 | 3.374 | 1.054 | | 1.422 | 0.380 | 1.108 |
+| no lamp shadows, MetalFX spatial at 0.5 | 603 x 1311 | nominal -> fair | 364 | 11.15 | 2.076 | 11.467 | 1.351 | 0.822 | 3.494 | 1.122 | | 1.533 | 0.383 | 1.121 |
+| no lamp shadows, MetalFX temporal at 0.5 | 603 x 1311 | fair | 307 | 11.30 | 1.965 | 13.465 | 1.298 | 0.826 | 3.466 | 1.051 | | 1.534 | | 3.630 |
+| base, MetalFX spatial at 0.5 | 603 x 1311 | fair | 481 | 8.33 | 1.771 | 5.838 | 1.336 | 0.903 | | | | 0.613 | 0.442 | 1.285 |
+| base, bilinear at 0.5 | 603 x 1311 | fair | 481 | 8.34 | 1.706 | 5.807 | 1.832 | 1.232 | | | | 0.868 | 0.602 | |
+
+What each effect adds to the base at the device's size (the `game` difference): two lamp shadows +9.1 ms (their
+rays +6.2, their filter +2.7); reflections +4.6 ms; the probe grid +8.9 ms (3.3 ms for the probes, 4.2 ms more in
+the main pass, which samples the probe atlases per pixel); per-pixel indirect light +15.6 ms (10.5 ms of rays and
+filter over the probes). Everything the desktop default turns on costs 34.4 ms at the device's size (29 frames per
+second), 18.9 ms at 0.67 with MetalFX temporal and 13.4 ms at 0.5 with MetalFX spatial. Against the M4 Pro at 1080p
+(below, unpaced) the phone has 1.5 times the pixels and the base costs 2.8 times as much, everything 3.1 times. The
+probe grid costs 2.9 to 3.5 ms at every render scale (2048 probes of 64 rays every frame), so at half size it is the
+largest part of the frame (about 4.4 ms of the 11.5 ms without lamp shadows, with its sampling). MetalFX on the A19:
+temporal 3.6 ms at 0.5 and 4.0 ms at 0.67, spatial 1.1 ms at 0.5, the denoising upscaler 15.0 ms at 0.67 (it
+replaces the engine's denoiser, 2.4 ms at that scale, and TAA). CPU p50 reads 2.0 to 2.2 ms in the half-size regions against 1.2 to
+1.9 ms at the device's size, above the iPhone budget's 2.0 ms (set on the iPhone 18 Pro Max); not examined.
+
+**The phone defaults** (since 2026-11-06, `RayTracingSection.cpp`; phones and tablets that trace: `App::mobile()` and
+`gpu::Caps::rayTracing`): ray-traced sun shadows and occlusion, two lamp shadows and reflections, no probe grid (the
+sky's ambient light; the panel turns it on), render scale 0.5 with MetalFX spatial upscaling, and 60 frames per second
+while the section is current (the panel's "60 Hz" box, `App::setMaxFrameRate`). From the table: the probe grid is the
+one effect whose cost does not shrink with the render scale; MetalFX temporal costs three times spatial here while
+the engine's temporal denoiser already accumulates over frames; MetalFX denoising alone takes nearly a 60 Hz frame;
+at 0.5 everything but the probes fits a 60 Hz frame with room for the clocks to drop. The desktop default (everything
+at 0.67 with MetalFX temporal) is unchanged.
+
+**The defaults held for a minute** (`scenarios/raytracing_phone_sustained.txt`, 18:50-18:56, the code of the phone
+defaults): three 20 s regions at the display's rate from nominal, then, after a cool-down to nominal, three at 60 Hz.
+GPU p50 is the span, `game` the busy time; ms:
+
+| Region | Thermal | Frames / 20 s | Frame p50 / p99 | CPU p50 / p99 | GPU p50 | game | rays | denoise | reflections | upscale |
+|---|---|---|---|---|---|---|---|---|---|---|
+| display rate, 0-20 s | nominal | 2338 (117 per s) | 8.339 / 13.863 | 2.123 / 2.380 | 7.744 | 7.668 | 2.521 | 1.378 | 0.896 | 0.977 |
+| display rate, 20-40 s | nominal -> fair | 2264 (113 per s) | 8.344 / 13.947 | 2.077 / 2.305 | 10.002 | 8.903 | 2.897 | 1.599 | 1.080 | 1.101 |
+| display rate, 40-60 s | fair | 2160 (108 per s) | 8.362 / 14.346 | 2.047 / 2.320 | 10.832 | 9.351 | 3.068 | 1.659 | 1.099 | 1.178 |
+| 60 Hz, 0-20 s | nominal | 1200 | 16.669 / 16.764 | 2.161 / 2.444 | 15.328 | 15.252 | 5.220 | 2.682 | 1.821 | 1.959 |
+| 60 Hz, 20-40 s | nominal | 1200 | 16.669 / 16.751 | 2.168 / 2.475 | 15.323 | 15.247 | 5.211 | 2.675 | 1.827 | 1.958 |
+| 60 Hz, 40-60 s | nominal | 1200 | 16.670 / 16.756 | 2.176 / 2.454 | 15.320 | 15.246 | 5.199 | 2.690 | 1.823 | 1.974 |
+
+At the display's rate the defaults run at 117 frames per second cold (7.7 ms busy, just inside the 8.33 ms
+interval); the phone turned fair after 34 s, and by the third region every range had grown by about 1.2 times (108
+frames per second). At 60 Hz every frame made its interval (p99 16.76 ms), the three regions read the same and the
+state stayed nominal for the whole minute, which ran second, from a warmer start. The GPU there lowers its clock to
+fill the 16.7 ms: its 15.3 ms busy are time at that clock, not a cost. So ray-traced effects on phones target 60 Hz:
+at 120 Hz even this reduced set holds the rate only while the phone is cool (the baseline's ten-minute run below
+shows where it ends: about 1.6 times every range), at 60 Hz the A19 keeps its frame and its thermal state with the
+same picture. The 60 Hz minute is one minute; a run of ten minutes at 60 Hz is open. The iPhone 18 Pro Max (A20 Pro)
+has not run these defaults.
+
+### The iPhone 17 baseline (stage 9 and 10 code)
+
+2026-11-06 16:49-18:01, `5aea212` (the stage 10 code with the ARC fix), Release, `ios-xcode`, the iPhone 17 (A19 GPU,
+GPU family Apple10, iOS 27.0.1, 6 CPU cores, 7672 MB), 1206 x 2622 in portrait, 120 Hz, `--audio-device null`,
+launched through `devicectl`. The device tests (Metal API validation layer): SDL GPU 198 cases, 188 passed, 0
+failed, 10 skipped (the 8 ray tracing and MetalFX cases and the two skipped everywhere on the phone); native 198
+cases, 196 passed, 0 failed, 2 skipped. `gpu::Caps` as on the iPhone 18 Pro Max; the denoised scaler is supported.
+
+The ray tracing benchmark on the native backend (`raytracing_benchmark.txt` of stage 10, 5 s regions, its second run,
+from nominal; GPU span p50 / busy (`game`) in ms; the iPhone 18 Pro Max at 1320 x 2868 from the run of 14:59 below):
+
+| Region | iPhone 17 frames / 5 s | iPhone 17 span / busy | iPhone 17 rays / denoise / upscale | iPhone 18 Pro Max frames / span |
+|---|---|---|---|---|
+| rt_shadows_ao | 499 | 13.242 / 10.239 | 4.262 / 1.906 / - | 601 / 8.015 |
+| rt_shadows (no AO) | 601 | 8.291 / 8.081 | 3.120 / 0.791 / - | 601 / 6.215 |
+| rt_hard_shadows | 601 | 6.701 / 6.662 | 2.739 / - / - | 601 / 6.128 |
+| shadow_maps | 601 | 5.952 / 5.845 | - | 600 / 6.131 |
+| temporal_1 | 311 | 18.354 / 16.495 | 4.629 / 2.252 / 6.825 | 493 / 10.817 |
+| temporal_067 | 506 | 11.107 / 10.246 | 2.315 / 1.057 / 4.705 | 601 / 6.231 |
+| temporal_05 | 597 | 7.252 / 7.208 | 1.333 / 0.573 / 3.696 | 601 / 6.104 |
+| spatial_05 | 601 | 5.671 / 5.618 | 1.339 / 0.630 / 1.281 | 600 / 6.125 |
+| bilinear_05 | 601 | 5.702 / 5.613 | 1.814 / 0.863 / - | 601 / 6.052 |
+
+- Below the interval the GPU time settles on a plateau that follows the load: about 5.6 to 5.9 ms on the A19, 6.0 to
+  6.2 ms on the A20 Pro; only the regions above it compare costs. The span exceeds the busy sum where the GPU is the
+  limit (command buffers wait behind the previous frame): the busy sum is the measure of the work.
+- RT shadows with occlusion at the native size: 120 Hz on the A20 Pro, about 100 frames per second cold on the A19.
+  The rays cost 1.19 times the A20 Pro's per frame, about 1.4 times per pixel; MetalFX temporal 6.8 ms at scale 1
+  (1.95 times) and 3.7 ms at 0.5, where it costs more than the rays and denoising it saves.
+- The benchmark of every section (`--benchmark-all`, 5 s each, both backends, each run from nominal to fair): every
+  section holds 120 Hz on both backends (GPU p50 5.6 to 5.9 ms) except the ray tracing section on the native
+  backend, 419 frames in 5 s at GPU p50 18.5 ms (it ran last, warm). CPU p50 is about 1.5 times the iPhone 18 Pro
+  Max's (0.9 to 1.3 ms against 0.63 to 0.91 ms; animation 1.8 against 1.45 ms).
+- **Throttling** (ten 60 s regions of RT shadows and occlusion at the native size, from nominal, 17:49-18:00): minute
+  1 at 87 frames per second with every range 1.18 times its cold time; from minute 2 about 65 frames per second at
+  1.56 times, 1.65 times and 62 frames per second by minute 10. Every range (rays, denoise, hdr, taa, bloom) grows by
+  the same factor and the CPU time does not: the clock, not the work. A last minute at 0.5 with MetalFX temporal ran
+  at 90 frames per second, 1.63 times its cold time.
+- **Thermal state** (read by a probe app then; the engine reads it since the same day): serious after one 65 s ray
+  tracing benchmark, 5 to 11 minutes back to nominal while idle; fair before any demo had run, and once rising from
+  fair to serious with no Quench app running (cause not known: background work of a freshly connected phone, or
+  charging; nothing on the phone can be seen from here).
+
+### Stage 11 on the Mac, and earlier runs
+
 Stage 11 (ray-traced lighting), 2026-11-06 17:20-18:00, Release, Mac, Apple M4 Pro, `--frame-size 1920x1080`,
-`--audio-device null`, on the screen. The display ran at 60 Hz in this session. Nothing of stage 11 has run on the
-iPhone yet.
+`--audio-device null`, on the screen. The display ran at 60 Hz in this session. Its iPhone numbers are
+[above](#stage-11-on-the-iphone).
 
 **The cost of each effect.** `raytracing_benchmark.txt` on the native backend with `--present-mode immediate`
 (17:47-17:49, one run; the build before the hard-shadow change below): unpaced, the GPU at its full clock. With vsync
