@@ -133,6 +133,8 @@ bool App::canRelaunch() const {
     return (QUENCH_PLATFORM_MACOS || QUENCH_PLATFORM_WINDOWS || QUENCH_PLATFORM_LINUX) && !m_state.program.empty();
 }
 
+bool App::mobile() const { return QUENCH_PLATFORM_IOS || QUENCH_PLATFORM_ANDROID; }
+
 Result<void> App::relaunch(std::span<const std::string> args) {
     if (!canRelaunch()) return Error{"relaunch: not possible on this platform"};
     std::vector<const char*> argv{m_state.program.c_str()};

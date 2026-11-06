@@ -53,7 +53,9 @@ the ranges arrive a few frames later), the display output (`output()`, `hdrMode(
 `perf_begin` .. `perf_end` does (real time, the same `perf:` line and `perf_*` values) and return its numbers as a
 `PerfReport` (a game's benchmark mode); `arguments()` is the command line the app was started with, and
 `relaunch(args)` starts the program again with other arguments and quits (`canRelaunch()`: desktops only; not phones,
-tablets or the web), for example with another `--gpu-backend`; `memoryFootprint()` is the memory the system charges
+tablets or the web), for example with another `--gpu-backend`; `mobile()` says the app runs on a phone or tablet
+(iOS, also in the Simulator, and Android), for lighter quality defaults where sustained GPU load lowers the clocks
+(the demo's ray tracing section; effects still fall back by `gpu::Caps`); `memoryFootprint()` is the memory the system charges
 the process (Apple platforms; nullopt elsewhere). `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
 headroom); the renderer takes it as is ([HDR output](#hdr-output)).
 

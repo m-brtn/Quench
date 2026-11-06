@@ -256,6 +256,10 @@ public:
     std::span<const std::string> arguments() const;
     // Whether relaunch() can start the app again: desktops; not phones, tablets or the web.
     bool canRelaunch() const;
+    // Whether the app runs on a phone or tablet (iOS, also in the Simulator, and Android): a passively cooled device
+    // that lowers its clocks under sustained GPU load (FrameStats::thermal), for a game's quality defaults. Effects
+    // still fall back by gpu::Caps.
+    bool mobile() const;
     // Starts the program again as a new process with `args` (without the program name) and ends this one after the
     // frame, as quit(0); an error, and the app goes on, where it cannot or the process does not start.
     Result<void> relaunch(std::span<const std::string> args);

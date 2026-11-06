@@ -1,0 +1,55 @@
+# The ray tracing section's defaults on a phone (half size, MetalFX spatial, no probe grid; RayTracingSection.cpp)
+# held for a minute at the display's rate and for a minute at 60 frames per second (the section's default there),
+# each from the nominal thermal state, in 20 s regions (docs/performance.md, "Stage 11 on the iPhone"):
+#   copy this file into the app's user directory, launch with --gpu-backend metal --script raytracing_phone_sustained.txt
+# The 60 Hz minute runs second, after a cool-down to nominal: a warmer start than the first minute's, if anything.
+
+section raytracing
+until rt_ready == 1 5
+expect limit_60hz == 1
+expect max_frame_rate == 60
+
+# Cool down: the cheapest frame, few of them (as in raytracing_phone.txt); reset_section brings the defaults back.
+set sun_shadows maps
+set ao none
+set local_shadows 0
+set reflections sky
+set upscaling bilinear
+max_frame_rate 20
+until thermal_state <= 0 300
+reset_section
+until rt_ready == 1 5
+set limit_60hz 0
+expect max_frame_rate == 0
+wait 0.5
+perf_begin defaults_display_rate_1
+wait 20
+perf_end
+perf_begin defaults_display_rate_2
+wait 20
+perf_end
+perf_begin defaults_display_rate_3
+wait 20
+perf_end
+
+set sun_shadows maps
+set ao none
+set local_shadows 0
+set reflections sky
+set upscaling bilinear
+max_frame_rate 20
+until thermal_state <= 0 300
+reset_section
+until rt_ready == 1 5
+expect max_frame_rate == 60
+wait 0.5
+perf_begin defaults_60hz_1
+wait 20
+perf_end
+perf_begin defaults_60hz_2
+wait 20
+perf_end
+perf_begin defaults_60hz_3
+wait 20
+perf_end
+quit

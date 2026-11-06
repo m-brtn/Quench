@@ -3,8 +3,9 @@
 #   copy this file into the app's user directory, launch with --gpu-backend metal --script raytracing_phone.txt
 # A phone lowers its clocks within a minute of full load, and a region measured hot does not compare with one
 # measured cool: every group of regions (at most about 20 s of load) starts only once the system's thermal state is
-# nominal again. Meanwhile the section runs its cheapest frame (shadow maps at half size) at 24 frames per second.
-# The perf lines carry the thermal state of each region ("thermal nominal", "thermal nominal -> fair").
+# nominal again. Meanwhile the section runs its cheapest frame (shadow maps at half size) at 20 frames per second.
+# The perf lines carry the thermal state of each region ("thermal nominal", "thermal nominal -> fair"). Every option
+# is set here, so the section's phone defaults do not matter; the regions run at the display's rate.
 
 section raytracing
 until rt_ready == 1 5

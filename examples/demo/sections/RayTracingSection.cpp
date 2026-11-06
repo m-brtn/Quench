@@ -84,11 +84,20 @@ public:
     }
 
     Result<void> init(Context& c) override {
-        // All of it costs more than a phone's frame at the phone's size (docs/performance.md): where MetalFX scales
-        // up, the section renders at two thirds of the size with MetalFX's temporal upscaler and the engine's
-        // denoiser. MetalFX's denoising upscaler is a choice in the panel: on the M4 Pro it costs about three times
-        // as much at 1080p.
-        if (c.app.device().caps().temporalUpscaling) {
+        // All of it costs more than a frame at the device's size (docs/performance.md, "Stage 11 on the iPhone").
+        // Where MetalFX scales up, the section renders at two thirds of the size with MetalFX's temporal upscaler
+        // and the engine's denoiser; MetalFX's denoising upscaler is a choice in the panel (on the M4 Pro it costs
+        // about three times as much at 1080p). Phones and tablets that trace start at half the size with MetalFX's
+        // spatial upscaler (a third of the temporal one's cost on the A19), without the probe grid (2048 probes
+        // every frame at any size: 3.5 ms there, and 1 ms more to sample them) and at 60 frames per second: the A19
+        // throttles within a minute of full load, to about 1.6 times every pass's time.
+        const gpu::Caps& caps = c.app.device().caps();
+        if (c.app.mobile() && caps.rayTracing) {
+            settings.indirectLight = IndirectLight::Sky;
+            settings.renderScale = 0.5f;
+            if (caps.spatialUpscaling) settings.upscaling = Upscaling::Spatial;
+            m_limit60 = true;
+        } else if (caps.temporalUpscaling) {
             settings.upscaling = Upscaling::Temporal;
             settings.renderScale = 0.67f;
         }
@@ -214,6 +223,15 @@ public:
         return {};
     }
 
+    void enter(Context& c) override {
+        m_outsideRate = c.app.maxFrameRate();
+        applyFrameLimit(c);
+    }
+
+    void leave(Context& c) override {
+        if (c.app.maxFrameRate() != m_outsideRate) c.app.setMaxFrameRate(m_outsideRate);
+    }
+
     void update(Context& c, double frameDt) override {
         const float dt = std::min(float(frameDt), 0.1f);
         // The path tracer's mean starts again whenever something moves: while it runs, nothing does.
@@ -300,6 +318,7 @@ public:
         ImGui::SameLine();
         ImGui::Checkbox("Walk", &m_walk);
         if (ImGui::SliderFloat("Sun elevation", &m_elevation, 5.0f, 85.0f, "%.0f deg")) applySun();
+        if (ImGui::Checkbox("60 Hz (less heat)", &m_limit60)) applyFrameLimit(c);
     }
 
     void stats(Context& c) override {
@@ -352,11 +371,11 @@ public:
     std::optional<double> value(std::string_view name) const override {
         if (name == "rt_ready") return m_skin >= 0 ? 1.0 : 0.0;
         if (name == "sun_azimuth") return double(m_azimuth);
+        if (name == "limit_60hz") return m_limit60 ? 1.0 : 0.0;
         return std::nullopt;
     }
 
     bool set(Context& c, std::string_view name, std::string_view value) override {
-        (void)c;
         const std::optional<float> number = parseFloat(value);
         const std::optional<bool> flag = parseBool(value);
         if (name == "turn_sun" && flag) {
@@ -369,6 +388,9 @@ public:
         } else if (name == "sun_elevation" && number) {
             m_elevation = std::clamp(*number, 5.0f, 85.0f);
             applySun();
+        } else if (name == "limit_60hz" && flag) {
+            m_limit60 = *flag;
+            applyFrameLimit(c);
         } else {
             return false;
         }
@@ -376,7 +398,7 @@ public:
     }
 
     std::string perfDetails() const override {
-        return std::format("turn_sun={} walk={}", m_turnSun ? 1 : 0, m_walk ? 1 : 0);
+        return std::format("turn_sun={} walk={} limit_60hz={}", m_turnSun ? 1 : 0, m_walk ? 1 : 0, m_limit60 ? 1 : 0);
     }
 
     void shutdown(Context& c) override {
@@ -400,6 +422,13 @@ private:
     }
 
     void applySun() { setDaylight(*m_scene, m_sun, m_elevation, m_azimuth); }
+
+    // 60 frames per second while the section is current, unless the app already runs slower (--max-frame-rate).
+    void applyFrameLimit(Context& c) {
+        double rate = m_outsideRate;
+        if (m_limit60 && (rate <= 0.0 || rate > 60.0)) rate = 60.0;
+        if (c.app.maxFrameRate() != rate) c.app.setMaxFrameRate(rate);
+    }
 
     void animate() {
         glm::mat4 torus = glm::translate(glm::mat4(1.0f), glm::vec3(0.9f, 1.4f, -0.6f));
@@ -426,6 +455,8 @@ private:
     float m_elevation = 34.0f;
     float m_azimuth = 315.0f;
     bool m_turnSun = true, m_walk = true, m_teleport = true;
+    bool m_limit60 = false;
+    double m_outsideRate = 0.0; // the app's frame rate limit outside the section
 };
 
 } // namespace
