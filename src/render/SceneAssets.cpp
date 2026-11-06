@@ -158,7 +158,7 @@ Result<void> ModelAsset::decode(fs::Bytes bytes) {
             if (mapped == ~0u) {
                 mapped = std::uint32_t(out.vertices.size());
                 const assets::ModelVertex& v = mesh.vertices[mesh.indices[i]];
-                out.vertices.push_back({v.position, v.normal, v.uv, v.color});
+                out.vertices.push_back({v.position, v.normal, v.uv, v.color, v.tangent});
                 if (mesh.skin >= 0) {
                     const assets::ModelSkinVertex& w = mesh.skinning[mesh.indices[i]];
                     out.skinning.push_back({{w.joints[0], w.joints[1], w.joints[2], w.joints[3]},
@@ -211,6 +211,8 @@ Result<void> ModelAsset::finish() {
         desc.doubleSided = m.doubleSided;
         desc.textures[0] = texture(m.baseColorTexture);
         desc.textures[1] = texture(m.metallicRoughnessTexture);
+        desc.textures[2] = texture(m.normalTexture);
+        desc.textures[3] = texture(m.emissiveTexture);
         desc.name = m.name;
         materials.push_back(scene.addMaterial(desc));
     }

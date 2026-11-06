@@ -116,12 +116,21 @@ synchronous loads.
   `writeKtx2` and `decodeBc7` are in `include/quench/assets/Texture.h`; the reader checks every size and offset
   against the file before it allocates, so a corrupt file is an error, not a crash or a huge allocation.
 - **Models**: `.qmodel` (`include/quench/assets/Model.h`): the meshes of a glTF scene with the node transforms
-  applied, the engine's 48-byte vertex (position, normal, uv, linear color), index ranges per level of detail, and
-  glTF metallic-roughness materials that name their textures by asset path. Vertex and index streams are compressed
-  with meshoptimizer's codecs. The format has a version; files of another version fail to load. Version 2
-  (stage 8; version 1 files still load) adds skins: per skin the joint names and inverse bind matrices, per skinned
-  part a skin index and per vertex four 16-bit joint indices and weights (`ModelSkinVertex`, weights summing to
-  65535). Skinned parts keep their vertices in the skin's bind space (no node transform applied).
+  applied, the engine's 64-byte vertex (position, normal, uv, linear color, tangent), index ranges per level of
+  detail, and glTF metallic-roughness materials that name their textures by asset path (base color,
+  metallic-roughness, normal, emissive). Vertex and index streams are compressed with meshoptimizer's codecs. The
+  format has a version; files of another version fail to load. Version 2 (stage 8) added skins: per skin the joint
+  names and inverse bind matrices, per skinned part a skin index and per vertex four 16-bit joint indices and
+  weights (`ModelSkinVertex`, weights summing to 65535). Skinned parts keep their vertices in the skin's bind space
+  (no node transform applied). Version 3 (stage 11) adds the tangent: xyz along +u, w the sign of the bitangent
+  (`w * cross(normal, tangent)` points toward -v, the normal map's +y), as glTF's `TANGENT`. Versions 1 and 2 are
+  rejected with an error that says to cook the source again (they have no tangents; a cooked file is rebuilt from
+  its source by `quench_cook_assets()` whenever the cook changes, so only files cooked by hand need it).
+- **Tangents**: the cook keeps a glTF's `TANGENT` (turned with the node transform, w flipped under a mirroring
+  transform) and otherwise generates MikkTSpace tangents (`assets::generateTangents`, `include/quench/assets/
+  Tangents.h`), the frame normal map bakers use; vertices that need two tangents (mirrored uv seams) are split.
+  Procedural meshes get the same through `render::computeTangents`; the engine's mesh builders write theirs
+  analytically (they match MikkTSpace's, `render.mesh_builder_tangents_match_mikktspace`).
 - **Skeletons and clip sets**: `.qskel` and `.qanim` ([Animation](animation.md#files)): ozz-animation archives in a
   container with a magic, a version, the payload size and an XXH64 checksum, so a truncated or corrupt file fails to
   load (ozz itself checks only with asserts). A clip set holds every clip of one source with its events, flags and

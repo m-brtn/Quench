@@ -221,6 +221,33 @@ QUENCH_TEST(mesh_builder_winding) {
           box.indices.size());
 }
 
+// The builders' tangents are the frame MikkTSpace gives the same mesh (computeTangents), corner by corner (the
+// sphere's pole corners have no defined +u and are skipped).
+QUENCH_TEST(mesh_builder_tangents_match_mikktspace) {
+    const std::pair<MeshData, const char*> meshes[] = {{boxMesh(glm::vec3(1.0f, 2.0f, 0.5f)), "box"},
+                                                       {sphereMesh(1.0f, 12, 24), "sphere"},
+                                                       {planeMesh(glm::vec2(2.0f, 3.0f), 4.0f), "plane"},
+                                                       {torusMesh(1.0f, 0.3f, 24, 12), "torus"}};
+    for (const auto& [built, name] : meshes) {
+        MeshData mikk = built;
+        for (Vertex& v : mikk.vertices) v.tangent = glm::vec4(0.0f);
+        computeTangents(mikk);
+        REQUIRE(mikk.indices.size() == built.indices.size(), "%s: %zu indices", name, mikk.indices.size());
+        float worst = 1.0f;
+        int signs = 0, units = 0;
+        for (std::size_t i = 0; i < built.indices.size(); ++i) {
+            const Vertex& a = built.vertices[built.indices[i]];
+            const Vertex& b = mikk.vertices[mikk.indices[i]];
+            if (std::abs(a.normal.y) > 0.999f && std::string_view(name) == "sphere") continue;
+            worst = std::min(worst, glm::dot(glm::vec3(a.tangent), glm::vec3(b.tangent)));
+            if (a.tangent.w != b.tangent.w) ++signs;
+            if (std::abs(glm::length(glm::vec3(b.tangent)) - 1.0f) > 1e-4f) ++units;
+        }
+        CHECK(worst > 0.98f && signs == 0 && units == 0, "%s: smallest dot %f, %d other signs, %d not unit", name,
+              double(worst), signs, units);
+    }
+}
+
 QUENCH_TEST(tone_map_hdr_extends_the_sdr_curve) {
     for (const ToneCurve curve : {ToneCurve::Aces, ToneCurve::Agx}) {
         const char* name = curve == ToneCurve::Aces ? "ACES" : "AgX";

@@ -306,6 +306,42 @@ Finished on 2026-11-06 and released as 0.8.0 (Mac and iOS Simulator only, the iP
 - [x] Version 0.8.0, release notes in [docs/releases/v0.8.0.md](releases/v0.8.0.md). Released before the iPhone run
   (decided without the user, 2026-11-06, as recommended); the release notes list it under "What was not verified".
 
+## Stage 11: full ray tracing (in progress since 2026-11-06, target version 0.9.0)
+
+Requested by the user on 2026-11-06. Order: foundations, the reference path tracer and the temporal denoiser come
+before reflections and indirect light (1-sample effects need temporal accumulation, and the path tracer is their
+numeric reference). New effects stay off by default until measured on the user's iPhone. Fallbacks are chosen by
+`gpu::Caps`, never by platform. User decisions (2026-11-06): plan the iPhone around render scale 0.67 or 0.5 with
+MetalFX; MikkTSpace tangents in the vertices; the engine's own temporal denoiser plus the MetalFX temporal denoised
+scaler.
+
+- [x] iPhone baseline (the user, 2026-11-06): the native backend and the stage 9 ray tracing section on the device;
+  ray-traced shadows and occlusion at the native 1320x2868 cost 8.02 ms GPU p50 (over the 7.5 ms budget); MetalFX
+  temporal within 120 Hz at scale 0.67 and 0.5; the MetalFX temporal denoised scaler is supported on the A20 Pro
+  ([Performance](performance.md#measurements)).
+- [x] Normal and emissive maps in the standard surface (slots 2 and 3) with MikkTSpace tangents in the vertex
+  (`.qmodel` version 3, a 64-byte vertex; the cook generates tangents where a glTF has none; `computeTangents`
+  for procedural meshes); `SceneAssets` maps both textures (2026-11-06).
+- [ ] G-buffer prepass when ray tracing runs (normal + roughness, base color + metallic); motion vectors before the
+  HDR pass.
+- [ ] Hit material access for every instance (`RayHit.hlsli`) with the material textures.
+- [ ] Counter-clockwise front-face flag in the Metal backend, with a test.
+- [ ] Split `accel` timing into `blas` / `tlas`; TLAS refit when only transforms change; BLAS compaction;
+  `rayMemoryBytes` stat.
+- [ ] Reference path tracer (progressive, next event estimation, furnace test).
+- [ ] Temporal ray denoiser (SVGF-like; `RenderSettings::rayDenoiser`), first on sun shadows and AO.
+- [ ] Ray-traced shadows for up to 4 local lights (`localLightShadows`, `LightDesc::sourceRadius`); no fallback
+  (spot and point shadow maps later).
+- [ ] Ray-traced reflections with hit lighting and a roughness cut-off; sky fallback (no SSR this stage).
+- [ ] Indirect light: DDGI-like probes, then per-pixel; sky ambient fallback.
+- [ ] MetalFX temporal denoised scaler (`Caps::denoisedUpscaling`, `UpscalerType::TemporalDenoised`); exposure
+  passed to the MetalFX temporal scalers.
+- [ ] Demo: the ray tracing scene grows (mirror, roughness strip, colored corner, emissive panel, shadowed local
+  lights), graphics panel options, scenarios and golden captures (native, the fallbacks on Metal and on Vulkan
+  through MoltenVK), benchmark regions per effect, check mode items.
+- [ ] Per-pass GPU costs at 1080p on the M4 Pro and on the user's iPhone in `docs/performance.md`.
+- [ ] Full test tier, `tools/package_demo.sh --ios`, release notes `docs/releases/v0.9.0.md`.
+
 ## What is next
 
 The plan the user left (stages 6 to 10) has been worked through with version 0.8.0. What stays open, in the order

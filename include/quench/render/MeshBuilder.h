@@ -1,7 +1,7 @@
 #pragma once
 
 // Procedural meshes in the engine's vertex format, for samples, tests and placeholder content. Counter-clockwise
-// front faces, outward normals, white vertex color.
+// front faces, outward normals, white vertex color, tangents along +u (the frame computeTangents gives them).
 
 #include <quench/render/Scene.h>
 
@@ -29,5 +29,9 @@ MeshData sphereMesh(float radius, int rings = 24, int segments = 48);
 MeshData planeMesh(const glm::vec2& halfSize, float uvScale = 1.0f);
 // Around the y axis.
 MeshData torusMesh(float ringRadius, float tubeRadius, int rings = 64, int sides = 32);
+
+// MikkTSpace tangents (assets::generateTangents) for a mesh made elsewhere: from its positions, normals and uvs.
+// Vertices at mirrored uv seams may be split; vertices no triangle uses are dropped.
+void computeTangents(MeshData& mesh);
 
 } // namespace quench::render

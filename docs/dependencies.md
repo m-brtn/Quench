@@ -163,6 +163,21 @@ glslang stays for every other entry (decided without the user, 2026-11-06): its 
 what every golden image was made with; DXC's HLSL rules differ in places that would mean checking every shader and
 capture again; and glslang is a library inside `quench_shaderc` where DXC is a separate executable built from source.
 
+## Added in stage 11
+
+Vertex tangents ([Assets](assets.md#cooked-formats), [Render](render.md)); the user chose MikkTSpace tangents stored
+in the vertices on 2026-11-06. One library, in `cmake/Dependencies.cmake`, listed with its licence in
+`THIRD_PARTY_LICENSES`; every configure downloads it (headless and web builds included).
+
+| Library | Version | Commit | Licence | Linked into | Purpose |
+|---|---|---|---|---|---|
+| MikkTSpace | none (commit, 2020-03-26) | `3e895b49d05ea07e4c2133156cfa94369e19e409`, SHA256 `aeba65ddee85a679133d510d71d00b108f603752f90b15b9ecf7777033f6e351` | zlib (the notice in both files, `mikktspace.c` and `mikktspace.h`; the README has none) | `quench_assets` (`quench_mikktspace`, a static library from `mikktspace.c`), `quench_cook` through it | tangents where a glTF has none (`quench_cook`) and for procedural meshes (`render::computeTangents`), the frame normal map bakers use |
+
+The archive has no CMake project; the engine compiles its one C file without warnings flags (third-party code) and
+calls it only from `src/assets/Tangents.cpp` (`assets::generateTangents`), so no MikkTSpace type is in a public
+header. Its repository has had no commit since 2020; it is the reference implementation Blender, the glTF sample
+models and most bakers use. Neither game uses it, so no game pin is affected.
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.

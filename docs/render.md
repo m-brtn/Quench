@@ -35,13 +35,18 @@ renderer->render(scene, {.view = camera, .fovY = fov, .nearPlane = 0.1f, .time =
 - **Handles** (`MeshId`, `TextureId`, `MaterialId`, `InstanceId`, `LightId`, `SurfaceId`, `PassId`) are plain values
   with a generation: a removed handle stays invalid when its slot is reused (`contains()` tells). Using a stale or
   null handle is a programming error (`QUENCH_ASSERT`; ignored in release builds).
-- **Meshes** use the engine vertex (`render::Vertex`, 48 bytes: position, normal, uv, linear color) and 32-bit
-  indices, counter-clockwise front faces. `MeshBuilder.h` makes boxes, planes, spheres and tori. Bounds for culling
-  are computed on upload.
+- **Meshes** use the engine vertex (`render::Vertex`, 64 bytes: position, normal, uv, linear color, tangent) and
+  32-bit indices, counter-clockwise front faces. The tangent is glTF's (xyz along +u, w the sign of the bitangent
+  `w * cross(normal, tangent)`, which points toward -v): MikkTSpace's frame, the one normal map bakers use.
+  `MeshBuilder.h` makes boxes, planes, spheres and tori with their tangents, and `computeTangents` gives any other
+  procedural mesh MikkTSpace tangents (it may split vertices on mirrored uv seams). Bounds for culling are computed
+  on upload.
 - **Textures** are RGBA8 (`TextureData`, sRGB or linear), mipmaps generated on the GPU. Loading files is stage 6.
 - **Materials** replace the games' fixed material enums: base color, emissive, roughness, metallic, alpha cutoff,
   blend mode (opaque, alpha blend, additive), double-sided, shadow mode, four textures and four `vec4` parameters
-  for custom surfaces. The shadow mode (`ShadowMode`) is `Auto` by default: opaque materials cast solid shadows,
+  for custom surfaces. The standard surface reads texture 0 as base color (sRGB), 1 as glTF's metallic-roughness,
+  2 as a tangent-space normal map (linear, glTF's convention: +y toward -v) and 3 as emissive (sRGB, multiplied with
+  the material's emissive). The shadow mode (`ShadowMode`) is `Auto` by default: opaque materials cast solid shadows,
   alpha-blended ones translucent shadows, additive ones (light) none; `None`, `Solid` and `Translucent` override it.
   The alpha cutoff cuts the shadow too.
 - **Instances** carry a transform, a color, a `vec4` for the surface shader, visibility and shadow casting. The
@@ -274,7 +279,8 @@ scene.addMaterial({.surface = checker, .params = {...}});
 ```
 
 - `QuenchSurfaceInput`: world position, normal (flipped on back faces), view direction, uv, color, the instance's
-  `custom` vector, pixel position, front face. `QuenchSurface`: albedo, opacity, roughness, metallic, shading normal,
+  `custom` vector, pixel position, front face, tangent (world space; w the bitangent sign, turned around by a
+  mirroring transform). `quenchNormalFromMap(i, texel)` turns a normal map texel into a world normal. `QuenchSurface`: albedo, opacity, roughness, metallic, shading normal,
   emissive, occlusion.
 - The material is `quenchMaterial` (`MaterialUniforms`: base color, emissive, roughness, metallic, cutoff, the texture
   mask, `params[4]`); its textures are `quenchTexture0..3` with `quenchSampler0..3`; `quenchHasTexture(n)` tells
@@ -378,7 +384,7 @@ pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; the
 - Skinning: four joints per vertex, linear blend (no dual quaternions), no blend shapes; every drawn skinned
   instance is skinned every frame (no caching of unchanged poses, no skinning LOD); the output buffers grow with the
   skinned vertices drawn (two copies).
-- No normal maps, no MSAA, no image-based lighting from a cubemap (the sky model is the environment), no shadows from
+- No MSAA, no image-based lighting from a cubemap (the sky model is the environment), no shadows from
   local lights, at most 16 local lights per frame and no clustered or tiled light lists.
 - One render per scene and frame (several views of one scene need a scene per view).
 - Not in this stage, listed in the roadmap: Ashfall's screen-space effects (ambient occlusion, bounce light,

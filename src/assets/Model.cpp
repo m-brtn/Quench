@@ -7,22 +7,23 @@
 #include <cstring>
 #include <format>
 
-// Layout (little endian, every field 4-byte aligned):
-//   u32 magic "QMDL", u32 version, u32 mesh count, u32 material count, [v2: u32 skin count,] f32 bounds min[3], max[3]
+// Layout (little endian, every field 4-byte aligned), version 3:
+//   u32 magic "QMDL", u32 version, u32 mesh count, u32 material count, u32 skin count, f32 bounds min[3], max[3]
 //   materials: string name, f32 base color[4], emissive[3], roughness, metallic, alpha cutoff,
 //              u8 alpha mode, u8 double sided, u16 0, string textures[4] (base color, metallic-roughness, normal,
 //              emissive)
-//   v2 skins: string name, u32 joint count, string joint names[count], f32 inverse bind matrices[count][16]
+//   skins: string name, u32 joint count, string joint names[count], f32 inverse bind matrices[count][16]
 //   meshes: string name, u32 material, u32 vertex count, u32 index count, u32 LOD count, f32 bounds min[3], max[3],
-//           [v2: u32 skin (0xffffffff: none),] LODs (u32 first index, u32 index count, f32 error),
-//           u32 size + meshopt vertex stream (padded), u32 size + meshopt index stream (padded),
-//           [v2, skinned: u32 size + meshopt stream of the skin vertices (padded)]
+//           u32 skin (0xffffffff: none), LODs (u32 first index, u32 index count, f32 error),
+//           u32 size + meshopt stream of the 64-byte vertices (padded), u32 size + meshopt index stream (padded),
+//           [skinned: u32 size + meshopt stream of the skin vertices (padded)]
 //   string: u32 length + bytes (padded)
+// Versions 1 (no skins) and 2 had 48-byte vertices without tangents; they are not read (cook the source again).
 namespace quench::assets {
 namespace {
 
 constexpr std::uint32_t kMagic = 0x4C444D51; // "QMDL"
-constexpr std::uint32_t kVersion = 2;
+constexpr std::uint32_t kVersion = 3;
 constexpr std::uint32_t kMaxCount = 1u << 24;
 constexpr std::uint32_t kMaxSkinJoints = 65536;
 constexpr std::uint32_t kNoSkin = 0xffffffffu;
@@ -192,10 +193,15 @@ Result<ModelData> readModel(std::span<const std::uint8_t> file) {
     Reader r(file);
     std::uint32_t magic = 0, version = 0, meshCount = 0, materialCount = 0, skinCount = 0;
     if (!r.u32(magic) || magic != kMagic) return Error{"not a cooked model (.qmodel)"};
-    if (!r.u32(version) || version < 1 || version > kVersion)
-        return Error{std::format("cooked model version {} (this engine reads 1 to {})", version, kVersion)};
+    if (!r.u32(version)) return Error{"truncated model header"};
+    if (version == 1 || version == 2)
+        return Error{std::format("cooked model version {} has no tangents (this engine reads version {}): cook its "
+                                 "source again with this engine's quench_cook",
+                                 version, kVersion)};
+    if (version != kVersion)
+        return Error{std::format("cooked model version {} (this engine reads version {})", version, kVersion)};
     ModelData model;
-    if (!r.u32(meshCount) || !r.u32(materialCount) || (version >= 2 && !r.u32(skinCount)) || meshCount > kMaxCount ||
+    if (!r.u32(meshCount) || !r.u32(materialCount) || !r.u32(skinCount) || meshCount > kMaxCount ||
         materialCount > kMaxCount || skinCount > kMaxCount || !r.vec(&model.boundsMin.x, 3) ||
         !r.vec(&model.boundsMax.x, 3))
         return Error{"truncated model header"};
@@ -240,8 +246,7 @@ Result<ModelData> readModel(std::span<const std::uint8_t> file) {
         ModelMesh& mesh = model.meshes[i];
         std::uint32_t vertexCount = 0, indexCount = 0, lodCount = 0, skin = kNoSkin;
         if (!r.string(mesh.name) || !r.u32(mesh.material) || !r.u32(vertexCount) || !r.u32(indexCount) ||
-            !r.u32(lodCount) || !r.vec(&mesh.boundsMin.x, 3) || !r.vec(&mesh.boundsMax.x, 3) ||
-            (version >= 2 && !r.u32(skin)))
+            !r.u32(lodCount) || !r.vec(&mesh.boundsMin.x, 3) || !r.vec(&mesh.boundsMax.x, 3) || !r.u32(skin))
             return truncated("mesh", i);
         if (skin != kNoSkin && skin >= skinCount)
             return Error{std::format("corrupt model: mesh {} has skin {} of {}", i, skin, skinCount)};

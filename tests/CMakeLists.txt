@@ -140,6 +140,7 @@ quench_add_test_executable(quench_assets_tests PREFIX assets LABEL assets
         assets/AssetManagerTests.cpp
         assets/ModelTests.cpp
         assets/StreamingGridTests.cpp
+        assets/TangentsTests.cpp
         assets/TextureTests.cpp
     LIBS quench_assets)
 

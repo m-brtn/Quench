@@ -36,6 +36,10 @@ QuenchVaryings surface_vs(QuenchVertexIn v, uint instance : SV_InstanceID) {
     o.uv = v.uv;
     o.color = v.color * inst.color;
     o.custom = inst.custom;
+    // A mirroring transform (negative determinant) turns the bitangent around.
+    const float3x3 basis = (float3x3)inst.model;
+    const float mirrored = dot(cross(basis[0], basis[1]), basis[2]) < 0.0 ? -1.0 : 1.0;
+    o.tangent = float4(mul(basis, v.tangent.xyz), (v.tangent.w < 0.0 ? -1.0 : 1.0) * mirrored);
     return o;
 }
 #endif
@@ -55,6 +59,8 @@ QuenchSurfaceInput quenchSurfaceInput(QuenchVaryings v, bool front, float3 view)
     QuenchSurfaceInput i;
     i.world = v.world;
     i.normal = normalize(v.normal) * (front ? 1.0 : -1.0);
+    const float t2 = dot(v.tangent.xyz, v.tangent.xyz);
+    i.tangent = float4(t2 > 1e-12 ? v.tangent.xyz * rsqrt(t2) : float3(0.0, 0.0, 0.0), v.tangent.w < 0.0 ? -1.0 : 1.0);
     i.view = view;
     i.uv = v.uv;
     i.color = v.color;

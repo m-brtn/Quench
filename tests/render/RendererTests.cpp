@@ -246,6 +246,63 @@ QUENCH_TEST(renderer_cutout_shadows_let_light_through_the_holes) {
     measure("surface without shadow entries", false);
 }
 
+// A flat ground under a sun 45 degrees up, seen from above: a normal map that tilts the normal toward the sun
+// (along the tangent, +u, or the bitangent, -v) brightens it by about 1 / cos 45, a tilt away darkens it; an
+// emissive map multiplies the material's emissive.
+QUENCH_TEST(renderer_normal_and_emissive_maps) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.sky = false;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const auto flatTexture = [&](std::array<std::uint8_t, 3> rgb, bool srgb) {
+        std::vector<std::byte> pixels(4 * 4 * 4, std::byte{255});
+        for (std::size_t i = 0; i < 16; ++i)
+            for (std::size_t c = 0; c < 3; ++c) pixels[i * 4 + c] = std::byte{rgb[c]};
+        Result<TextureId> texture = scene.addTexture({.width = 4, .height = 4, .pixels = pixels, .srgb = srgb});
+        CHECK(texture, "texture: %s", texture ? "" : texture.error().c_str());
+        return texture ? *texture : TextureId{};
+    };
+    // Tangent-space normals (x along +u, y toward -v) as texels: 0.5 + 0.5 * n.
+    const TextureId towardMinusU = flatTexture({37, 128, 218}, false);
+    const TextureId towardPlusU = flatTexture({218, 128, 218}, false);
+    const TextureId towardMinusV = flatTexture({128, 218, 218}, false);
+    MaterialDesc desc{.baseColor = glm::vec4(0.5f), .roughness = 0.9f};
+    const MaterialId material = scene.addMaterial(desc);
+    scene.addInstance({.mesh = ground, .material = material});
+    const LightId sun = addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const glm::ivec2 center = pixelOf(kTopView, glm::vec3(0.0f));
+    const auto measure = [&](TextureId normals) {
+        desc.textures[2] = normals;
+        scene.setMaterial(material, desc);
+        return sceneValue(at(renderOnce(device, *renderer, scene, kTopView, *target), center)).g;
+    };
+    // The plane's u runs along +x and its v along +z; the sun travels toward +x (it comes from -x).
+    const float flat = measure({});
+    const float toward = measure(towardMinusU), away = measure(towardPlusU);
+    CHECK(toward > flat * 1.25f && away < flat * 0.3f, "tangent: flat %f, toward the sun %f, away %f", double(flat),
+          double(toward), double(away));
+    // A sun from -z: the bitangent (toward -v, -z) faces it.
+    scene.setLight(sun, {.type = LightType::Directional,
+                         .color = glm::vec3(5.0f),
+                         .direction = glm::normalize(glm::vec3(0.0f, -1.0f, 1.0f))});
+    const float flatZ = measure({}), towardZ = measure(towardMinusV);
+    CHECK(towardZ > flatZ * 1.25f, "bitangent: flat %f, toward the sun %f", double(flatZ), double(towardZ));
+
+    scene.removeLight(sun);
+    desc.textures[2] = {};
+    desc.emissive = glm::vec3(1.0f);
+    desc.textures[3] = flatTexture({255, 0, 0}, true);
+    scene.setMaterial(material, desc);
+    const Rgba8 glow = at(renderOnce(device, *renderer, scene, kTopView, *target), center);
+    CHECK(glow.r > 120 && glow.g < 8 && glow.b < 8, "emissive map: %u %u %u", glow.r, glow.g, glow.b);
+}
+
 QUENCH_TEST(renderer_translucent_shadows_follow_opacity) {
     QUENCH_GPU_DEVICE(device);
     RenderSettings settings = shadowSettings();

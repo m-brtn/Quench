@@ -59,6 +59,7 @@ constexpr gpu::VertexAttribute kVertexAttributes[] = {
     {.location = 1, .slot = 0, .format = gpu::VertexFormat::Float3, .offset = offsetof(Vertex, normal)},
     {.location = 2, .slot = 0, .format = gpu::VertexFormat::Float2, .offset = offsetof(Vertex, uv)},
     {.location = 3, .slot = 0, .format = gpu::VertexFormat::Float4, .offset = offsetof(Vertex, color)},
+    {.location = 4, .slot = 0, .format = gpu::VertexFormat::Float4, .offset = offsetof(Vertex, tangent)},
 };
 // Shadow and motion vector shaders read only the position: a layout without the other attributes keeps the Vulkan
 // validation layer from reporting attributes the shader does not consume.

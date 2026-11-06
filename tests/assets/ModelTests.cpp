@@ -35,7 +35,8 @@ ModelData sampleModel() {
             grid.vertices.push_back({{float(x), 0.1f * float(x * z), float(z)},
                                      {0.0f, 1.0f, 0.0f},
                                      {float(x) / 4.0f, float(z) / 4.0f},
-                                     {1.0f, 0.5f, 0.25f, 1.0f}});
+                                     {1.0f, 0.5f, 0.25f, 1.0f},
+                                     {1.0f, 0.0f, 0.0f, z % 2 == 0 ? 1.0f : -1.0f}});
     for (std::uint32_t z = 0; z < 4; ++z)
         for (std::uint32_t x = 0; x < 4; ++x) {
             const std::uint32_t i = z * 5 + x;
@@ -71,43 +72,6 @@ ModelData sampleModel() {
     model.boundsMin = {0.0f, 0.0f, 0.0f};
     model.boundsMax = {4.0f, 1.6f, 4.0f};
     return model;
-}
-
-// The version 1 layout of a model without skins (no skin count, no skin index per mesh), from a version 2 file.
-std::vector<std::uint8_t> toVersion1(const std::vector<std::uint8_t>& v2) {
-    std::vector<std::uint8_t> out;
-    std::size_t at = 0;
-    const auto u32 = [&](std::size_t offset) {
-        std::uint32_t v = 0;
-        std::memcpy(&v, v2.data() + offset, 4);
-        return v;
-    };
-    const auto copy = [&](std::size_t n) {
-        out.insert(out.end(), v2.begin() + std::ptrdiff_t(at), v2.begin() + std::ptrdiff_t(at + n));
-        at += n;
-    };
-    const auto skip = [&](std::size_t n) { at += n; };
-    const auto string = [&] { copy(4 + ((u32(at) + 3) & ~3u)); };
-    const std::uint32_t meshes = u32(8), materials = u32(12);
-    copy(16);
-    skip(4); // skin count (0)
-    copy(24);
-    out[4] = 1;
-    for (std::uint32_t m = 0; m < materials; ++m) {
-        string();
-        copy(4 * 10 + 4);
-        for (int t = 0; t < 4; ++t) string();
-    }
-    for (std::uint32_t m = 0; m < meshes; ++m) {
-        string();
-        const std::uint32_t lods = u32(at + 12);
-        copy(16 + 24);
-        skip(4); // skin index
-        copy(std::size_t(lods) * 12);
-        string(); // the vertex and index streams have the layout of strings
-        string();
-    }
-    return out;
 }
 
 // meshoptimizer's index codec keeps the triangle order and winding but may rotate a triangle's indices.
@@ -168,18 +132,14 @@ QUENCH_TEST(model_round_trip) {
           "mesh 1 skin vertices");
 }
 
-QUENCH_TEST(model_reads_version_1) {
-    ModelData model = sampleModel();
-    model.skins.clear();
-    model.meshes[1].skin = -1;
-    model.meshes[1].skinning.clear();
-    const std::vector<std::uint8_t> v1 = toVersion1(writeModel(model).value());
-    const Result<ModelData> read = readModel(v1);
-    REQUIRE(read.ok(), "read: %s", read.error().c_str());
-    CHECK(read->meshes.size() == 2 && read->skins.empty() && read->meshes[1].skin == -1, "a model without skins");
-    CHECK(sameVertices(read->meshes[0].vertices, model.meshes[0].vertices) &&
-              sameTriangles(read->meshes[1].indices, model.meshes[1].indices),
-          "vertices and triangles");
+QUENCH_TEST(model_rejects_versions_without_tangents) {
+    std::vector<std::uint8_t> file = writeModel(sampleModel()).value();
+    for (const std::uint8_t version : {1, 2}) {
+        file[4] = version;
+        const Result<ModelData> read = readModel(file);
+        CHECK(!read && read.error().find("cook its source again") != std::string::npos, "version %u: %s", version,
+              read ? "accepted" : read.error().c_str());
+    }
 }
 
 QUENCH_TEST(model_rejects_corrupt) {
@@ -187,9 +147,9 @@ QUENCH_TEST(model_rejects_corrupt) {
     for (std::size_t size = 0; size < file.size(); ++size)
         CHECK(!readModel(std::span(file).first(size)), "prefix of %zu of %zu bytes accepted", size, file.size());
     std::vector<std::uint8_t> bad = file;
-    bad[4] = 3;
+    bad[4] = 4;
     const Result<ModelData> version = readModel(bad);
-    CHECK(!version && version.error().find("version 3") != std::string::npos, "version: %s",
+    CHECK(!version && version.error().find("version 4") != std::string::npos, "version: %s",
           version ? "accepted" : version.error().c_str());
     // Every byte flip is rejected or gives a model whose indices are in range (asan checks the reads).
     for (std::size_t i = 0; i < file.size(); ++i) {

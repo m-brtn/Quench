@@ -1,6 +1,8 @@
 #include "Cook.h"
 #include "Gltf.h"
 
+#include <quench/assets/Tangents.h>
+
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
@@ -238,6 +240,23 @@ private:
                                                 });
                 if (!r) return r;
             }
+            // Given tangents are kept (glTF: they are ignored where the normals are not given).
+            bool hasTangents = false;
+            if (const auto tangent = prim.findAttribute("TANGENT"); hasNormals && tangent != prim.attributes.end()) {
+                hasTangents = true;
+                const glm::mat3 linear(toModel);
+                r = read<fastgltf::math::fvec4>(tangent->accessorIndex, fastgltf::AccessorType::Vec4, vertexCount,
+                                                what + " TANGENT", [&](const fastgltf::math::fvec4& v, std::size_t i) {
+                                                    const glm::vec3 t = linear * glm::vec3(v[0], v[1], v[2]);
+                                                    const float length = glm::length(t);
+                                                    // A mirroring transform turns the bitangent around.
+                                                    const float sign = (v[3] < 0.0f) != flip ? -1.0f : 1.0f;
+                                                    vertices[i].tangent = length > 1e-12f
+                                                                              ? glm::vec4(t / length, sign)
+                                                                              : glm::vec4(0.0f, 0.0f, 0.0f, sign);
+                                                });
+                if (!r) return r;
+            }
             if (const auto uv = prim.findAttribute("TEXCOORD_0"); uv != prim.attributes.end()) {
                 r = read<fastgltf::math::fvec2>(
                     uv->accessorIndex, fastgltf::AccessorType::Vec2, vertexCount, what + " TEXCOORD_0",
@@ -280,6 +299,9 @@ private:
             if (flip)
                 for (std::size_t i = 0; i < indices.size(); i += 3) std::swap(indices[i + 1], indices[i + 2]);
             if (!hasNormals) smoothNormals(vertices, indices);
+            // MikkTSpace may split vertices at mirrored uv seams: `from` maps the new vertices to the file's.
+            std::vector<std::uint32_t> from;
+            if (!hasTangents) from = assets::generateTangents(vertices, indices);
 
             std::vector<ModelSkinVertex> skinning;
             if (skin >= 0) {
@@ -307,6 +329,11 @@ private:
                         if (!(joint >= 0.0f && joint < float(jointCount)))
                             return Error{std::format("{}: joint {} of a skin with {}", what, joint, jointCount)};
                     skinning[i] = quantizeWeights(jv, wv);
+                }
+                if (!from.empty()) {
+                    std::vector<ModelSkinVertex> split(from.size());
+                    for (std::size_t i = 0; i < from.size(); ++i) split[i] = skinning[from[i]];
+                    skinning = std::move(split);
                 }
             }
 

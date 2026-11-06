@@ -9,7 +9,7 @@
 //
 // Bindings (fragment): uniform 0 FrameUniforms, uniform 1 RayTracingUniforms. rt_shadow_fs: sampler 0 the prepass
 // depth, samplers 1..8 the alpha textures (texture 0 of the materials), storage buffers t9..t11 (RayInstanceData[],
-// vertices as three float4 each, uint indices), acceleration structure t12. rt_denoise_fs: sampler 0 the traced
+// vertices as four float4 each, uint indices), acceleration structure t12. rt_denoise_fs: sampler 0 the traced
 // mask, sampler 1 the depth.
 
 #include "quench/Bindings.hlsli"
@@ -76,9 +76,9 @@ float4 alphaTexture(int slot, float2 uv) {
 float4 candidateColor(RayInstanceData d, uint primitive, float2 bary) {
     const uint first = asuint(d.geometry.x) + primitive * 3u;
     const uint base = asuint(d.geometry.y);
-    const uint i0 = (base + rtIndices[first]) * 3u;
-    const uint i1 = (base + rtIndices[first + 1u]) * 3u;
-    const uint i2 = (base + rtIndices[first + 2u]) * 3u;
+    const uint i0 = (base + rtIndices[first]) * 4u;
+    const uint i1 = (base + rtIndices[first + 1u]) * 4u;
+    const uint i2 = (base + rtIndices[first + 2u]) * 4u;
     const float3 w = float3(1.0 - bary.x - bary.y, bary.x, bary.y);
     const float2 uv = rtVertices[i0 + 1u].zw * w.x + rtVertices[i1 + 1u].zw * w.y + rtVertices[i2 + 1u].zw * w.z;
     const float4 color = rtVertices[i0 + 2u] * w.x + rtVertices[i1 + 2u] * w.y + rtVertices[i2 + 2u] * w.z;

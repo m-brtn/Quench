@@ -33,12 +33,13 @@
 #include "quench/Shadows.hlsli"
 #include "quench/Sky.hlsli"
 
-// The engine's vertex (quench::render::Vertex): 48 bytes.
+// The engine's vertex (quench::render::Vertex): 64 bytes.
 struct QuenchVertexIn {
     float3 position : TEXCOORD0;
     float3 normal : TEXCOORD1;
     float2 uv : TEXCOORD2;
     float4 color : TEXCOORD3;
+    float4 tangent : TEXCOORD4; // xyz along +u, w: the bitangent's sign (Vertex::tangent)
 };
 
 struct QuenchVaryings {
@@ -46,15 +47,17 @@ struct QuenchVaryings {
     float3 world : TEXCOORD0;
     float3 normal : TEXCOORD1;
     float2 uv : TEXCOORD2;
-    float4 color : TEXCOORD3;  // vertex color times InstanceDesc::color
-    float4 custom : TEXCOORD4; // InstanceDesc::custom
+    float4 color : TEXCOORD3;   // vertex color times InstanceDesc::color
+    float4 custom : TEXCOORD4;  // InstanceDesc::custom
+    float4 tangent : TEXCOORD5; // world tangent, w: the bitangent's sign (mirroring transforms included)
 };
 
 // What a surface function gets for a pixel.
 struct QuenchSurfaceInput {
-    float3 world;  // position (m)
-    float3 normal; // unit geometric normal (interpolated), turned toward the viewer on back faces
-    float3 view;   // unit direction toward the camera
+    float3 world;   // position (m)
+    float3 normal;  // unit geometric normal (interpolated), turned toward the viewer on back faces
+    float4 tangent; // unit world tangent along +u, w: bitangent = w * cross(normal, tangent) (toward -v)
+    float3 view;    // unit direction toward the camera
     float2 uv;
     float4 color;  // vertex color times InstanceDesc::color
     float4 custom; // InstanceDesc::custom
@@ -100,8 +103,23 @@ SamplerState quenchRayMaskSampler : QUENCH_SAMPLER(6);
 // True when the material has texture n (MaterialDesc::textures); unset textures sample white.
 bool quenchHasTexture(int n) { return (uint(quenchMaterial.surface.w) & (1u << uint(n))) != 0u; }
 
+// The shading normal of a tangent-space normal map texel (glTF's encoding: xyz * 0.5 + 0.5, +y toward -v) in the
+// frame of the input's normal and tangent; the geometric normal where the tangent gives no frame.
+float3 quenchNormalFromMap(QuenchSurfaceInput i, float3 texel) {
+    const float3 n = texel * 2.0 - 1.0;
+    const float3 t = i.tangent.xyz - i.normal * dot(i.normal, i.tangent.xyz);
+    const float t2 = dot(t, t);
+    if (t2 < 1e-8) return i.normal;
+    const float3 T = t * rsqrt(t2);
+    const float3 B = cross(i.normal, T) * i.tangent.w;
+    const float3 N = T * n.x + B * n.y + i.normal * n.z;
+    const float n2 = dot(N, N);
+    return n2 > 1e-8 ? N * rsqrt(n2) : i.normal;
+}
+
 // The standard surface: base color times texture 0 (sRGB) and the vertex color, roughness and metallic times the
-// green and blue channels of texture 1 (glTF's metallic-roughness layout), emissive.
+// green and blue channels of texture 1 (glTF's metallic-roughness layout), the normal map of texture 2 (tangent
+// space), emissive times texture 3 (sRGB).
 QuenchSurface quenchStandardSurface(QuenchSurfaceInput i) {
     QuenchSurface s;
     const float4 base = quenchMaterial.baseColor * quenchTexture0.Sample(quenchSampler0, i.uv) * i.color;
@@ -111,7 +129,10 @@ QuenchSurface quenchStandardSurface(QuenchSurfaceInput i) {
     s.roughness = saturate(quenchMaterial.surface.x * mr.g);
     s.metallic = saturate(quenchMaterial.surface.y * mr.b);
     s.normal = i.normal;
-    s.emissive = quenchMaterial.emissive.rgb;
+    [branch] if (quenchHasTexture(2)) {
+        s.normal = quenchNormalFromMap(i, quenchTexture2.Sample(quenchSampler2, i.uv).rgb);
+    }
+    s.emissive = quenchMaterial.emissive.rgb * quenchTexture3.Sample(quenchSampler3, i.uv).rgb;
     s.occlusion = 1.0;
     return s;
 }

@@ -485,3 +485,50 @@ QUENCH_TEST(cook_skinned_model) {
     CHECK(!scaled && scaled.error().find("--scale") != std::string::npos, "scale with skins: %s",
           scaled ? "accepted" : scaled.error().c_str());
 }
+
+// A quad with uvs: MikkTSpace tangents where the file has none (along +u, the bitangent toward -v), the file's own
+// where it has TANGENT (here deliberately not MikkTSpace's), turned around under a mirroring node.
+QUENCH_TEST(cook_model_tangents) {
+    JobSystem jobs(JobSystemDesc{.workerThreads = 0});
+    const std::filesystem::path dir = tmpPath("cook_tangents");
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto write = [&](const char* name, bool tangents, const char* node) {
+        GltfWriter w;
+        const int positions = w.add(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1}, 4, "VEC3", kFloat,
+                                    R"(, "min": [0, 0, 0], "max": [1, 0, 1])");
+        const int normals = w.add(std::vector<float>{0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0}, 4, "VEC3", kFloat);
+        const int uvs = w.add(std::vector<float>{0, 0, 1, 0, 0, 1, 1, 1}, 4, "VEC2", kFloat);
+        const int given =
+            w.add(std::vector<float>{0, 0, 1, -1, 0, 0, 1, -1, 0, 0, 1, -1, 0, 0, 1, -1}, 4, "VEC4", kFloat);
+        const int indices = w.add(std::vector<std::uint16_t>{0, 2, 1, 1, 2, 3}, 6, "SCALAR", kUnsignedShort);
+        const std::string attributes =
+            std::format(R"("POSITION": {}, "NORMAL": {}, "TEXCOORD_0": {}{})", positions, normals, uvs,
+                        tangents ? std::format(R"(, "TANGENT": {})", given) : std::string());
+        const std::string json = std::format(
+            R"({{"asset": {{"version": "2.0"}}, "scene": 0, "scenes": [{{"nodes": [0]}}], "nodes": [{{"mesh": 0{}}}],
+"meshes": [{{"primitives": [{{"attributes": {{{}}}, "indices": {}}}]}}],
+"buffers": [{{"uri": "{}.bin", "byteLength": {}}}], "bufferViews": [{}], "accessors": [{}]}})",
+            node, attributes, indices, name, w.bin.size(), join(w.views), join(w.accessors));
+        std::ofstream(dir / std::format("{}.gltf", name), std::ios::binary) << json;
+        std::ofstream(dir / std::format("{}.bin", name), std::ios::binary)
+            .write(reinterpret_cast<const char*>(w.bin.data()), std::streamsize(w.bin.size()));
+        return dir / std::format("{}.gltf", name);
+    };
+    const auto tangentsOf = [&](const std::filesystem::path& gltf) {
+        Result<CookedModel> cooked = cookModel(gltf, "m", {.lods = 1}, jobs);
+        std::vector<glm::vec4> out;
+        if (cooked && cooked->model.meshes.size() == 1)
+            for (const assets::ModelVertex& v : cooked->model.meshes[0].vertices) out.push_back(v.tangent);
+        return out;
+    };
+    const auto all = [](const std::vector<glm::vec4>& tangents, const glm::vec4& expected) {
+        bool same = !tangents.empty();
+        for (const glm::vec4& t : tangents) same = same && glm::length(t - expected) < 1e-4f;
+        return same;
+    };
+    CHECK(all(tangentsOf(write("generated", false, "")), {1, 0, 0, 1}), "generated: +u with w 1");
+    CHECK(all(tangentsOf(write("given", true, "")), {0, 0, 1, -1}), "the file's tangents kept");
+    CHECK(all(tangentsOf(write("mirrored", true, R"(, "scale": [-1, 1, 1])")), {0, 0, 1, 1}),
+          "a mirroring node turns w around");
+}

@@ -93,6 +93,19 @@ add_library(quench_meshoptimizer STATIC ${_meshopt_sources})
 target_include_directories(quench_meshoptimizer SYSTEM PUBLIC ${meshoptimizer_SOURCE_DIR}/src)
 target_compile_features(quench_meshoptimizer PUBLIC cxx_std_20)
 
+# ---------------------------------------------------------------- MikkTSpace
+# The reference implementation (Morten S. Mikkelsen, zlib licence in both source files; the repository's last commit,
+# 2020-03-25). quench_assets generates tangents with it: quench_cook for glTF files without TANGENT, games for their
+# procedural meshes (assets::generateTangents, render::computeTangents).
+FetchContent_Declare(mikktspace
+    URL https://github.com/mmikk/MikkTSpace/archive/3e895b49d05ea07e4c2133156cfa94369e19e409.tar.gz
+    URL_HASH SHA256=aeba65ddee85a679133d510d71d00b108f603752f90b15b9ecf7777033f6e351
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(mikktspace)
+add_library(quench_mikktspace STATIC ${mikktspace_SOURCE_DIR}/mikktspace.c)
+target_include_directories(quench_mikktspace SYSTEM PUBLIC ${mikktspace_SOURCE_DIR})
+
 # ---------------------------------------------------------------- bc7enc_rdo
 # TrailForge's pin. bc7decomp.cpp (MIT or public domain) decodes BC7 at run time on devices without BC textures;
 # quench_cook also encodes with bc7enc.cpp (cmake/CookToolchain.cmake). bc7e.ispc (Apache-2.0) is not used.

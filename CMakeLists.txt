@@ -76,10 +76,11 @@ add_library(quench_assets STATIC
     src/assets/AssetManager.cpp
     src/assets/Model.cpp
     src/assets/StreamingGrid.cpp
+    src/assets/Tangents.cpp
     src/assets/Texture.cpp)
 quench_configure_target(quench_assets)
 target_link_libraries(quench_assets PUBLIC quench_core quench_glm PRIVATE quench_xxhash quench_meshoptimizer
-                                                                          quench_bc7decomp)
+                                                                          quench_bc7decomp quench_mikktspace)
 
 # ------------------------------------------------------------------ audio
 # Headless: the mixer (buses, voices, streams, 3D sound), sounds as assets, WAV writing and signal analysis. The device

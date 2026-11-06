@@ -19,14 +19,17 @@
 // and name their skin's joints, which bind to an animation skeleton by name at run time.
 namespace quench::assets {
 
-// The engine's 48-byte vertex (render::Vertex has the same layout).
+// The engine's 64-byte vertex (render::Vertex has the same layout).
 struct ModelVertex {
     glm::vec3 position{0.0f};
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
     glm::vec2 uv{0.0f};
     glm::vec4 color{1.0f}; // linear
+    // xyz: unit tangent along +u; w: +-1, the bitangent (toward -v, the normal map's +y in glTF's convention) is
+    // w * cross(normal, tangent). MikkTSpace tangents (generateTangents) or the glTF file's TANGENT.
+    glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
 };
-static_assert(sizeof(ModelVertex) == 48);
+static_assert(sizeof(ModelVertex) == 64);
 
 enum class AlphaMode : std::uint8_t { Opaque, Mask, Blend };
 
@@ -42,8 +45,8 @@ struct ModelMaterial {
     bool doubleSided = false;
     std::string baseColorTexture;         // sRGB
     std::string metallicRoughnessTexture; // linear; green: roughness, blue: metallic
-    std::string normalTexture;            // linear; cooked, not read by the standard surface yet
-    std::string emissiveTexture;          // sRGB; cooked, not read by the standard surface yet
+    std::string normalTexture;            // linear, tangent space (glTF's: +y toward -v)
+    std::string emissiveTexture;          // sRGB; multiplied with emissive
 };
 
 // A range of ModelMesh::indices drawn at one level of detail; error is meshoptimizer's relative simplification error.
@@ -88,7 +91,8 @@ struct ModelData {
     glm::vec3 boundsMax{0.0f};
 };
 
-// Checks the header, the counts and every stream. Reads versions 1 (no skins) and 2.
+// Checks the header, the counts and every stream. Reads version 3; versions 1 and 2 (no tangents) are an error that
+// says to cook the source again.
 Result<ModelData> readModel(std::span<const std::uint8_t> file);
 // The output depends only on the model. The index codec keeps the order and winding of triangles but may rotate the
 // indices within one.

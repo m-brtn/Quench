@@ -38,14 +38,18 @@ namespace detail {
 struct SceneImpl;
 }
 
-// The engine's vertex (48 bytes), read by surface shaders as QuenchVertexIn (quench/Surface.hlsli).
+// The engine's vertex (64 bytes, the layout of assets::ModelVertex), read by surface shaders as QuenchVertexIn
+// (quench/Surface.hlsli).
 struct Vertex {
     glm::vec3 position{0.0f};
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
     glm::vec2 uv{0.0f};
     glm::vec4 color{1.0f}; // linear; multiplied with InstanceDesc::color and the material's base color
+    // For normal maps. xyz: unit tangent along +u; w: +-1, the bitangent (toward -v, the normal map's +y as in glTF)
+    // is w * cross(normal, tangent). MikkTSpace tangents from quench_cook or computeTangents (MeshBuilder.h).
+    glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f};
 };
-static_assert(sizeof(Vertex) == 48);
+static_assert(sizeof(Vertex) == 64);
 
 // The joints that move one vertex of a skinned mesh (the layout of assets::ModelSkinVertex): indices into the mesh's
 // joints and their weights in 1/65535 (normalized to their sum when skinned).
@@ -102,7 +106,8 @@ struct MaterialDesc {
     bool doubleSided = false; // no back-face culling; back faces are shaded with the flipped normal
     ShadowMode shadows = ShadowMode::Auto;
     // The standard surface reads 0: base color (sRGB), 1: metallic-roughness (green: roughness, blue: metallic, as
-    // in glTF). A custom surface reads them as quenchTexture0..3. Unset slots sample white.
+    // in glTF), 2: normal map (linear, tangent space as in glTF; needs the vertex tangents), 3: emissive (sRGB,
+    // multiplied with `emissive`). A custom surface reads them as quenchTexture0..3. Unset slots sample white.
     std::array<TextureId, 4> textures{};
     std::array<glm::vec4, 4> params{}; // MaterialUniforms::params, for custom surfaces
     std::string_view name{};
