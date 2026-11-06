@@ -34,8 +34,6 @@ constexpr ImGuiWindowFlags kSheetFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWind
                                          ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                                          ImGuiWindowFlags_NoSavedSettings;
 
-const char* presentModeSetting(const std::string& value) { return value.empty() ? "vsync" : value.c_str(); }
-
 // The controls of every 3D section, per device (also in the About window and docs/demo.md).
 void controlsHelp() {
     ImGui::SeparatorText("Camera");
@@ -48,6 +46,7 @@ void controlsHelp() {
     ImGui::BulletText("Keys 1 to 9: sections 1 to 9; key 0: section 10; section 11 by next or previous.");
     ImGui::BulletText("Menu by keyboard or gamepad: Tab or the D-pad; Enter or A press, Escape or B go back.");
     ImGui::BulletText("Hide the windows: H, Start, or Hide in the menu.");
+    ImGui::BulletText("Graphics panel (render options for every section): G, or Graphics in the menu.");
     ImGui::TextWrapped("The input section's character takes W A S D and the left stick; a section's own keys are in "
                        "its description.");
 }
@@ -137,8 +136,7 @@ void DemoGame::sectionList(bool compactList) {
     }
 }
 
-void DemoGame::modeButtons(App& app) {
-    (void)app;
+void DemoGame::modeButtons() {
     if (ImGui::Button(m_mode == Mode::Tour ? "Stop tour" : "Tour")) {
         if (m_mode == Mode::Tour)
             stopMode("stopped");
@@ -173,6 +171,9 @@ void DemoGame::modeButtons(App& app) {
         if (compact()) m_sheet = Sheet::Settings;
     }
     recordPoint("ui:settings");
+    ImGui::SameLine();
+    if (ImGui::Button("Graphics")) openGraphics(false);
+    recordPoint("ui:graphics");
     ImGui::SameLine();
     if (ImGui::Button("Hide")) {
         m_showUi = false;
@@ -266,12 +267,16 @@ void DemoGame::sectionPanel(bool withAbout) {
         ImGui::TextUnformatted(about.data(), about.data() + about.size());
         ImGui::PopTextWrapPos();
     }
+    // Until the end of the frame and fallbacks the section's settings hold the Graphics panel's values.
+    const render::RenderSettings own = section.settings;
+    section.settings = graphicsSettings(own);
     if (!slot.error.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 110, 100, 255));
         ImGui::TextWrapped("Not available: %s", slot.error.c_str());
         ImGui::PopStyleColor();
     } else if (slot.ready) {
         ImGui::SeparatorText("Controls");
+        graphicsNote();
         ImGui::PushItemWidth(itemWidth());
         section.controls(*m_context);
         ImGui::PopItemWidth();
@@ -279,6 +284,7 @@ void DemoGame::sectionPanel(bool withAbout) {
         section.stats(*m_context);
     }
     effectsPanel(*m_context, section.settings, currentScene());
+    section.settings = takeSectionEdits(own, section.settings);
     ImGui::Separator();
     const bool reset = ImGui::Button("Reset section");
     recordPoint("ui:reset_section");
@@ -305,13 +311,13 @@ void DemoGame::wideLayout(App& app) {
                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | navFlags())) {
         sectionList(false);
         ImGui::Separator();
-        modeButtons(app);
+        modeButtons();
         performancePanel(app);
         logPanel();
         ImGui::TextDisabled("Sections: keys 1-9, 0 = 10");
         ImGui::TextDisabled("Previous, next: PgUp PgDn LB RB");
         ImGui::TextDisabled("Menu: Tab, D-pad; back: Esc, B");
-        ImGui::TextDisabled("Hide: H, Start");
+        ImGui::TextDisabled("Hide: H, Start; Graphics: G");
     }
     const ImVec2 menuEnd(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x,
                          ImGui::GetWindowPos().y + ImGui::GetWindowSize().y);
@@ -357,6 +363,9 @@ void DemoGame::wideLayout(App& app) {
             settingsContents(app);
         ImGui::End();
     }
+    if (m_graphicsOpen)
+        graphicsWindow(app, ImVec2(menuEnd.x + margin, top + margin),
+                       ImVec2((stacked ? right : x) - margin, bottom - margin));
 }
 
 void DemoGame::compactLayout(App& app) {
@@ -399,6 +408,8 @@ void DemoGame::compactLayout(App& app) {
     ImGui::End();
     if (m_aboutOpen && m_sheet != Sheet::About) m_sheet = Sheet::About;
     if (m_settingsOpen && m_sheet != Sheet::Settings && m_sheet != Sheet::About) m_sheet = Sheet::Settings;
+    if (m_graphicsOpen && m_sheet == Sheet::None) m_sheet = Sheet::Graphics; // opened in the wide layout
+    m_graphicsOpen = m_sheet == Sheet::Graphics;
 
     const float height = std::max(bottom - barBottom, 6.0f * em);
     switch (m_sheet) {
@@ -411,7 +422,7 @@ void DemoGame::compactLayout(App& app) {
         if (ImGui::Begin("##sections", nullptr, kSheetFlags | navFlags())) {
             sectionList(true);
             ImGui::Separator();
-            modeButtons(app);
+            modeButtons();
             performancePanel(app);
             logPanel();
             dragScroll();
@@ -432,6 +443,13 @@ void DemoGame::compactLayout(App& app) {
             dragScroll();
         }
         ImGui::End();
+        break;
+    }
+    case Sheet::Graphics: {
+        // Docked as the controls are, a little larger: the scene stays in view while options change.
+        const ImVec2 size = portrait ? ImVec2(width, std::min(height, float(safe.height) * 0.5f))
+                                     : ImVec2(std::min(24.0f * em, width * 0.6f), height);
+        graphicsSheet(app, portrait ? ImVec2(left, bottom - size.y) : ImVec2(right - size.x, barBottom), size);
         break;
     }
     case Sheet::About:
@@ -496,36 +514,7 @@ void DemoGame::aboutContents(App& app) {
             ImGui::SeparatorText("GPU backend");
             ImGui::TextWrapped("SDL GPU is the default; the native Metal backend (Apple platforms) adds GPU times per "
                                "pass, ray tracing and MetalFX.");
-            if (app.canRelaunch()) {
-                for (const gpu::Backend backend : {gpu::Backend::SdlGpu, gpu::Backend::Metal}) {
-                    if (!gpu::backendAvailable(backend) || backend == caps.backend) continue;
-                    const std::string label = std::format(
-                        "Relaunch with {}", backend == gpu::Backend::Metal ? "the native Metal backend" : "SDL GPU");
-                    if (ImGui::Button(label.c_str())) {
-                        // The same command line with the other --gpu-backend.
-                        std::vector<std::string> args;
-                        const std::span<const std::string> old = app.arguments();
-                        for (std::size_t i = 0; i < old.size(); ++i) {
-                            if (old[i] == "--gpu-backend") {
-                                ++i;
-                                continue;
-                            }
-                            if (old[i].starts_with("--gpu-backend=")) continue;
-                            args.push_back(old[i]);
-                        }
-                        args.push_back("--gpu-backend");
-                        args.push_back(backend == gpu::Backend::Metal ? "metal" : "sdl");
-                        saveSettings(true);
-                        if (Result<void> r = app.relaunch(args); !r) log::error("demo", "relaunch: {}", r.error());
-                    }
-                    recordPoint("ui:relaunch");
-                }
-            } else {
-                ImGui::TextWrapped("This platform cannot start the app again from inside: the backend is chosen at "
-                                   "launch, with --gpu-backend metal or the environment variable "
-                                   "QUENCH_GPU_BACKEND=metal (docs/demo.md: devicectl with "
-                                   "--environment-variables).");
-            }
+            relaunchButtons(app);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Controls")) {
@@ -570,27 +559,7 @@ void DemoGame::settingsContents(App& app) {
         applyStyle();
         noteSettings();
     }
-    int hdr = int(app.hdrMode());
-    ImGui::TextUnformatted("HDR output");
-    changed = ImGui::RadioButton("off##hdr", &hdr, int(app::HdrMode::Off));
-    ImGui::SameLine();
-    changed |= ImGui::RadioButton("auto##hdr", &hdr, int(app::HdrMode::Auto));
-    ImGui::SameLine();
-    changed |= ImGui::RadioButton("on##hdr", &hdr, int(app::HdrMode::On));
-    if (changed) app.setHdrMode(app::HdrMode(hdr));
-    ImGui::TextUnformatted("Present");
-    const std::string present = presentModeSetting(m_settings.present);
-    for (const char* mode : {"vsync", "immediate", "mailbox"}) {
-        ImGui::SameLine();
-        const std::string label = std::format("{}##present", mode);
-        if (ImGui::RadioButton(label.c_str(), present == mode)) {
-            m_settings.present = mode;
-            app.setPresentMode(std::string_view(mode) == "immediate" ? gpu::PresentMode::Immediate
-                               : std::string_view(mode) == "mailbox" ? gpu::PresentMode::Mailbox
-                                                                     : gpu::PresentMode::Vsync);
-            noteSettings();
-        }
-    }
+    outputControls(app);
     ImGui::SetNextItemWidth(itemWidth());
     if (ImGui::SliderFloat("Tour time", &m_tourSeconds, 2.0f, 30.0f, "%.0f s")) noteSettings();
     if (ImGui::Button("Defaults")) {

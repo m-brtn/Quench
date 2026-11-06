@@ -5,6 +5,8 @@
 // gives the defaults and a log line. Scripted runs (--script) ignore the file unless --settings-file names one, so
 // checks start from the defaults and leave the user's file alone; --no-settings ignores it in any run.
 
+#include "GraphicsPanel.h"
+
 #include <quench/core/Result.h>
 
 #include <string>
@@ -24,6 +26,8 @@ struct Settings {
     std::string hdr;     // "off", "on", "auto"; empty: the app's default
     std::string present; // "vsync", "immediate", "mailbox"; empty: the app's default
     float tourSeconds = 8.0f;
+    // The Graphics panel's options, for every section ("graphics": optional, so files without it still load).
+    GraphicsOverrides graphics;
 
     friend bool operator==(const Settings&, const Settings&) = default;
 };
