@@ -393,6 +393,7 @@ Result<void> RendererImpl::init() {
     support.rayLighting = support.rayTracing && shaders::render_raylight.find("rt_reflect_fs") != nullptr;
     support.spatialUpscaling = caps.spatialUpscaling;
     support.temporalUpscaling = caps.temporalUpscaling;
+    support.denoisedUpscaling = caps.denoisedUpscaling;
     if (!supports(ldrFormat, gpu::TextureType::Texture2D, targetSampled))
         return Error{"render: Rgba8Unorm cannot be rendered to and sampled"};
 
@@ -573,9 +574,10 @@ Result<void> RendererImpl::init() {
               support.shadowArray ? gpu::formatInfo(shadowFormat).name : "unsupported",
               support.velocityTarget ? "Rg16Float" : "unsupported", caps.depthClamp ? "yes" : "no",
               caps.depthBiasClamp ? "yes" : "no", support.rayTracing ? "yes" : "no",
-              support.temporalUpscaling  ? "spatial, temporal"
-              : support.spatialUpscaling ? "spatial"
-                                         : "bilinear");
+              support.denoisedUpscaling   ? "spatial, temporal, temporal denoised"
+              : support.temporalUpscaling ? "spatial, temporal"
+              : support.spatialUpscaling  ? "spatial"
+                                          : "bilinear");
     return {};
 }
 
@@ -905,24 +907,34 @@ bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32
         !create(ldr, {.format = ldrTarget, .usage = targetSampled, .width = ow, .height = oh, .name = "render ldr"}))
         return false;
     if (effects.upscaling != Upscaling::Bilinear) {
-        const bool temporal =
-            effects.upscaling == Upscaling::Temporal || effects.upscaling == Upscaling::TemporalDenoised;
-        Result<gpu::Upscaler> u =
-            device->createUpscaler({.type = temporal ? gpu::UpscalerType::Temporal : gpu::UpscalerType::Spatial,
-                                    .colorFormat = hdrFormat,
-                                    .outputFormat = hdrFormat,
-                                    .depthFormat = depthFormat,
-                                    .motionFormat = velocityFormat,
-                                    .inputWidth = rw,
-                                    .inputHeight = rh,
-                                    .outputWidth = ow,
-                                    .outputHeight = oh,
-                                    .name = "render upscaler"});
+        const bool denoised = effects.upscaling == Upscaling::TemporalDenoised;
+        const bool temporal = effects.upscaling == Upscaling::Temporal || denoised;
+        const gpu::UpscalerType type = denoised   ? gpu::UpscalerType::TemporalDenoised
+                                       : temporal ? gpu::UpscalerType::Temporal
+                                                  : gpu::UpscalerType::Spatial;
+        Result<gpu::Upscaler> u = device->createUpscaler({.type = type,
+                                                          .colorFormat = hdrFormat,
+                                                          .outputFormat = hdrFormat,
+                                                          .depthFormat = depthFormat,
+                                                          .motionFormat = velocityFormat,
+                                                          .diffuseAlbedoFormat = RayTracing::kAlbedoFormat,
+                                                          .specularAlbedoFormat = RayTracing::kAlbedoFormat,
+                                                          .normalFormat = RayTracing::gbufferNormalFormat(),
+                                                          .roughnessFormat = RayTracing::kRoughnessFormat,
+                                                          .inputWidth = rw,
+                                                          .inputHeight = rh,
+                                                          .outputWidth = ow,
+                                                          .outputHeight = oh,
+                                                          .name = "render upscaler"});
         if (!u) {
-            // Not for this size or format: the frame is scaled up in tone mapping from now on.
-            log::error("render", "{} upscaler {} x {} -> {} x {}: {}; bilinear", temporal ? "temporal" : "spatial", rw,
-                       rh, ow, oh, u.error());
-            (temporal ? support.temporalUpscaling : support.spatialUpscaling) = false;
+            // Not for this size or format: the next kind down (the denoising upscaler: the temporal one with the
+            // engine's denoiser; else scaled up in tone mapping) from now on.
+            const char* kind = denoised ? "denoising" : temporal ? "temporal" : "spatial";
+            log::error("render", "{} upscaler {} x {} -> {} x {}: {}; {}", kind, rw, rh, ow, oh, u.error(),
+                       denoised ? "temporal" : "bilinear");
+            (denoised   ? support.denoisedUpscaling
+             : temporal ? support.temporalUpscaling
+                        : support.spatialUpscaling) = false;
             return false;
         }
         upscaler = std::move(*u);
@@ -1405,7 +1417,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     bool rayTraced = anyTraced();
     // Hits are shaded (not only tested for shadows): every visible instance is in the top level, with its material.
     const bool hitData = rayReflections || probes || pathTracing;
-    const bool gbuffer = rayReflections || rayIndirect;
+    const bool denoisedUpscale = effects.upscaling == Upscaling::TemporalDenoised;
+    const bool gbuffer = rayReflections || rayIndirect || denoisedUpscale;
     if (!rayTraced) rayTracing.releaseTargets();
     Cascades shadow;
     if (cascades > 0)
@@ -1610,7 +1623,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                                  .reflections = rayReflections,
                                  .indirect = rayIndirect,
                                  .probes = probes,
-                                 .temporal = rayTemporal};
+                                 .temporal = rayTemporal,
+                                 .denoiseInputs = denoisedUpscale};
         commands.beginTiming("accel");
         rayMask = rayTracing.ensureTargets(rw, rh, depthFormat, targets);
         if (rayMask) {
@@ -1623,6 +1637,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         stats.rayInstances = rs.instances;
         stats.rayBuilds = rs.builds;
         stats.rayRefits = rs.refits;
+        stats.rayCompactions = rs.compactions;
+        stats.rayTopRefit = rs.topRefit;
         stats.rayMemoryBytes = rs.memoryBytes;
         stats.hitTextures = rs.hitTextures;
     }
@@ -1718,6 +1734,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     hu.params =
         glm::vec4(std::clamp(settings.reflectionRoughness, 0.05f, 1.0f), kRayNormalOffset, kRayLightLength, 0.0f);
     hu.rotation = frameRotation(frameIndex);
+    bool denoiseInputs = false; // the denoising upscaler's G-buffer inputs are written
+    if (denoisedUpscale && !(rayMask && !pathFrame)) denoiseInputs = rayTracing.writeDenoiseInputs(commands, false);
     if (rayMask && !pathFrame) {
         commands.beginTiming("prepass");
         {
@@ -1736,6 +1754,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             }
         }
         if (rayTemporal) drawVelocity(rayTracing.depth());
+        if (denoisedUpscale) denoiseInputs = rayTracing.writeDenoiseInputs(commands, true);
         commands.endTiming();
         const float cone = std::clamp(env.sunAngularRadius * std::max(settings.shadowSoftness, 0.0f), 0.0f, 0.2f);
         const shader::RayTracingUniforms ru{
@@ -1959,10 +1978,24 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             u.motionScaleY = -float(rh);
             u.reset = cut || upscalerReset;
         }
+        if (effects.upscaling == Upscaling::TemporalDenoised) {
+            u.diffuseAlbedo = rayTracing.diffuseAlbedo();
+            u.specularAlbedo = rayTracing.specularAlbedo();
+            u.normal = rayTracing.gbufferNormal();
+            u.roughness = rayTracing.roughness();
+            std::memcpy(u.worldToView.data(), &view.view[0][0], sizeof(u.worldToView));
+            std::memcpy(u.viewToClip.data(), &proj[0][0], sizeof(u.viewToClip)); // without the jitter
+        }
         commands.beginTiming("upscale");
-        commands.upscale(upscaler, u);
+        if (effects.upscaling != Upscaling::TemporalDenoised || denoiseInputs) {
+            commands.upscale(upscaler, u);
+            upscalerReset = false;
+        } else {
+            // No G-buffer this frame (the ray tracing targets failed): scaled up as by the bilinear path.
+            commands.blit({.source = {.texture = image}, .destination = {.texture = upscaled}});
+            upscalerReset = true;
+        }
         commands.endTiming();
-        upscalerReset = false;
         image = upscaled;
     }
 

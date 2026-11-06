@@ -262,8 +262,9 @@ struct RenderStats {
     std::uint32_t rayBuilds = 0;
     std::uint32_t rayRefits = 0;
     std::uint32_t rayCompactions = 0; // bottom levels compacted this frame
-    // GPU memory of the ray tracing data: acceleration structures, the vertex and index tables and the hit texture
-    // arrays (not the targets).
+    bool rayTopRefit = false;         // the top level was refitted this frame (same instances), not built
+    // GPU memory of the ray tracing data: acceleration structures, the vertex and index tables, the hit texture
+    // arrays and the probe atlases (not the targets).
     std::uint64_t rayMemoryBytes = 0;
     std::uint32_t hitTextures = 0; // material textures in the hit texture arrays
     std::uint32_t probes = 0;      // probes traced this frame (IndirectLight::Probes and RayTraced)

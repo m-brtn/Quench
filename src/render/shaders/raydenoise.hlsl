@@ -70,10 +70,16 @@ TemporalOut rt_temporal_fs(FullscreenOut vin) {
     m1 /= 9.0;
     const float4 sigma = sqrt(max(m2 / 9.0 - m1 * m1, 0.0));
     float4 history = historyTex.SampleLevel(linearSampler, previousUv, 0.0);
+    // Anti-lag: where the neighbourhood's mean is farther from the history than its noise explains (the error of a
+    // mean of 9 samples is sigma / 3), the signal changed (a caster moved, a light turned): the history is cut short.
+    // The clamp alone misses it at thin features, whose neighbourhood spans both values.
+    const float4 change = abs(m1 - history) - (2.0 / 3.0) * sigma - 0.05;
+    const float lag = saturate(max(max(change.r, change.g), max(change.b, change.a)) * 4.0);
     if (rd.filter.w > 0.0) history = clamp(history, m1 - rd.filter.w * sigma, m1 + rd.filter.w * sigma);
 
     const float maxLength = rd.temporal.z > 0.5 ? max(rd.temporal.x * current.a, 1.0) : rd.temporal.x;
-    const float length = min(lengthTex.SampleLevel(lengthSampler, previousUv, 0.0).r + 1.0, maxLength);
+    const float previousLength = lengthTex.SampleLevel(lengthSampler, previousUv, 0.0).r * (1.0 - lag);
+    const float length = min(previousLength + 1.0, maxLength);
     o.signal = lerp(history, current, 1.0 / length);
     o.length = float4(length, 0.0, 0.0, 1.0);
     return o;
@@ -115,5 +121,47 @@ float4 rt_atrous_fs(FullscreenOut vin) : SV_Target0 {
             weights += w;
         }
     return sum / weights;
+}
+#endif
+
+#if defined(QUENCH_ENTRY_rt_denoise_inputs_fs)
+// The G-buffer as the MetalFX denoising upscaler reads it (Upscaling::TemporalDenoised): the diffuse albedo, the
+// specular albedo (the split-sum reflectance the surfaces use) and the roughness. Samplers 0 the depth, 1 the
+// G-buffer's normal and roughness, 2 its albedo and metallic.
+#include "quench/Brdf.hlsli"
+
+Texture2D<float> depthTex : QUENCH_TEXTURE(0);
+SamplerState depthSampler : QUENCH_SAMPLER(0);
+Texture2D<float4> normalTex : QUENCH_TEXTURE(1);
+SamplerState normalSampler : QUENCH_SAMPLER(1);
+Texture2D<float4> albedoTex : QUENCH_TEXTURE(2);
+SamplerState albedoSampler : QUENCH_SAMPLER(2);
+
+struct DenoiseInputs {
+    float4 diffuse : SV_Target0;
+    float4 specular : SV_Target1;
+    float4 roughness : SV_Target2;
+};
+
+DenoiseInputs rt_denoise_inputs_fs(FullscreenOut vin) {
+    const int2 p = int2(vin.position.xy);
+    DenoiseInputs o;
+    const float d = depthTex.Load(int3(p, 0));
+    if (d <= 0.0) { // the sky: lit as it is
+        o.diffuse = float4(1.0, 1.0, 1.0, 1.0);
+        o.specular = float4(0.0, 0.0, 0.0, 1.0);
+        o.roughness = float4(1.0, 0.0, 0.0, 0.0);
+        return o;
+    }
+    const float4 g = normalTex.Load(int3(p, 0));
+    const float4 a = albedoTex.Load(int3(p, 0));
+    const float3 P = rtWorldAt(vin.position.xy, d);
+    const float3 V = normalize(quenchFrame.cameraPos.xyz - P);
+    const float NdotV = saturate(dot(normalize(g.xyz), V));
+    const float3 F0 = lerp(float3(0.04, 0.04, 0.04), a.rgb, a.a);
+    o.diffuse = float4(a.rgb * (1.0 - a.a), 1.0);
+    o.specular = float4(envBRDFApprox(F0, g.w, NdotV), 1.0);
+    o.roughness = float4(g.w, 0.0, 0.0, 0.0);
+    return o;
 }
 #endif

@@ -1494,3 +1494,143 @@ QUENCH_TEST(renderer_temporal_ray_denoiser) {
     CHECK(t.mean < s.mean, "the temporal denoiser is closer to the reference: %.2f vs %.2f", t.mean, s.mean);
     CHECK(tf.mean < sf.mean * 0.75, "and steadier: %.2f vs %.2f", tf.mean, sf.mean);
 }
+
+// The acceleration structures over frames: rigid meshes are built once and replaced by compacted copies, the top
+// level is refitted while only transforms change, and a refitted top level traces what a fresh build does.
+QUENCH_TEST(renderer_ray_tracing_refit_and_compaction) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.sunShadows = SunShadows::RayTraced;
+    settings.shadowSoftness = 0.0f;
+    settings.rayDenoiser = RayDenoiser::Spatial; // hard shadows: the mask as traced, no history
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!rayTracingActive(device, *renderer)) QUENCH_SKIP("no ray tracing: shadow maps");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.6f, 0.6f, 0.6f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {-1.5f, 1.0f, 0})});
+    const InstanceId moving = scene.addInstance(
+        {.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {1.5f, 1.0f, 0})});
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+
+    renderOnce(device, *renderer, scene, kTopView, *target);
+    const RenderStats first = renderer->stats();
+    renderOnce(device, *renderer, scene, kTopView, *target); // the first frame's command buffer has completed
+    const RenderStats second = renderer->stats();
+    renderOnce(device, *renderer, scene, kTopView, *target);
+    const RenderStats third = renderer->stats();
+    scene.setTransform(moving, glm::translate(glm::mat4(1.0f), {1.5f, 1.0f, 2.0f}));
+    const std::vector<Rgba8> refitted = renderOnce(device, *renderer, scene, kTopView, *target);
+    const RenderStats moved = renderer->stats();
+    std::printf("  frame 1: %u builds, %llu bytes; frame 2: %u compactions, %llu bytes; frame 3: top refit %d; "
+                "moved: top refit %d\n",
+                first.rayBuilds, static_cast<unsigned long long>(first.rayMemoryBytes), second.rayCompactions,
+                static_cast<unsigned long long>(second.rayMemoryBytes), int(third.rayTopRefit), int(moved.rayTopRefit));
+    CHECK(first.rayBuilds == 2 && !first.rayTopRefit, "two bottom levels and the top level built: %u", first.rayBuilds);
+    CHECK(second.rayCompactions == 2 && second.rayBuilds == 0 && !second.rayTopRefit,
+          "both compacted, the top level built over the copies: %u compactions", second.rayCompactions);
+    CHECK(second.rayMemoryBytes < first.rayMemoryBytes, "less memory after compaction: %llu vs %llu",
+          static_cast<unsigned long long>(second.rayMemoryBytes),
+          static_cast<unsigned long long>(first.rayMemoryBytes));
+    CHECK(third.rayTopRefit && moved.rayTopRefit && third.rayCompactions == 0, "refits while only transforms change");
+
+    // A fresh renderer builds its top level over the same (compacted) bottom levels.
+    Result<Renderer> fresh = Renderer::create(device, settings);
+    REQUIRE(fresh, "%s", fresh.error().c_str());
+    const std::vector<Rgba8> built = renderOnce(device, *fresh, scene, kTopView, *target);
+    CHECK(!fresh->stats().rayTopRefit, "built");
+    const ImageDiff d = compare(refitted, built);
+    std::printf("  refitted against built: mean %.3f, %.2f%% over 16\n", d.mean, d.over16 * 100.0);
+    CHECK(d.mean < 0.05 && d.over16 == 0.0, "the same shadows: mean %.3f", d.mean);
+    // boxMesh(0.5) is 0.5 m wide: its shadow covers x 2 to 3, z +-0.25 around the box.
+    const glm::ivec2 shadow = pixelOf(kTopView, {2.5f, 0, 2.0f}), old = pixelOf(kTopView, {2.5f, 0, 0});
+    CHECK(sum(at(refitted, shadow)) * 4 < sum(at(refitted, old)), "the shadow moved with the box: %d vs %d",
+          sum(at(refitted, shadow)), sum(at(refitted, old)));
+
+    // The temporal denoiser's history does not trail the moved shadow (its anti-lag), also where the shadow is a few
+    // pixels thin and the history clamp alone lets it fade in over the history's length.
+    settings.rayDenoiser = RayDenoiser::Temporal;
+    renderer->setSettings(settings);
+    settle(device, *renderer, scene, kTopView, *target, 8);
+    scene.setTransform(moving, glm::translate(glm::mat4(1.0f), {1.5f, 1.0f, 0.0f}));
+    const std::vector<Rgba8> after = renderOnce(device, *renderer, scene, kTopView, *target);
+    const std::vector<Rgba8> settled = settle(device, *renderer, scene, kTopView, *target, 16);
+    std::printf("  temporal denoiser, the frame after a move back: new shadow %d (settled %d), where it was %d "
+                "(settled %d)\n",
+                sum(at(after, old)), sum(at(settled, old)), sum(at(after, shadow)), sum(at(settled, shadow)));
+    CHECK(sum(at(after, old)) < sum(at(settled, old)) + 40, "the new shadow at once: %d, settled %d",
+          sum(at(after, old)), sum(at(settled, old)));
+    CHECK(sum(at(after, shadow)) + 20 > sum(at(settled, shadow)), "lit at once where it was: %d, settled %d",
+          sum(at(after, shadow)), sum(at(settled, shadow)));
+}
+
+// The MetalFX denoising upscaler (gpu::Caps::denoisedUpscaling): the raw one-ray shadows and occlusion at half size,
+// denoised and upscaled from the G-buffer, against eight rays at full size; without it the temporal upscaler and
+// the engine's denoiser.
+QUENCH_TEST(renderer_denoised_upscaling) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.sunShadows = SunShadows::RayTraced;
+    settings.shadowSoftness = 6.0f;
+    settings.shadowRays = 8;
+    settings.ambientOcclusion = AmbientOcclusion::RayTraced;
+    settings.occlusionRays = 8;
+    settings.antiAliasing = AntiAliasing::Taa;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!rayTracingActive(device, *renderer)) QUENCH_SKIP("no ray tracing: shadow maps");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyAmbient = e.groundAmbient = glm::vec3(0.3f);
+    scene.setEnvironment(e);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0, 1.5f, 0})});
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const std::vector<Rgba8> reference = settle(device, *renderer, scene, kTopView, *target, 24);
+    REQUIRE(reference.size() == kSize * kSize, "%zu pixels", reference.size());
+
+    settings.shadowRays = settings.occlusionRays = 1;
+    settings.renderScale = 0.5f;
+    settings.upscaling = Upscaling::TemporalDenoised;
+    renderer->setSettings(settings);
+    const bool denoised = renderer->effects().upscaling == Upscaling::TemporalDenoised;
+    if (!denoised) {
+        CHECK(!device.caps().denoisedUpscaling, "the denoising upscaler on the device, not used");
+        CHECK(renderer->effects().upscaling ==
+                  (device.caps().temporalUpscaling ? Upscaling::Temporal : Upscaling::Bilinear),
+              "the temporal upscaler in its place");
+        CHECK(std::ranges::any_of(renderer->fallbacks(),
+                                  [](const std::string& l) { return l.starts_with("denoising upscaler: "); }),
+              "Renderer::fallbacks names the denoising upscaler");
+    }
+    std::vector<Rgba8> previous = settle(device, *renderer, scene, kTopView, *target, 32);
+    const std::vector<Rgba8> upscaled = settle(device, *renderer, scene, kTopView, *target, 1);
+    CHECK(renderer->stats().renderWidth == kSize / 2, "render width %u", renderer->stats().renderWidth);
+    const ImageDiff d = compare(upscaled, reference), f = compare(upscaled, previous);
+    std::printf("  %s at half size, one ray, against eight at full size: mean %.2f (%.2f%% over 16); frame to "
+                "frame %.2f\n",
+                denoised ? "denoising upscaler" : "temporal upscaler and the engine's denoiser", d.mean,
+                d.over16 * 100.0, f.mean);
+    CHECK(d.mean < 4.0 && d.over16 < 0.12, "mean %.2f, %.2f%% over 16", d.mean, d.over16 * 100.0);
+    CHECK(f.mean < 1.0, "steady: %.2f from frame to frame", f.mean);
+    if (!denoised) QUENCH_SKIP("no denoising upscaler on this device");
+
+    settings.upscaling = Upscaling::Temporal;
+    renderer->setSettings(settings);
+    previous = settle(device, *renderer, scene, kTopView, *target, 32);
+    const std::vector<Rgba8> engine = settle(device, *renderer, scene, kTopView, *target, 1);
+    const ImageDiff de = compare(engine, reference), fe = compare(engine, previous);
+    std::printf("  the temporal upscaler and the engine's denoiser: mean %.2f (%.2f%% over 16); frame to frame %.2f\n",
+                de.mean, de.over16 * 100.0, fe.mean);
+}

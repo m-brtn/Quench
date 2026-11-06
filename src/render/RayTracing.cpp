@@ -3,6 +3,7 @@
 #include <quench/core/Log.h>
 
 #include <render_frame_shaders.h>
+#include <render_raydenoise_shaders.h>
 #include <render_raylight_shaders.h>
 #include <render_raytrace_shaders.h>
 
@@ -27,8 +28,9 @@ constexpr TextureFormat kLightFormat = TextureFormat::Rgba16Float;
 constexpr TextureFormat kNormalFormat = TextureFormat::Rgba16Float;
 constexpr TextureFormat kDistanceFormat = TextureFormat::Rg16Float;
 // A skinned bottom level is refitted to each pose and built again after this many refits: refits keep the build's
-// tree, which loosens as limbs move away from the pose it was built in.
+// tree, which loosens as limbs move away from the pose it was built in. The top level likewise as instances move.
 constexpr std::uint32_t kRefitsPerBuild = 60;
+constexpr std::uint32_t kTopRefitsPerBuild = 30;
 // The hit texture arrays: every material texture once, scaled to one size without mip levels.
 constexpr std::uint32_t kHitTextureSize = 256;
 constexpr std::uint32_t kMaxHitLayers = 64;
@@ -87,7 +89,10 @@ bool RayTracing::init(gpu::Device& device, std::uint32_t& pipelines, const RaySa
     };
     const gpu::ColorTargetDesc mask{kMaskFormat};
     const gpu::ColorTargetDesc maskAndLocal[] = {{kMaskFormat}, {kMaskFormat}};
+    const gpu::ColorTargetDesc denoiseInputs[] = {{kAlbedoFormat}, {kAlbedoFormat}, {kRoughnessFormat}};
     if (!make(m_tracePipeline, trace, {&mask, 1}, "render ray trace") ||
+        !make(m_denoiseInputsPipeline, shaders::render_raydenoise.find("rt_denoise_inputs_fs"), denoiseInputs,
+              "render denoise inputs") ||
         !make(m_traceLocalPipeline, shaders::render_raytrace.find("rt_shadow_local_fs"), maskAndLocal,
               "render ray trace local") ||
         !make(m_denoisePipeline, shaders::render_raytrace.find("rt_denoise_fs"), {&mask, 1}, "render ray denoise") ||
@@ -174,6 +179,10 @@ bool RayTracing::ensureTargets(std::uint32_t width, std::uint32_t height, Textur
     if (ok && targets.gbuffer)
         ok = createTarget(m_gbufferNormal, kNormalFormat, width, height, "render gbuffer normal") &&
              createTarget(m_gbufferAlbedo, TextureFormat::Rgba8Unorm, width, height, "render gbuffer albedo");
+    if (ok && targets.gbuffer && targets.denoiseInputs)
+        ok = createTarget(m_diffuseAlbedo, kAlbedoFormat, width, height, "render diffuse albedo") &&
+             createTarget(m_specularAlbedo, kAlbedoFormat, width, height, "render specular albedo") &&
+             createTarget(m_roughness, kRoughnessFormat, width, height, "render roughness");
     if (ok && targets.local)
         ok = createTarget(m_localRaw, kMaskFormat, width, height, "render ray local trace") &&
              createTarget(m_local, kMaskFormat, width, height, "render ray local shadows") &&
@@ -211,6 +220,9 @@ void RayTracing::releaseTargets() {
     m_depth = {};
     m_gbufferNormal = {};
     m_gbufferAlbedo = {};
+    m_diffuseAlbedo = {};
+    m_specularAlbedo = {};
+    m_roughness = {};
     m_raw = {};
     m_mask = {};
     m_localRaw = {};
@@ -415,6 +427,7 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
         }
         return std::move(*s);
     };
+    bool replaced = false; // a bottom level the top level's last build had is another object now
     for (const RayCaster& c : casters) {
         MeshEntry& mesh = *c.mesh;
         const std::uint32_t triangles = mesh.indexCount / 3;
@@ -431,11 +444,13 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
             geometry.vertexOffset = c.skinned.offset;
             const bool fresh = !inst.rayStructure || inst.rayStructure.desc().vertexCount != mesh.vertexCount ||
                                inst.rayStructure.desc().triangleCount != triangles;
-            if (fresh)
+            if (fresh) {
                 inst.rayStructure = create({.vertexCount = mesh.vertexCount,
                                             .triangleCount = triangles,
                                             .allowRefit = true,
                                             .name = "render ray skinned"});
+                replaced = true;
+            }
             if (!inst.rayStructure) continue;
             if (fresh || inst.rayRefits >= kRefitsPerBuild) {
                 pass.build(inst.rayStructure, geometry);
@@ -449,12 +464,32 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
             }
             bottom = &inst.rayStructure;
         } else {
+            using Compaction = MeshEntry::Compaction;
             if (!mesh.rayStructure) {
                 mesh.rayStructure =
                     create({.vertexCount = mesh.vertexCount, .triangleCount = triangles, .name = "render ray mesh"});
                 if (!mesh.rayStructure) continue;
                 pass.build(mesh.rayStructure, geometry);
+                // Rigid meshes do not change: a compacted copy replaces the built one once its size is known.
+                pass.queryCompactedSize(mesh.rayStructure);
+                mesh.rayCompaction = Compaction::Queried;
                 ++stats.builds;
+                replaced = true;
+            } else if (mesh.rayCompaction == Compaction::Queried) {
+                if (const std::optional<std::uint32_t> size = m_device->compactedSize(mesh.rayStructure)) {
+                    gpu::AccelerationStructure compacted =
+                        *size > 0 ? create({.compactedSize = *size, .name = "render ray mesh"})
+                                  : gpu::AccelerationStructure{};
+                    mesh.rayCompaction = Compaction::Done;
+                    if (compacted) {
+                        pass.copyAndCompact(mesh.rayStructure, compacted);
+                        stats.compactedBytes +=
+                            std::max(mesh.rayStructure.bytes(), compacted.bytes()) - compacted.bytes();
+                        mesh.rayStructure = std::move(compacted); // the command buffer keeps the source alive
+                        ++stats.compactions;
+                        replaced = true;
+                    }
+                }
             }
             bottom = &mesh.rayStructure;
         }
@@ -518,12 +553,33 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
     if (!m_top || m_top.desc().instanceCapacity < needed) {
         m_top = create({.level = gpu::AccelerationStructureLevel::Top,
                         .instanceCapacity = grown(m_top ? m_top.desc().instanceCapacity : 0, needed, 64),
+                        .allowRefit = true,
                         .name = "render ray scene"});
         if (!m_top) return false;
+        m_topBottoms.clear();
     }
-    pass.build(m_top, m_instances);
+    // The same bottom levels in the same order (instances that only moved): a refit, and a build now and then, as
+    // a refitted top level grows worse the farther its instances move.
+    const bool refit = !replaced && m_topRefits < kTopRefitsPerBuild &&
+                       std::ranges::equal(m_instances, m_topBottoms, {}, &gpu::RayInstance::bottomLevel);
+    if (refit) {
+        pass.refit(m_top, m_instances);
+        ++m_topRefits;
+    } else {
+        pass.build(m_top, m_instances);
+        m_topBottoms.clear();
+        for (const gpu::RayInstance& i : m_instances) m_topBottoms.push_back(i.bottomLevel);
+        m_topRefits = 0;
+        std::vector<const gpu::AccelerationStructure*> distinct = m_topBottoms;
+        std::ranges::sort(distinct);
+        const auto [last, end] = std::ranges::unique(distinct);
+        distinct.erase(last, end);
+        m_structureBytes = m_top.bytes();
+        for (const gpu::AccelerationStructure* b : distinct) m_structureBytes += b->bytes();
+    }
     pass.end();
     stats.instances = needed;
+    stats.topRefit = refit;
 
     if (!m_data.empty()) {
         const auto bytes = std::uint32_t(m_data.size() * sizeof(shader::RayInstanceData));
@@ -550,7 +606,7 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
 }
 
 std::uint64_t RayTracing::memoryBytes() const {
-    return std::uint64_t(m_vertexBytes) + m_indexBytes + m_instanceBytes + textureBytes(m_hitColor.texture) +
+    return m_structureBytes + m_vertexBytes + m_indexBytes + m_instanceBytes + textureBytes(m_hitColor.texture) +
            textureBytes(m_hitLinear.texture) + textureBytes(m_probeIrradiance[0]) * 2 +
            textureBytes(m_probeDistance[0]) * 2 + textureBytes(m_probeRays);
 }
@@ -735,6 +791,32 @@ void RayTracing::traceIndirect(gpu::CommandBuffer& commands, const shader::RayHi
         filter(commands, m_indirectFilter, m_indirectRaw, m_indirect, inputs,
                {.maxHistory = 32.0f, .clampGamma = 2.5f, .steps = 2, .planeTolerance = 0.03f}, filtering);
     commands.endTiming();
+}
+
+bool RayTracing::writeDenoiseInputs(gpu::CommandBuffer& commands, bool prepass) {
+    if (!m_diffuseAlbedo || !m_gbufferNormal) return false;
+    if (!prepass) {
+        const gpu::ColorTarget sky[] = {{.texture = m_diffuseAlbedo, .clear = {1.0f, 1.0f, 1.0f, 1.0f}, .cycle = true},
+                                        {.texture = m_specularAlbedo, .clear = {0.0f, 0.0f, 0.0f, 1.0f}, .cycle = true},
+                                        {.texture = m_roughness, .clear = {1.0f, 0.0f, 0.0f, 0.0f}, .cycle = true},
+                                        {.texture = m_gbufferNormal, .clear = {0.0f, 1.0f, 0.0f, 1.0f}, .cycle = true}};
+        gpu::RenderPass pass = commands.beginRenderPass(sky);
+        if (!pass) return false;
+        pass.end();
+        return true;
+    }
+    const gpu::ColorTarget targets[] = {{.texture = m_diffuseAlbedo, .load = gpu::LoadOp::DontCare, .cycle = true},
+                                        {.texture = m_specularAlbedo, .load = gpu::LoadOp::DontCare, .cycle = true},
+                                        {.texture = m_roughness, .load = gpu::LoadOp::DontCare, .cycle = true}};
+    gpu::RenderPass pass = commands.beginRenderPass(targets);
+    if (!pass) return false;
+    const gpu::TextureSamplerBinding samplers[] = {
+        {depth(), *m_samplers.point}, {m_gbufferNormal, *m_samplers.point}, {m_gbufferAlbedo, *m_samplers.point}};
+    pass.bindPipeline(m_denoiseInputsPipeline);
+    pass.bindSamplers(kFragment, 0, samplers);
+    pass.draw(3);
+    pass.end();
+    return true;
 }
 
 } // namespace quench::render::detail

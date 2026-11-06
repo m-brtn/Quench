@@ -28,6 +28,9 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
     e.pathTracer = lighting && settings.pathTracer;
     e.antiAliasing = settings.antiAliasing;
     const bool temporalInputs = support.sampledDepth && support.velocityTarget;
+    const bool traced = e.sunShadows == SunShadows::RayTraced || e.ambientOcclusion == AmbientOcclusion::RayTraced ||
+                        e.localLightShadows > 0 || e.reflections == Reflections::RayTraced ||
+                        e.indirectLight != IndirectLight::Sky;
     e.rayDenoiser =
         settings.rayDenoiser == RayDenoiser::Temporal && temporalInputs ? RayDenoiser::Temporal : RayDenoiser::Spatial;
     if (e.antiAliasing == AntiAliasing::Taa && !temporalInputs) e.antiAliasing = AntiAliasing::Fxaa;
@@ -37,7 +40,7 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
         if (support.spatialUpscaling && settings.renderScale < 1.0f) e.upscaling = Upscaling::Spatial;
         break;
     case Upscaling::TemporalDenoised:
-        if (support.denoisedUpscaling && support.rayTracing && temporalInputs) {
+        if (support.denoisedUpscaling && traced && temporalInputs) {
             e.upscaling = Upscaling::TemporalDenoised;
             e.antiAliasing = AntiAliasing::Taa;
             break;

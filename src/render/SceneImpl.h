@@ -29,8 +29,9 @@ struct MeshEntry {
     std::uint32_t jointCount = 0;
     std::vector<glm::vec4> jointBounds; // per joint: the bind-pose sphere of the vertices it moves (w < 0: none)
     // Ray tracing (gpu::Caps::rayTracing): the bottom level of a rigid mesh, built when it first casts a ray-traced
-    // shadow.
+    // shadow, then replaced by its compacted copy.
     gpu::AccelerationStructure rayStructure;
+    enum class Compaction : std::uint8_t { None, Queried, Done } rayCompaction = Compaction::None;
 };
 
 struct TextureEntry {

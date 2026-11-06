@@ -38,8 +38,11 @@ struct RayCaster {
 
 struct RayTracingStats {
     std::uint32_t instances = 0;
-    std::uint32_t builds = 0;
+    std::uint32_t builds = 0; // bottom levels
     std::uint32_t refits = 0;
+    std::uint32_t compactions = 0;
+    std::uint64_t compactedBytes = 0; // saved by this frame's compactions
+    bool topRefit = false;
     std::uint64_t memoryBytes = 0;
     std::uint32_t hitTextures = 0;
 };
@@ -50,8 +53,9 @@ struct RayTargets {
     bool local = false;   // local light shadows
     bool reflections = false;
     bool indirect = false;
-    bool probes = false;   // the probe grid's atlases
-    bool temporal = false; // the histories of RayDenoiser::Temporal
+    bool probes = false;        // the probe grid's atlases
+    bool temporal = false;      // the histories of RayDenoiser::Temporal
+    bool denoiseInputs = false; // the albedos and roughness of the denoising upscaler (with gbuffer)
     friend bool operator==(const RayTargets&, const RayTargets&) = default;
 };
 
@@ -115,6 +119,12 @@ public:
     // The probe atlases of this frame (valid after updateProbes()).
     const gpu::Texture& probeIrradiance() const { return m_probeIrradiance[std::size_t(m_probeIndex)]; }
     const gpu::Texture& probeDistance() const { return m_probeDistance[std::size_t(m_probeIndex)]; }
+    // Upscaling::TemporalDenoised's inputs besides the G-buffer normal, valid after writeDenoiseInputs().
+    const gpu::Texture& diffuseAlbedo() const { return m_diffuseAlbedo; }
+    const gpu::Texture& specularAlbedo() const { return m_specularAlbedo; }
+    const gpu::Texture& roughness() const { return m_roughness; }
+    static constexpr gpu::TextureFormat kAlbedoFormat = gpu::TextureFormat::Rgba8Unorm;
+    static constexpr gpu::TextureFormat kRoughnessFormat = gpu::TextureFormat::R16Float;
 
     // The bottom levels, the top level and the tables; false when there is nothing to trace against. hitData: the
     // triangles and textures of every instance for the hit passes (else of cut-out and translucent casters only).
@@ -135,6 +145,9 @@ public:
                           const shader::LightUniforms& lights, const FilterInputs& inputs, RayFiltering filtering);
     void traceIndirect(gpu::CommandBuffer& commands, const shader::RayHitUniforms& uniforms,
                        const shader::LightUniforms& lights, const FilterInputs& inputs, RayFiltering filtering);
+    // The denoising upscaler's albedos and roughness from the G-buffer of this frame's prepass; prepass false (no
+    // prepass ran): the sky's values everywhere, the G-buffer normal cleared. False without the targets.
+    bool writeDenoiseInputs(gpu::CommandBuffer& commands, bool prepass);
     // Binds what RayHit.hlsli reads (samplers 0..5, the tables and the top level); probes: the grid's atlases
     // (else placeholders).
     void bindHits(gpu::RenderPass& pass, bool probes);
@@ -186,7 +199,7 @@ private:
     RaySamplers m_samplers;
     bool m_available = false;
     bool m_lighting = false;
-    gpu::GraphicsPipeline m_tracePipeline, m_traceLocalPipeline, m_denoisePipeline;
+    gpu::GraphicsPipeline m_tracePipeline, m_traceLocalPipeline, m_denoisePipeline, m_denoiseInputsPipeline;
     gpu::GraphicsPipeline m_reflectPipeline, m_indirectPipeline, m_probeTracePipeline, m_probeIrradiancePipeline,
         m_probeDistancePipeline;
     TemporalFilter m_maskFilter, m_localFilter, m_reflectionFilter, m_indirectFilter;
@@ -196,11 +209,14 @@ private:
     int m_depthIndex = 0;
     bool m_recreated = false;  // the targets were made since the last frame
     bool m_frameReset = false; // this frame has no history
-    gpu::Texture m_gbufferNormal, m_gbufferAlbedo;
+    gpu::Texture m_gbufferNormal, m_gbufferAlbedo, m_diffuseAlbedo, m_specularAlbedo, m_roughness;
     gpu::Texture m_raw, m_mask, m_localRaw, m_local, m_reflectionsRaw, m_reflections, m_indirectRaw, m_indirect;
 
     gpu::AccelerationStructure m_top;
     std::vector<gpu::RayInstance> m_instances;
+    std::vector<const gpu::AccelerationStructure*> m_topBottoms; // per instance, of the top level's last build
+    std::uint32_t m_topRefits = 0;                               // since that build
+    std::uint64_t m_structureBytes = 0;                          // the acceleration structures in use
     // The meshes' vertices and indices, and per instance id what a hit reads.
     std::vector<TableMesh> m_tableMeshes;
     std::uint64_t m_tableScene = 0; // SceneImpl::serial of the scene the tables were copied from
