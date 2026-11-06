@@ -10,7 +10,10 @@
 //   fragment: uniform 0 FrameUniforms, uniform 1 LightUniforms, uniform 2 MaterialUniforms,
 //             sampler 0 the sun's shadow cascades (Texture2DArray<float>, read with Gather),
 //             samplers 1..4 the material's textures 0..3,
-//             sampler 5 the cascades' transmittance of translucent casters (Texture2DArray<float4>)
+//             sampler 5 the cascades' transmittance of translucent casters (Texture2DArray<float4>),
+//             samplers 6..9 the ray-traced sun visibility and occlusion, reflections, indirect light and local light
+//             shadows at the render size, samplers 10 and 11 the probe grid's irradiance and distance atlases
+//             (each read only where FrameUniforms::options.w says so)
 
 #include "quench/Shared.h"
 
@@ -44,13 +47,23 @@ struct QUENCH_ALIGN16 FrameUniforms {
                           // w: sun scattering (0..1)
     float4 fogColor;      // rgb: fog radiance away from the sun, w: maximum fog amount (0..1)
     float4 screen;        // xy: render size (pixels), zw: 1 / render size
-    // x: exposure, y: frame index, z: TAA jitter on (0/1), w: the ray-traced mask on fragment sampler 6 (bit 0: its
-    // rgb is the sun's visibility, in place of the shadow maps; bit 1: its alpha is the ambient occlusion; 0: unread)
+    // x: exposure, y: frame index, z: TAA jitter on (0/1), w: what the ray-traced textures hold (0: none is read):
+    // bit 0: sampler 6's rgb is the sun's visibility (in place of the shadow maps), bit 1: its alpha is the ambient
+    // occlusion, bit 2: sampler 9 holds the shadows of the local lights whose LocalLight::cone.y is non-zero, bit 3:
+    // sampler 7 the reflections (rgb radiance, a: weight), bit 4: sampler 8 the indirect light (rgb, irradiance /
+    // pi), bit 5: the probe grid (samplers 10 and 11, probeGrid) lights what bit 4 does not.
     float4 options;
     // Translucent casters (render::ShadowMode::Translucent) in the transmittance maps: x: the cascades that have them
     // (bit n: cascade n; 0: none, the maps are not read), y: 1 / transmittance map size, zw: unused.
     float4 shadowTransmittance;
     float4 transmittanceBias; // per cascade: how far (shadow depth) a receiver lies behind a caster before it is tinted
+    // The probe grid (quench/Probes.hlsli): xyz: the cell of its first probe (a probe sits at cell * spacing), w:
+    // spacing (m).
+    float4 probeGrid;
+    float4 probeCounts; // xyz: probes per axis, w: irradiance texels per probe side (with a one-texel border)
+    float4 probeAtlas;  // x: distance texels per probe side (with the border), y: the sampling bias (m), zw: unused
+    // x: the roughness above which surfaces reflect the sky instead of the traced reflections, yzw: unused
+    float4 rayLighting;
 };
 
 // One registered instance in the frame's instance buffer.

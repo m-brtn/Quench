@@ -2,8 +2,8 @@
 #define QUENCH_SURFACE_ENTRIES_HLSLI
 
 // The entry points of a surface shader (quench/Surface.hlsli): surface_vs, surface_fs, surface_shadow_vs,
-// surface_shadow_fs and surface_transmittance_fs. Include it after the surface function; QUENCH_SURFACE names it
-// (default: quenchStandardSurface).
+// surface_shadow_fs, surface_transmittance_fs and surface_gbuffer_fs. Include it after the surface function;
+// QUENCH_SURFACE names it (default: quenchStandardSurface).
 
 #include "quench/Surface.hlsli"
 
@@ -79,6 +79,25 @@ float4 surface_fs(QuenchVaryings v, bool front : SV_IsFrontFace) : SV_Target0 {
     const float3 lit = quenchShade(s, i);
     const float4 fog = fogAt(v.world, quenchFrame.cameraPos.xyz);
     return float4(lerp(lit, fog.rgb, fog.a), saturate(s.opacity));
+}
+#endif
+
+#if defined(QUENCH_ENTRY_surface_gbuffer_fs)
+// The ray tracing prepass with a G-buffer (ray-traced reflections and indirect light, the denoising upscaler): the
+// surface's shading normal and roughness, its albedo and metallic, cut out as in the HDR pass.
+struct QuenchGbuffer {
+    float4 normal : SV_Target0; // xyz: unit shading normal (world), w: roughness
+    float4 albedo : SV_Target1; // rgb: albedo, a: metallic
+};
+
+QuenchGbuffer surface_gbuffer_fs(QuenchVaryings v, bool front : SV_IsFrontFace) {
+    const QuenchSurfaceInput i = quenchSurfaceInput(v, front, normalize(quenchFrame.cameraPos.xyz - v.world));
+    const QuenchSurface s = QUENCH_SURFACE(i);
+    if (quenchMaterial.surface.z > 0.0 && s.opacity < quenchMaterial.surface.z) discard;
+    QuenchGbuffer o;
+    o.normal = float4(s.normal, saturate(s.roughness));
+    o.albedo = float4(saturate(s.albedo), saturate(s.metallic));
+    return o;
 }
 #endif
 

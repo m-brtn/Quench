@@ -1,6 +1,7 @@
 #include <quench/render/Renderer.h>
 
 #include "Effects.h"
+#include "PathTracer.h"
 #include "RayTracing.h"
 #include "SceneImpl.h"
 #include "shaders/PostUniforms.h"
@@ -10,6 +11,7 @@
 #include <quench/render/Projection.h>
 
 #include <render_frame_shaders.h>
+#include <render_raylight_shaders.h>
 #include <render_raytrace_shaders.h>
 #include <render_skin_shaders.h>
 #include <render_standard_shaders.h>
@@ -52,6 +54,9 @@ constexpr float kRayNormalOffset = 0.002f;
 constexpr int kRayDenoiseShadowRadius = 1;    // pixels: a 3 x 3 box (0 for hard shadows)
 constexpr int kRayDenoiseOcclusionRadius = 2; // pixels: a 5 x 5 box
 constexpr float kRayDenoiseTolerance = 0.02f; // relative view depth: neighbours further apart are other surfaces
+// Reflection, indirect and probe rays: how far they look (m), and the probes' sampling bias per meter of spacing.
+constexpr float kRayLightLength = 1000.0f;
+constexpr float kProbeBias = 0.3f;
 
 constexpr gpu::VertexBufferLayout kVertexLayout{.slot = 0, .stride = sizeof(Vertex)};
 constexpr gpu::VertexAttribute kVertexAttributes[] = {
@@ -105,6 +110,7 @@ struct SurfaceEntry {
     const ShaderBlob* shadowVertex = nullptr;
     const ShaderBlob* shadowFragment = nullptr;        // null: the standard surface's
     const ShaderBlob* transmittanceFragment = nullptr; // null: the standard surface's
+    const ShaderBlob* gbufferFragment = nullptr;       // null: the standard surface's
     std::string name;
     std::array<gpu::GraphicsPipeline, kVariants> pipelines;
     std::array<bool, kVariants> failed{};
@@ -117,6 +123,9 @@ struct SurfaceEntry {
     // The ray tracing prepass (camera depth): [doubleSided]; with shadowVertex, and of cut-out materials.
     std::array<gpu::GraphicsPipeline, 2> depthPipelines, depthMaskPipelines;
     std::array<bool, 2> depthFailed{}, depthMaskFailed{};
+    // The prepass with the G-buffer (traced reflections and indirect light): [doubleSided].
+    std::array<gpu::GraphicsPipeline, 2> gbufferPipelines;
+    std::array<bool, 2> gbufferFailed{};
 };
 
 struct PassEntry {
@@ -185,6 +194,36 @@ float maxScale(const glm::mat4& m) {
 }
 
 bool isSrgb(TextureFormat format) { return gpu::formatInfo(format).srgb; }
+
+// A different rotation every frame (the probe rays): an axis and an angle from a hash of the frame.
+glm::mat4 frameRotation(std::uint64_t frame) {
+    const auto hash = [](std::uint32_t v) {
+        v = v * 747796405u + 2891336453u;
+        v = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
+        return float((v >> 22u) ^ v) / 4294967296.0f;
+    };
+    const auto f = std::uint32_t(frame);
+    const float z = hash(f * 3u) * 2.0f - 1.0f, a = hash(f * 3u + 1u) * 6.2831853f,
+                angle = hash(f * 3u + 2u) * 6.2831853f;
+    const float r = std::sqrt(std::max(1.0f - z * z, 0.0f));
+    const glm::vec3 axis(r * std::cos(a), z, r * std::sin(a));
+    const float c = std::cos(angle), s = std::sin(angle), t = 1.0f - c;
+    glm::mat4 m(1.0f);
+    m[0] = glm::vec4(t * axis.x * axis.x + c, t * axis.x * axis.y + s * axis.z, t * axis.x * axis.z - s * axis.y, 0.0f);
+    m[1] = glm::vec4(t * axis.x * axis.y - s * axis.z, t * axis.y * axis.y + c, t * axis.y * axis.z + s * axis.x, 0.0f);
+    m[2] = glm::vec4(t * axis.x * axis.z + s * axis.y, t * axis.y * axis.z - s * axis.x, t * axis.z * axis.z + c, 0.0f);
+    return m;
+}
+
+// FNV-1a over plain values: what the path tracer's mean depends on.
+struct StateHash {
+    std::uint64_t value = 1469598103934665603ull;
+    template <class T>
+    void add(const T& v) {
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&v);
+        for (std::size_t i = 0; i < sizeof(T); ++i) value = (value ^ bytes[i]) * 1099511628211ull;
+    }
+};
 
 } // namespace
 
@@ -266,10 +305,13 @@ struct RendererImpl {
     std::vector<gpu::Fence> skinFences; // oldest first
     float skinningGpuMs = -1.0f;
 
-    // Ray tracing (SunShadows::RayTraced, AmbientOcclusion::RayTraced)
+    // Ray tracing (the RayTraced effects, the probe grid and the path tracer)
     RayTracing rayTracing;
     bool rayTracingTried = false;
     std::vector<RayCaster> rayCasters;
+    PathTracer pathTracer;
+    bool pathTracerTried = false;
+    bool targetVelocity = false; // the velocity target was made (TAA, or the temporal ray denoiser)
 
     // Temporal state
     std::uint64_t frameIndex = 0;
@@ -287,6 +329,8 @@ struct RendererImpl {
     const gpu::GraphicsPipeline* surfaceMaskPipeline(SurfaceEntry& surface);
     const gpu::GraphicsPipeline* surfaceTransmittancePipeline(SurfaceEntry& surface, bool doubleSided);
     const gpu::GraphicsPipeline* surfaceDepthPipeline(SurfaceEntry& surface, bool doubleSided, bool cutOut);
+    const gpu::GraphicsPipeline* surfaceGbufferPipeline(SurfaceEntry& surface, bool doubleSided);
+    bool rayVelocity() const; // the temporal ray denoiser needs motion vectors
     const gpu::GraphicsPipeline* outputPipeline(std::map<TextureFormat, gpu::GraphicsPipeline>& cache,
                                                 const char* entry, TextureFormat format);
     bool ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32_t ow, std::uint32_t oh, TextureFormat ldrTarget);
@@ -346,6 +390,7 @@ Result<void> RendererImpl::init() {
     support.transmittanceArray = supports(transmittanceFormat, gpu::TextureType::Texture2DArray, targetSampled);
     support.rayTracing =
         caps.rayTracing && support.sampledDepth && shaders::render_raytrace.find("rt_shadow_fs") != nullptr;
+    support.rayLighting = support.rayTracing && shaders::render_raylight.find("rt_reflect_fs") != nullptr;
     support.spatialUpscaling = caps.spatialUpscaling;
     support.temporalUpscaling = caps.temporalUpscaling;
     if (!supports(ldrFormat, gpu::TextureType::Texture2D, targetSampled))
@@ -515,6 +560,7 @@ Result<void> RendererImpl::init() {
     standard.fragment = shaders::render_standard.find("surface_fs");
     standard.shadowFragment = shaders::render_standard.find("surface_shadow_fs");
     standard.transmittanceFragment = shaders::render_standard.find("surface_transmittance_fs");
+    standard.gbufferFragment = shaders::render_standard.find("surface_gbuffer_fs");
     standard.name = "standard";
     if (!surfacePipeline(standard, variantOf(BlendMode::Opaque, false)))
         return Error{"render: the standard surface pipeline failed (logged)"};
@@ -545,12 +591,39 @@ void RendererImpl::applySettings() {
         fallbacks.push_back(std::format("ray-traced shadows: {}; shadow maps", noRays));
     if (settings.ambientOcclusion == AmbientOcclusion::RayTraced && next.ambientOcclusion != settings.ambientOcclusion)
         fallbacks.push_back(std::format("ray-traced ambient occlusion: {}; none", noRays));
+    if (settings.localLightShadows > 0 && next.localLightShadows == 0)
+        fallbacks.push_back(std::format("ray-traced local light shadows: {}; unshadowed", noRays));
+    const char* noLighting = support.rayTracing ? "this build has no ray query shaders for traced lighting" : noRays;
+    if (settings.reflections == Reflections::RayTraced && next.reflections != Reflections::RayTraced)
+        fallbacks.push_back(std::format("ray-traced reflections: {}; the sky's", noLighting));
+    if (settings.indirectLight != IndirectLight::Sky && next.indirectLight == IndirectLight::Sky)
+        fallbacks.push_back(std::format("{}: {}; the sky's ambient light",
+                                        settings.indirectLight == IndirectLight::Probes ? "the probe grid"
+                                                                                        : "ray-traced indirect light",
+                                        noLighting));
+    if (settings.pathTracer && !next.pathTracer)
+        fallbacks.push_back(std::format("path tracer: {}; the real-time frame", noLighting));
+    if (settings.rayDenoiser == RayDenoiser::Temporal && next.rayDenoiser != RayDenoiser::Temporal)
+        fallbacks.emplace_back("temporal ray denoiser: needs a sampled depth buffer and Rg16Float targets; spatial");
     if (settings.upscaling == Upscaling::Spatial && next.upscaling != Upscaling::Spatial && settings.renderScale < 1.0f)
         fallbacks.emplace_back("spatial upscaling: not on this device (gpu::Caps::spatialUpscaling); bilinear");
-    if (settings.upscaling == Upscaling::Temporal && next.upscaling != Upscaling::Temporal)
+    if (settings.upscaling == Upscaling::TemporalDenoised && next.upscaling != Upscaling::TemporalDenoised &&
+        !next.pathTracer)
+        fallbacks.emplace_back(next.upscaling == Upscaling::Temporal
+                                   ? "denoising upscaler: not on this device (gpu::Caps::denoisedUpscaling) or no ray "
+                                     "tracing; temporal upscaling with the engine's denoiser"
+                                   : "denoising upscaler: not on this device (gpu::Caps::denoisedUpscaling, "
+                                     "temporalUpscaling, TAA's inputs); bilinear");
+    if (settings.upscaling == Upscaling::Temporal && next.upscaling != Upscaling::Temporal && !next.pathTracer)
         fallbacks.emplace_back("temporal upscaling: not on this device (gpu::Caps::temporalUpscaling, TAA's inputs); "
                                "bilinear");
-    if (settings.antiAliasing != next.antiAliasing && next.upscaling != Upscaling::Temporal)
+    if (next.pathTracer &&
+        (settings.upscaling == Upscaling::Temporal || settings.upscaling == Upscaling::TemporalDenoised))
+        fallbacks.emplace_back("temporal upscaling: not with the path tracer (it accumulates its own samples); "
+                               "spatial or bilinear");
+    const bool temporalUpscaler =
+        next.upscaling == Upscaling::Temporal || next.upscaling == Upscaling::TemporalDenoised;
+    if (settings.antiAliasing != next.antiAliasing && !temporalUpscaler && !next.pathTracer)
         fallbacks.emplace_back("anti-aliasing: TAA needs a sampled depth buffer and Rg16Float targets; using FXAA");
     if (settings.shadowCascades > 0 && next.shadowCascades == 0 && next.sunShadows == SunShadows::ShadowMaps)
         fallbacks.emplace_back("shadows off: no depth texture array the device can sample and render to");
@@ -712,6 +785,43 @@ const gpu::GraphicsPipeline* RendererImpl::surfaceDepthPipeline(SurfaceEntry& su
     return &out;
 }
 
+// The prepass with the G-buffer: the surface's vertex function and its G-buffer function (or the standard surface's,
+// which reads the material), cut-outs discarded.
+const gpu::GraphicsPipeline* RendererImpl::surfaceGbufferPipeline(SurfaceEntry& surface, bool doubleSided) {
+    const std::size_t i = doubleSided ? 1 : 0;
+    if (surface.gbufferPipelines[i]) return &surface.gbufferPipelines[i];
+    if (surface.gbufferFailed[i]) return nullptr;
+    const std::string name = std::format("surface {} gbuffer ({})", surface.name, i);
+    const gpu::ColorTargetDesc colors[] = {{rayTracing.gbufferNormalFormat()}, {rayTracing.gbufferAlbedoFormat()}};
+    Result<gpu::GraphicsPipeline> p = createPipeline({
+        .vertexShader = surface.vertex,
+        .fragmentShader = surface.gbufferFragment ? surface.gbufferFragment : standard.gbufferFragment,
+        .vertexBuffers = {&kVertexLayout, 1},
+        .vertexAttributes = kVertexAttributes,
+        .rasterizer = {.cull = doubleSided ? gpu::CullMode::None : gpu::CullMode::Back},
+        .depth = {.test = true, .write = true},
+        .colorTargets = colors,
+        .depthFormat = depthFormat,
+        .name = name,
+    });
+    if (!p) {
+        log::error("render", "pipeline '{}': {}", name, p.error());
+        surface.gbufferFailed[i] = true;
+        return nullptr;
+    }
+    surface.gbufferPipelines[i] = std::move(*p);
+    return &surface.gbufferPipelines[i];
+}
+
+bool RendererImpl::rayVelocity() const {
+    const bool traced = effects.sunShadows == SunShadows::RayTraced ||
+                        effects.ambientOcclusion == AmbientOcclusion::RayTraced || effects.localLightShadows > 0 ||
+                        effects.reflections == Reflections::RayTraced ||
+                        effects.indirectLight == IndirectLight::RayTraced;
+    return traced && !effects.pathTracer && effects.rayDenoiser == RayDenoiser::Temporal &&
+           effects.upscaling != Upscaling::TemporalDenoised && support.velocityTarget;
+}
+
 const gpu::GraphicsPipeline* RendererImpl::outputPipeline(std::map<TextureFormat, gpu::GraphicsPipeline>& cache,
                                                           const char* entry, TextureFormat format) {
     if (auto it = cache.find(format); it != cache.end()) return it->second ? &it->second : nullptr;
@@ -731,10 +841,11 @@ const gpu::GraphicsPipeline* RendererImpl::outputPipeline(std::map<TextureFormat
 bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32_t ow, std::uint32_t oh,
                                  TextureFormat ldrTarget) {
     const bool sizeSame = rw == renderWidth && rh == renderHeight && ow == outputWidth && oh == outputHeight;
-    const bool effectsSame = targetEffects.antiAliasing == effects.antiAliasing &&
-                             targetEffects.shadowCascades == effects.shadowCascades &&
-                             targetEffects.bloom == effects.bloom && targetEffects.upscaling == effects.upscaling &&
-                             targetShadowSize == settings.shadowMapSize && targetLdrFormat == ldrTarget;
+    const bool needVelocity = effects.antiAliasing == AntiAliasing::Taa || rayVelocity();
+    const bool effectsSame =
+        targetEffects.antiAliasing == effects.antiAliasing && targetEffects.shadowCascades == effects.shadowCascades &&
+        targetEffects.bloom == effects.bloom && targetEffects.upscaling == effects.upscaling &&
+        targetShadowSize == settings.shadowMapSize && targetLdrFormat == ldrTarget && targetVelocity == needVelocity;
     if (sizeSame && effectsSame && hdr) return true;
     if (sizeSame && effectsSame && targetsFailed) return false;
     hdr = {};
@@ -758,6 +869,7 @@ bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32
     targetEffects = effects;
     targetShadowSize = settings.shadowMapSize;
     targetLdrFormat = ldrTarget;
+    targetVelocity = needVelocity;
     targetsFailed = true;
 
     const auto create = [this](gpu::Texture& out, const gpu::TextureDesc& desc) {
@@ -776,14 +888,13 @@ bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32
     if (support.sampledDepth) depthUsage |= TextureUsage::Sampled;
     if (!create(depth, {.format = depthFormat, .usage = depthUsage, .width = rw, .height = rh, .name = "render depth"}))
         return false;
+    if (needVelocity &&
+        !create(
+            velocity,
+            {.format = velocityFormat, .usage = targetSampled, .width = rw, .height = rh, .name = "render velocity"}))
+        return false;
     if (effects.antiAliasing == AntiAliasing::Taa) {
-        if (!create(velocity, {.format = velocityFormat,
-                               .usage = targetSampled,
-                               .width = rw,
-                               .height = rh,
-                               .name = "render velocity"}))
-            return false;
-        if (effects.upscaling != Upscaling::Temporal)
+        if (effects.upscaling != Upscaling::Temporal && effects.upscaling != Upscaling::TemporalDenoised)
             for (gpu::Texture& h : history)
                 if (!create(
                         h,
@@ -794,7 +905,8 @@ bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32
         !create(ldr, {.format = ldrTarget, .usage = targetSampled, .width = ow, .height = oh, .name = "render ldr"}))
         return false;
     if (effects.upscaling != Upscaling::Bilinear) {
-        const bool temporal = effects.upscaling == Upscaling::Temporal;
+        const bool temporal =
+            effects.upscaling == Upscaling::Temporal || effects.upscaling == Upscaling::TemporalDenoised;
         Result<gpu::Upscaler> u =
             device->createUpscaler({.type = temporal ? gpu::UpscalerType::Temporal : gpu::UpscalerType::Spatial,
                                     .colorFormat = hdrFormat,
@@ -972,8 +1084,10 @@ bool RendererImpl::skin(gpu::CommandBuffer& commands) {
     const std::uint32_t vertices = grow(skinnedCapacity, skinnedVertices);
     if (vertices != skinnedCapacity || !skinned[0]) {
         for (int i = 0; i < 2; ++i) {
+            // Also read by the hit shading of ray-traced lighting (the posed normals).
             Result<gpu::Buffer> b =
-                device->createBuffer({.usage = gpu::BufferUsage::Vertex | gpu::BufferUsage::ComputeStorageWrite,
+                device->createBuffer({.usage = gpu::BufferUsage::Vertex | gpu::BufferUsage::ComputeStorageWrite |
+                                               gpu::BufferUsage::GraphicsStorageRead,
                                       .size = vertices * std::uint32_t(sizeof(Vertex)),
                                       .name = i == 0 ? "render skinned vertices 0" : "render skinned vertices 1"});
             if (!b) {
@@ -1141,8 +1255,12 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     // taa: the jittered projection and motion vectors; resolved by TAA or by the temporal upscaler.
     const bool taa = effects.antiAliasing == AntiAliasing::Taa;
     const bool upscaling = effects.upscaling != Upscaling::Bilinear;
-    const bool taaResolve = taa && effects.upscaling != Upscaling::Temporal;
+    const bool taaResolve =
+        taa && effects.upscaling != Upscaling::Temporal && effects.upscaling != Upscaling::TemporalDenoised;
     const bool fxaa = effects.antiAliasing == AntiAliasing::Fxaa;
+    // Motion vectors: for TAA or the temporal upscaler, or for the temporal ray denoiser (drawn after the prepass).
+    const bool rayTemporal = rayVelocity() && velocity;
+    const bool motion = (taa || rayTemporal) && velocity;
     // The image after anti-aliasing and upscaling.
     const std::uint32_t iw = upscaling ? ow : rw, ih = upscaling ? oh : rh;
     commands.pushDebugGroup("quench render");
@@ -1191,6 +1309,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     struct Candidate {
         float score;
         shader::LocalLight light;
+        bool shadows = false; // LightDesc::castsShadows
     };
     std::vector<Candidate> candidates;
     for (std::uint32_t i = 0; i < scene.lights.capacity(); ++i) {
@@ -1215,11 +1334,11 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         local.color = glm::vec4(color, l.type == LightType::Spot ? 2.0f : 1.0f);
         const float cosOuter = std::cos(l.outerAngle), cosInner = std::cos(std::min(l.innerAngle, l.outerAngle));
         local.direction = glm::vec4(dir, cosOuter);
-        local.cone = glm::vec4(1.0f / std::max(cosInner - cosOuter, 1e-4f), 0.0f, 0.0f, 0.0f);
-        candidates.push_back({std::max(0.0f, glm::length(l.position - cameraPos) - l.range), local});
+        local.cone = glm::vec4(1.0f / std::max(cosInner - cosOuter, 1e-4f), 0.0f, std::max(l.sourceRadius, 0.0f), 0.0f);
+        candidates.push_back({std::max(0.0f, glm::length(l.position - cameraPos) - l.range), local, l.castsShadows});
     }
-    std::sort(candidates.begin(), candidates.end(),
-              [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
+    std::stable_sort(candidates.begin(), candidates.end(),
+                     [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
     shader::LightUniforms lu{};
     const auto lightCount = std::min<std::size_t>(candidates.size(), QUENCH_MAX_LIGHTS);
     for (std::size_t i = 0; i < lightCount; ++i) lu.lights[i] = candidates[i].light;
@@ -1237,19 +1356,56 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     const glm::vec3 sunColor = sun ? sun->desc.color * sun->desc.intensity : glm::vec3(0.0f);
     const bool sunLights = std::max({sunColor.r, sunColor.g, sunColor.b}) > 0.0f;
     const bool sunShadows = sunLights && sun->desc.castsShadows && towardSun.y > -0.1f;
-    const int cascades = sunShadows ? effects.shadowCascades : 0;
-    const bool rayShadows = sunShadows && effects.sunShadows == SunShadows::RayTraced;
-    const bool rayOcclusion = effects.ambientOcclusion == AmbientOcclusion::RayTraced;
-    bool rayTraced = rayShadows || rayOcclusion;
-    if (rayTraced && !rayTracing.available()) {
-        if (!rayTracingTried) rayTracing.init(*device, pipelineCount);
+    // The path tracer replaces the frame's lighting: none of the other traced effects, no shadow maps.
+    bool pathTracing = effects.pathTracer;
+    const int cascades = sunShadows && !pathTracing ? effects.shadowCascades : 0;
+    bool rayShadows = sunShadows && effects.sunShadows == SunShadows::RayTraced && !pathTracing;
+    bool rayOcclusion = effects.ambientOcclusion == AmbientOcclusion::RayTraced && !pathTracing;
+    int localShadows = pathTracing ? 0 : effects.localLightShadows;
+    bool rayReflections = !pathTracing && effects.reflections == Reflections::RayTraced;
+    bool probes = !pathTracing && effects.indirectLight != IndirectLight::Sky;
+    bool rayIndirect = !pathTracing && effects.indirectLight == IndirectLight::RayTraced;
+    const auto anyTraced = [&] {
+        return rayShadows || rayOcclusion || localShadows > 0 || rayReflections || probes || pathTracing;
+    };
+    if (anyTraced() && !rayTracing.available()) {
+        if (!rayTracingTried)
+            rayTracing.init(*device, pipelineCount,
+                            {&pointClamp, &linearClamp, &materialSampler, &white, &dummyTransmittance});
         rayTracingTried = true;
         if (!rayTracing.available()) {
-            support.rayTracing = false;
+            support.rayTracing = support.rayLighting = false;
             applySettings();
-            rayTraced = false;
+            rayShadows = rayOcclusion = rayReflections = probes = rayIndirect = pathTracing = false;
+            localShadows = 0;
         }
     }
+    if ((rayReflections || probes || pathTracing) && !rayTracing.lighting()) {
+        support.rayLighting = false; // the pipelines failed (logged)
+        applySettings();
+        rayReflections = probes = rayIndirect = pathTracing = false;
+    }
+    if (pathTracing && !pathTracer.ready()) {
+        if (!pathTracerTried && !pathTracer.init(*device, rayTracing, pipelineCount)) {
+            support.rayLighting = false; // logged; the real-time frame from the next one
+            applySettings();
+        }
+        pathTracerTried = true;
+        if (!pathTracer.ready()) pathTracing = false;
+    }
+    if (!pathTracing) pathTracer.release();
+    // Local lights with ray-traced shadows: the nearest ones that cast shadows, one channel each.
+    int channels = 0;
+    for (std::size_t i = 0; i < lightCount && channels < localShadows; ++i) {
+        shader::LocalLight& l = lu.lights[i];
+        if (int(l.color.w) == 0 || !candidates[i].shadows) continue;
+        l.cone.y = float(++channels);
+    }
+    localShadows = channels;
+    bool rayTraced = anyTraced();
+    // Hits are shaded (not only tested for shadows): every visible instance is in the top level, with its material.
+    const bool hitData = rayReflections || probes || pathTracing;
+    const bool gbuffer = rayReflections || rayIndirect;
     if (!rayTraced) rayTracing.releaseTargets();
     Cascades shadow;
     if (cascades > 0)
@@ -1312,10 +1468,11 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             if (pipeline) {
                 const bool skinnedHere = skinnedOffset(*inst, i, *mesh) != kNotSkinned;
                 Item item{0, glm::length(center - cameraPos), i, pipeline};
-                if (rayTraced && m.blend == BlendMode::Opaque) {
+                if (rayTraced && !pathTracing && m.blend == BlendMode::Opaque) {
                     const bool cutOut = m.alphaCutoff > 0.0f;
-                    item.depth = surfaceDepthPipeline(*surface, m.doubleSided, cutOut);
-                    item.depthMaterial = cutOut;
+                    item.depth = gbuffer ? surfaceGbufferPipeline(*surface, m.doubleSided)
+                                         : surfaceDepthPipeline(*surface, m.doubleSided, cutOut);
+                    item.depthMaterial = gbuffer || cutOut;
                 }
                 if (m.blend == BlendMode::Opaque) {
                     item.key = (std::uint64_t(surfaceIndex & 0xfff) << 52) | (std::uint64_t(variant) << 48) |
@@ -1325,18 +1482,23 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 } else {
                     transparent.push_back(item);
                 }
-                if (taa && (inst->moved || (skinnedHere && inst->posed))) moved.push_back(item);
+                if (motion && (inst->moved || (skinnedHere && inst->posed))) moved.push_back(item);
             }
         } else {
             ++stats.culled;
         }
         const ShadowMode shadowMode = shadowModeOf(m);
-        if (rayTraced && inst->desc.castsShadows && shadowMode != ShadowMode::None) {
-            // Every caster is in the top level; skinned ones only near the camera (they are posed for it).
+        const bool caster = inst->desc.castsShadows && shadowMode != ShadowMode::None;
+        const bool seen = hitData && m.blend != BlendMode::Additive;
+        if (rayTraced && (caster || seen)) {
+            // Every caster is in the top level (and with hit shading every surface rays can see); skinned ones only
+            // near the camera (they are posed for it).
             const bool skinnedMesh = mesh->jointCount > 0 && skinPipeline;
             if (!skinnedMesh || glm::length(center - cameraPos) - radius < settings.shadowDistance) {
                 if (skinnedMesh) skinnedOffset(*inst, i, *mesh);
-                rayCasters.push_back({i, inst, mesh, material, {}, shadowMode == ShadowMode::Translucent});
+                const bool translucent =
+                    caster ? shadowMode == ShadowMode::Translucent : m.blend == BlendMode::AlphaBlend;
+                rayCasters.push_back({i, inst, mesh, material, {}, caster, translucent, m.doubleSided});
             }
         }
         if (cascades == 0 || !inst->desc.castsShadows || shadowMode == ShadowMode::None) continue;
@@ -1439,18 +1601,46 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         return;
     }
 
-    // ---- 0. Ray tracing: the acceleration structures of the casters (skinned ones after the skinning pass)
-    bool rayMask = false;
+    // ---- 0. Ray tracing: the acceleration structures (skinned ones after the skinning pass) and the tables
+    bool rayMask = false; // the top level and the prepass targets are ready
     if (rayTraced) {
         RayTracingStats rs;
+        const RayTargets targets{.gbuffer = gbuffer,
+                                 .local = localShadows > 0,
+                                 .reflections = rayReflections,
+                                 .indirect = rayIndirect,
+                                 .probes = probes,
+                                 .temporal = rayTemporal};
         commands.beginTiming("accel");
-        rayMask = rayTracing.ensureTargets(rw, rh, depthFormat) && rayTracing.build(commands, scene, rayCasters, rs);
+        rayMask = rayTracing.ensureTargets(rw, rh, depthFormat, targets);
+        if (rayMask) {
+            rayTracing.beginFrame();
+            const gpu::Buffer& posed = skinned[frameIndex & 1];
+            rayMask = rayTracing.build(commands, scene, rayCasters, hitData,
+                                       skinJobs.empty() || !posed ? gpu::BufferRef{} : gpu::BufferRef(posed), rs);
+        }
         commands.endTiming();
         stats.rayInstances = rs.instances;
         stats.rayBuilds = rs.builds;
         stats.rayRefits = rs.refits;
+        stats.rayMemoryBytes = rs.memoryBytes;
+        stats.hitTextures = rs.hitTextures;
     }
-    fu.options.w = rayMask ? float((rayShadows ? 1 : 0) | (rayOcclusion ? 2 : 0)) : 0.0f;
+    const bool pathFrame = pathTracing && rayMask && pathTracer.ensureTargets(rw, rh);
+    std::uint32_t rayBits = 0;
+    if (rayMask && !pathFrame) {
+        rayBits = (rayShadows ? 1u : 0u) | (rayOcclusion ? 2u : 0u) | (localShadows > 0 ? 4u : 0u) |
+                  (rayReflections ? 8u : 0u) | (rayIndirect ? 16u : 0u) | (probes ? 32u : 0u);
+        if (probes) {
+            const ProbeGridState grid =
+                rayTracing.placeProbes(view.probeCenter.value_or(cameraPos), settings.probeSpacing);
+            fu.probeGrid = glm::vec4(glm::vec3(grid.first), grid.spacing);
+            fu.probeCounts = glm::vec4(glm::vec3(grid.counts), float(RayTracing::kIrradianceTile));
+            fu.probeAtlas = glm::vec4(float(RayTracing::kDistanceTile), kProbeBias * grid.spacing, 0.0f, 0.0f);
+        }
+        fu.rayLighting = glm::vec4(std::clamp(settings.reflectionRoughness, 0.05f, 1.0f), 0.0f, 0.0f, 0.0f);
+    }
+    fu.options.w = float(rayBits);
     commands.pushUniforms(kVertex, 0, fu);
     commands.pushUniforms(kFragment, 0, fu);
     commands.pushUniforms(kFragment, 1, lu);
@@ -1495,13 +1685,48 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     const gpu::BufferRef instances(instanceBuffer);
     const gpu::TextureSamplerBinding noShadowBinding{dummyShadow, shadowSampler};
 
-    // ---- 0. Ray tracing: the camera's depth of the opaque surfaces, traced toward the sun and over the hemisphere
-    if (rayMask) {
+    // Motion vectors from a depth of this frame: the camera's motion, then the instances that moved.
+    bool velocityDrawn = false;
+    const auto drawVelocity = [&](const gpu::Texture& depthTexture) {
+        {
+            const gpu::ColorTarget color{.texture = velocity, .cycle = true};
+            gpu::RenderPass pass = commands.beginRenderPass(color);
+            if (pass) {
+                pass.bindPipeline(velocityPipeline);
+                pass.bindSampler(kFragment, 0, {depthTexture, pointClamp});
+                pass.draw(3);
+                pass.end();
+            }
+        }
+        if (!velocityBatches.empty()) {
+            const gpu::ColorTarget color{.texture = velocity, .load = gpu::LoadOp::Load};
+            const gpu::DepthTarget dt{.texture = depthTexture, .load = gpu::LoadOp::Load, .store = gpu::StoreOp::Store};
+            gpu::RenderPass pass = commands.beginRenderPass(color, &dt);
+            if (pass) {
+                const gpu::BufferRef movedBuffer(velocityBuffer);
+                pass.bindStorageBuffers(kVertex, 0, {&movedBuffer, 1});
+                std::uint32_t draws = 0;
+                drawBatches(pass, velocityBatches, -1, draws);
+                pass.end();
+            }
+        }
+        velocityDrawn = true;
+    };
+
+    // ---- 0. Ray tracing: the camera's depth (and G-buffer) of the opaque surfaces, then the traced effects
+    shader::RayHitUniforms hu{};
+    hu.params =
+        glm::vec4(std::clamp(settings.reflectionRoughness, 0.05f, 1.0f), kRayNormalOffset, kRayLightLength, 0.0f);
+    hu.rotation = frameRotation(frameIndex);
+    if (rayMask && !pathFrame) {
         commands.beginTiming("prepass");
         {
             const gpu::DepthTarget dt{
                 .texture = rayTracing.depth(), .store = gpu::StoreOp::Store, .clearDepth = 0.0f, .cycle = true};
-            gpu::RenderPass pass = commands.beginRenderPass(std::span<const gpu::ColorTarget>{}, &dt);
+            const gpu::ColorTarget colors[] = {{.texture = rayTracing.gbufferNormal(), .cycle = true},
+                                               {.texture = rayTracing.gbufferAlbedo(), .cycle = true}};
+            gpu::RenderPass pass = commands.beginRenderPass(
+                gbuffer ? std::span<const gpu::ColorTarget>(colors) : std::span<const gpu::ColorTarget>{}, &dt);
             if (pass) {
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
                 pass.bindSampler(kFragment, 0, noShadowBinding);
@@ -1510,6 +1735,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.end();
             }
         }
+        if (rayTemporal) drawVelocity(rayTracing.depth());
         commands.endTiming();
         const float cone = std::clamp(env.sunAngularRadius * std::max(settings.shadowSoftness, 0.0f), 0.0f, 0.2f);
         const shader::RayTracingUniforms ru{
@@ -1519,9 +1745,26 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                       std::max(settings.occlusionRadius, 0.01f), std::clamp(settings.occlusionStrength, 0.0f, 1.0f),
                       0.0f),
             glm::vec4(cone > 0.0f && settings.shadowRays > 0 ? float(kRayDenoiseShadowRadius) : 0.0f,
-                      kRayDenoiseTolerance, rayOcclusion ? float(kRayDenoiseOcclusionRadius) : 0.0f, 0.0f)};
+                      kRayDenoiseTolerance, rayOcclusion ? float(kRayDenoiseOcclusionRadius) : 0.0f, 0.0f),
+            glm::vec4(float(localShadows), 0.0f, 0.0f, 0.0f)};
+        const RayFiltering filtering = effects.upscaling == Upscaling::TemporalDenoised ? RayFiltering::Raw
+                                       : rayTemporal                                    ? RayFiltering::Temporal
+                                                                                        : RayFiltering::Spatial;
+        const FilterInputs inputs{.depth = rayTracing.depth(),
+                                  .previousDepth = rayTracing.previousDepth(),
+                                  .velocity = rayTemporal ? gpu::TextureRef(velocity) : gpu::TextureRef(white),
+                                  .reset = cut};
         commands.beginTiming("raytrace");
-        rayTracing.trace(commands, ru, pointClamp, materialSampler, white);
+        if (rayShadows || rayOcclusion || localShadows > 0)
+            rayTracing.traceShadows(commands, ru, lu, inputs, filtering);
+        if (probes) {
+            rayTracing.updateProbes(commands, hu, lu, cut);
+            stats.probes =
+                std::uint32_t(RayTracing::kProbeCounts.x * RayTracing::kProbeCounts.y * RayTracing::kProbeCounts.z);
+        }
+        hu.params.w = probes && rayTracing.probesValid() ? 1.0f : 0.0f;
+        if (rayReflections) rayTracing.traceReflections(commands, hu, lu, inputs, filtering);
+        if (rayIndirect) rayTracing.traceIndirect(commands, hu, lu, inputs, filtering);
         commands.endTiming();
     }
 
@@ -1575,8 +1818,43 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             hasLaterPasses = true;
     const bool keepDepth = taa || hasLaterPasses;
     const glm::vec3 clear = settings.sky ? glm::vec3(0.0f) : settings.clearColor;
+    if (pathFrame) {
+        // ---- 2. The path tracer's mean in place of the HDR pass (sky, lights and materials as the hits see them)
+        StateHash h;
+        h.add(fu.viewProj);
+        h.add(fu.screen);
+        h.add(fu.skyZenith);
+        h.add(fu.skyHorizon);
+        h.add(fu.skyGround);
+        h.add(fu.sunGlow);
+        h.add(fu.sunDir);
+        h.add(fu.sunColor);
+        h.add(fu.sunDisc);
+        h.add(lu);
+        h.add(scene.serial);
+        h.add(std::clamp(settings.pathBounces, 1, 16));
+        for (const RayCaster& c : rayCasters) {
+            const MaterialDesc& m = c.material->desc;
+            h.add(c.slot);
+            h.add(c.instance->desc.transform);
+            h.add(c.instance->desc.color);
+            h.add(c.instance->desc.mesh);
+            h.add(c.instance->posed);
+            h.add(m.baseColor);
+            h.add(m.emissive);
+            h.add(m.roughness);
+            h.add(m.metallic);
+            h.add(m.alphaCutoff);
+            h.add(m.textures);
+        }
+        const gpu::Texture& radiance = pathTracer.render(commands, rayTracing, hu, lu, h.value, settings.pathBounces,
+                                                         settings.pathSamples, pointClamp);
+        commands.blit(
+            {.source = {.texture = radiance}, .destination = {.texture = hdr}, .filter = gpu::Filter::Nearest});
+        stats.pathSamples = pathTracer.samples();
+    }
     commands.beginTiming("hdr");
-    {
+    if (!pathFrame) {
         const gpu::ColorTarget color{.texture = hdr, .clear = {clear.r, clear.g, clear.b, 1.0f}, .cycle = true};
         const gpu::DepthTarget dt{.texture = depth,
                                   .store = keepDepth ? gpu::StoreOp::Store : gpu::StoreOp::DontCare,
@@ -1589,15 +1867,30 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             const gpu::TextureSamplerBinding transmittanceBinding{
                 transmittanceMask != 0 ? gpu::TextureRef(transmittanceMap) : gpu::TextureRef(dummyTransmittance),
                 linearClamp};
-            // The ray-traced mask is the opaque surfaces' (the prepass depth): transparent ones read white.
-            const gpu::TextureSamplerBinding maskBinding{
-                rayMask ? gpu::TextureRef(rayTracing.mask()) : gpu::TextureRef(white), pointClamp};
-            const gpu::TextureSamplerBinding noMaskBinding{white, pointClamp};
+            // The traced targets are the opaque surfaces' (the prepass depth): transparent ones read white for the
+            // sun's mask and no local shadows, reflections or traced indirect light; the probe grid lights both.
+            const auto traced = [&](std::uint32_t bit, const gpu::Texture& texture) {
+                return gpu::TextureSamplerBinding{
+                    (rayBits & bit) != 0 ? gpu::TextureRef(texture) : gpu::TextureRef(white), pointClamp};
+            };
+            const gpu::TextureSamplerBinding opaqueTraced[] = {
+                traced(3u, rayTracing.mask()), traced(8u, rayTracing.reflections()), traced(16u, rayTracing.indirect()),
+                traced(4u, rayTracing.localShadows())};
+            const gpu::TextureSamplerBinding noTraced[] = {
+                {white, pointClamp}, {white, pointClamp}, {white, pointClamp}, {white, pointClamp}};
+            const bool grid = (rayBits & 32u) != 0;
+            const gpu::TextureSamplerBinding probeBindings[] = {
+                {grid ? gpu::TextureRef(rayTracing.probeIrradiance()) : gpu::TextureRef(white), linearClamp},
+                {grid ? gpu::TextureRef(rayTracing.probeDistance()) : gpu::TextureRef(white), linearClamp}};
+            shader::FrameUniforms transparentFrame = fu;
+            transparentFrame.options.w = float(rayBits & (1u | 2u | 32u));
             const auto bindFrame = [&](bool opaqueSurfaces) {
+                if (!opaqueSurfaces && rayBits != 0) pass.pushUniforms(kFragment, 0, transparentFrame);
                 pass.pushUniforms(kFragment, 1, lu);
                 pass.bindSampler(kFragment, 0, shadowBinding);
                 pass.bindSampler(kFragment, 5, transmittanceBinding);
-                pass.bindSampler(kFragment, 6, opaqueSurfaces ? maskBinding : noMaskBinding);
+                pass.bindSamplers(kFragment, 6, opaqueSurfaces ? opaqueTraced : noTraced);
+                pass.bindSamplers(kFragment, 10, probeBindings);
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
             };
             bindFrame(true);
@@ -1622,28 +1915,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     gpu::TextureRef image = hdr;
     if (taa) {
         commands.beginTiming("taa");
-        {
-            const gpu::ColorTarget color{.texture = velocity, .cycle = true};
-            gpu::RenderPass pass = commands.beginRenderPass(color);
-            if (pass) {
-                pass.bindPipeline(velocityPipeline);
-                pass.bindSampler(kFragment, 0, {depth, pointClamp});
-                pass.draw(3);
-                pass.end();
-            }
-        }
-        if (!velocityBatches.empty()) {
-            const gpu::ColorTarget color{.texture = velocity, .load = gpu::LoadOp::Load};
-            const gpu::DepthTarget dt{.texture = depth, .load = gpu::LoadOp::Load, .store = gpu::StoreOp::Store};
-            gpu::RenderPass pass = commands.beginRenderPass(color, &dt);
-            if (pass) {
-                const gpu::BufferRef movedBuffer(velocityBuffer);
-                pass.bindStorageBuffers(kVertex, 0, {&movedBuffer, 1});
-                std::uint32_t draws = 0;
-                drawBatches(pass, velocityBatches, -1, draws);
-                pass.end();
-            }
-        }
+        if (!velocityDrawn) drawVelocity(depth);
         const bool reset = cut || !historyValid;
         const int write = historyIndex ^ 1;
         const gpu::ColorTarget color{
@@ -1674,7 +1946,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     }
     if (upscaling) {
         gpu::UpscaleDesc u{.color = image, .output = upscaled};
-        if (effects.upscaling == Upscaling::Temporal) {
+        if (effects.upscaling == Upscaling::Temporal || effects.upscaling == Upscaling::TemporalDenoised) {
             const glm::vec2 j = subpixelJitter(frameIndex);
             u.depth = depth;
             u.motion = velocity;
@@ -1700,9 +1972,9 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                         nullptr,
                         fu,
                         image,
-                        upscaling ? gpu::TextureRef{} : gpu::TextureRef(depth),
+                        upscaling || pathFrame ? gpu::TextureRef{} : gpu::TextureRef(depth),
                         hdrFormat,
-                        upscaling ? TextureFormat::Invalid : depthFormat,
+                        upscaling || pathFrame ? TextureFormat::Invalid : depthFormat,
                         iw,
                         ih,
                         -1};
@@ -1863,7 +2135,8 @@ Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
         desc.fragmentShader->stage != ShaderStage::Fragment ||
         (desc.shadowVertexShader && desc.shadowVertexShader->stage != ShaderStage::Vertex) ||
         (desc.shadowFragmentShader && desc.shadowFragmentShader->stage != ShaderStage::Fragment) ||
-        (desc.transmittanceShader && desc.transmittanceShader->stage != ShaderStage::Fragment))
+        (desc.transmittanceShader && desc.transmittanceShader->stage != ShaderStage::Fragment) ||
+        (desc.gbufferShader && desc.gbufferShader->stage != ShaderStage::Fragment))
         return Error{std::format("surface '{}': needs a vertex and a fragment shader", name)};
     detail::SurfaceEntry entry;
     entry.vertex = desc.vertexShader;
@@ -1871,6 +2144,7 @@ Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
     entry.shadowVertex = desc.shadowVertexShader;
     entry.shadowFragment = desc.shadowFragmentShader;
     entry.transmittanceFragment = desc.transmittanceShader;
+    entry.gbufferFragment = desc.gbufferShader;
     entry.name = name;
     if (!m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false)))
         return Error{std::format("surface '{}': the pipeline could not be created (logged)", name)};

@@ -1,0 +1,119 @@
+// The temporal denoiser of the renderer's traced signals (render::RayDenoiser::Temporal; docs/render.md, "Denoising"):
+// rt_temporal_fs blends each pixel's new samples into its history, reprojected by the motion vectors and dropped
+// where the depth there does not match (disocclusion), with the history clamped to the spread of the new samples
+// around the pixel (moving shadows and reflections do not trail); rt_atrous_fs then blurs it in a-trous passes
+// (3 x 3 taps at growing steps) weighted by the distance of each tap to the pixel's plane, so edges stay sharp.
+// Without variance guidance: the blur does not adapt to how noisy each pixel still is.
+//
+// Bindings (fragment): uniform 0 FrameUniforms, uniform 1 RayDenoiseUniforms. rt_temporal_fs: samplers 0 the new
+// signal, 1 its history, 2 the history length (r), 3 the motion vectors, 4 the depth, 5 the previous frame's depth;
+// out: the signal and its history length. rt_atrous_fs: samplers 0 the signal, 1 the depth.
+
+#include "quench/Bindings.hlsli"
+#include "quench/Fullscreen.hlsli"
+#include "quench/SceneUniforms.h"
+
+#include "RayCommon.hlsli"
+#include "RayTracingUniforms.h"
+
+cbuffer RayDenoiseBlock : QUENCH_UNIFORM(1) {
+    RayDenoiseUniforms rd;
+};
+
+#if defined(QUENCH_ENTRY_rt_temporal_fs)
+Texture2D<float4> signalTex : QUENCH_TEXTURE(0);
+SamplerState pointSampler : QUENCH_SAMPLER(0);
+Texture2D<float4> historyTex : QUENCH_TEXTURE(1);
+SamplerState linearSampler : QUENCH_SAMPLER(1);
+Texture2D<float4> lengthTex : QUENCH_TEXTURE(2);
+SamplerState lengthSampler : QUENCH_SAMPLER(2);
+Texture2D<float4> motionTex : QUENCH_TEXTURE(3);
+SamplerState motionSampler : QUENCH_SAMPLER(3);
+Texture2D<float> depthTex : QUENCH_TEXTURE(4);
+SamplerState depthSampler : QUENCH_SAMPLER(4);
+Texture2D<float> previousDepthTex : QUENCH_TEXTURE(5);
+SamplerState previousDepthSampler : QUENCH_SAMPLER(5);
+
+struct TemporalOut {
+    float4 signal : SV_Target0;
+    float4 length : SV_Target1;
+};
+
+TemporalOut rt_temporal_fs(FullscreenOut vin) {
+    const int2 p = int2(vin.position.xy);
+    const float4 current = signalTex.Load(int3(p, 0));
+    TemporalOut o;
+    o.signal = current;
+    o.length = float4(1.0, 0.0, 0.0, 1.0);
+    const float d = depthTex.Load(int3(p, 0));
+    if (d <= 0.0 || rd.temporal.w > 0.5) return o;
+
+    // Where the surface was: the motion vectors are this frame's uv minus the previous frame's.
+    const float2 uv = vin.position.xy * quenchFrame.screen.zw;
+    const float2 previousUv = uv - motionTex.Load(int3(p, 0)).xy;
+    if (any(previousUv < 0.0) || any(previousUv > 1.0)) return o;
+    const float3 P = rtWorldAt(vin.position.xy, d);
+    const float4 clip = mul(quenchFrame.prevViewProj, float4(P, 1.0));
+    const float expected = clip.w; // the view distance the previous frame saw it at
+    const float previousDepth = previousDepthTex.SampleLevel(depthSampler, previousUv, 0.0);
+    if (previousDepth <= 0.0 || abs(rtViewDepth(previousDepth) - expected) > rd.temporal.y * expected) return o;
+
+    // The spread of the new samples around the pixel: the history is clamped to their mean +- gamma sigma.
+    const int2 last = int2(quenchFrame.screen.xy) - 1;
+    float4 m1 = float4(0.0, 0.0, 0.0, 0.0), m2 = float4(0.0, 0.0, 0.0, 0.0);
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            const float4 s = signalTex.Load(int3(clamp(p + int2(x, y), int2(0, 0), last), 0));
+            m1 += s;
+            m2 += s * s;
+        }
+    m1 /= 9.0;
+    const float4 sigma = sqrt(max(m2 / 9.0 - m1 * m1, 0.0));
+    float4 history = historyTex.SampleLevel(linearSampler, previousUv, 0.0);
+    if (rd.filter.w > 0.0) history = clamp(history, m1 - rd.filter.w * sigma, m1 + rd.filter.w * sigma);
+
+    const float maxLength = rd.temporal.z > 0.5 ? max(rd.temporal.x * current.a, 1.0) : rd.temporal.x;
+    const float length = min(lengthTex.SampleLevel(lengthSampler, previousUv, 0.0).r + 1.0, maxLength);
+    o.signal = lerp(history, current, 1.0 / length);
+    o.length = float4(length, 0.0, 0.0, 1.0);
+    return o;
+}
+#endif
+
+#if defined(QUENCH_ENTRY_rt_atrous_fs)
+Texture2D<float4> signalTex : QUENCH_TEXTURE(0);
+SamplerState pointSampler : QUENCH_SAMPLER(0);
+Texture2D<float> depthTex : QUENCH_TEXTURE(1);
+SamplerState depthSampler : QUENCH_SAMPLER(1);
+
+float4 rt_atrous_fs(FullscreenOut vin) : SV_Target0 {
+    const int2 p = int2(vin.position.xy);
+    const float4 center = signalTex.Load(int3(p, 0));
+    const float d = depthTex.Load(int3(p, 0));
+    if (d <= 0.0) return center;
+    const float scale = rd.filter.z > 0.5 ? center.a : 1.0;
+    const int step = int(rd.filter.x * scale + 0.5);
+    if (step < 1) return center;
+    const float3 P = rtWorldAt(vin.position.xy, d);
+    const float3 N = rtDepthNormal(depthTex, p, P);
+    const float tolerance = rd.filter.y * rtViewDepth(d);
+    const int2 last = int2(quenchFrame.screen.xy) - 1;
+    const float kernel[3] = {0.25, 0.5, 0.25};
+    float4 sum = center * 0.25;
+    float weights = 0.25;
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x) {
+            if (x == 0 && y == 0) continue;
+            const int2 q = clamp(p + int2(x, y) * step, int2(0, 0), last);
+            const float dq = depthTex.Load(int3(q, 0));
+            if (dq <= 0.0) continue;
+            const float4 s = signalTex.Load(int3(q, 0));
+            if (rd.filter.z > 0.5 && s.a <= 0.0) continue; // an untraced pixel (too rough to reflect)
+            const float3 Pq = rtWorldAt(float2(q) + 0.5, dq);
+            const float w = kernel[x + 1] * kernel[y + 1] * saturate(1.0 - abs(dot(Pq - P, N)) / tolerance);
+            sum += s * w;
+            weights += w;
+        }
+    return sum / weights;
+}
+#endif

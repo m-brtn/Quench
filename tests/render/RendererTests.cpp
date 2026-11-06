@@ -1230,3 +1230,267 @@ QUENCH_TEST(renderer_upscaling) {
     }
     if (renderer->effects().upscaling == Upscaling::Bilinear) QUENCH_SKIP("no upscaling on this device");
 }
+
+// ---------------------------------------------------------------- ray-traced lighting (native Metal backend)
+
+namespace {
+
+// Without gpu::Caps::rayTracing the traced lighting falls back to the sky's, named in Renderer::fallbacks.
+bool lightingActive(gpu::Device& device, const Renderer& renderer, const char* fallback) {
+    const ActiveEffects& e = renderer.effects();
+    if (e.reflections == Reflections::RayTraced || e.indirectLight != IndirectLight::Sky || e.pathTracer ||
+        e.localLightShadows > 0)
+        return true;
+    CHECK(!device.caps().rayTracing, "ray tracing on the device, not used for %s", fallback);
+    CHECK(std::ranges::any_of(renderer.fallbacks(), [&](const std::string& l) { return l.starts_with(fallback); }),
+          "Renderer::fallbacks names '%s'", fallback);
+    return false;
+}
+
+std::vector<Rgba8> settle(gpu::Device& device, Renderer& renderer, Scene& scene, const View& view,
+                          const gpu::Texture& target, int frames) {
+    std::vector<Rgba8> pixels;
+    for (int frame = 0; frame < frames; ++frame) pixels = renderOnce(device, renderer, scene, view, target);
+    return pixels;
+}
+
+} // namespace
+
+// The path tracer's furnace: a white diffuse sphere under a uniform sky of radiance 1 sends back what reaches it (a
+// convex shape's bounces see only the sky), so it disappears into the sky. A darker sphere means lost energy, a
+// brighter one a sampling weight that adds it.
+QUENCH_TEST(renderer_path_tracer_furnace) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.pathTracer = true;
+    settings.pathBounces = 4;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "path tracer: ")) QUENCH_SKIP("no ray tracing: no path tracer");
+    CHECK(renderer->effects().antiAliasing == AntiAliasing::None, "no TAA with the path tracer");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyZenith = e.skyHorizon = e.skyGround = glm::vec3(1.0f);
+    e.fogColor = glm::vec3(1.0f / 0.85f); // skyRadiance's below-horizon blend
+    scene.setEnvironment(e);
+    const MeshId sphere = addMesh(scene, sphereMesh(1.0f));
+    const InstanceId ball = scene.addInstance(
+        {.mesh = sphere, .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = 1.0f})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 0, 3.5f), glm::vec3(0));
+    const std::vector<Rgba8> pixels = settle(device, *renderer, scene, view, *target, 96);
+    REQUIRE(pixels.size() == kSize * kSize, "%zu pixels", pixels.size());
+    CHECK(renderer->stats().pathSamples == 96, "%u samples in the mean", renderer->stats().pathSamples);
+    const float sky = sceneValue(at(pixels, {2, 2})).g;
+    const auto mean = [&](glm::vec3 p) {
+        const glm::ivec2 c = pixelOf(view, p);
+        float v = 0.0f;
+        for (int y = -1; y <= 1; ++y) v += sceneValue(at(pixels, c + glm::ivec2(0, y))).g / 3.0f;
+        return v;
+    };
+    // The middle, half way out (n.v 0.76) and the pixel at the silhouette (n.v 0.37 to 0).
+    const float middle = mean({0, 0, 1}), half = mean({0.5f, 0, 0.866f}), rim = mean({0.8f, 0, 0.6f});
+    std::printf("  sky %.3f, sphere middle %.3f, half way %.3f, at the silhouette %.3f\n", double(sky), double(middle),
+                double(half), double(rim));
+    CHECK(std::abs(sky - 1.0f) < 0.03f, "the sky is 1: %.3f", double(sky));
+    // The standard surface's BRDF ((1 - F) Lambert + single-scattering GGX, as in the raster path) loses a few
+    // percent; toward grazing views Fresnel takes more from the diffuse term than the GGX lobe gives back.
+    CHECK(middle > 0.94f && middle < 1.03f && half > 0.94f && half < 1.03f, "the sphere is the sky: %.3f, %.3f",
+          double(middle), double(half));
+    CHECK(rim > 0.75f && rim < 1.03f, "the silhouette: %.3f", double(rim));
+
+    // A change of the scene starts the mean again.
+    scene.setTransform(ball, glm::translate(glm::mat4(1.0f), {0.01f, 0, 0}));
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().pathSamples == 1, "restarted: %u samples", renderer->stats().pathSamples);
+}
+
+// Ray-traced reflections on a mirror floor: the image of an emissive box (its emissive texture through the hit
+// texture arrays) where the sky's reflection was.
+QUENCH_TEST(renderer_ray_traced_reflections) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.reflections = Reflections::RayTraced;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "ray-traced reflections: ")) QUENCH_SKIP("no ray tracing: sky reflections");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyZenith = e.skyHorizon = glm::vec3(0.1f, 0.2f, 0.8f);
+    scene.setEnvironment(e);
+    const MeshId floor = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    scene.addInstance(
+        {.mesh = floor,
+         .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = 0.05f, .metallic = 1.0f})});
+    std::vector<std::byte> red(4 * 4 * 4);
+    for (std::size_t i = 0; i < red.size(); i += 4) red[i] = red[i + 3] = std::byte{255};
+    Result<TextureId> texture = scene.addTexture({.width = 4, .height = 4, .pixels = red, .mipmaps = false});
+    REQUIRE(texture, "%s", texture.error().c_str());
+    MaterialDesc glow{.baseColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f), .emissive = glm::vec3(4.0f)};
+    glow.textures[3] = *texture;
+    scene.addInstance({.mesh = box,
+                       .material = scene.addMaterial(glow),
+                       .transform = glm::translate(glm::mat4(1.0f), {0, 1.0f, -2.0f})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 1.0f, 3.0f), glm::vec3(0, 0, -1.0f));
+    // The mirror image of the box's middle, and floor that reflects the sky.
+    const glm::ivec2 image = pixelOf(view, {0, -1.0f, -2.0f}), open = pixelOf(view, {2.5f, -1.0f, -2.0f});
+    const std::vector<Rgba8> traced = settle(device, *renderer, scene, view, *target, 8);
+    REQUIRE(traced.size() == kSize * kSize, "%zu pixels", traced.size());
+    CHECK(renderer->stats().hitTextures == 1, "%u textures in the hit arrays", renderer->stats().hitTextures);
+    settings.reflections = Reflections::Sky;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> sky = settle(device, *renderer, scene, view, *target, 2);
+    const Rgba8 t = at(traced, image), s = at(sky, image), o = at(traced, open);
+    std::printf("  mirror image %d %d %d (sky reflections %d %d %d), open floor %d %d %d\n", t.r, t.g, t.b, s.r, s.g,
+                s.b, o.r, o.g, o.b);
+    CHECK(t.r > 150 && t.r > t.b * 2, "the box's red in the mirror: %d %d %d", t.r, t.g, t.b);
+    CHECK(s.b > s.r, "without traced reflections the sky's: %d %d %d", s.r, s.g, s.b);
+    CHECK(o.b > o.r && std::abs(sum(o) - sum(at(sky, open))) < 24, "the open floor reflects the sky in both: %d vs %d",
+          sum(o), sum(at(sky, open)));
+}
+
+// A point light beside a box: with ray-traced local light shadows the box shadows the ground behind it.
+QUENCH_TEST(renderer_ray_traced_local_light_shadows) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.localLightShadows = 1;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "ray-traced local light shadows: "))
+        QUENCH_SKIP("no ray tracing: unshadowed local lights");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.4f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.6f, 0.6f, 0.6f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {-0.75f, 1.5f, 0})});
+    scene.addLight({.type = LightType::Point,
+                    .color = glm::vec3(1.0f),
+                    .intensity = 40.0f,
+                    .position = {-1.5f, 3.0f, 0.0f},
+                    .range = 12.0f});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // The light, the box and (0, 0, 0) are on a line; (-3, 0, 0), mirrored under the light, is in the open.
+    const glm::ivec2 shadow = pixelOf(kTopView, {0.0f, 0, 0}), lit = pixelOf(kTopView, {-3.0f, 0, 0});
+    const std::vector<Rgba8> traced = settle(device, *renderer, scene, kTopView, *target, 4);
+    REQUIRE(traced.size() == kSize * kSize, "%zu pixels", traced.size());
+    settings.localLightShadows = 0;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> open = settle(device, *renderer, scene, kTopView, *target, 2);
+    std::printf("  behind the box %d (unshadowed %d), in the open %d (unshadowed %d)\n", sum(at(traced, shadow)),
+                sum(at(open, shadow)), sum(at(traced, lit)), sum(at(open, lit)));
+    CHECK(sum(at(traced, shadow)) * 4 < sum(at(traced, lit)), "shadowed behind the box: %d vs %d",
+          sum(at(traced, shadow)), sum(at(traced, lit)));
+    CHECK(std::abs(sum(at(open, shadow)) - sum(at(open, lit))) * 10 < sum(at(open, lit)),
+          "unshadowed both are lit alike: %d vs %d", sum(at(open, shadow)), sum(at(open, lit)));
+    CHECK(std::abs(sum(at(traced, lit)) - sum(at(open, lit))) * 20 < sum(at(open, lit)),
+          "the open ground is as lit with shadows: %d vs %d", sum(at(traced, lit)), sum(at(open, lit)));
+}
+
+// Indirect light: the sun lights a red wall and the ground; the ground in front of the wall turns red with the probe
+// grid and with traced indirect light, not with the sky's (zero) ambient light.
+QUENCH_TEST(renderer_indirect_light_bounces) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.indirectLight = IndirectLight::Probes;
+    settings.probeSpacing = 1.0f;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "the probe grid: ")) QUENCH_SKIP("no ray tracing: the sky's ambient light");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId wall = addMesh(scene, boxMesh(glm::vec3(0.1f, 2.0f, 4.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.8f, 0.8f, 0.8f, 1), .roughness = 1})});
+    scene.addInstance({.mesh = wall,
+                       .material = scene.addMaterial({.baseColor = glm::vec4(0.9f, 0.05f, 0.05f, 1), .roughness = 1}),
+                       .transform = glm::translate(glm::mat4(1.0f), {1.5f, 2.0f, 0})});
+    // From the upper left: the wall's face toward -x and the ground in front of it are lit.
+    addSun(scene, glm::normalize(glm::vec3(1.0f, -1.2f, 0.3f)));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // The top view is 9 m up, above the 8 probes of the grid's height: it centers the grid on the ground.
+    View view = kTopView;
+    view.probeCenter = glm::vec3(0.0f, 2.0f, 0.0f);
+    const glm::ivec2 near = pixelOf(view, {1.0f, 0, 0}), far = pixelOf(view, {-3.5f, 0, 0});
+    const auto redness = [](Rgba8 c) {
+        const glm::vec3 v = sceneValue(c);
+        return v.r / std::max(v.g, 1e-3f);
+    };
+    const std::vector<Rgba8> grid = settle(device, *renderer, scene, view, *target, 6);
+    REQUIRE(grid.size() == kSize * kSize, "%zu pixels", grid.size());
+    CHECK(renderer->stats().probes == 16 * 8 * 16, "%u probes", renderer->stats().probes);
+    settings.indirectLight = IndirectLight::RayTraced;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> traced = settle(device, *renderer, scene, view, *target, 16);
+    settings.indirectLight = IndirectLight::Sky;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> sky = settle(device, *renderer, scene, view, *target, 2);
+    std::printf("  red / green next to the wall: probes %.3f, traced %.3f, sky %.3f; far from it %.3f %.3f %.3f\n",
+                double(redness(at(grid, near))), double(redness(at(traced, near))), double(redness(at(sky, near))),
+                double(redness(at(grid, far))), double(redness(at(traced, far))), double(redness(at(sky, far))));
+    CHECK(std::abs(redness(at(sky, near)) - 1.0f) < 0.02f, "no bounce with the sky's light: %.3f",
+          double(redness(at(sky, near))));
+    CHECK(redness(at(grid, near)) > 1.05f && redness(at(traced, near)) > 1.05f,
+          "red bounce light next to the wall: probes %.3f, traced %.3f", double(redness(at(grid, near))),
+          double(redness(at(traced, near))));
+    CHECK(redness(at(grid, near)) > redness(at(grid, far)) && redness(at(traced, near)) > redness(at(traced, far)),
+          "more of it near the wall than far: %.3f > %.3f, %.3f > %.3f", double(redness(at(grid, near))),
+          double(redness(at(grid, far))), double(redness(at(traced, near))), double(redness(at(traced, far))));
+}
+
+// The temporal denoiser: a soft sun shadow traced with one ray per pixel, settled over frames, is closer to the same
+// shadow traced with eight rays than the spatial filter's, and steadier from frame to frame.
+QUENCH_TEST(renderer_temporal_ray_denoiser) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.sunShadows = SunShadows::RayTraced;
+    settings.shadowSoftness = 6.0f;
+    settings.shadowRays = 1;
+    settings.ambientOcclusion = AmbientOcclusion::RayTraced;
+    settings.occlusionRays = 1;
+    settings.rayDenoiser = RayDenoiser::Temporal;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!rayTracingActive(device, *renderer)) QUENCH_SKIP("no ray tracing: shadow maps");
+    CHECK(renderer->effects().rayDenoiser == RayDenoiser::Temporal, "the temporal denoiser runs");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyAmbient = e.groundAmbient = glm::vec3(0.3f);
+    scene.setEnvironment(e);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0, 1.5f, 0})});
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const auto run = [&](RayDenoiser denoiser, int rays, std::vector<Rgba8>* previous) {
+        RenderSettings s = settings;
+        s.rayDenoiser = denoiser;
+        s.shadowRays = s.occlusionRays = rays;
+        renderer->setSettings(s);
+        std::vector<Rgba8> pixels = settle(device, *renderer, scene, kTopView, *target, 24);
+        if (previous) *previous = pixels;
+        return settle(device, *renderer, scene, kTopView, *target, 1);
+    };
+    std::vector<Rgba8> temporalBefore, spatialBefore;
+    const std::vector<Rgba8> reference = run(RayDenoiser::Temporal, 8, nullptr);
+    const std::vector<Rgba8> temporal = run(RayDenoiser::Temporal, 1, &temporalBefore);
+    const std::vector<Rgba8> spatial = run(RayDenoiser::Spatial, 1, &spatialBefore);
+    const ImageDiff t = compare(temporal, reference), s = compare(spatial, reference);
+    const ImageDiff tf = compare(temporal, temporalBefore), sf = compare(spatial, spatialBefore);
+    std::printf("  against 8 rays: temporal mean %.2f (%.2f%% over 16), spatial %.2f (%.2f%%); frame to frame: "
+                "temporal %.2f, spatial %.2f\n",
+                t.mean, t.over16 * 100.0, s.mean, s.over16 * 100.0, tf.mean, sf.mean);
+    CHECK(t.mean < s.mean, "the temporal denoiser is closer to the reference: %.2f vs %.2f", t.mean, s.mean);
+    CHECK(tf.mean < sf.mean * 0.75, "and steadier: %.2f vs %.2f", tf.mean, sf.mean);
+}

@@ -3,11 +3,15 @@
 #include <quench/core/Log.h>
 
 #include <render_frame_shaders.h>
+#include <render_raylight_shaders.h>
 #include <render_raytrace_shaders.h>
+
+#include <glm/matrix.hpp>
 
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstring>
 #include <format>
 
@@ -19,11 +23,15 @@ using gpu::TextureUsage;
 
 constexpr ShaderStage kFragment = ShaderStage::Fragment;
 constexpr TextureFormat kMaskFormat = TextureFormat::Rgba8Unorm;
-constexpr std::uint8_t kMaskOpaque = 1;      // raytrace.hlsl: opaque and cut-out instances
-constexpr std::uint8_t kMaskTranslucent = 2; // raytrace.hlsl: translucent instances (not in ambient occlusion)
+constexpr TextureFormat kLightFormat = TextureFormat::Rgba16Float;
+constexpr TextureFormat kNormalFormat = TextureFormat::Rgba16Float;
+constexpr TextureFormat kDistanceFormat = TextureFormat::Rg16Float;
 // A skinned bottom level is refitted to each pose and built again after this many refits: refits keep the build's
 // tree, which loosens as limbs move away from the pose it was built in.
 constexpr std::uint32_t kRefitsPerBuild = 60;
+// The hit texture arrays: every material texture once, scaled to one size without mip levels.
+constexpr std::uint32_t kHitTextureSize = 256;
+constexpr std::uint32_t kMaxHitLayers = 64;
 
 std::array<float, 12> rowsOf(const glm::mat4& m) {
     std::array<float, 12> t{};
@@ -38,11 +46,21 @@ std::uint32_t grown(std::uint32_t capacity, std::size_t needed, std::uint32_t mi
     return c;
 }
 
+bool idLess(MeshId a, MeshId b) { return a.index != b.index ? a.index < b.index : a.generation < b.generation; }
+
+std::uint64_t textureBytes(const gpu::Texture& t) {
+    if (!t) return 0;
+    const gpu::TextureDesc& d = t.desc();
+    return gpu::levelByteSize(d.format, d.width, d.height, d.layers);
+}
+
 } // namespace
 
-bool RayTracing::init(gpu::Device& device, std::uint32_t& pipelines) {
+bool RayTracing::init(gpu::Device& device, std::uint32_t& pipelines, const RaySamplers& samplers) {
     m_device = &device;
+    m_samplers = samplers;
     m_available = false;
+    m_lighting = false;
     if (!device.caps().rayTracing) return false;
     const ShaderBlob* trace = shaders::render_raytrace.find("rt_shadow_fs");
     if (!trace) {
@@ -51,29 +69,70 @@ bool RayTracing::init(gpu::Device& device, std::uint32_t& pipelines) {
         return false;
     }
     const ShaderBlob* fullscreen = shaders::render_frame.find("fullscreen_vs");
-    const gpu::ColorTargetDesc color{kMaskFormat};
-    Result<gpu::GraphicsPipeline> tracePipeline = device.createPipeline(
-        {.vertexShader = fullscreen, .fragmentShader = trace, .colorTargets = {&color, 1}, .name = "render ray trace"});
-    Result<gpu::GraphicsPipeline> denoisePipeline =
-        device.createPipeline({.vertexShader = fullscreen,
-                               .fragmentShader = shaders::render_raytrace.find("rt_denoise_fs"),
-                               .colorTargets = {&color, 1},
-                               .name = "render ray denoise"});
-    if (!tracePipeline || !denoisePipeline) {
-        log::error("render", "ray tracing pipelines: {}; shadow maps",
-                   tracePipeline ? denoisePipeline.error() : tracePipeline.error());
+    const auto make = [&](gpu::GraphicsPipeline& out, const ShaderBlob* shader,
+                          std::span<const gpu::ColorTargetDesc> targets, const char* name) {
+        if (!shader) {
+            log::error("render", "pipeline '{}': the shader is not in this build", name);
+            return false;
+        }
+        Result<gpu::GraphicsPipeline> p = device.createPipeline(
+            {.vertexShader = fullscreen, .fragmentShader = shader, .colorTargets = targets, .name = name});
+        if (!p) {
+            log::error("render", "pipeline '{}': {}", name, p.error());
+            return false;
+        }
+        out = std::move(*p);
+        ++pipelines;
+        return true;
+    };
+    const gpu::ColorTargetDesc mask{kMaskFormat};
+    const gpu::ColorTargetDesc maskAndLocal[] = {{kMaskFormat}, {kMaskFormat}};
+    if (!make(m_tracePipeline, trace, {&mask, 1}, "render ray trace") ||
+        !make(m_traceLocalPipeline, shaders::render_raytrace.find("rt_shadow_local_fs"), maskAndLocal,
+              "render ray trace local") ||
+        !make(m_denoisePipeline, shaders::render_raytrace.find("rt_denoise_fs"), {&mask, 1}, "render ray denoise") ||
+        !m_maskFilter.init(device, kMaskFormat, "ray mask", pipelines) ||
+        !m_localFilter.init(device, kMaskFormat, "ray local shadows", pipelines)) {
+        log::error("render", "ray tracing pipelines failed (logged); shadow maps");
         return false;
     }
-    m_tracePipeline = std::move(*tracePipeline);
-    m_denoisePipeline = std::move(*denoisePipeline);
-    pipelines += 2;
-    // Bound when no caster needs them.
+    // Bound when no instance needs them.
     if (!ensureBuffer(m_vertices, m_vertexBytes, 256, "render ray vertices") ||
         !ensureBuffer(m_indices, m_indexBytes, 256, "render ray indices") ||
         !ensureBuffer(m_instanceTable, m_instanceBytes, 256, "render ray instances"))
         return false;
     m_available = true;
+
+    if (!shaders::render_raylight.find("rt_reflect_fs")) {
+        log::warning("render", "ray tracing: this build has no ray query shaders for reflections, indirect light "
+                               "and the path tracer; sky reflections and ambient light");
+        return true;
+    }
+    const gpu::ColorTargetDesc light{kLightFormat}, distance{kDistanceFormat};
+    m_lighting =
+        make(m_reflectPipeline, shaders::render_raylight.find("rt_reflect_fs"), {&light, 1}, "render ray reflect") &&
+        make(m_indirectPipeline, shaders::render_raylight.find("rt_indirect_fs"), {&light, 1}, "render ray indirect") &&
+        make(m_probeTracePipeline, shaders::render_raylight.find("rt_probe_trace_fs"), {&light, 1},
+             "render probe rays") &&
+        make(m_probeIrradiancePipeline, shaders::render_raylight.find("rt_probe_irradiance_fs"), {&light, 1},
+             "render probe irradiance") &&
+        make(m_probeDistancePipeline, shaders::render_raylight.find("rt_probe_distance_fs"), {&distance, 1},
+             "render probe distance") &&
+        m_reflectionFilter.init(device, kLightFormat, "ray reflections", pipelines) &&
+        m_indirectFilter.init(device, kLightFormat, "ray indirect", pipelines);
+    if (!m_lighting)
+        log::error("render", "ray-traced lighting pipelines failed (logged); sky reflections and ambient light");
     return true;
+}
+
+Result<gpu::GraphicsPipeline> RayTracing::hitPipeline(const char* entry, TextureFormat format, const char* name) {
+    const ShaderBlob* shader = shaders::render_raylight.find(entry);
+    if (!shader) return Error{std::format("the shader '{}' is not in this build", entry)};
+    const gpu::ColorTargetDesc color{format};
+    return m_device->createPipeline({.vertexShader = shaders::render_frame.find("fullscreen_vs"),
+                                     .fragmentShader = shader,
+                                     .colorTargets = {&color, 1},
+                                     .name = name});
 }
 
 bool RayTracing::ensureBuffer(gpu::Buffer& buffer, std::uint32_t& capacity, std::uint32_t bytes, const char* name) {
@@ -90,50 +149,99 @@ bool RayTracing::ensureBuffer(gpu::Buffer& buffer, std::uint32_t& capacity, std:
     return true;
 }
 
-bool RayTracing::ensureTargets(std::uint32_t width, std::uint32_t height, TextureFormat depthFormat) {
-    if (m_mask && m_width == width && m_height == height) return true;
+bool RayTracing::createTarget(gpu::Texture& out, TextureFormat format, std::uint32_t width, std::uint32_t height,
+                              const char* name, TextureUsage usage) {
+    Result<gpu::Texture> t =
+        m_device->createTexture({.format = format, .usage = usage, .width = width, .height = height, .name = name});
+    if (!t) {
+        log::error("render", "target '{}' {} x {}: {}", name, width, height, t.error());
+        return false;
+    }
+    out = std::move(*t);
+    return true;
+}
+
+bool RayTracing::ensureTargets(std::uint32_t width, std::uint32_t height, TextureFormat depthFormat,
+                               const RayTargets& targets) {
+    if (m_mask && m_width == width && m_height == height && m_targets == targets) return true;
     releaseTargets();
-    const auto create = [this, width, height](gpu::Texture& out, TextureFormat format, TextureUsage usage,
-                                              const char* name) {
-        Result<gpu::Texture> t =
-            m_device->createTexture({.format = format, .usage = usage, .width = width, .height = height, .name = name});
-        if (!t) {
-            log::error("render", "target '{}' {} x {}: {}", name, width, height, t.error());
-            return false;
-        }
-        out = std::move(*t);
-        return true;
-    };
-    const TextureUsage targetSampled = TextureUsage::ColorTarget | TextureUsage::Sampled;
-    if (!create(m_depth, depthFormat, TextureUsage::DepthStencilTarget | TextureUsage::Sampled, "render ray depth") ||
-        !create(m_raw, kMaskFormat, targetSampled, "render ray trace") ||
-        !create(m_mask, kMaskFormat, targetSampled, "render ray mask")) {
+    const TextureUsage depthUsage = TextureUsage::DepthStencilTarget | TextureUsage::Sampled;
+    bool ok = createTarget(m_depth[0], depthFormat, width, height, "render ray depth 0", depthUsage) &&
+              createTarget(m_depth[1], depthFormat, width, height, "render ray depth 1", depthUsage) &&
+              createTarget(m_raw, kMaskFormat, width, height, "render ray trace") &&
+              createTarget(m_mask, kMaskFormat, width, height, "render ray mask") &&
+              m_maskFilter.ensureTargets(width, height);
+    if (ok && targets.gbuffer)
+        ok = createTarget(m_gbufferNormal, kNormalFormat, width, height, "render gbuffer normal") &&
+             createTarget(m_gbufferAlbedo, TextureFormat::Rgba8Unorm, width, height, "render gbuffer albedo");
+    if (ok && targets.local)
+        ok = createTarget(m_localRaw, kMaskFormat, width, height, "render ray local trace") &&
+             createTarget(m_local, kMaskFormat, width, height, "render ray local shadows") &&
+             m_localFilter.ensureTargets(width, height);
+    if (ok && targets.reflections)
+        ok = createTarget(m_reflectionsRaw, kLightFormat, width, height, "render ray reflections trace") &&
+             createTarget(m_reflections, kLightFormat, width, height, "render ray reflections") &&
+             m_reflectionFilter.ensureTargets(width, height);
+    if (ok && targets.indirect)
+        ok = createTarget(m_indirectRaw, kLightFormat, width, height, "render ray indirect trace") &&
+             createTarget(m_indirect, kLightFormat, width, height, "render ray indirect") &&
+             m_indirectFilter.ensureTargets(width, height);
+    if (ok && targets.probes) {
+        const auto probes = std::uint32_t(kProbeCounts.x * kProbeCounts.y * kProbeCounts.z);
+        const auto columns = std::uint32_t(kProbeCounts.x * kProbeCounts.y), rows = std::uint32_t(kProbeCounts.z);
+        ok = createTarget(m_probeRays, kLightFormat, kProbeRays, probes, "render probe rays");
+        for (int i = 0; ok && i < 2; ++i)
+            ok = createTarget(m_probeIrradiance[std::size_t(i)], kLightFormat, columns * kIrradianceTile,
+                              rows * kIrradianceTile, "render probe irradiance") &&
+                 createTarget(m_probeDistance[std::size_t(i)], kDistanceFormat, columns * kDistanceTile,
+                              rows * kDistanceTile, "render probe distance");
+    }
+    if (!ok) {
         releaseTargets();
         return false;
     }
     m_width = width;
     m_height = height;
+    m_targets = targets;
+    m_recreated = true;
     return true;
 }
 
 void RayTracing::releaseTargets() {
     m_depth = {};
+    m_gbufferNormal = {};
+    m_gbufferAlbedo = {};
     m_raw = {};
     m_mask = {};
+    m_localRaw = {};
+    m_local = {};
+    m_reflectionsRaw = {};
+    m_reflections = {};
+    m_indirectRaw = {};
+    m_indirect = {};
+    m_probeRays = {};
+    m_probeIrradiance = {};
+    m_probeDistance = {};
+    m_probesValid = false;
+    m_maskFilter.release();
+    m_localFilter.release();
+    m_reflectionFilter.release();
+    m_indirectFilter.release();
     m_width = m_height = 0;
+    m_targets = {};
 }
 
-// The vertices and indices of the meshes of cut-out and translucent casters, copied once per set of meshes.
-bool RayTracing::updateTables(gpu::CommandBuffer& commands, std::uint64_t scene, std::span<const RayCaster> casters) {
+// The vertices and indices of the meshes the shaders read: every instance's for the hit passes, else those of
+// cut-out and translucent casters; copied once per set of meshes.
+bool RayTracing::updateTables(gpu::CommandBuffer& commands, std::uint64_t scene, std::span<const RayCaster> casters,
+                              bool all) {
     std::vector<TableMesh> meshes;
     for (const RayCaster& c : casters) {
         const bool cutOut = c.material->desc.alphaCutoff > 0.0f;
-        if (!c.translucent && !cutOut) continue;
+        if (!all && !c.translucent && !cutOut) continue;
         meshes.push_back({c.instance->desc.mesh, c.mesh});
     }
-    std::sort(meshes.begin(), meshes.end(), [](const TableMesh& a, const TableMesh& b) {
-        return a.id.index != b.id.index ? a.id.index < b.id.index : a.id.generation < b.id.generation;
-    });
+    std::sort(meshes.begin(), meshes.end(), [](const TableMesh& a, const TableMesh& b) { return idLess(a.id, b.id); });
     meshes.erase(
         std::unique(meshes.begin(), meshes.end(), [](const TableMesh& a, const TableMesh& b) { return a.id == b.id; }),
         meshes.end());
@@ -170,13 +278,132 @@ bool RayTracing::updateTables(gpu::CommandBuffer& commands, std::uint64_t scene,
     return true;
 }
 
+void RayTracing::updateHitArray(gpu::CommandBuffer& commands, HitArray& array, std::uint64_t scene,
+                                std::span<const std::pair<TextureId, const gpu::Texture*>> wanted,
+                                std::vector<int>& layers) {
+    layers.assign(wanted.size(), -1);
+    for (HitLayer& l : array.layers) l.used = false;
+    const auto find = [&](TextureId id, const gpu::Texture* t) {
+        for (std::size_t i = 0; i < array.layers.size(); ++i) {
+            const HitLayer& l = array.layers[i];
+            if (l.scene == scene && l.id == id && l.native == gpu::TextureRef(*t).native) return int(i);
+        }
+        return -1;
+    };
+    std::vector<std::size_t> missing;
+    for (std::size_t i = 0; i < wanted.size(); ++i) {
+        const int layer = find(wanted[i].first, wanted[i].second);
+        if (layer >= 0) {
+            array.layers[std::size_t(layer)].used = true;
+            layers[i] = layer;
+        } else {
+            missing.push_back(i);
+        }
+    }
+    if (missing.empty()) return;
+    // Grow when the textures of this frame do not fit; the copies are made again into the new array.
+    const std::size_t count = std::min<std::size_t>(wanted.size(), kMaxHitLayers);
+    const std::uint32_t capacity = array.texture ? array.texture.desc().layers : 0;
+    if (count > capacity) {
+        const std::uint32_t layersNeeded = std::min(grown(capacity, count, 4), kMaxHitLayers);
+        Result<gpu::Texture> t = m_device->createTexture({.type = gpu::TextureType::Texture2DArray,
+                                                          .format = array.format,
+                                                          .usage = TextureUsage::ColorTarget | TextureUsage::Sampled,
+                                                          .width = kHitTextureSize,
+                                                          .height = kHitTextureSize,
+                                                          .layers = layersNeeded,
+                                                          .name = array.name});
+        if (!t) {
+            log::error("render", "hit texture array ({} layers): {}; hits read their material's values only",
+                       layersNeeded, t.error());
+            return;
+        }
+        array.texture = std::move(*t);
+        array.layers.assign(layersNeeded, {});
+        std::fill(layers.begin(), layers.end(), -1);
+        missing.clear();
+        for (std::size_t i = 0; i < wanted.size(); ++i) missing.push_back(i);
+    }
+    for (const std::size_t i : missing) {
+        // A layer not used this frame, empty ones first.
+        int free = -1;
+        for (std::size_t l = 0; l < array.layers.size(); ++l) {
+            if (array.layers[l].used) continue;
+            if (free < 0 || !array.layers[l].native) free = int(l);
+            if (!array.layers[l].native) break;
+        }
+        if (free < 0) {
+            if (!m_hitLayersLogged) {
+                log::warning("render",
+                             "ray tracing: more than {} material textures; hits on the others read their "
+                             "material's values only",
+                             kMaxHitLayers);
+                m_hitLayersLogged = true;
+            }
+            continue;
+        }
+        const gpu::Texture& source = *wanted[i].second;
+        const gpu::TextureDesc& d = source.desc();
+        // The mip level nearest the array's size (at least its size where there is one).
+        std::uint32_t level = 0;
+        while (level + 1 < d.mipLevels && std::min(d.width >> (level + 1), d.height >> (level + 1)) >= kHitTextureSize)
+            ++level;
+        commands.blit({.source = {.texture = source, .mipLevel = level},
+                       .destination = {.texture = array.texture,
+                                       .layer = std::uint32_t(free),
+                                       .width = kHitTextureSize,
+                                       .height = kHitTextureSize},
+                       .filter = gpu::Filter::Linear});
+        array.layers[std::size_t(free)] = {scene, wanted[i].first, gpu::TextureRef(source).native, true};
+        layers[i] = free;
+    }
+}
+
 bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std::span<const RayCaster> casters,
-                       RayTracingStats& stats) {
+                       bool hitData, const gpu::BufferRef& skinned, RayTracingStats& stats) {
     m_instances.clear();
     m_data.clear();
     m_alphaTextures.clear();
+    m_skinned = skinned;
     if (!m_available || casters.empty()) return false;
-    if (!updateTables(commands, scene.serial, casters)) return false;
+    if (!updateTables(commands, scene.serial, casters, hitData)) return false;
+    m_tableAll = hitData;
+
+    // The hit texture arrays: base color and emissive (sRGB), metallic-roughness (linear).
+    std::vector<int> colorLayers, linearLayers;
+    std::vector<std::pair<TextureId, const gpu::Texture*>> colorWanted, linearWanted;
+    const auto want = [&scene](std::vector<std::pair<TextureId, const gpu::Texture*>>& list, TextureId id) {
+        const TextureEntry* t = scene.textures.get(id);
+        if (!t || !t->texture) return; // unset or still loading
+        for (const auto& w : list)
+            if (w.first == id) return;
+        list.emplace_back(id, &t->texture);
+    };
+    if (hitData) {
+        if (m_hitColor.format == TextureFormat::Invalid) {
+            m_hitColor.format = TextureFormat::Rgba8UnormSrgb;
+            m_hitColor.name = "render hit colors";
+            m_hitLinear.format = TextureFormat::Rgba8Unorm;
+            m_hitLinear.name = "render hit data";
+        }
+        for (const RayCaster& c : casters) {
+            const MaterialDesc& m = c.material->desc;
+            want(colorWanted, m.textures[0]);
+            want(colorWanted, m.textures[3]);
+            want(linearWanted, m.textures[1]);
+        }
+        updateHitArray(commands, m_hitColor, scene.serial, colorWanted, colorLayers);
+        updateHitArray(commands, m_hitLinear, scene.serial, linearWanted, linearLayers);
+        stats.hitTextures =
+            std::uint32_t(std::count_if(colorLayers.begin(), colorLayers.end(), [](int l) { return l >= 0; }) +
+                          std::count_if(linearLayers.begin(), linearLayers.end(), [](int l) { return l >= 0; }));
+    }
+    const auto layerOf = [](const std::vector<std::pair<TextureId, const gpu::Texture*>>& list,
+                            const std::vector<int>& layers, TextureId id) {
+        for (std::size_t i = 0; i < list.size(); ++i)
+            if (list[i].first == id) return float(layers[i]);
+        return -1.0f;
+    };
 
     gpu::AccelerationStructurePass pass = commands.beginAccelerationStructurePass();
     if (!pass) return false;
@@ -234,19 +461,21 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
 
         const MaterialDesc& m = c.material->desc;
         const bool cutOut = m.alphaCutoff > 0.0f;
+        std::uint8_t mask = 0;
+        if (c.caster) mask |= c.translucent ? QUENCH_RT_MASK_TRANSLUCENT : QUENCH_RT_MASK_CASTER;
+        if (hitData) mask |= c.translucent ? QUENCH_RT_MASK_SEE_THROUGH : QUENCH_RT_MASK_VISIBLE;
+        if (mask == 0) continue;
         gpu::RayInstance instance{.bottomLevel = bottom,
                                   .transform = rowsOf(c.instance->desc.transform),
-                                  .mask = c.translucent ? kMaskTranslucent : kMaskOpaque,
+                                  .mask = mask,
                                   .flags = c.translucent || cutOut ? gpu::RayInstanceFlags::NonOpaque
                                                                    : gpu::RayInstanceFlags::Opaque};
-        if (c.translucent || cutOut) {
-            const auto table = std::lower_bound(
-                m_tableMeshes.begin(), m_tableMeshes.end(), c.instance->desc.mesh, [](const TableMesh& t, MeshId id) {
-                    return t.id.index != id.index ? t.id.index < id.index : t.id.generation < id.generation;
-                });
+        if (hitData || c.translucent || cutOut) {
+            const auto table = std::lower_bound(m_tableMeshes.begin(), m_tableMeshes.end(), c.instance->desc.mesh,
+                                                [](const TableMesh& t, MeshId id) { return idLess(t.id, id); });
             int alphaSlot = -1;
             const TextureEntry* texture = scene.textures.get(m.textures[0]);
-            if (texture && texture->texture) {
+            if ((c.translucent || cutOut) && texture && texture->texture) {
                 const auto it = std::find(m_alphaTextures.begin(), m_alphaTextures.end(), &texture->texture);
                 if (it != m_alphaTextures.end()) {
                     alphaSlot = int(it - m_alphaTextures.begin());
@@ -261,11 +490,26 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
                     m_alphaTexturesLogged = true;
                 }
             }
+            const std::uint32_t skinnedFirst =
+                c.skinned.buffer ? 1 + c.skinned.offset / std::uint32_t(sizeof(Vertex)) : 0;
+            const glm::mat3 normal = glm::transpose(glm::inverse(glm::mat3(c.instance->desc.transform)));
+            shader::RayInstanceData d{};
+            d.geometry = glm::vec4(std::bit_cast<float>(table->firstIndex), std::bit_cast<float>(table->firstVertex),
+                                   std::bit_cast<float>(skinnedFirst),
+                                   c.translucent ? 2.0f
+                                   : cutOut      ? 1.0f
+                                                 : 0.0f);
+            d.color = m.baseColor * c.instance->desc.color;
+            d.emissive = glm::vec4(m.emissive, cutOut ? m.alphaCutoff : 0.0f);
+            d.surface = glm::vec4(m.roughness, m.metallic, float(alphaSlot), m.doubleSided ? 1.0f : 0.0f);
+            d.layers = glm::vec4(layerOf(colorWanted, colorLayers, m.textures[0]),
+                                 layerOf(linearWanted, linearLayers, m.textures[1]),
+                                 layerOf(colorWanted, colorLayers, m.textures[3]), 0.0f);
+            d.normal0 = glm::vec4(normal[0][0], normal[1][0], normal[2][0], 0.0f);
+            d.normal1 = glm::vec4(normal[0][1], normal[1][1], normal[2][1], 0.0f);
+            d.normal2 = glm::vec4(normal[0][2], normal[1][2], normal[2][2], 0.0f);
             instance.id = std::uint32_t(m_data.size());
-            m_data.push_back(
-                {glm::vec4(std::bit_cast<float>(table->firstIndex), std::bit_cast<float>(table->firstVertex),
-                           c.translucent ? 2.0f : 1.0f, float(alphaSlot)),
-                 m.baseColor * c.instance->desc.color, glm::vec4(m.alphaCutoff, 0.0f, 0.0f, 0.0f)});
+            m_data.push_back(d);
         }
         m_instances.push_back(instance);
     }
@@ -301,42 +545,195 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
         gpu::CopyPass copy = commands.beginCopyPass();
         copy.upload(m_transfer, 0, m_instanceTable, 0, bytes, true);
     }
+    stats.memoryBytes = memoryBytes();
     return true;
 }
 
-void RayTracing::trace(gpu::CommandBuffer& commands, const shader::RayTracingUniforms& uniforms,
-                       const gpu::Sampler& point, const gpu::Sampler& material, const gpu::Texture& white) {
-    // Nothing to blur (hard shadows, no occlusion): the rays write the mask directly.
-    const bool denoise = uniforms.denoise.x > 0.0f || uniforms.denoise.z > 0.0f;
+std::uint64_t RayTracing::memoryBytes() const {
+    return std::uint64_t(m_vertexBytes) + m_indexBytes + m_instanceBytes + textureBytes(m_hitColor.texture) +
+           textureBytes(m_hitLinear.texture) + textureBytes(m_probeIrradiance[0]) * 2 +
+           textureBytes(m_probeDistance[0]) * 2 + textureBytes(m_probeRays);
+}
+
+void RayTracing::bindHits(gpu::RenderPass& pass, bool probes) {
+    const gpu::Sampler& point = *m_samplers.point;
+    const gpu::Sampler& linear = *m_samplers.linear;
+    const gpu::Sampler& material = *m_samplers.material;
+    const gpu::TextureRef white(*m_samplers.white), array(*m_samplers.array);
+    const bool grid = probes && m_probesValid;
+    const gpu::TextureSamplerBinding samplers[] = {
+        {depth(), point},
+        {m_gbufferNormal ? gpu::TextureRef(m_gbufferNormal) : white, point},
+        {m_hitColor.texture ? gpu::TextureRef(m_hitColor.texture) : array, material},
+        {m_hitLinear.texture ? gpu::TextureRef(m_hitLinear.texture) : array, material},
+        {grid ? gpu::TextureRef(probeIrradiance()) : white, linear},
+        {grid ? gpu::TextureRef(probeDistance()) : white, linear}};
+    pass.bindSamplers(kFragment, 0, samplers);
+    const std::array<gpu::BufferRef, 4> buffers{m_instanceTable, m_vertices,
+                                                m_skinned ? m_skinned : gpu::BufferRef(m_vertices), m_indices};
+    pass.bindStorageBuffers(kFragment, 0, buffers);
+    pass.bindAccelerationStructure(kFragment, 0, m_top);
+}
+
+void RayTracing::filter(gpu::CommandBuffer& commands, TemporalFilter& f, const gpu::Texture& raw,
+                        const gpu::Texture& output, const FilterInputs& inputs, const FilterParams& params,
+                        RayFiltering filtering) {
+    FilterInputs in = inputs;
+    in.reset = in.reset || m_frameReset;
+    f.run(commands, raw, output, in, params, filtering == RayFiltering::Temporal, *m_samplers.point,
+          *m_samplers.linear);
+}
+
+void RayTracing::traceShadows(gpu::CommandBuffer& commands, const shader::RayTracingUniforms& uniforms,
+                              const shader::LightUniforms& lights, const FilterInputs& inputs, RayFiltering filtering) {
+    const bool local = uniforms.local.x > 0.0f && m_local;
+    // Nothing to blur (hard shadows, no occlusion, no local lights): the rays write the mask directly.
+    const bool soft = uniforms.denoise.x > 0.0f || uniforms.denoise.z > 0.0f;
+    const bool rawMask = filtering == RayFiltering::Raw || (filtering == RayFiltering::Spatial && !soft);
     commands.beginTiming("rays");
-    const gpu::ColorTarget traced{.texture = denoise ? m_raw : m_mask, .load = gpu::LoadOp::DontCare, .cycle = true};
-    if (gpu::RenderPass pass = commands.beginRenderPass(traced)) {
+    std::array<gpu::ColorTarget, 2> targets{
+        gpu::ColorTarget{.texture = rawMask ? m_mask : m_raw, .load = gpu::LoadOp::DontCare, .cycle = true},
+        gpu::ColorTarget{.texture = filtering == RayFiltering::Raw ? m_local : m_localRaw,
+                         .load = gpu::LoadOp::DontCare,
+                         .cycle = true}};
+    if (gpu::RenderPass pass = commands.beginRenderPass(std::span(targets.data(), local ? 2 : 1))) {
         std::array<gpu::TextureSamplerBinding, 1 + QUENCH_RT_ALPHA_TEXTURES> samplers{};
-        samplers[0] = {m_depth, point};
+        samplers[0] = {depth(), *m_samplers.point};
         for (std::size_t i = 0; i < QUENCH_RT_ALPHA_TEXTURES; ++i)
-            samplers[i + 1] = {
-                i < m_alphaTextures.size() ? gpu::TextureRef(*m_alphaTextures[i]) : gpu::TextureRef(white), material};
+            samplers[i + 1] = {i < m_alphaTextures.size() ? gpu::TextureRef(*m_alphaTextures[i])
+                                                          : gpu::TextureRef(*m_samplers.white),
+                               *m_samplers.material};
         const std::array<gpu::BufferRef, 3> buffers{m_instanceTable, m_vertices, m_indices};
-        pass.bindPipeline(m_tracePipeline);
+        pass.bindPipeline(local ? m_traceLocalPipeline : m_tracePipeline);
         pass.bindSamplers(kFragment, 0, samplers);
         pass.bindStorageBuffers(kFragment, 0, buffers);
         pass.bindAccelerationStructure(kFragment, 0, m_top);
         pass.pushUniforms(kFragment, 1, uniforms);
+        if (local) pass.pushUniforms(kFragment, 2, lights);
         pass.draw(3);
         pass.end();
     }
     commands.endTiming();
-    if (!denoise) return;
+    if (filtering == RayFiltering::Raw) return;
     commands.beginTiming("denoise");
-    const gpu::ColorTarget color{.texture = m_mask, .load = gpu::LoadOp::DontCare, .cycle = true};
-    if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-        const gpu::TextureSamplerBinding samplers[] = {{m_raw, point}, {m_depth, point}};
-        pass.bindPipeline(m_denoisePipeline);
+    if (filtering == RayFiltering::Temporal) {
+        // Sun penumbrae and occlusion: a short history (moving casters), clamped; two a-trous passes.
+        filter(commands, m_maskFilter, m_raw, m_mask, inputs,
+               {.maxHistory = 16.0f, .clampGamma = 1.5f, .steps = 2, .planeTolerance = uniforms.denoise.y}, filtering);
+    } else if (soft) {
+        const gpu::ColorTarget color{.texture = m_mask, .load = gpu::LoadOp::DontCare, .cycle = true};
+        if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
+            const gpu::TextureSamplerBinding samplers[] = {{m_raw, *m_samplers.point}, {depth(), *m_samplers.point}};
+            pass.bindPipeline(m_denoisePipeline);
+            pass.bindSamplers(kFragment, 0, samplers);
+            pass.pushUniforms(kFragment, 1, uniforms);
+            pass.draw(3);
+            pass.end();
+        }
+    }
+    if (local)
+        filter(commands, m_localFilter, m_localRaw, m_local, inputs,
+               {.maxHistory = 16.0f, .clampGamma = 1.5f, .steps = 2, .planeTolerance = uniforms.denoise.y}, filtering);
+    commands.endTiming();
+}
+
+ProbeGridState RayTracing::placeProbes(const glm::vec3& camera, float spacing) {
+    ProbeGridState g;
+    g.spacing = std::max(spacing, 0.1f);
+    g.counts = kProbeCounts;
+    const glm::ivec3 cell(glm::floor(camera / g.spacing));
+    g.first = cell - kProbeCounts / 2;
+    if (std::abs(g.spacing - m_grid.spacing) > 1e-4f) m_probesValid = false;
+    m_grid = g;
+    return g;
+}
+
+void RayTracing::updateProbes(gpu::CommandBuffer& commands, shader::RayHitUniforms uniforms,
+                              const shader::LightUniforms& lights, bool reset) {
+    if (!m_lighting || !m_probeRays) return;
+    const bool restart = reset || m_frameReset || !m_probesValid;
+    uniforms.probes = glm::vec4(float(kProbeRays), m_grid.spacing * 2.0f, 0.97f, restart ? 1.0f : 0.0f);
+    uniforms.previousGrid = glm::vec4(glm::vec3(m_previousFirst), 0.0f);
+    // The rays see the grid's last state (no probes in the first frame).
+    uniforms.params.w = restart ? 0.0f : 1.0f;
+    commands.beginTiming("probes");
+    {
+        const gpu::ColorTarget color{.texture = m_probeRays, .load = gpu::LoadOp::DontCare, .cycle = true};
+        if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
+            pass.bindPipeline(m_probeTracePipeline);
+            bindHits(pass, !restart);
+            pass.pushUniforms(kFragment, 1, uniforms);
+            pass.pushUniforms(kFragment, 2, lights);
+            pass.draw(3);
+            pass.end();
+        }
+    }
+    const int write = m_probeIndex ^ 1;
+    const auto update = [&](const gpu::GraphicsPipeline& pipeline, const gpu::Texture& target,
+                            const gpu::Texture& previous) {
+        const gpu::ColorTarget color{.texture = target, .load = gpu::LoadOp::DontCare, .cycle = true};
+        gpu::RenderPass pass = commands.beginRenderPass(color);
+        if (!pass) return;
+        const gpu::TextureSamplerBinding samplers[] = {{m_probeRays, *m_samplers.point}, {previous, *m_samplers.point}};
+        pass.bindPipeline(pipeline);
         pass.bindSamplers(kFragment, 0, samplers);
         pass.pushUniforms(kFragment, 1, uniforms);
         pass.draw(3);
         pass.end();
+    };
+    update(m_probeIrradiancePipeline, m_probeIrradiance[std::size_t(write)],
+           m_probeIrradiance[std::size_t(m_probeIndex)]);
+    update(m_probeDistancePipeline, m_probeDistance[std::size_t(write)], m_probeDistance[std::size_t(m_probeIndex)]);
+    commands.endTiming();
+    m_probeIndex = write;
+    m_probesValid = true;
+    m_previousFirst = m_grid.first;
+}
+
+void RayTracing::traceReflections(gpu::CommandBuffer& commands, const shader::RayHitUniforms& uniforms,
+                                  const shader::LightUniforms& lights, const FilterInputs& inputs,
+                                  RayFiltering filtering) {
+    if (!m_lighting || !m_reflections) return;
+    commands.beginTiming("reflections");
+    const gpu::ColorTarget color{.texture = filtering == RayFiltering::Raw ? m_reflections : m_reflectionsRaw,
+                                 .load = gpu::LoadOp::DontCare,
+                                 .cycle = true};
+    if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
+        pass.bindPipeline(m_reflectPipeline);
+        bindHits(pass, uniforms.params.w > 0.5f);
+        pass.pushUniforms(kFragment, 1, uniforms);
+        pass.pushUniforms(kFragment, 2, lights);
+        pass.draw(3);
+        pass.end();
     }
+    // Smooth surfaces keep a short history and a narrow filter (their reflections are sharp), rough ones long ones.
+    if (filtering != RayFiltering::Raw)
+        filter(commands, m_reflectionFilter, m_reflectionsRaw, m_reflections, inputs,
+               {.maxHistory = 24.0f, .clampGamma = 1.25f, .alphaScale = true, .steps = 2, .planeTolerance = 0.02f},
+               filtering);
+    commands.endTiming();
+}
+
+void RayTracing::traceIndirect(gpu::CommandBuffer& commands, const shader::RayHitUniforms& uniforms,
+                               const shader::LightUniforms& lights, const FilterInputs& inputs,
+                               RayFiltering filtering) {
+    if (!m_lighting || !m_indirect) return;
+    commands.beginTiming("indirect");
+    const gpu::ColorTarget color{.texture = filtering == RayFiltering::Raw ? m_indirect : m_indirectRaw,
+                                 .load = gpu::LoadOp::DontCare,
+                                 .cycle = true};
+    if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
+        pass.bindPipeline(m_indirectPipeline);
+        bindHits(pass, uniforms.params.w > 0.5f);
+        pass.pushUniforms(kFragment, 1, uniforms);
+        pass.pushUniforms(kFragment, 2, lights);
+        pass.draw(3);
+        pass.end();
+    }
+    // One ray per pixel is the noisiest signal: a long history, a loose clamp and the widest filter.
+    if (filtering != RayFiltering::Raw)
+        filter(commands, m_indirectFilter, m_indirectRaw, m_indirect, inputs,
+               {.maxHistory = 32.0f, .clampGamma = 2.5f, .steps = 2, .planeTolerance = 0.03f}, filtering);
     commands.endTiming();
 }
 

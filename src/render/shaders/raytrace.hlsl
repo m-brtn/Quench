@@ -1,16 +1,19 @@
-// Ray-traced sun shadows and ambient occlusion of quench::render::Renderer (docs/render.md, "Ray-traced shadows").
-// rt_shadow_fs uses ray queries and is compiled by DXC (gpu::Caps::rayTracing); rt_denoise_fs by glslang.
+// Ray-traced shadows and ambient occlusion of quench::render::Renderer (docs/render.md, "Ray-traced shadows").
+// rt_shadow_fs and rt_shadow_local_fs use ray queries and are compiled by DXC (gpu::Caps::rayTracing); rt_denoise_fs
+// by glslang.
 //
 // rt_shadow_fs traces from the depth of a prepass: per pixel, rays toward the sun's disc and, with ambient
 // occlusion, rays over the hemisphere of the normal reconstructed from the depth. Opaque instances end a ray. For
 // the others (RayInstanceData at the instance id) every hit is a candidate: cut-out materials let the ray through
 // where their alpha is below the cutoff, translucent ones tint it as their transmittance map does
 // (quenchTransmittanceOf), once per instance. Output: rgb the sun's transmittance, a the ambient occlusion.
+// rt_shadow_local_fs also traces one ray per pixel toward each local light with ray-traced shadows (LocalLight::cone:
+// y the channel + 1, z the light's radius) into a second target.
 //
-// Bindings (fragment): uniform 0 FrameUniforms, uniform 1 RayTracingUniforms. rt_shadow_fs: sampler 0 the prepass
-// depth, samplers 1..8 the alpha textures (texture 0 of the materials), storage buffers t9..t11 (RayInstanceData[],
-// vertices as four float4 each, uint indices), acceleration structure t12. rt_denoise_fs: sampler 0 the traced
-// mask, sampler 1 the depth.
+// Bindings (fragment): uniform 0 FrameUniforms, uniform 1 RayTracingUniforms, uniform 2 LightUniforms
+// (rt_shadow_local_fs). rt_shadow_fs: sampler 0 the prepass depth, samplers 1..8 the alpha textures (texture 0 of
+// the materials), storage buffers t9..t11 (RayInstanceData[], vertices as four float4 each, uint indices),
+// acceleration structure t12. rt_denoise_fs: sampler 0 the traced mask, sampler 1 the depth.
 
 #include "quench/Bindings.hlsli"
 #include "quench/Common.hlsli"
@@ -18,20 +21,14 @@
 #include "quench/Fullscreen.hlsli"
 #include "quench/SceneUniforms.h"
 
+#include "RayCommon.hlsli"
 #include "RayTracingUniforms.h"
 
 cbuffer RayTracingBlock : QUENCH_UNIFORM(1) {
     RayTracingUniforms rt;
 };
 
-// World position of a pixel center at a depth (reversed: near 1, far 0).
-float3 worldAt(float2 pixel, float depth) {
-    const float2 uv = pixel * quenchFrame.screen.zw;
-    const float4 w = mul(quenchFrame.invViewProj, float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0));
-    return w.xyz / w.w;
-}
-
-#if defined(QUENCH_ENTRY_rt_shadow_fs)
+#if defined(QUENCH_ENTRY_rt_shadow_fs) || defined(QUENCH_ENTRY_rt_shadow_local_fs)
 Texture2D<float> depthTex : QUENCH_TEXTURE(0);
 SamplerState depthSampler : QUENCH_SAMPLER(0);
 Texture2D<float4> alpha0 : QUENCH_TEXTURE(1);
@@ -55,9 +52,6 @@ StructuredBuffer<float4> rtVertices : QUENCH_STORAGE(10);
 StructuredBuffer<uint> rtIndices : QUENCH_STORAGE(11);
 RaytracingAccelerationStructure rtScene : QUENCH_STORAGE(12);
 
-static const uint kMaskOpaque = 1u;      // opaque and cut-out instances
-static const uint kMaskTranslucent = 2u; // translucent instances (not in ambient occlusion)
-
 float4 alphaTexture(int slot, float2 uv) {
     switch (slot) {
     case 0: return alpha0.SampleLevel(alphaSampler0, uv, 0.0);
@@ -72,7 +66,8 @@ float4 alphaTexture(int slot, float2 uv) {
     }
 }
 
-// The standard surface's base color at a candidate hit: material color, texture 0 and the vertex color.
+// The standard surface's base color at a candidate hit: material color, texture 0 and the vertex color. Cut-out and
+// translucent casters are in the vertex table with their bind-pose vertices (uv and color do not move with a pose).
 float4 candidateColor(RayInstanceData d, uint primitive, float2 bary) {
     const uint first = asuint(d.geometry.x) + primitive * 3u;
     const uint base = asuint(d.geometry.y);
@@ -83,7 +78,7 @@ float4 candidateColor(RayInstanceData d, uint primitive, float2 bary) {
     const float2 uv = rtVertices[i0 + 1u].zw * w.x + rtVertices[i1 + 1u].zw * w.y + rtVertices[i2 + 1u].zw * w.z;
     const float4 color = rtVertices[i0 + 2u] * w.x + rtVertices[i1 + 2u] * w.y + rtVertices[i2 + 2u] * w.z;
     float4 c = d.color * color;
-    const int slot = int(d.geometry.w);
+    const int slot = int(d.surface.z);
     if (slot >= 0) c *= alphaTexture(slot, uv);
     return c;
 }
@@ -97,15 +92,16 @@ float3 traceVisibility(float3 origin, float3 direction, float tMax) {
     ray.TMin = 0.0;
     ray.TMax = tMax;
     RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
-    q.TraceRayInline(rtScene, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, kMaskOpaque | kMaskTranslucent, ray);
+    q.TraceRayInline(rtScene, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+                     QUENCH_RT_MASK_CASTER | QUENCH_RT_MASK_TRANSLUCENT, ray);
     float3 t = float3(1.0, 1.0, 1.0);
     uint seen0 = 0xffffffffu, seen1 = 0xffffffffu, seen2 = 0xffffffffu, seen3 = 0xffffffffu;
     while (q.Proceed()) {
         const uint id = q.CandidateInstanceID();
         const RayInstanceData d = rtInstances[id];
         const float4 c = candidateColor(d, q.CandidatePrimitiveIndex(), q.CandidateTriangleBarycentrics());
-        if (d.params.x > 0.0 && c.a < d.params.x) continue; // a cut-out hole
-        if (int(d.geometry.z) != 2) {
+        if (d.emissive.w > 0.0 && c.a < d.emissive.w) continue; // a cut-out hole
+        if (int(d.geometry.w) != 2) {
             q.CommitNonOpaqueTriangleHit();
             q.Abort();
             break;
@@ -120,7 +116,7 @@ float3 traceVisibility(float3 origin, float3 direction, float tMax) {
     return q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? float3(0.0, 0.0, 0.0) : t;
 }
 
-// The distance to the nearest opaque or cut-out surface along a ray (translucent ones are not in the mask); tMax:
+// The distance to the nearest opaque or cut-out caster along a ray (translucent ones are not in the mask); tMax:
 // none.
 float traceDistance(float3 origin, float3 direction, float tMax) {
     RayDesc ray;
@@ -129,45 +125,19 @@ float traceDistance(float3 origin, float3 direction, float tMax) {
     ray.TMin = 0.0;
     ray.TMax = tMax;
     RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> q;
-    q.TraceRayInline(rtScene, RAY_FLAG_NONE, kMaskOpaque, ray);
+    q.TraceRayInline(rtScene, RAY_FLAG_NONE, QUENCH_RT_MASK_CASTER, ray);
     while (q.Proceed()) {
         const RayInstanceData d = rtInstances[q.CandidateInstanceID()];
         const float4 c = candidateColor(d, q.CandidatePrimitiveIndex(), q.CandidateTriangleBarycentrics());
-        if (d.params.x > 0.0 && c.a < d.params.x) continue;
+        if (d.emissive.w > 0.0 && c.a < d.emissive.w) continue;
         q.CommitNonOpaqueTriangleHit();
     }
     return q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? q.CommittedRayT() : tMax;
 }
 
-// A unit vector perpendicular to n.
-float3 perpendicular(float3 n) {
-    return abs(n.y) < 0.99 ? normalize(cross(n, float3(0.0, 1.0, 0.0))) : normalize(cross(n, float3(1.0, 0.0, 0.0)));
-}
-
-float4 rt_shadow_fs(FullscreenOut vin) : SV_Target0 {
-    const int2 p = int2(vin.position.xy);
-    const float d = depthTex.Load(int3(p, 0));
-    if (d <= 0.0) return float4(1.0, 1.0, 1.0, 1.0); // the sky
-
-    // The normal from the depth: the smaller difference on each axis keeps edges from bending it.
-    const float3 P = worldAt(vin.position.xy, d);
-    const int2 last = int2(quenchFrame.screen.xy) - 1;
-    const int2 pr = min(p + int2(1, 0), last), pl = max(p - int2(1, 0), int2(0, 0));
-    const int2 pd = min(p + int2(0, 1), last), pu = max(p - int2(0, 1), int2(0, 0));
-    const float3 R = worldAt(float2(pr) + 0.5, depthTex.Load(int3(pr, 0))) - P;
-    const float3 L = P - worldAt(float2(pl) + 0.5, depthTex.Load(int3(pl, 0)));
-    const float3 D = worldAt(float2(pd) + 0.5, depthTex.Load(int3(pd, 0))) - P;
-    const float3 U = P - worldAt(float2(pu) + 0.5, depthTex.Load(int3(pu, 0)));
-    const float3 dx = dot(R, R) < dot(L, L) ? R : L;
-    const float3 dy = dot(D, D) < dot(U, U) ? D : U;
-    float3 N = normalize(cross(dy, dx));
-    const float3 V = normalize(quenchFrame.cameraPos.xyz - P);
-    if (dot(N, V) < 0.0) N = -N;
-
-    const float viewDistance = max(quenchViewDepth(P), 1.0);
-    const float3 origin = P + N * (rt.shadow.w * viewDistance);
+float4 traceSunAndOcclusion(float2 position, float3 P, float3 N, float3 origin) {
     // Per pixel and frame: TAA and the denoise pass average the samples.
-    const float rotation = 6.2831853 * ign(vin.position.xy + float(uint(quenchFrame.options.y) & 63u) * 5.588238);
+    const float rotation = 6.2831853 * ign(position + float(uint(quenchFrame.options.y) & 63u) * 5.588238);
 
     float4 result = float4(1.0, 1.0, 1.0, 1.0);
     const uint sunRays = uint(rt.shadow.x);
@@ -176,7 +146,7 @@ float4 rt_shadow_fs(FullscreenOut vin) : SV_Target0 {
         if (dot(N, sun) <= -0.05) {
             result.rgb = float3(0.0, 0.0, 0.0); // facing away: unlit anyway
         } else {
-            const float3 T = perpendicular(sun);
+            const float3 T = rtPerpendicular(sun);
             const float3 B = cross(sun, T);
             float3 sum = float3(0.0, 0.0, 0.0);
             for (uint i = 0u; i < sunRays; ++i) {
@@ -192,9 +162,9 @@ float4 rt_shadow_fs(FullscreenOut vin) : SV_Target0 {
 
     const uint aoRays = uint(rt.occlusion.x);
     if (aoRays > 0u) {
-        const float3 T = perpendicular(N);
+        const float3 T = rtPerpendicular(N);
         const float3 B = cross(N, T);
-        const float jitter = ign(vin.position.yx + float(uint(quenchFrame.options.y) & 63u) * 3.17);
+        const float jitter = ign(position.yx + float(uint(quenchFrame.options.y) & 63u) * 3.17);
         float occluded = 0.0;
         for (uint i = 0u; i < aoRays; ++i) {
             // Cosine-weighted hemisphere: a Vogel disc projected up.
@@ -207,6 +177,64 @@ float4 rt_shadow_fs(FullscreenOut vin) : SV_Target0 {
         result.a = 1.0 - rt.occlusion.z * occluded / float(aoRays);
     }
     return result;
+}
+#endif
+
+#if defined(QUENCH_ENTRY_rt_shadow_fs)
+float4 rt_shadow_fs(FullscreenOut vin) : SV_Target0 {
+    const int2 p = int2(vin.position.xy);
+    const float d = depthTex.Load(int3(p, 0));
+    if (d <= 0.0) return float4(1.0, 1.0, 1.0, 1.0); // the sky
+    const float3 P = rtWorldAt(vin.position.xy, d);
+    const float3 N = rtDepthNormal(depthTex, p, P);
+    const float3 origin = P + N * (rt.shadow.w * max(quenchViewDepth(P), 1.0));
+    return traceSunAndOcclusion(vin.position.xy, P, N, origin);
+}
+#endif
+
+#if defined(QUENCH_ENTRY_rt_shadow_local_fs)
+cbuffer RayLightBlock : QUENCH_UNIFORM(2) {
+    LightUniforms rtLights;
+};
+
+struct ShadowOut {
+    float4 mask : SV_Target0;
+    float4 local : SV_Target1; // one channel per local light with ray-traced shadows
+};
+
+ShadowOut rt_shadow_local_fs(FullscreenOut vin) {
+    ShadowOut o;
+    o.mask = float4(1.0, 1.0, 1.0, 1.0);
+    o.local = float4(1.0, 1.0, 1.0, 1.0);
+    const int2 p = int2(vin.position.xy);
+    const float d = depthTex.Load(int3(p, 0));
+    if (d <= 0.0) return o;
+    const float3 P = rtWorldAt(vin.position.xy, d);
+    const float3 N = rtDepthNormal(depthTex, p, P);
+    const float3 origin = P + N * (rt.shadow.w * max(quenchViewDepth(P), 1.0));
+    o.mask = traceSunAndOcclusion(vin.position.xy, P, N, origin);
+    uint seed = rtSeed(uint2(p), uint(quenchFrame.options.y), 0x3c6eu);
+    const int lights = int(rtLights.count.x);
+    for (int k = 0; k < lights; ++k) {
+        const LocalLight light = rtLights.lights[k];
+        if (light.cone.y <= 0.0) continue;
+        const int c = int(light.cone.y) - 1;
+        // A point on the light's sphere, uniformly over its area.
+        const float z = rtRandom(seed) * 2.0 - 1.0;
+        const float a = 6.2831853 * rtRandom(seed);
+        const float r = sqrt(max(1.0 - z * z, 0.0));
+        const float3 target = light.positionRange.xyz + float3(r * cos(a), z, r * sin(a)) * light.cone.z;
+        const float3 toLight = target - origin;
+        const float distance = length(toLight);
+        float visible = 0.0;
+        if (distance > 1e-4 && dot(N, light.positionRange.xyz - P) > 0.0)
+            visible = luminance(traceVisibility(origin, toLight / distance, max(distance - light.cone.z, 0.0)));
+        o.local = c == 0 ? float4(visible, o.local.yzw) : o.local;
+        o.local = c == 1 ? float4(o.local.x, visible, o.local.zw) : o.local;
+        o.local = c == 2 ? float4(o.local.xy, visible, o.local.w) : o.local;
+        o.local = c == 3 ? float4(o.local.xyz, visible) : o.local;
+    }
+    return o;
 }
 #endif
 

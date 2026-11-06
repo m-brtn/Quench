@@ -30,6 +30,7 @@
 #include "quench/Common.hlsli"
 #include "quench/Fog.hlsli"
 #include "quench/Frame.hlsli"
+#include "quench/Probes.hlsli"
 #include "quench/Shadows.hlsli"
 #include "quench/Sky.hlsli"
 
@@ -99,6 +100,19 @@ SamplerState quenchTransmittanceSampler : QUENCH_SAMPLER(5);
 // nothing was traced (transparent surfaces, game passes that bind it so).
 Texture2D<float4> quenchRayMask : QUENCH_TEXTURE(6);
 SamplerState quenchRayMaskSampler : QUENCH_SAMPLER(6);
+// Ray-traced reflections (rgb radiance, a: weight), indirect light (rgb: irradiance / pi) and the shadows of up to
+// four local lights (one channel each) at the render size, and the probe grid's atlases (quench/Probes.hlsli);
+// FrameUniforms::options.w says which are read.
+Texture2D<float4> quenchRayReflections : QUENCH_TEXTURE(7);
+SamplerState quenchRayReflectionsSampler : QUENCH_SAMPLER(7);
+Texture2D<float4> quenchRayIndirect : QUENCH_TEXTURE(8);
+SamplerState quenchRayIndirectSampler : QUENCH_SAMPLER(8);
+Texture2D<float4> quenchRayLocalShadows : QUENCH_TEXTURE(9);
+SamplerState quenchRayLocalShadowsSampler : QUENCH_SAMPLER(9);
+Texture2D<float4> quenchProbeIrradianceAtlas : QUENCH_TEXTURE(10);
+SamplerState quenchProbeSampler : QUENCH_SAMPLER(10);
+Texture2D<float4> quenchProbeDistanceAtlas : QUENCH_TEXTURE(11);
+SamplerState quenchProbeDistanceSampler : QUENCH_SAMPLER(11);
 
 // True when the material has texture n (MaterialDesc::textures); unset textures sample white.
 bool quenchHasTexture(int n) { return (uint(quenchMaterial.surface.w) & (1u << uint(n))) != 0u; }
@@ -188,6 +202,12 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
         }
     }
     const int lights = int(quenchLights.count.x);
+    const bool localRays = (rayTraced & 4u) != 0u;
+    float4 localShadows = float4(1.0, 1.0, 1.0, 1.0);
+    [branch] if (localRays) {
+        localShadows = quenchRayLocalShadows.SampleLevel(quenchRayLocalShadowsSampler, i.pixel * quenchFrame.screen.zw,
+                                                         0.0);
+    }
     for (int k = 0; k < lights; ++k) {
         const LocalLight light = quenchLights.lights[k];
         const int type = int(light.color.w);
@@ -205,17 +225,40 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
                 const float t = saturate((dot(-L, light.direction.xyz) - light.direction.w) * light.cone.x);
                 attenuation *= t * t;
             }
+            // A light with ray-traced shadows: its channel in sampler 9 (LocalLight::cone.y = channel + 1).
+            if (localRays && light.cone.y > 0.0) {
+                const int c = int(light.cone.y) - 1;
+                attenuation *= dot(localShadows, float4(c == 0, c == 1, c == 2, c == 3));
+            }
         }
         if (attenuation > 0.0) color += quenchDirectLight(s, V, L, light.color.rgb * attenuation);
     }
     const float3 F0 = lerp(((float3)(0.04)), s.albedo, s.metallic);
-    const float3 ambient = quenchAmbient(N);
-    const float occlusion = (rayTraced & 2u) != 0u ? s.occlusion * rayMask.a : s.occlusion;
+    const float2 screenUv = i.pixel * quenchFrame.screen.zw;
+    // The indirect light: traced per pixel (it has its own occlusion), the probe grid, or the sky's ambient.
+    const bool tracedIndirect = (rayTraced & 16u) != 0u;
+    float3 ambient = quenchAmbient(N);
+    [branch] if (tracedIndirect) {
+        ambient = quenchRayIndirect.SampleLevel(quenchRayIndirectSampler, screenUv, 0.0).rgb;
+    } else if ((rayTraced & 32u) != 0u) {
+        ambient = quenchProbeIrradiance(quenchProbeIrradianceAtlas, quenchProbeDistanceAtlas, quenchProbeSampler,
+                                        i.world, N, V, ambient);
+    }
+    const float occlusion = (rayTraced & 2u) != 0u && !tracedIndirect ? s.occlusion * rayMask.a : s.occlusion;
     color += ambient * s.albedo * (1.0 - s.metallic) * occlusion;
     // Sun-shadowed areas see less of the bright sky in their reflection.
     const float3 R = reflect(-V, N);
-    const float3 env = lerp(skyRadiance(R), ambient, saturate(s.roughness * 1.2)) * lerp(0.35, 1.0, shadow);
-    color += env * envBRDFApprox(F0, s.roughness, NdotV) * occlusion;
+    float3 env = lerp(skyRadiance(R), ambient, saturate(s.roughness * 1.2)) * lerp(0.35, 1.0, shadow);
+    float envOcclusion = occlusion;
+    // Traced reflections up to the roughness cutoff, faded into the sky's over its last quarter.
+    [branch] if ((rayTraced & 8u) != 0u) {
+        const float4 traced = quenchRayReflections.SampleLevel(quenchRayReflectionsSampler, screenUv, 0.0);
+        const float cutoff = quenchFrame.rayLighting.x;
+        const float w = traced.a > 0.0 ? saturate((cutoff - s.roughness) / max(cutoff * 0.25, 1e-3)) : 0.0;
+        env = lerp(env, traced.rgb, w);
+        envOcclusion = lerp(occlusion, 1.0, w);
+    }
+    color += env * envBRDFApprox(F0, s.roughness, NdotV) * envOcclusion;
     return color + s.emissive;
 }
 #endif

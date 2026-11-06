@@ -132,6 +132,60 @@ QUENCH_TEST(effects_ray_tracing_and_upscaling_fall_back) {
     CHECK(e.sunShadows == SunShadows::ShadowMaps && e.shadowCascades == 0, "shadowCascades 0: no sun shadows");
 }
 
+QUENCH_TEST(effects_ray_traced_lighting_falls_back) {
+    using quench::render::detail::selectEffects;
+    RenderSettings s;
+    s.localLightShadows = 9;
+    s.reflections = Reflections::RayTraced;
+    s.indirectLight = IndirectLight::RayTraced;
+    s.rayDenoiser = RayDenoiser::Temporal;
+    s.upscaling = Upscaling::TemporalDenoised;
+    s.renderScale = 0.5f;
+    quench::render::detail::DeviceSupport full{.shadowArray = true,
+                                               .depthClamp = true,
+                                               .sampledDepth = true,
+                                               .velocityTarget = true,
+                                               .transmittanceArray = true,
+                                               .rayTracing = true,
+                                               .rayLighting = true,
+                                               .spatialUpscaling = true,
+                                               .temporalUpscaling = true,
+                                               .denoisedUpscaling = true};
+    ActiveEffects e = selectEffects(s, full);
+    CHECK(e.localLightShadows == kMaxRayLocalShadows && e.reflections == Reflections::RayTraced &&
+              e.indirectLight == IndirectLight::RayTraced && e.rayDenoiser == RayDenoiser::Temporal,
+          "everything traced, local light shadows clamped to %d: %d", kMaxRayLocalShadows, e.localLightShadows);
+    CHECK(e.upscaling == Upscaling::TemporalDenoised && e.antiAliasing == AntiAliasing::Taa,
+          "the denoising upscaler takes TAA's jitter and motion");
+
+    quench::render::detail::DeviceSupport noDenoiser = full;
+    noDenoiser.denoisedUpscaling = false;
+    CHECK(selectEffects(s, noDenoiser).upscaling == Upscaling::Temporal,
+          "without the denoising upscaler: temporal upscaling (and the engine's denoiser)");
+    quench::render::detail::DeviceSupport noLighting = full;
+    noLighting.rayLighting = false;
+    e = selectEffects(s, noLighting);
+    CHECK(e.reflections == Reflections::Sky && e.indirectLight == IndirectLight::Sky && e.localLightShadows > 0,
+          "without the lighting shaders: the sky's light, traced shadows stay");
+    quench::render::detail::DeviceSupport noRays = full;
+    noRays.rayTracing = false;
+    e = selectEffects(s, noRays);
+    CHECK(e.reflections == Reflections::Sky && e.indirectLight == IndirectLight::Sky && e.localLightShadows == 0 &&
+              e.upscaling == Upscaling::Temporal,
+          "without ray tracing: the sky's light, unshadowed local lights, temporal upscaling");
+    quench::render::detail::DeviceSupport noVelocity = full;
+    noVelocity.velocityTarget = false;
+    e = selectEffects(s, noVelocity);
+    CHECK(e.rayDenoiser == RayDenoiser::Spatial && e.upscaling == Upscaling::Bilinear,
+          "without motion vectors: the spatial denoiser, no temporal upscaling");
+
+    s.pathTracer = true;
+    e = selectEffects(s, full);
+    CHECK(e.pathTracer && e.antiAliasing == AntiAliasing::None && e.upscaling == Upscaling::Spatial,
+          "the path tracer: no TAA, spatial upscaling in place of the temporal one");
+    CHECK(!selectEffects(s, noLighting).pathTracer, "the path tracer needs the lighting shaders");
+}
+
 QUENCH_TEST(cascades_cover_the_view) {
     const glm::mat4 view = glm::lookAt(glm::vec3(3, 2, 8), glm::vec3(0, 1, 0), glm::vec3(0, 1, 0));
     const glm::vec3 sun = glm::normalize(glm::vec3(0.4f, 0.8f, 0.3f));

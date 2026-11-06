@@ -21,20 +21,41 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
     e.ambientOcclusion = settings.ambientOcclusion == AmbientOcclusion::RayTraced && support.rayTracing
                              ? AmbientOcclusion::RayTraced
                              : AmbientOcclusion::None;
+    e.localLightShadows = support.rayTracing ? std::clamp(settings.localLightShadows, 0, kMaxRayLocalShadows) : 0;
+    const bool lighting = support.rayTracing && support.rayLighting;
+    e.reflections = lighting ? settings.reflections : Reflections::Sky;
+    e.indirectLight = lighting ? settings.indirectLight : IndirectLight::Sky;
+    e.pathTracer = lighting && settings.pathTracer;
     e.antiAliasing = settings.antiAliasing;
     const bool temporalInputs = support.sampledDepth && support.velocityTarget;
+    e.rayDenoiser =
+        settings.rayDenoiser == RayDenoiser::Temporal && temporalInputs ? RayDenoiser::Temporal : RayDenoiser::Spatial;
     if (e.antiAliasing == AntiAliasing::Taa && !temporalInputs) e.antiAliasing = AntiAliasing::Fxaa;
     switch (settings.upscaling) {
     case Upscaling::Bilinear: break;
     case Upscaling::Spatial:
         if (support.spatialUpscaling && settings.renderScale < 1.0f) e.upscaling = Upscaling::Spatial;
         break;
+    case Upscaling::TemporalDenoised:
+        if (support.denoisedUpscaling && support.rayTracing && temporalInputs) {
+            e.upscaling = Upscaling::TemporalDenoised;
+            e.antiAliasing = AntiAliasing::Taa;
+            break;
+        }
+        [[fallthrough]]; // the temporal upscaler, with the engine's denoiser
     case Upscaling::Temporal:
         if (support.temporalUpscaling && temporalInputs) {
             e.upscaling = Upscaling::Temporal;
             e.antiAliasing = AntiAliasing::Taa; // its jitter and motion; the upscaler resolves
         }
         break;
+    }
+    // The path tracer accumulates jittered samples itself: no TAA, and nothing for a temporal upscaler to resolve.
+    if (e.pathTracer) {
+        e.antiAliasing = AntiAliasing::None;
+        if (e.upscaling == Upscaling::Temporal || e.upscaling == Upscaling::TemporalDenoised)
+            e.upscaling =
+                support.spatialUpscaling && settings.renderScale < 1.0f ? Upscaling::Spatial : Upscaling::Bilinear;
     }
     e.bloom = settings.bloom && settings.bloomStrength > 0.0f;
     return e;

@@ -204,11 +204,13 @@ if(NOT QUENCH_HEADLESS)
         src/render/Daylight.cpp
         src/render/Effects.cpp
         src/render/MeshBuilder.cpp
+        src/render/PathTracer.cpp
         src/render/Projection.cpp
         src/render/RayTracing.cpp
         src/render/Renderer.cpp
         src/render/Scene.cpp
         src/render/SceneAssets.cpp
+        src/render/TemporalFilter.cpp
         src/render/ToneMap.cpp)
     quench_configure_target(quench_render)
     target_link_libraries(quench_render PUBLIC quench_core quench_assets quench_gpu quench_gpu_shaders quench_glm)
@@ -217,12 +219,18 @@ if(NOT QUENCH_HEADLESS)
                 velocity_fs:fragment velocity_obj_vs:vertex velocity_skin_vs:vertex velocity_obj_fs:fragment
                 taa_fs:fragment bloom_down_fs:fragment bloom_up_fs:fragment tonemap_fs:fragment fxaa_fs:fragment)
     quench_add_shaders(quench_render NAME render_standard SOURCE src/render/shaders/standard.hlsl
-        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_fs:fragment surface_transmittance_fs:fragment)
+        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_fs:fragment surface_transmittance_fs:fragment
+                surface_gbuffer_fs:fragment)
     quench_add_shaders(quench_render NAME render_skin SOURCE src/render/shaders/skin.hlsl ENTRIES skin_cs:compute)
-    # Ray-traced shadows (gpu::Caps::rayTracing): rt_shadow_fs needs DXC (cmake/QuenchDxc.cmake); without it the set
-    # has rt_denoise_fs only and the renderer uses the shadow maps.
+    # Ray tracing (gpu::Caps::rayTracing): the rayquery entries need DXC (cmake/QuenchDxc.cmake); without it the sets
+    # have the other entries only and the renderer uses the shadow maps and the sky's light.
     quench_add_shaders(quench_render NAME render_raytrace SOURCE src/render/shaders/raytrace.hlsl
-        ENTRIES rt_shadow_fs:fragment:rayquery rt_denoise_fs:fragment)
+        ENTRIES rt_shadow_fs:fragment:rayquery rt_shadow_local_fs:fragment:rayquery rt_denoise_fs:fragment)
+    quench_add_shaders(quench_render NAME render_raylight SOURCE src/render/shaders/raylight.hlsl
+        ENTRIES rt_reflect_fs:fragment:rayquery rt_indirect_fs:fragment:rayquery rt_probe_trace_fs:fragment:rayquery
+                pt_fs:fragment:rayquery rt_probe_irradiance_fs:fragment rt_probe_distance_fs:fragment)
+    quench_add_shaders(quench_render NAME render_raydenoise SOURCE src/render/shaders/raydenoise.hlsl
+        ENTRIES rt_temporal_fs:fragment rt_atrous_fs:fragment)
 
     # SDL main callbacks (src/app/Main.cpp): an object library, so the symbols land in the game executable.
     add_library(quench_main OBJECT src/app/Main.cpp)

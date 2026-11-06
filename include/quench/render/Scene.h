@@ -127,8 +127,9 @@ enum class LightType : std::uint8_t { Directional, Point, Spot };
 
 // The first directional light is the sun: it lights the scene with cascaded shadow maps (when castsShadows and the
 // renderer has cascades) and places the sun in the sky. Further directional lights, point and spot lights light the
-// surfaces without shadows; per frame the renderer uses at most 16 of them, the nearest to the camera. A light with
-// zero color or intensity is off (a sun that is off still places the sun disc and casts no shadows).
+// surfaces; per frame the renderer uses at most 16 of them, the nearest to the camera. Point and spot lights have
+// shadows only where they are ray traced (RenderSettings::localLightShadows: the nearest ones with castsShadows). A
+// light with zero color or intensity is off (a sun that is off still places the sun disc and casts no shadows).
 struct LightDesc {
     LightType type = LightType::Point;
     glm::vec3 color{1.0f}; // linear
@@ -138,7 +139,8 @@ struct LightDesc {
     float range = 10.0f;                    // point, spot: the light fades to zero at this distance (m)
     float innerAngle = 0.35f;               // spot: half angle of the full-intensity cone (radians)
     float outerAngle = 0.5f;                // spot: half angle where the light ends
-    bool castsShadows = true;               // the sun only
+    bool castsShadows = true;               // the sun; point and spot lights with ray-traced local light shadows
+    float sourceRadius = 0.0f;              // point, spot: the radius of the emitting sphere (m): soft traced shadows
 };
 
 // Sky, ambient light, fog and exposure. The defaults are a clear day with the sun about 25 degrees high

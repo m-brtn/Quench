@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -67,7 +68,44 @@ enum class Upscaling : std::uint8_t {
     // MetalFX temporal upscaling from the jittered frame, its depth and motion, in place of TAA's resolve (also at
     // renderScale 1: anti-aliasing only). Needs TAA's inputs and gpu::Caps::temporalUpscaling; else Bilinear.
     Temporal,
+    // MetalFX's temporal denoising upscaler: the frame with its traced effects undenoised, its depth, motion and a
+    // G-buffer (albedos, normal, roughness), denoised and scaled up in one pass, in place of TAA and the engine's
+    // denoiser (gpu::Caps::denoisedUpscaling, ray tracing; else Temporal with the engine's denoiser).
+    TemporalDenoised,
 };
+
+// How the noise of the traced effects (soft and local light shadows, ambient occlusion, reflections, indirect light)
+// is filtered before the surfaces read them.
+enum class RayDenoiser : std::uint8_t {
+    // A depth-aware blur of each frame (3 x 3 for the sun's penumbrae, 5 x 5 for the occlusion); TAA averages the
+    // rest. Reflections and indirect light get the a-trous filter only.
+    Spatial,
+    // A history per effect, reprojected with the motion vectors and dropped where the depth disagrees, clamped to the
+    // spread of the new samples, then a-trous filtering weighted by the surface's plane (docs/render.md,
+    // "Denoising"). Needs the motion vector inputs (else Spatial).
+    Temporal,
+};
+
+// How surfaces below RenderSettings::reflectionRoughness reflect their surroundings.
+enum class Reflections : std::uint8_t {
+    Sky,       // the sky, blurred toward the ambient light with roughness (all surfaces)
+    RayTraced, // one ray per pixel along the GGX lobe; hits lit by the sun with shadows (gpu::Caps::rayTracing)
+};
+
+// The light that reaches surfaces from other surfaces and the sky (the diffuse part; reflections are separate).
+enum class IndirectLight : std::uint8_t {
+    Sky, // Environment::skyAmbient and groundAmbient by the normal's direction
+    // A grid of 16 x 8 x 16 probes around View::probeCenter (probeSpacing apart), traced every frame: one bounce from
+    // the surfaces around them and more through the grid's history, with visibility so light does not leak through
+    // walls (DDGI). Smooth, a few frames behind changes. gpu::Caps::rayTracing; else Sky.
+    Probes,
+    // One ray per pixel over the hemisphere, its hits lit with the probe grid (also running): contact detail the grid
+    // is too coarse for. gpu::Caps::rayTracing; else Sky.
+    RayTraced,
+};
+
+// Ray-traced shadows of at most this many local lights per frame (RenderSettings::localLightShadows).
+inline constexpr int kMaxRayLocalShadows = 4;
 
 struct RenderSettings {
     float renderScale = 1.0f; // 3D resolution relative to the target, 0.25..1 (scaled up by `upscaling`)
@@ -86,6 +124,21 @@ struct RenderSettings {
     int occlusionRays = 2;        // 1..8 per pixel
     float occlusionRadius = 1.0f; // m
     float occlusionStrength = 1.0f;
+    // Ray-traced shadows of the frame's nearest local lights with castsShadows (0..kMaxRayLocalShadows; one ray per
+    // pixel and light, soft by LightDesc::sourceRadius; gpu::Caps::rayTracing, else unshadowed).
+    int localLightShadows = 0;
+    Reflections reflections = Reflections::Sky;
+    float reflectionRoughness = 0.5f; // traced reflections up to this roughness, faded into the sky's above
+    IndirectLight indirectLight = IndirectLight::Sky;
+    float probeSpacing = 2.0f; // m between the probes of the grid
+    RayDenoiser rayDenoiser = RayDenoiser::Temporal;
+    // The reference path tracer (gpu::Caps::rayTracing): every frame adds one path per pixel to a running mean of
+    // the scene's light, until pathSamples or a change of the camera, the scene or the settings, in place of the
+    // whole frame up to bloom (no TAA, no game passes before PostHdr). For comparing the real-time effects with,
+    // not for play: docs/render.md, "Path tracer".
+    bool pathTracer = false;
+    int pathBounces = 4;    // 1..16
+    int pathSamples = 1024; // the mean stops changing after this many
     AntiAliasing antiAliasing = AntiAliasing::Taa;
     float sharpen = 0.25f; // after TAA, 0..1
     bool bloom = true;
@@ -110,7 +163,15 @@ struct ActiveEffects {
     // Map needs an Rgba16Float texture array the device can render to and sample; otherwise Dithered.
     TranslucentShadows translucentShadows = TranslucentShadows::Dithered;
     AmbientOcclusion ambientOcclusion = AmbientOcclusion::None;
-    AntiAliasing antiAliasing = AntiAliasing::None; // with Upscaling::Temporal: Taa's jitter, the upscaler resolves
+    // The traced lighting needs gpu::Caps::rayTracing and the ray query shaders, like RayTraced shadows; the path
+    // tracer replaces the frame's lighting (the other traced effects are not run then).
+    int localLightShadows = 0;
+    Reflections reflections = Reflections::Sky;
+    IndirectLight indirectLight = IndirectLight::Sky;
+    bool pathTracer = false; // then no TAA and no temporal upscaling
+    RayDenoiser rayDenoiser = RayDenoiser::Spatial;
+    // With Upscaling::Temporal and TemporalDenoised: Taa's jitter, the upscaler resolves.
+    AntiAliasing antiAliasing = AntiAliasing::None;
     Upscaling upscaling = Upscaling::Bilinear;
     bool bloom = false;
 
@@ -127,6 +188,9 @@ struct SurfaceDesc {
     // times texture 0 alpha times the vertex color alpha).
     const ShaderBlob* shadowFragmentShader = nullptr;
     const ShaderBlob* transmittanceShader = nullptr;
+    // surface_gbuffer_fs: the surface's normal, roughness, albedo and metallic for the traced reflections, indirect
+    // light and the denoising upscaler. Without it the standard surface's are written (the material's values).
+    const ShaderBlob* gbufferShader = nullptr;
     std::string_view name{};
 };
 
@@ -170,6 +234,9 @@ struct View {
     float nearPlane = 0.1f; // m
     bool cut = false;       // a camera cut: no motion from the previous frame, the TAA history restarts
     double time = 0.0;      // seconds, for animated surfaces (FrameUniforms::cameraPos.w)
+    // The center of the probe grid (IndirectLight::Probes and RayTraced); unset: the camera. A camera high above
+    // the ground (top-down, strategy) sets the point it looks at, so the grid covers the ground.
+    std::optional<glm::vec3> probeCenter{};
 };
 
 struct RenderStats {
@@ -194,6 +261,13 @@ struct RenderStats {
     std::uint32_t rayInstances = 0;
     std::uint32_t rayBuilds = 0;
     std::uint32_t rayRefits = 0;
+    std::uint32_t rayCompactions = 0; // bottom levels compacted this frame
+    // GPU memory of the ray tracing data: acceleration structures, the vertex and index tables and the hit texture
+    // arrays (not the targets).
+    std::uint64_t rayMemoryBytes = 0;
+    std::uint32_t hitTextures = 0; // material textures in the hit texture arrays
+    std::uint32_t probes = 0;      // probes traced this frame (IndirectLight::Probes and RayTraced)
+    std::uint32_t pathSamples = 0; // samples in the path tracer's mean
 };
 
 class Renderer {
