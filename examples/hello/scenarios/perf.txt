@@ -2,7 +2,7 @@
 # real time, where the GPU time of every frame is read once, when its fence has signalled, and counted in the region
 # its frame was in. No timed frame is lost or counted twice (perf_gpu_lost: the region's frames on a device that
 # times them, less the samples and the frames still in flight at the end; 0 without GPU timing, Vulkan through
-# MoltenVK).
+# MoltenVK). Offscreen there is no present mode (-1), and the frames' waits are measured.
 
 wait 0.1
 perf_begin hello_perf
@@ -10,6 +10,8 @@ wait 0.25
 perf_end
 expect perf_frames > 10
 expect perf_gpu_lost == 0
+expect perf_present_mode == -1
+expect perf_wait_p95 >= 0
 perf_begin hello_perf_2
 wait 0.25
 perf_end

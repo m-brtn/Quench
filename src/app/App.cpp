@@ -436,7 +436,7 @@ void updateThermalState(AppState& s) {
     s.stats.thermal = state;
 }
 
-void updateStats(AppState& s, double realDt, double cpuMs, int ticks) {
+void updateStats(AppState& s, double realDt, double cpuMs, double waitMs, int ticks) {
     s.statsWindowMs += realDt * 1000.0;
     ++s.statsWindowFrames;
     if (s.statsWindowMs >= 500.0) {
@@ -452,6 +452,7 @@ void updateStats(AppState& s, double realDt, double cpuMs, int ticks) {
     if (s.perf) {
         s.perf->thermalMax = std::max(s.perf->thermalMax, s.stats.thermal);
         s.perf->cpuMs.push_back(cpuMs);
+        s.perf->waitMs.push_back(waitMs);
     }
 }
 
@@ -821,7 +822,7 @@ SDL_AppResult iterate(AppState& s) {
     if (!render(s, waitMs, submitCounter)) return SDL_APP_FAILURE;
 
     const double cpuMs = double(submitCounter - now) * 1000.0 / frequency - waitMs;
-    updateStats(s, realDt, cpuMs, ticks);
+    updateStats(s, realDt, cpuMs, waitMs, ticks);
     // Deterministic frames are held to real time on the screen. Offscreen they run as fast as they render, except
     // while loads are in flight or delayed by a simulated latency: loads take real time, and scripts wait for them
     // in app time.

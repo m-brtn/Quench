@@ -61,7 +61,14 @@ Why vsync: a window is paced to its display even with `--present-mode immediate`
 and then the measured GPU time grows to about 15.5 ms, probably because the drawable wait is counted inside the
 command buffer (not verified). With vsync the GPU time matches the work (0.55 ms). On 2026-11-06 the same Mac ran
 `immediate` unpaced (4286 frames in 10 s, GPU time 0.62 ms on average; cause not known): vsync stays the benchmark's
-mode, its frame rate is the display's either way.
+mode, its frame rate is the display's either way. The native backend was paced at 120 Hz with `immediate` the same
+day (481 frames in 4 s) and unpaced at 60 Hz in another session; both backends set the layer's `displaySyncEnabled`
+to false for `immediate` on macOS. A hypothesis, not checked: the window server holds the drawables to the display's
+refresh when it composites the window (which display, full screen or not, the window's position), so `immediate` is
+unpaced only sometimes. Each `perf:` line now says what the frames waited for: `wait ms p50 .. p95 ..` (the wait
+for the swapchain texture, left out of the CPU time; offscreen, for the oldest frame in flight), the present mode in
+use and the display's rate (`perf_wait_p50`, `perf_present_mode`, `perf_display_hz`). A paced `immediate` run shows
+a wait of about the display's interval less the CPU time.
 
 ## Comparing runs
 

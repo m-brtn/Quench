@@ -218,7 +218,10 @@ there were no samples, for example GPU time without `gpu::Caps::gpuTiming`), `pe
 time), `perf_gpu_lost` (frames timed by the device without a sample, less those still in flight at the end: 0 unless
 a sample went missing; 0 without `gpuTiming`), `perf_process_cpu` (the process's CPU time per frame, all threads)
 and `perf_cpu_performance_share` (the percentage of it on performance cores; both -1 where unknown, reported on
-Apple platforms; [Performance](performance.md#cpu-time-and-the-cores)), with `gpu::Caps::gpuPassTiming` also
+Apple platforms; [Performance](performance.md#cpu-time-and-the-cores)), `perf_wait_p50` and `perf_wait_p95` (the
+frame's wait for its swapchain texture, offscreen for the oldest frame in flight; not in the CPU time),
+`perf_present_mode` (the mode in use: 0 vsync, 1 immediate, 2 mailbox; -1 offscreen) and `perf_display_hz` (the
+window's display; 0 when unknown), with `gpu::Caps::gpuPassTiming` also
 `perf_pass_<range>_p50` per timed range, `perf_pass_sum_p50`, `perf_pass_span_p50` and `perf_pass_share_p50`
 ([Performance](performance.md#gpu-time-per-pass)), and `perf_thermal_start`, `perf_thermal_end`, `perf_thermal_max`
 (as `thermal_state`); after `audio_measure` `audio_rms`,

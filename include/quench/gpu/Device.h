@@ -127,6 +127,7 @@ public:
     bool supportsPresentMode(SDL_Window* window, PresentMode mode) const;
     // Falls back to Vsync when the mode is unsupported; returns the mode in use.
     PresentMode setPresentMode(SDL_Window* window, PresentMode mode);
+    PresentMode presentMode(SDL_Window* window) const;
     // Whether the backend can composite the window's swapchain so (Sdr: always). The display is not asked: an HDR
     // composition on a display without HDR range shows SDR values.
     bool supportsComposition(SDL_Window* window, SwapchainComposition composition) const;

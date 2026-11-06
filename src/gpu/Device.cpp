@@ -383,6 +383,11 @@ PresentMode Device::setPresentMode(SDL_Window* window, PresentMode mode) {
     return mode;
 }
 
+PresentMode Device::presentMode(SDL_Window* window) const {
+    const detail::WindowEntry* entry = m_impl->find(window);
+    return entry ? entry->presentMode : PresentMode::Vsync;
+}
+
 bool Device::supportsComposition(SDL_Window* window, SwapchainComposition composition) const {
     return m_impl->supportsComposition(window, composition);
 }

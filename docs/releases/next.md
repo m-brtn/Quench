@@ -26,6 +26,9 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   `perf_process_cpu`, `perf_cpu_performance_share`, on the `perf:` line and in the demo's `benchmark.json`): the
   frame's CPU time read 0.29 or 1.2 ms for the same work on the M4 Pro, by where the scheduler ran it
   ([Performance](../performance.md#cpu-time-and-the-cores)).
+- Perf regions report the frames' wait for the swapchain texture (offscreen, for the oldest frame in flight), the
+  present mode in use and the display's rate, so a run with `--present-mode immediate` shows whether it was paced
+  ([Performance](../performance.md#the-benchmark)).
 - The renderer's `accel` timing range has two ranges inside it: `blas` (the bottom levels' builds, refits and
   compactions; absent in a frame without them) and `tlas` (the top level's build or refit).
 - Offscreen perf regions also time GPU-bound frames on the GPU (before, they had no GPU sample and no times per
@@ -89,6 +92,8 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   read, a few less than `frames` (the frames in flight at the end), where it equalled `frames` before; GPU times of
   a region come only from its own frames. **`PerfReport::processCpu`** and **`cpuPerformanceShare`** are new, at its
   end. The `perf:` line has `, process <ms> per frame (<n>% on performance cores)` after the CPU percentiles on
-  Apple platforms: a parser of the line that expects `; gpu ms` right after `p99 <ms>` needs to allow it.
+  Apple platforms and then `; wait ms p50 <ms> p95 <ms> (<present mode>, display <n> Hz)` everywhere: a parser of
+  the line that expects `; gpu ms` right after `p99 <ms>` needs to allow both. New values `perf_wait_p50`,
+  `perf_wait_p95`, `perf_present_mode`, `perf_display_hz`; **`gpu::Device::presentMode(window)`** is new.
 - No new dependency library: the LTC data is code and a table in `quench_render` (BSD-2-Clause, with the paper
   reference its licence asks for).

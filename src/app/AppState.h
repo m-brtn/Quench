@@ -65,6 +65,9 @@ struct PerfRegion {
     // A frame's time runs from its start to the next frame's start, so it is added at the next frame's start.
     std::vector<double> frameMs;
     std::vector<double> cpuMs;
+    // The wait for the swapchain texture (offscreen: for the oldest frame's fence), left out of cpuMs: paced presents
+    // and a GPU-bound frame wait here.
+    std::vector<double> waitMs;
     // One sample per frame of the region, read when the frame's fence has signalled (later than the frame itself);
     // timedFrames: the region's frames on a device that times them.
     std::vector<double> gpuMs;
