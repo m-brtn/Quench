@@ -180,8 +180,9 @@ checks and copies them. Its mix checks (`examples/demo/scenarios/audio_tone.txt`
 frequencies of the mix: the tone at 2 m (RMS 0.0625 and 1000 Hz), panned to the right, the three attenuation models
 at 8 m, a pitch glide, the fly-by approaching (481 Hz from a 440 Hz siren fundamental) and receding (405 Hz), both
 music tracks and the crossfade, a muted bus, no underruns or clipping, and stealing. The section's capture check
-(`audio.txt`, Metal and Vulkan through MoltenVK) writes the mix as WAV too, and `demo_audio_wav_match` checks that
-both backends write the same bytes.
+(`audio.txt`) runs in the batch of every backend (Metal, the native Metal backend, Vulkan through MoltenVK); the
+batches write no WAV file, so the backends' mixes are no longer compared byte for byte (`demo_audio_wav_match` is
+gone).
 
 Tests (`tests/audio/`): `audio.*` (24 cases, headless, also under Node.js: spatial formulas, bus gains, click-free
 ramps, resampling and pitch, Doppler, panning and attenuation in the mix, voice stealing, one-shots and loops,
