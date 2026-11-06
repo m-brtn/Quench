@@ -1413,6 +1413,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     }
     lu.count = glm::vec4(float(lightCount), float(areaCount), 0.0f, 0.0f);
     stats.lights = std::uint32_t(lightCount);
+    stats.areaLights = std::uint32_t(areaCount);
 
     glm::vec3 towardSun(0.0f, 1.0f, 0.0f);
     if (sun) {
