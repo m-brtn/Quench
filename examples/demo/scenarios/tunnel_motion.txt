@@ -1,0 +1,66 @@
+# The tunnel in motion on the native Metal backend (ctest: demo_tunnel_motion_metal_native, the last part of
+# batch_native.txt, so that no other capture moves in the batch's frame sequence): the drive starts eased, the lamps
+# move on their clock, both stand still while the path tracer runs and go on after it, Pause all stops both, and a
+# camera move from elsewhere hands the camera to the free one. The capture is taken while both move, 3 s after a set
+# start, at the section's defaults: the denoisers and the upscaler in motion. tunnel_motion_fallback.txt checks the
+# same on SDL GPU without the capture.
+section tunnel
+reset_section
+
+set dither 0
+until tunnel_ready == 1 10
+expect upscaling == 2
+set drive 1
+set drive_stop 0
+set drive_speed 1.4
+set animate 1
+set pause 0
+set drive_position 0
+set lamp_time 0
+wait 0.05
+expect drive == 1
+expect drive_velocity > 0
+expect drive_velocity < 0.5
+until drive_velocity >= 1.2 3
+expect lamp_time >= 0.5
+expect drive_position >= 0.5
+
+# The path tracer's mean needs a still scene: nothing moves while it runs.
+set path_tracer 1
+wait 0.1
+expect path_tracer == 1
+expect drive_velocity == 0
+mark lamp_time
+mark drive_position
+wait 0.2
+expect d_lamp_time == 0
+expect d_drive_position == 0
+expect path_samples >= 10
+set path_tracer 0
+wait 0.3
+expect d_lamp_time >= 0.2
+expect drive_velocity > 0
+
+set pause 1
+wait 0.05
+mark lamp_time
+mark drive_position
+wait 0.2
+expect d_lamp_time == 0
+expect d_drive_position == 0
+set pause 0
+
+# A camera move from elsewhere (a drag, Reset camera, a script) hands the camera to the free one.
+camera 20 15 5
+wait 0.05
+expect drive == 0
+
+set drive 1
+set drive_position 0
+set lamp_time 0
+wait 3
+expect drive == 1
+windows off
+capture demo_tunnel_motion_native.png
+windows on
+quit

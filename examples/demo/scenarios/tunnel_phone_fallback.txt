@@ -1,10 +1,14 @@
 # The tunnel on a phone on SDL GPU (the default backend; docs/performance.md, "The tunnel on the iPhone"): the
 # fallback frame (the area lights unshadowed, the sky's reflections) at the display's rate for 8 s from the nominal
-# thermal state, then at the section's 60 Hz for 20 s, and its capture:
+# thermal state, then at the section's 60 Hz for 20 s, and its capture, from the overview with the lamps standing
+# still; then 20 s at 60 Hz in motion (the lamps moving, the camera driving its loop) and the thermal state after it:
 #   copy this file into the app's user directory, launch with --script tunnel_phone_fallback.txt
 
 section tunnel
 until tunnel_ready == 1 10
+reset_camera
+set animate 0
+set lamp_time 0
 expect area_lights == 8
 expect local_shadows == 0
 expect limit_60hz == 1
@@ -25,4 +29,12 @@ perf_end
 windows off
 capture tunnel_phone_fallback.png
 windows on
+set animate 1
+set drive 1
+set drive_position 0
+wait 1
+perf_begin tunnel_sdl_gpu_moving_60hz
+wait 20
+perf_end
+expect thermal_state <= 0
 quit

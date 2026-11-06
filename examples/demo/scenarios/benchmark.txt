@@ -101,9 +101,13 @@ perf_end
 expect perf_frames >= 150
 
 # Eight area lights and two spots: traced lamp shadows and reflections where gpu::Caps allow them, else the lamps
-# unshadowed (raster LTC shading) and the sky's reflections.
+# unshadowed (raster LTC shading) and the sky's reflections. From the overview with the lamps standing still (the
+# numbers stay comparable with those from before they moved; raytracing_benchmark.txt measures them moving).
 section tunnel
 until tunnel_ready == 1 5
+reset_camera
+set animate 0
+set lamp_time 0
 wait 1
 perf_begin tunnel
 wait 5

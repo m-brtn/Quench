@@ -1,7 +1,7 @@
 # The check mode with a checks.json that is not JSON: a warning, and every item pending.
 
 expect mode == 2
-expect checks_pending == 32
+expect checks_pending == 33
 expect check_index == 0
 expect log_warnings >= 1
 quit

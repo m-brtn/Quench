@@ -144,11 +144,15 @@ wait 4
 perf_end
 set path_tracer 0
 
-# The tunnel: eight area lights and two spots at full size. The lamps unshadowed (the fallback's frame), then their
-# traced shadows (four of them), traced reflections, the probe grid (all traced), the section's default where MetalFX
-# runs (two thirds with MetalFX temporal) and the path tracer.
+# The tunnel: eight area lights and two spots at full size, from the overview with the lamps standing still (as before
+# they moved). The lamps unshadowed (the fallback's frame), then their traced shadows (four of them), traced
+# reflections, the probe grid (all traced), the section's default where MetalFX runs (two thirds with MetalFX
+# temporal), the same with the lamps moving, then also the camera driving its loop from its start, and the path tracer.
 section tunnel
 until tunnel_ready == 1 5
+reset_camera
+set animate 0
+set lamp_time 0
 set upscaling bilinear
 set scale 1
 set local_shadows 0
@@ -185,6 +189,22 @@ perf_begin tunnel_default
 wait 4
 perf_end
 
+set animate 1
+wait 1
+perf_begin tunnel_lamps_moving
+wait 4
+perf_end
+
+set drive 1
+set drive_position 0
+wait 1
+perf_begin tunnel_moving
+wait 4
+perf_end
+
+reset_camera
+set animate 0
+set lamp_time 0
 set upscaling bilinear
 set scale 1
 set path_tracer 1

@@ -379,10 +379,11 @@ if(NOT QUENCH_HEADLESS)
         if(TARGET quench_demo)
             # The engine demo (docs/demo.md, "Checks"): batch.txt on Vulkan through MoltenVK, batch_metal.txt (batch.txt
             # and cycle.txt) on SDL GPU's Metal driver, batch_native.txt (ray tracing itself instead of its fallbacks,
-            # and cycle.txt) on the native Metal backend, which compares with the Metal golden images except for ray tracing's
-            # and the tunnel's own (demo_raytracing_native, demo_tunnel_native). The tunnel's path tracer part (tunnel_path)
-            # writes its capture without a golden image: 1.3 MB of noise at 256 samples; the render tests check the path
-            # tracer's area lights by numbers.
+            # and cycle.txt) on the native Metal backend, which compares with the Metal golden images except for ray
+            # tracing's and the tunnel's own (demo_raytracing_native, demo_tunnel_native, demo_tunnel_motion_native: the
+            # tunnel in motion, the last part, so that no other capture moves in the frame sequence). The tunnel's path
+            # tracer part (tunnel_path) writes its capture without a golden image: 1.3 MB of noise at 256 samples; the
+            # render tests check the path tracer's area lights by numbers.
             # A part with a golden name ends in a capture: the sections without the demo's windows, demo_ui and the
             # compact layouts with them.
             set(demo_scenarios ${Quench_SOURCE_DIR}/examples/demo/scenarios)
@@ -394,18 +395,19 @@ if(NOT QUENCH_HEADLESS)
             if(QUENCH_TEST_CAPTURES)
                 quench_add_batch(demo metal APP quench_demo SCRIPT ${demo_scenarios}/batch_metal.txt BACKEND metal
                     ARGS ${demo_args} ENVIRONMENT MTL_DEBUG_LAYER=1
-                    PARTS ${demo_parts} raytracing_fallback:demo_raytracing tunnel_fallback:demo_tunnel cycle)
+                    PARTS ${demo_parts} raytracing_fallback:demo_raytracing tunnel_fallback:demo_tunnel
+                    tunnel_motion_fallback cycle)
                 if(APPLE)
                     quench_add_batch(demo metal_native APP quench_demo SCRIPT ${demo_scenarios}/batch_native.txt
                         BACKEND metal ARGS ${demo_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1
                         PARTS ${demo_parts} raytracing:demo_raytracing_native tunnel:demo_tunnel_native tunnel_path
-                        cycle)
+                        cycle tunnel_motion:demo_tunnel_motion_native)
                 endif()
                 if(QUENCH_TEST_VULKAN_LOADER)
                     quench_add_batch(demo vulkan APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND vulkan
                         ARGS ${demo_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment}
                         FAIL_REGEX "Validation (Error|Warning)" PARTS ${demo_parts} raytracing_fallback:demo_raytracing
-                        tunnel_fallback:demo_tunnel)
+                        tunnel_fallback:demo_tunnel tunnel_motion_fallback)
                 endif()
                 # The tour (started by its flag), the check mode, the settings and benchmark-all with their files in a
                 # fresh user directory (they need runs of their own).

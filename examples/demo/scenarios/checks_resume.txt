@@ -4,6 +4,6 @@ expect mode == 2
 expect checks_ok == 2
 expect checks_problem == 1
 expect checks_skipped == 1
-expect checks_pending == 28
+expect checks_pending == 29
 expect check_index == 4
 quit

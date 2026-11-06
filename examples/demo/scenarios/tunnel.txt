@@ -1,13 +1,18 @@
 # The tunnel on the native Metal backend (ctest: demo_tunnel_metal_native, a part of batch_native.txt): eight area lights
 # and two spots with ray-traced lamp shadows, traced reflections (the puddle, the metal) and the probe grid; lamp
 # groups turn off and on, the aluminium's anisotropy changes, the path tracer accumulates while nothing moves. The
-# capture is taken at 2.5 s at full size (bilinear, the engine's temporal denoiser), the white spot sweeping. The
-# fallbacks on SDL GPU run tunnel_fallback.txt, the path tracer's reference tunnel_path.txt.
+# capture is taken at 2.5 s at full size (bilinear, the engine's temporal denoiser) from the overview (Reset camera
+# ends the drive), the lamps standing at their clock's start. The fallbacks on SDL GPU run tunnel_fallback.txt, the
+# path tracer's reference tunnel_path.txt, the motion tunnel_motion.txt.
 section tunnel
 
 set dither 0
 until tunnel_ready == 1 10
+reset_camera
+set animate 0
+set lamp_time 0
 wait 0.1
+expect drive == 0
 expect lights == 10
 expect area_lights == 8
 expect local_shadows == 4

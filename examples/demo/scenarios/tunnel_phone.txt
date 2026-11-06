@@ -3,11 +3,16 @@
 #   copy this file into the app's user directory, launch with --gpu-backend metal --script tunnel_phone.txt
 # As in raytracing_phone.txt, each group of regions starts from the nominal thermal state, after a cool-down on the
 # cheapest frame at 20 frames per second. First the cost of each option at the display's rate (4 s regions, about
-# 40 s of load), then the section's phone defaults (TunnelSection.cpp) held at 60 Hz for 40 s with a capture, then
+# 40 s of load), then the section's phone defaults (TunnelSection.cpp) held at 60 Hz for 40 s with a capture, all from
+# the overview with the lamps standing still (comparable with the runs from before they moved); then the defaults in
+# motion (the lamps moving, the camera driving its loop) for 20 s with a capture and the thermal state after it, then
 # the path tracer's capture.
 
 section tunnel
 until tunnel_ready == 1 10
+reset_camera
+set animate 0
+set lamp_time 0
 expect limit_60hz == 1
 expect max_frame_rate == 60
 set denoiser temporal
@@ -78,6 +83,9 @@ max_frame_rate 20
 until thermal_state <= 0 300
 reset_section
 until tunnel_ready == 1 10
+reset_camera
+set animate 0
+set lamp_time 0
 expect max_frame_rate == 60
 expect local_shadows == 2
 expect reflections == 0
@@ -93,8 +101,24 @@ perf_begin tunnel_defaults_60hz_2
 wait 20
 perf_end
 
-# The path tracer at the device's size, the spot standing still.
-set sweep 0
+# The defaults in motion: the lamps move, the camera drives its loop from its start.
+set animate 1
+set lamp_time 0
+set drive 1
+set drive_position 0
+wait 1
+perf_begin tunnel_moving_60hz
+wait 20
+perf_end
+expect thermal_state <= 0
+windows off
+capture tunnel_phone_moving.png
+windows on
+
+# The path tracer at the device's size from the overview, the lamps standing still.
+reset_camera
+set animate 0
+set lamp_time 0
 set upscaling bilinear
 set scale 1
 set path_tracer 1

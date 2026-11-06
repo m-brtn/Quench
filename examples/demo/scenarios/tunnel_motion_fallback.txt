@@ -1,0 +1,47 @@
+# The tunnel in motion on SDL GPU (ctest: demo_tunnel_motion_fallback_<backend>, the last tunnel part of batch.txt):
+# the drive starts eased, the lamps move on their clock, the path tracer's fallback (the real-time frame) does not stop
+# them, Pause all does, and a camera move from elsewhere hands the camera to the free one. tunnel_motion.txt checks
+# the same with ray tracing and takes the capture.
+section tunnel
+reset_section
+
+set dither 0
+until tunnel_ready == 1 10
+set drive 1
+set drive_stop 0
+set drive_speed 1.4
+set animate 1
+set pause 0
+set drive_position 0
+set lamp_time 0
+wait 0.05
+expect drive == 1
+expect drive_velocity > 0
+expect drive_velocity < 0.5
+until drive_velocity >= 1.2 3
+expect lamp_time >= 0.5
+expect drive_position >= 0.5
+
+set path_tracer 1
+wait 0.05
+expect path_tracer == 0
+mark lamp_time
+wait 0.2
+expect d_lamp_time >= 0.15
+expect drive_velocity > 0
+set path_tracer 0
+
+set pause 1
+wait 0.05
+mark lamp_time
+mark drive_position
+wait 0.2
+expect d_lamp_time == 0
+expect d_drive_position == 0
+set pause 0
+
+camera 20 15 5
+wait 0.05
+expect drive == 0
+set drive 1
+quit

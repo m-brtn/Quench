@@ -6,6 +6,12 @@
 // cooked into KTX2. Where gpu::Caps offer ray tracing (the native Metal backend) the lamps cast soft traced shadows,
 // the puddle and the metal reflect the tunnel and the path tracer is a toggle; elsewhere the lamps light and shine
 // (raster LTC shading, diffuse and specular) without shadows and the reflections are the night sky's.
+//
+// Lamps move on a clock of their own (paused while the path tracer runs, settable by scripts): the violet tube rides
+// two ceiling rails from the end wall to the open end and back, the orange tube slides in its bay, the amber spot
+// turns its cone, the white one circles the sphere and the portal breathes. Their hangers, brackets and housings move
+// with them (instances in the ray tracing's top level, refitted). By default the camera drives a loop through the
+// tunnel; any other move of the camera (a drag, Reset camera, a script's camera) hands it to the free camera.
 
 #include "Demo.h"
 
@@ -21,9 +27,11 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <format>
 #include <numbers>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -43,6 +51,86 @@ constexpr float kHalfLength = 0.5f * (kNear - kFar);
 constexpr float kPanelMeters = 3.0f; // one repeat of the panel texture (2 x 2 panels)
 constexpr std::array<float, 5> kRibs{0.0f, -4.5f, -9.0f, -13.5f, -18.0f};
 constexpr std::array<float, 2> kSquares{-7.0f, -16.0f}; // z of the ceiling squares
+
+// The lamps' motion (seconds of the lamps' clock, meters). The violet tube hangs from two rails just under the ribs'
+// beams and rides them from z -20 to -0.5 and back, eased (a cosine); the orange tube slides in its bay between the
+// ribs at -4.5 and -9; the spots turn on pivots under the ceiling, their lights a little in front of the housings.
+constexpr float kRailX = 0.9f, kRailY = kHeight - 0.165f, kRailNear = 1.5f, kRailFar = kFar + 0.03f;
+constexpr float kRideMid = -10.25f, kRideHalf = 9.75f, kRidePeriod = 20.0f;
+constexpr float kTubeY = kHeight - 0.4f;
+constexpr float kBayZ = -7.0f, kBayHalf = 1.4f, kBayPeriod = 7.0f, kWallTubeX = kHalfWidth - 0.12f;
+constexpr float kPivotY = kHeight - 0.12f, kSpotReach = 0.18f, kHousingHalf = 0.07f;
+constexpr float kAmberX = -1.6f, kAmberZ = -5.8f, kAmberTilt = 0.42f, kAmberPeriod = 9.0f;
+constexpr float kSphereX = 1.4f, kSphereY = 0.85f, kSphereZ = -12.0f;
+constexpr float kPortalIntensity = 2.5f, kBreathPeriod = 5.0f;
+
+// The camera's drive: a closed loop at eye height, always looking down the tunnel (the open end is a black night and
+// the end wall a blank close-up): in on the left of the middle, across in front of the wheel stops, back out on the
+// right (a dolly) and across again near the open end. It keeps clear of the crates, the sphere and the lamps.
+struct Point {
+    float x, y, z;
+};
+constexpr std::array<Point, 14> kDrive{{{-0.9f, 1.7f, 0.6f},
+                                        {-0.9f, 1.45f, -3.0f},
+                                        {-0.7f, 1.55f, -6.8f},
+                                        {-0.4f, 1.9f, -10.6f},
+                                        {-0.7f, 1.7f, -14.0f},
+                                        {-0.3f, 1.6f, -16.6f},
+                                        {0.5f, 1.65f, -17.0f},
+                                        {1.0f, 1.85f, -14.6f},
+                                        {0.25f, 1.8f, -12.0f},
+                                        {0.8f, 1.5f, -8.2f},
+                                        {1.2f, 1.35f, -4.4f},
+                                        {1.1f, 1.6f, -0.8f},
+                                        {0.6f, 1.75f, 1.6f},
+                                        {-0.4f, 1.75f, 1.8f}}};
+constexpr float kDriveSpeed = 1.4f;   // m/s, the panel's default
+constexpr float kDriveEase = 0.5f;    // s: the speed follows its target with this time constant
+constexpr float kLookAhead = 4.5f;    // m down the tunnel from the eye, turned a little toward its middle
+constexpr float kLookDistance = 3.0f; // the orbit camera's distance while driving (its target is on the line of sight)
+
+// A closed Catmull-Rom loop through points, sampled densely and walked by arc length.
+class Loop {
+public:
+    explicit Loop(std::span<const Point> points) {
+        constexpr int kSteps = 48; // per segment: a few centimeters apart
+        const std::size_t n = points.size();
+        const auto p = [&](std::size_t i) {
+            const Point& q = points[i % n];
+            return glm::vec3(q.x, q.y, q.z);
+        };
+        for (std::size_t i = 0; i < n; ++i) {
+            const glm::vec3 p0 = p(i + n - 1), p1 = p(i), p2 = p(i + 1), p3 = p(i + 2);
+            for (int k = 0; k < kSteps; ++k) {
+                const float u = float(k) / float(kSteps), u2 = u * u, u3 = u2 * u;
+                m_samples.push_back(0.5f * (2.0f * p1 + (p2 - p0) * u + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * u2 +
+                                            (3.0f * p1 - p0 - 3.0f * p2 + p3) * u3));
+            }
+        }
+        m_lengths.push_back(0.0f);
+        for (std::size_t i = 1; i <= m_samples.size(); ++i)
+            m_lengths.push_back(m_lengths.back() + glm::distance(m_samples[i - 1], m_samples[i % m_samples.size()]));
+    }
+
+    float length() const { return m_lengths.back(); }
+    float wrap(float s) const {
+        s = std::fmod(s, length());
+        return s < 0.0f ? s + length() : s;
+    }
+    glm::vec3 at(float s) const {
+        s = wrap(s);
+        const auto next = std::upper_bound(m_lengths.begin(), m_lengths.end(), s);
+        const auto i = std::size_t(std::max<std::ptrdiff_t>(next - m_lengths.begin() - 1, 0));
+        const float span = m_lengths[i + 1] - m_lengths[i];
+        return glm::mix(m_samples[i], m_samples[(i + 1) % m_samples.size()],
+                        span > 0.0f ? (s - m_lengths[i]) / span : 0.0f);
+    }
+    glm::vec3 direction(float s) const { return glm::normalize(at(s + 0.25f) - at(s - 0.25f)); }
+
+private:
+    std::vector<glm::vec3> m_samples;
+    std::vector<float> m_lengths; // to each sample; the last entry closes the loop
+};
 
 // The section's textures, cooked from tools/assets/make_demo_tunnel.py's files.
 enum Texture : std::size_t {
@@ -96,6 +184,13 @@ glm::mat4 frame(glm::vec3 center, glm::vec3 u, glm::vec3 normal) {
 
 glm::mat4 turned(glm::vec3 position, float angle, glm::vec3 axis) {
     return glm::rotate(glm::translate(glm::mat4(1.0f), position), angle, axis);
+}
+
+// Places a mesh made along y (a cylinder) at `center` with its y along `axis`.
+glm::mat4 along(glm::vec3 center, glm::vec3 axis) {
+    const glm::vec3 side = std::abs(axis.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+    const glm::vec3 u = glm::normalize(glm::cross(side, axis));
+    return frame(center, u, axis);
 }
 
 class TunnelSection final : public Section {
@@ -184,8 +279,15 @@ public:
         const Result<MeshId> stop = addMesh(s, boxMesh(glm::vec3(0.7f, 0.07f, 0.12f)));
         const Result<MeshId> puddle = addMesh(s, quad({1.6f, 1.1f}, {1.0f, 1.0f}));
         const Result<MeshId> housing = addMesh(s, boxMesh(glm::vec3(0.62f, 0.025f, 0.62f)));
-        for (const Result<MeshId>* m : {&floor, &wall, &slope, &ceiling, &end, &kick, &pillar, &brace, &beam, &crate,
-                                        &sphere, &plinth, &mat, &stop, &puddle, &housing})
+        const Result<MeshId> rail = addMesh(s, boxMesh(glm::vec3(0.015f, 0.025f, 0.5f * (kRailNear - kRailFar))));
+        const Result<MeshId> hanger = addMesh(s, boxMesh(glm::vec3(0.012f, 0.5f * (kRailY - kTubeY), 0.012f)));
+        const Result<MeshId> track = addMesh(s, boxMesh(glm::vec3(0.012f, 0.012f, 2.05f)));
+        const Result<MeshId> bracket = addMesh(s, boxMesh(glm::vec3(0.05f, 0.012f, 0.02f)));
+        const Result<MeshId> spotHousing = addMesh(s, cylinderMesh(0.055f, kHousingHalf, 24));
+        const Result<MeshId> stem = addMesh(s, boxMesh(glm::vec3(0.01f, 0.5f * (kHeight - kPivotY), 0.01f)));
+        for (const Result<MeshId>* m :
+             {&floor,  &wall, &slope, &ceiling, &end,     &kick, &pillar, &brace, &beam,    &crate,       &sphere,
+              &plinth, &mat,  &stop,  &puddle,  &housing, &rail, &hanger, &track, &bracket, &spotHousing, &stem})
             if (!*m) return Error{m->error()};
 
         MaterialDesc panels{.roughness = 1.0f, .metallic = 1.0f, .name = "metal panels"};
@@ -249,8 +351,22 @@ public:
             s.addInstance(
                 {.mesh = *beam, .material = m_aluminiumMaterial, .transform = placed({0, kHeight - 0.07f, rz})});
         }
-        s.addInstance({.mesh = *plinth, .material = dark, .transform = placed({1.4f, 0.15f, -12.0f})});
-        s.addInstance({.mesh = *sphere, .material = m_aluminiumMaterial, .transform = placed({1.4f, 0.85f, -12.0f})});
+        s.addInstance({.mesh = *plinth, .material = dark, .transform = placed({kSphereX, 0.15f, kSphereZ})});
+        s.addInstance(
+            {.mesh = *sphere, .material = m_aluminiumMaterial, .transform = placed({kSphereX, kSphereY, kSphereZ})});
+
+        // The moving lamps' fixtures: the violet tube's rails and hangers, the orange tube's track and brackets, the
+        // spots' housings on stems (placeLamps moves them).
+        for (const float side : {-1.0f, 1.0f})
+            s.addInstance({.mesh = *rail,
+                           .material = m_aluminiumMaterial,
+                           .transform = placed({side * kRailX, kRailY, 0.5f * (kRailNear + kRailFar)})});
+        for (const float y : {0.6f, 2.6f})
+            s.addInstance({.mesh = *track, .material = dark, .transform = placed({kHalfWidth - 0.015f, y, -6.75f})});
+        for (InstanceId& h : m_hangers) h = s.addInstance({.mesh = *hanger, .material = dark});
+        for (InstanceId& b : m_brackets) b = s.addInstance({.mesh = *bracket, .material = dark});
+        for (InstanceId& h : m_housings) h = s.addInstance({.mesh = *spotHousing, .material = dark});
+        for (InstanceId& t : m_stems) t = s.addInstance({.mesh = *stem, .material = dark});
 
         // Embossed plastic crates by the left wall, rubber on the right.
         const MaterialId orange = s.addMaterial(plastic), white = s.addMaterial(whitePlastic);
@@ -297,20 +413,20 @@ public:
         add(Tubes, {.type = LightType::Tube,
                     .color = glm::vec3(1.0f, 0.38f, 0.08f),
                     .intensity = 24.0f,
-                    .position = {kHalfWidth - 0.12f, 1.6f, -7.0f},
+                    .position = {kWallTubeX, 1.6f, kBayZ},
                     .range = 8.0f,
                     .size = {2.2f, 0.035f},
                     .tangent = y});
         add(Tubes, {.type = LightType::Tube,
                     .color = glm::vec3(0.6f, 0.25f, 1.0f),
                     .intensity = 24.0f,
-                    .position = {0, kHeight - 0.4f, -20.0f},
+                    .position = {0, kTubeY, kRideMid - kRideHalf},
                     .range = 9.0f,
                     .size = {3.6f, 0.03f},
                     .tangent = x});
         add(Portal, {.type = LightType::Disk,
                      .color = glm::vec3(0.25f, 0.55f, 1.0f),
-                     .intensity = 2.5f,
+                     .intensity = kPortalIntensity,
                      .position = {0, 1.9f, kFar + 0.03f},
                      .direction = z,
                      .range = 14.0f,
@@ -318,13 +434,18 @@ public:
         add(Spots, {.type = LightType::Spot,
                     .color = glm::vec3(1.0f, 0.7f, 0.3f),
                     .intensity = 30.0f,
-                    .position = {-1.6f, kHeight - 0.15f, -5.8f},
-                    .direction = glm::normalize(glm::vec3(-0.15f, -1.0f, -0.3f)),
                     .range = 7.0f,
                     .innerAngle = 0.25f,
                     .outerAngle = 0.45f,
                     .sourceRadius = 0.03f});
-        add(Spots, spotOnSphere());
+        add(Spots, {.type = LightType::Spot,
+                    .color = glm::vec3(0.85f, 0.9f, 1.0f),
+                    .intensity = 40.0f,
+                    .range = 8.0f,
+                    .innerAngle = 0.2f,
+                    .outerAngle = 0.38f,
+                    .sourceRadius = 0.03f});
+        placeLamps(true);
         for (std::size_t g = 0; g < GroupCount; ++g) applyGroup(g);
         return {};
     }
@@ -341,11 +462,25 @@ public:
     void update(Context& c, double frameDt) override {
         m_manager->update();
         m_assets->update();
+        m_shadowChanges += c.renderer.stats().localShadowChanges;
+        // The camera moved by something else than the drive (a drag, Reset camera, a script): it is free from here.
+        if (m_drive && m_driven && !samePose(camera, *m_driven)) m_drive = false;
         // The path tracer's mean starts again whenever something moves: while it runs, nothing does.
-        if (m_animate && !c.renderer.effects().pathTracer) {
-            m_sweep += float(std::min(frameDt, 0.1)) * 0.6f;
-            if (m_on[Spots] && m_lights[Spots].size() == 2 && m_lights[Spots][1].id)
-                m_scene->setLight(m_lights[Spots][1].id, spotOnSphere());
+        const bool still = m_pauseAll || c.renderer.effects().pathTracer;
+        const float dt = float(std::min(frameDt, 0.1));
+        if (m_animate && !still) {
+            m_lampTime += dt;
+            placeLamps(false);
+        }
+        if (m_drive) {
+            // The speed eases toward its target, lower where the loop turns within the next 2 m.
+            const float turn = std::acos(std::clamp(
+                glm::dot(m_loop.direction(m_drivePosition), m_loop.direction(m_drivePosition + 2.0f)), -1.0f, 1.0f));
+            const float target = still || m_drivePaused ? 0.0f : m_driveSpeed / (1.0f + 0.6f * turn);
+            m_driveVelocity += (target - m_driveVelocity) * (1.0f - std::exp(-dt / kDriveEase));
+            if (still) m_driveVelocity = 0.0f;
+            m_drivePosition = m_loop.wrap(m_drivePosition + m_driveVelocity * dt);
+            placeCamera();
         }
     }
 
@@ -382,8 +517,26 @@ public:
         bool puddle = m_showPuddle;
         if (ImGui::Checkbox("Puddle", &puddle)) setPuddle(puddle);
         ImGui::SameLine();
-        ImGui::Checkbox("Sweep the spot", &m_animate);
         if (ImGui::Checkbox("60 Hz (less heat)", &m_limit60)) applyFrameLimit(c);
+
+        ImGui::SeparatorText("Motion");
+        ImGui::Checkbox("Pause all", &m_pauseAll);
+        ImGui::SameLine();
+        ImGui::Checkbox("Lamps move", &m_animate);
+        int drive = m_drive ? 1 : 0;
+        ImGui::TextUnformatted("Camera");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Drive", &drive, 1)) setDrive(true);
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Free", &drive, 0)) setDrive(false);
+        if (m_drive) {
+            ImGui::SameLine();
+            ImGui::Checkbox("Stop", &m_drivePaused);
+            ImGui::SliderFloat("Drive speed", &m_driveSpeed, 0.2f, 4.0f, "%.1f m/s");
+        } else {
+            ImGui::TextDisabled("  drag to turn, the wheel or a pinch to zoom");
+        }
+        if (e.pathTracer && (m_animate || m_drive)) ImGui::TextDisabled("  standing still while the path tracer runs");
     }
 
     void stats(Context& c) override {
@@ -418,7 +571,16 @@ public:
     std::optional<double> value(std::string_view name) const override {
         if (name == "tunnel_ready") return texturesReady() ? 1.0 : 0.0;
         if (name == "anisotropy") return double(m_anisotropy);
-        if (name == "sweep") return m_animate ? 1.0 : 0.0;
+        if (name == "animate") return m_animate ? 1.0 : 0.0;
+        if (name == "pause") return m_pauseAll ? 1.0 : 0.0;
+        if (name == "lamp_time") return double(m_lampTime);
+        if (name == "drive") return m_drive ? 1.0 : 0.0;
+        if (name == "drive_stop") return m_drivePaused ? 1.0 : 0.0;
+        if (name == "drive_speed") return double(m_driveSpeed);
+        if (name == "drive_velocity") return double(m_driveVelocity);
+        if (name == "drive_position") return double(m_drivePosition);
+        if (name == "drive_length") return double(m_loop.length());
+        if (name == "shadow_changes") return double(m_shadowChanges);
         if (name == "limit_60hz") return m_limit60 ? 1.0 : 0.0;
         if (name == "puddle") return m_showPuddle ? 1.0 : 0.0;
         for (std::size_t g = 0; g < GroupCount; ++g)
@@ -432,8 +594,22 @@ public:
         if (name == "anisotropy" && number) {
             m_anisotropy = std::clamp(*number, 0.0f, 1.0f);
             applyAnisotropy();
-        } else if (name == "sweep" && flag) {
+        } else if (name == "animate" && flag) {
             m_animate = *flag;
+        } else if (name == "pause" && flag) {
+            m_pauseAll = *flag;
+        } else if (name == "lamp_time" && number) {
+            m_lampTime = std::max(*number, 0.0f);
+            placeLamps(true);
+        } else if (name == "drive" && flag) {
+            setDrive(*flag);
+        } else if (name == "drive_stop" && flag) {
+            m_drivePaused = *flag;
+        } else if (name == "drive_speed" && number) {
+            m_driveSpeed = std::clamp(*number, 0.2f, 4.0f);
+        } else if (name == "drive_position" && number) {
+            m_drivePosition = m_loop.wrap(*number);
+            if (m_drive) placeCamera();
         } else if (name == "limit_60hz" && flag) {
             m_limit60 = *flag;
             applyFrameLimit(c);
@@ -452,7 +628,8 @@ public:
     }
 
     std::string perfDetails() const override {
-        return std::format("sweep={} limit_60hz={}", m_animate ? 1 : 0, m_limit60 ? 1 : 0);
+        const bool lamps = m_animate && !m_pauseAll, driving = m_drive && !m_drivePaused && !m_pauseAll;
+        return std::format("lamps_move={} drive={} limit_60hz={}", lamps ? 1 : 0, driving ? 1 : 0, m_limit60 ? 1 : 0);
     }
 
     void shutdown(Context& c) override {
@@ -473,18 +650,82 @@ private:
         return std::ranges::all_of(m_textures, [](const assets::AssetRef<TextureAsset>& t) { return t.ready(); });
     }
 
-    // The white spot circles slowly around the aluminium sphere.
-    LightDesc spotOnSphere() const {
-        const glm::vec3 position(1.4f + 0.6f * std::cos(m_sweep), kHeight - 0.15f, -12.0f + 0.9f * std::sin(m_sweep));
-        return {.type = LightType::Spot,
-                .color = glm::vec3(0.85f, 0.9f, 1.0f),
-                .intensity = 40.0f,
-                .position = position,
-                .direction = glm::normalize(glm::vec3(1.4f, 0.85f, -12.0f) - position),
-                .range = 8.0f,
-                .innerAngle = 0.2f,
-                .outerAngle = 0.38f,
-                .sourceRadius = 0.03f};
+    // The moving lamps and their fixtures at the lamps' clock. `teleport`: a jump of the clock (no motion vectors).
+    void placeLamps(bool teleport) {
+        constexpr float kTau = 2.0f * kPi;
+        const float t = m_lampTime;
+        Scene& s = *m_scene;
+        const auto light = [&](Group g, std::size_t i, auto&& change) {
+            Lamp& lamp = m_lights[g][i];
+            change(lamp.desc);
+            if (lamp.id) s.setLight(lamp.id, lamp.desc);
+        };
+        const auto move = [&](InstanceId instance, const glm::mat4& transform) {
+            s.setTransform(instance, transform, teleport);
+        };
+
+        // The violet tube on its rails, eased at both ends.
+        const float rideZ = kRideMid - kRideHalf * std::cos(kTau * t / kRidePeriod);
+        light(Tubes, 1, [&](LightDesc& d) { d.position.z = rideZ; });
+        for (std::size_t i = 0; i < m_hangers.size(); ++i)
+            move(m_hangers[i], placed({(i == 0 ? -1.0f : 1.0f) * kRailX, 0.5f * (kRailY + kTubeY), rideZ}));
+        // The orange tube in its bay.
+        const float bayZ = kBayZ + kBayHalf * std::sin(kTau * t / kBayPeriod);
+        light(Tubes, 0, [&](LightDesc& d) { d.position.z = bayZ; });
+        for (std::size_t i = 0; i < m_brackets.size(); ++i)
+            move(m_brackets[i], placed({kHalfWidth - 0.07f, i == 0 ? 0.6f : 2.6f, bayZ}));
+        // The amber spot turns its cone around the vertical, from where it pointed before it moved.
+        const float azimuth = std::atan2(-0.3f, -0.15f) + kTau * t / kAmberPeriod;
+        const glm::vec3 amberPivot(kAmberX, kPivotY, kAmberZ);
+        const glm::vec3 amber(std::sin(kAmberTilt) * std::cos(azimuth), -std::cos(kAmberTilt),
+                              std::sin(kAmberTilt) * std::sin(azimuth));
+        light(Spots, 0, [&](LightDesc& d) {
+            d.position = amberPivot + amber * kSpotReach;
+            d.direction = amber;
+        });
+        move(m_housings[0], along(amberPivot + amber * kHousingHalf, amber));
+        move(m_stems[0], placed({kAmberX, 0.5f * (kHeight + kPivotY), kAmberZ}));
+        // The white spot circles the sphere, aimed at it.
+        const float circle = 0.6f * t;
+        const glm::vec3 whitePivot(kSphereX + 0.4f * std::cos(circle), kPivotY, kSphereZ + 0.8f * std::sin(circle));
+        const glm::vec3 white = glm::normalize(glm::vec3(kSphereX, kSphereY, kSphereZ) - whitePivot);
+        light(Spots, 1, [&](LightDesc& d) {
+            d.position = whitePivot + white * kSpotReach;
+            d.direction = white;
+        });
+        move(m_housings[1], along(whitePivot + white * kHousingHalf, white));
+        move(m_stems[1], placed({whitePivot.x, 0.5f * (kHeight + kPivotY), whitePivot.z}));
+        // The portal breathes.
+        light(Portal, 0, [&](LightDesc& d) {
+            d.intensity = kPortalIntensity * (1.0f + 0.35f * std::sin(kTau * t / kBreathPeriod));
+        });
+    }
+
+    static bool samePose(const OrbitCamera& a, const OrbitCamera& b) {
+        constexpr float kEpsilon = 1e-4f;
+        return glm::distance(a.target, b.target) < kEpsilon && std::abs(a.yaw - b.yaw) < kEpsilon &&
+               std::abs(a.pitch - b.pitch) < kEpsilon && std::abs(a.distance - b.distance) < kEpsilon;
+    }
+
+    // The orbit camera at the drive's position, looking down the tunnel and a little down (the floor and the puddle
+    // stay in view), its target on the line of sight.
+    void placeCamera() {
+        const glm::vec3 eye = m_loop.at(m_drivePosition);
+        const glm::vec3 ahead(0.4f * eye.x, eye.y - 0.45f, eye.z - kLookAhead);
+        const glm::vec3 back = glm::normalize(eye - ahead);
+        camera.yaw = std::atan2(back.x, back.z);
+        camera.pitch = std::clamp(std::asin(std::clamp(back.y, -1.0f, 1.0f)), glm::radians(-5.0f), glm::radians(85.0f));
+        camera.distance = kLookDistance;
+        camera.target = eye - back * kLookDistance;
+        m_driven = camera;
+    }
+
+    // The drive starts from rest (eased) where it stopped.
+    void setDrive(bool drive) {
+        m_drive = drive;
+        m_driveVelocity = 0.0f;
+        m_driven.reset();
+        if (drive) placeCamera();
     }
 
     void applyGroup(std::size_t g) {
@@ -524,10 +765,20 @@ private:
     MaterialDesc m_aluminium;
     MaterialId m_aluminiumMaterial;
     InstanceId m_puddle;
+    std::array<InstanceId, 2> m_hangers, m_brackets, m_housings, m_stems; // [0]: the amber spot's housing and stem
     float m_anisotropy = 0.8f;
-    float m_sweep = 0.0f; // the white spot's angle around the sphere (rad)
     bool m_showPuddle = true;
     bool m_animate = true;
+    bool m_pauseAll = false;
+    float m_lampTime = 0.0f; // s, the lamps' clock
+    const Loop m_loop{kDrive};
+    bool m_drive = true;
+    bool m_drivePaused = false;
+    float m_driveSpeed = kDriveSpeed;
+    float m_driveVelocity = 0.0f;        // m/s now
+    float m_drivePosition = 0.0f;        // m along the loop
+    std::optional<OrbitCamera> m_driven; // the camera as the drive left it
+    std::uint64_t m_shadowChanges = 0;   // RenderStats::localShadowChanges summed while the section is shown
     bool m_limit60 = false;
     double m_outsideRate = 0.0; // the app's frame rate limit outside the section
 };

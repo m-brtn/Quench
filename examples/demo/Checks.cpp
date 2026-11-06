@@ -121,12 +121,20 @@ constexpr std::array kItems{
     CheckItem{"tunnel.brushed", "tunnel", "Brushed aluminium",
               "The highlights on the aluminium sphere, ribs and kick plates stretch across the brushing; with "
               "Aluminium anisotropy at 0 they turn round, at 1 they stretch to streaks.",
-              "set sweep 1"},
+              "set animate 1"},
     CheckItem{"tunnel.puddle", "tunnel", "Puddle and wet floor",
               "Native Metal backend: the puddle mirrors the tunnel (the ceiling lamps, the violet tube) sharply, the "
               "wet asphalt shows blurred lamp streaks; Path traced settles to about the same image within a few "
               "seconds.",
               ""},
+    CheckItem{"tunnel.motion", "tunnel", "Lamps and camera in motion",
+              "The camera drives smoothly (no jerks at the turns); the violet tube rides its ceiling rails with its "
+              "hangers, the orange tube slides with its brackets, the spot housings turn with their cones, and each "
+              "glowing shape stays on its light. Native Metal backend: the moving lamps' shadows (the crates under "
+              "the amber spot, the sphere under the white one) and the puddle's reflection of the violet tube follow "
+              "without trails or smears, and no shadow flickers as the camera passes lamps. Path traced: everything "
+              "stops and settles; back to Ray traced, it moves on. A drag hands the camera to the free one.",
+              "set animate 1\nset drive 1\nset pause 0"},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",
