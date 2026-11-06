@@ -6,6 +6,10 @@
 // a documented way; without it a bundle was a regular app for up to 20 ms in 9 of 10 runs, with it in none of 10,
 // 2026-11-06). SDL then leaves the launch to whoever made the application and dispatches the events in its own pump.
 
+#if !__has_feature(objc_arc)
+#error "compile with ARC (-fobjc-arc, set by quench_configure_target)"
+#endif
+
 #include "core/Platform.h"
 
 #if QUENCH_PLATFORM_MACOS

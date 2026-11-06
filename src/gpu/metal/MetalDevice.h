@@ -8,6 +8,10 @@
 // Native handles are pointers to the structs below. A render, copy or compute pass handle is the MetalCommandBuffer
 // that records it (one pass at a time).
 
+#if !__has_feature(objc_arc)
+#error "compile with ARC (-fobjc-arc, set by quench_configure_target)"
+#endif
+
 #include "gpu/Backend.h"
 
 #import <Metal/Metal.h>

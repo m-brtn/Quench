@@ -1,6 +1,10 @@
 // The native Metal backend: command buffers, passes, bindings, draws, copies, blits and timestamps. Bindings are
 // recorded and applied at the next draw or dispatch, with the slot layout of SDL GPU's Metal backend.
 
+#if !__has_feature(objc_arc)
+#error "compile with ARC (-fobjc-arc, set by quench_configure_target)"
+#endif
+
 #include "gpu/metal/MetalDevice.h"
 
 #include "gpu/shaders/BlitUniforms.h"

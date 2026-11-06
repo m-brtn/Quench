@@ -1,5 +1,9 @@
 // The native Metal backend: the device, resources, presentation and fences (MetalCommands.mm records commands).
 
+#if !__has_feature(objc_arc)
+#error "compile with ARC (-fobjc-arc, set by quench_configure_target)"
+#endif
+
 #include "gpu/metal/MetalDevice.h"
 
 #include <quench/core/Assert.h>

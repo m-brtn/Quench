@@ -3,6 +3,10 @@
 // silences it; activation may fail while another app holds a non-mixable session (a call), and is retried after an
 // interruption ends.
 
+#if !__has_feature(objc_arc)
+#error "compile with ARC (-fobjc-arc, set by quench_configure_target)"
+#endif
+
 #include "core/Platform.h"
 
 #if QUENCH_PLATFORM_IOS

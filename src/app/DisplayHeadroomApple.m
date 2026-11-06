@@ -3,6 +3,10 @@
 // "may vary from moment to moment"; read the current one while processing a frame and map all values between 0 and
 // it, values above it are clamped. The potential value only says what the screen can reach.
 
+#if !__has_feature(objc_arc)
+#error "compile with ARC (-fobjc-arc, set by quench_configure_target)"
+#endif
+
 #include "core/Platform.h"
 
 #if QUENCH_PLATFORM_IOS

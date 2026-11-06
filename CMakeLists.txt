@@ -133,10 +133,9 @@ if(NOT QUENCH_HEADLESS)
         src/gpu/sdlgpu/SdlGpuCommands.cpp
         src/gpu/sdlgpu/SdlGpuDevice.cpp)
     if(APPLE)
-        # Objective-C++ with ARC: the Metal objects are strong members of plain C++ structs.
+        # Objective-C++ with ARC (quench_configure_target): the Metal objects are strong members of plain C++ structs.
         target_sources(quench_gpu PRIVATE src/gpu/sdlgpu/SdlGpuTimingMetal.m src/gpu/metal/MetalCommands.mm
                                           src/gpu/metal/MetalDevice.mm)
-        target_compile_options(quench_gpu PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
         target_link_libraries(quench_gpu PRIVATE "-framework Metal" "-framework QuartzCore" "-framework Foundation")
         # MetalFX (upscaling on the native Metal backend); the iOS Simulator's SDK does not have it.
         if(NOT CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")

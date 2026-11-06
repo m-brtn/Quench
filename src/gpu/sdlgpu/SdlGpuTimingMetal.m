@@ -4,6 +4,10 @@
 // to the fence is released. Any SDL update must recheck that layout; the native Metal backend (src/gpu/metal) reads
 // the command buffer's times directly.
 
+#if !__has_feature(objc_arc)
+#error "compile with ARC (-fobjc-arc, set by quench_configure_target)"
+#endif
+
 #import <Metal/Metal.h>
 
 typedef struct QuenchSdlMetalFenceView {
