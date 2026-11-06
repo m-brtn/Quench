@@ -123,16 +123,19 @@ public:
     }
 
     Result<void> init(Context& c) override {
-        // As in the ray tracing section (docs/performance.md, "Tunnel"): two thirds of the size with MetalFX's
+        // As in the ray tracing section (docs/performance.md, "The tunnel"): two thirds of the size with MetalFX's
         // temporal upscaler where it runs; phones that trace at half the size with MetalFX's spatial upscaler,
-        // without the probe grid, two shadowed lamps and 60 frames per second.
+        // without the probe grid or traced reflections (4.6 ms of the iPhone 17's 12.7 at 60 Hz) and two shadowed
+        // lamps. Phones run at 60 frames per second also without ray tracing: eight area lights at the iPhone 17's
+        // full size take about 12 ms.
         const gpu::Caps& caps = c.app.device().caps();
+        m_limit60 = c.app.mobile();
         if (c.app.mobile() && caps.rayTracing) {
             settings.indirectLight = IndirectLight::Sky;
+            settings.reflections = Reflections::Sky;
             settings.localLightShadows = 2;
             settings.renderScale = 0.5f;
             if (caps.spatialUpscaling) settings.upscaling = Upscaling::Spatial;
-            m_limit60 = true;
         } else if (caps.temporalUpscaling) {
             settings.upscaling = Upscaling::Temporal;
             settings.renderScale = 0.67f;

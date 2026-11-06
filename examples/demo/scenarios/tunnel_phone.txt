@@ -1,0 +1,106 @@
+# The tunnel on a phone (docs/performance.md, "The tunnel on the iPhone"), on the native Metal backend at the
+# device's size:
+#   copy this file into the app's user directory, launch with --gpu-backend metal --script tunnel_phone.txt
+# As in raytracing_phone.txt, each group of regions starts from the nominal thermal state, after a cool-down on the
+# cheapest frame at 20 frames per second. First the cost of each option at the display's rate (4 s regions, about
+# 40 s of load), then the section's phone defaults (TunnelSection.cpp) held at 60 Hz for 40 s with a capture, then
+# the path tracer's capture.
+
+section tunnel
+until tunnel_ready == 1 10
+expect limit_60hz == 1
+expect max_frame_rate == 60
+set denoiser temporal
+
+# Cool down: the cheapest frame, few of them.
+set local_shadows 0
+set reflections sky
+set indirect sky
+set upscaling bilinear
+set scale 0.5
+max_frame_rate 20
+until thermal_state <= 0 300
+set limit_60hz 0
+max_frame_rate 0
+
+# Each option at half size with MetalFX spatial, then two thirds with MetalFX temporal and the full size.
+set upscaling spatial
+wait 0.5
+perf_begin tunnel_lit_05
+wait 4
+perf_end
+set local_shadows 2
+wait 0.5
+perf_begin tunnel_shadows2_05
+wait 4
+perf_end
+set local_shadows 4
+wait 0.5
+perf_begin tunnel_shadows4_05
+wait 4
+perf_end
+set local_shadows 2
+set reflections rt
+wait 0.5
+perf_begin tunnel_shadows2_reflections_05
+wait 4
+perf_end
+set local_shadows 4
+wait 0.5
+perf_begin tunnel_shadows4_reflections_05
+wait 4
+perf_end
+set indirect probes
+wait 0.5
+perf_begin tunnel_all_traced_05
+wait 4
+perf_end
+set indirect sky
+set local_shadows 2
+set upscaling temporal
+set scale 0.67
+wait 0.5
+perf_begin tunnel_shadows2_reflections_067
+wait 4
+perf_end
+set local_shadows 0
+set reflections sky
+set upscaling bilinear
+set scale 1
+wait 0.5
+perf_begin tunnel_lit_1
+wait 4
+perf_end
+
+# Cool down again, then the phone defaults at 60 Hz.
+set scale 0.5
+max_frame_rate 20
+until thermal_state <= 0 300
+reset_section
+until tunnel_ready == 1 10
+expect max_frame_rate == 60
+expect local_shadows == 2
+expect reflections == 0
+expect indirect == 0
+wait 1
+windows off
+capture tunnel_phone_rt.png
+windows on
+perf_begin tunnel_defaults_60hz_1
+wait 20
+perf_end
+perf_begin tunnel_defaults_60hz_2
+wait 20
+perf_end
+
+# The path tracer at the device's size, the spot standing still.
+set sweep 0
+set upscaling bilinear
+set scale 1
+set path_tracer 1
+until path_samples >= 128 60
+windows off
+capture tunnel_phone_pt.png
+windows on
+set path_tracer 0
+quit
