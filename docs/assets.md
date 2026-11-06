@@ -246,9 +246,10 @@ failures; Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_a
 - **Texture formats**: the cook writes BC7 and RGBA8 only. ASTC (written by no cook yet) and Basis Universal
   transcoding are needed for Android and the web; until then a device without BC sampling gets BC7 decoded to RGBA8
   on the CPU (four times the memory).
-- **Materials**: normal and emissive textures are cooked and named in the model, but the standard surface does not
-  read them yet (no normal maps in `quench_render`); occlusion textures, `KHR_texture_transform` and unlit materials
-  are dropped with a note; morph targets, cameras and lights of glTF files are not cooked.
+- **Materials**: normal and emissive textures are cooked, named in the model and read by the standard surface
+  (`SceneAssets` puts them into a material's textures 2 and 3; [Render module](render.md)); ray hits do not read
+  normal maps. Occlusion textures, `KHR_texture_transform` and unlit materials are dropped with a note; morph
+  targets, cameras and lights of glTF files are not cooked.
 - **One scene per manager**: `SceneAssets` registers its asset types on its manager, so a second scene needs a
   second `AssetManager` (with its own cache: a file used by both scenes loads twice).
 - **Streaming** loads and unloads by distance; there is no memory budget across cells beyond the manager's per-type
