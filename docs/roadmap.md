@@ -195,7 +195,7 @@ the user"). Described in [Animation](animation.md).
 - Done: version 0.6.0 (with the cut-out and translucent shadows), release notes in
   [docs/releases/v0.6.0.md](releases/v0.6.0.md).
 
-## Stage 9: native Metal backend and ray tracing
+## Stage 9: native Metal backend and ray tracing (done 2026-11-06 except reflections and indirect light, 0.7.0)
 
 - Metal backend of `quench::gpu` (pixel comparison against the SDL GPU backend on the same Mac), GPU timestamps.
 - Acceleration structures from the retained scene; ray-traced shadows first, then reflections, ambient occlusion and
@@ -251,8 +251,16 @@ TODO for stage 9:
   (2026-11-06, [Engine demo](demo.md)).
 - [ ] Measure ray-traced shadows against shadow maps on the iPhone at 120 Hz and pick the default per device (the
   default stays shadow maps and SDL GPU until then).
+- [ ] Run the native backend on the iPhone (the device test app with `QUENCH_GPU_BACKEND=metal`, the demo with EDR
+  and at 120 Hz, timestamps on the A20 Pro, `Caps::rayTracing` and MetalFX on the device), then make it the default
+  on Apple platforms.
+- [ ] Look at the ray tracing section in motion (noise and ghosting with 1 and 2 shadow rays, with MetalFX
+  temporal): by the user, on the Mac and the iPhone.
 - [ ] Ray-traced reflections (fallback: what exists, the sky reflection) and indirect light: open.
 - [ ] Bottom-level compaction and top-level refits: not done (the top level is rebuilt every frame).
+- [x] Version 0.7.0, release notes in [docs/releases/v0.7.0.md](releases/v0.7.0.md). Released before the iPhone
+  run and before anyone watched the section in motion (decided without the user, 2026-11-06, as recommended); the
+  release notes list both under "What was not verified".
 
 ## Stage 10: engine demo
 

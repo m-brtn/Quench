@@ -1,9 +1,10 @@
 # Quench documentation
 
 Stages 1 to 3, 5 and 7 of the [Roadmap](roadmap.md) are implemented, stage 4 (games on the engine) for one game,
-stage 6 except shader hot reload and stage 8 except retargeting (version 0.6.0): the core and physics modules, the
-job system, the asset system and the asset cooker, the GPU layer over SDL GPU (and, from stage 9, a native Metal
-backend with GPU timestamps per pass, acceleration structures and MetalFX; not the default yet), the app shell with
+stage 6 except shader hot reload, stage 8 except retargeting and stage 9 except ray-traced reflections and indirect
+light (version 0.7.0): the core and physics modules, the job system, the asset system and the asset cooker, the GPU
+layer over SDL GPU (and a native Metal backend with GPU timestamps per pass, acceleration structures and MetalFX;
+not the default yet), the app shell with
 HDR display output, the render module (a retained scene and the standard frame with cut-out and translucent shadows,
 GPU skinning, and on the native backend ray-traced sun shadows and ambient occlusion and MetalFX upscaling, with
 shadow maps and bilinear scaling as the fallbacks; not yet run on the iPhone),
