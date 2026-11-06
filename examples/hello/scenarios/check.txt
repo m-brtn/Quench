@@ -3,4 +3,5 @@
 # "Scenarios").
 include frame.txt
 include input.txt
+include perf.txt
 quit

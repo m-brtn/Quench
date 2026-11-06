@@ -351,11 +351,11 @@ if(NOT QUENCH_HEADLESS)
             endforeach()
         endfunction()
 
-        # The hello example: its frame at 1 s against the golden image and the input check, on SDL GPU's Metal
-        # driver, on the native Metal backend (the same golden image) and on Vulkan through MoltenVK.
+        # The hello example: its frame at 1 s against the golden image, the input check and the perf region check, on
+        # SDL GPU's Metal driver, on the native Metal backend (the same golden image) and on Vulkan through MoltenVK.
         if(QUENCH_TEST_CAPTURES)
             set(hello_args --window 640x360 --frame-size 1280x720 --gpu-debug)
-            set(hello_parts frame:hello input)
+            set(hello_parts frame:hello input perf)
             set(hello_script ${Quench_SOURCE_DIR}/examples/hello/scenarios/check.txt)
             quench_add_batch(hello metal APP quench_hello SCRIPT ${hello_script} BACKEND metal ARGS ${hello_args}
                 ENVIRONMENT MTL_DEBUG_LAYER=1 PARTS ${hello_parts})

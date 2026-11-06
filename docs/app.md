@@ -138,7 +138,9 @@ A scenario's `perf_begin` .. `perf_end` region runs in real time instead, with a
 play, so it measures the real frame cost (`App::deterministic()` is false there); offscreen it warns that the frames
 are not presented, so benchmarks run with `--onscreen`. Offscreen regions still time each frame on the GPU (since
 2026-11-06 also when the GPU is the bottleneck, where the frame waits for the oldest one in flight): unpaced, they suit
-an A/B of GPU costs. Games should hide timings in deterministic runs, so captures
+an A/B of GPU costs. A frame's GPU time is read once, when its fence has signalled (a frame or two later), and counts
+in the region the frame was in; the frames still in flight at `perf_end` are not counted (`perf_gpu_samples`,
+`perf_gpu_lost`). Games should hide timings in deterministic runs, so captures
 compare across runs. `App::scripted()` tells a game that a scenario runs, for example to start from default settings
 and keep the user's files untouched.
 
@@ -212,7 +214,9 @@ in multiples of paper white; -1 before one), after `perf_end` `perf_frames`,
 `perf_frame_avg`, `perf_frame_p10`, `perf_frame_p50`, `perf_frame_p95`, `perf_frame_p99`, `perf_frame_max`,
 `perf_cpu_avg`, `perf_cpu_p50`, `perf_cpu_p95`, `perf_cpu_p99`, `perf_gpu_avg`, `perf_gpu_min`, `perf_gpu_p10`,
 `perf_gpu_p50`, `perf_gpu_p95` (milliseconds; -1 when
-there were no samples, for example GPU time without `gpu::Caps::gpuTiming`), with `gpu::Caps::gpuPassTiming` also
+there were no samples, for example GPU time without `gpu::Caps::gpuTiming`), `perf_gpu_samples` (frames with a GPU
+time), `perf_gpu_lost` (frames timed by the device without a sample, less those still in flight at the end: 0 unless
+a sample went missing; 0 without `gpuTiming`), with `gpu::Caps::gpuPassTiming` also
 `perf_pass_<range>_p50` per timed range, `perf_pass_sum_p50`, `perf_pass_span_p50` and `perf_pass_share_p50`
 ([Performance](performance.md#gpu-time-per-pass)), and `perf_thermal_start`, `perf_thermal_end`, `perf_thermal_max`
 (as `thermal_state`); after `audio_measure` `audio_rms`,

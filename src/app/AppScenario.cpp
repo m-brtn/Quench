@@ -249,7 +249,10 @@ double average(const std::vector<double>& values) {
 } // namespace
 
 void startPerf(AppState& s, std::string label) {
-    s.perf = PerfRegion{.label = std::move(label), .thermalStart = s.stats.thermal, .thermalMax = s.stats.thermal};
+    s.perf = PerfRegion{.label = std::move(label),
+                        .serial = ++s.perfSerial,
+                        .thermalStart = s.stats.thermal,
+                        .thermalMax = s.stats.thermal};
 }
 
 PerfReport finishPerf(AppState& s) {
@@ -275,6 +278,12 @@ PerfReport finishPerf(AppState& s) {
     v["perf_gpu_p10"] = percentile(r.gpuMs, 0.10);
     v["perf_gpu_p50"] = percentile(r.gpuMs, 0.50);
     v["perf_gpu_p95"] = percentile(r.gpuMs, 0.95);
+    // Frames still in flight at the end are not timed; any other timed frame without a sample is lost.
+    std::size_t inFlight = 0;
+    for (std::size_t i = 0; i < s.fences.size(); ++i)
+        if (s.fences[i] && s.fencePerf[i] == r.serial) ++inFlight;
+    v["perf_gpu_samples"] = double(r.gpuMs.size());
+    v["perf_gpu_lost"] = r.timedFrames == 0 ? 0.0 : double(r.timedFrames) - double(r.gpuMs.size() + inFlight);
     v["perf_thermal_start"] = double(r.thermalStart);
     v["perf_thermal_end"] = double(thermalEnd);
     v["perf_thermal_max"] = double(thermalMax);

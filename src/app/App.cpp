@@ -226,15 +226,43 @@ SDL_AppResult fail(std::string_view what) {
 
 int scenarioExitCode(const AppState& s) { return s.scenario && s.scenario->failed() > 0 ? 1 : 0; }
 
-void readGpuTime(AppState& s, gpu::Fence& fence) {
-    if (const auto ms = s.device->gpuMilliseconds(fence)) s.stats.gpuMs = *ms;
-    if (s.device->caps().gpuPassTiming) s.stats.gpuPasses = s.device->gpuTimings(fence);
+void addGpuSample(PerfRegion& perf, double gpuMs, const std::vector<gpu::GpuTiming>& passes) {
+    perf.gpuMs.push_back(gpuMs);
+    double sum = 0.0, start = 1e30, end = 0.0;
+    for (const gpu::GpuTiming& t : passes) {
+        auto it = std::find_if(perf.passMs.begin(), perf.passMs.end(),
+                               [&t](const auto& entry) { return entry.first == t.name; });
+        if (it == perf.passMs.end()) it = perf.passMs.insert(it, {t.name, {}});
+        it->second.push_back(t.milliseconds);
+        if (t.depth > 0) continue;
+        sum += t.milliseconds;
+        start = std::min(start, t.startMilliseconds);
+        end = std::max(end, t.endMilliseconds);
+    }
+    if (end > 0.0) {
+        perf.passSumMs.push_back(sum);
+        perf.passSpanMs.push_back(end - start);
+        if (gpuMs > 0.0) perf.passShare.push_back((end - start) / gpuMs);
+    }
+}
+
+// Reads the signalled fence s.fences[index] (its frame's GPU time into the stats, and into the perf region the frame
+// was in) and releases it.
+void readGpuTime(AppState& s, std::size_t index) {
+    gpu::Fence& fence = s.fences[index];
+    if (const auto ms = s.device->gpuMilliseconds(fence)) {
+        s.stats.gpuMs = *ms;
+        s.stats.gpuPasses = s.device->gpuTimings(fence);
+        if (s.perf && s.fencePerf[index] == s.perf->serial) addGpuSample(*s.perf, *ms, s.stats.gpuPasses);
+    }
     fence.reset();
 }
 
 void updateGpuTime(AppState& s) {
-    for (gpu::Fence& fence : s.fences)
-        if (fence && s.device->isSignaled(fence)) readGpuTime(s, fence);
+    for (std::size_t k = 0; k < s.fences.size(); ++k) {
+        const std::size_t index = (s.nextFence + k) % s.fences.size(); // the oldest first
+        if (s.fences[index] && s.device->isSignaled(s.fences[index])) readGpuTime(s, index);
+    }
 }
 
 void runScenario(AppState& s) {
@@ -264,9 +292,9 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
     gpu::TextureRef swapchain;
     if (s.offscreen) {
         // Read here: this frame's fence takes its place, and a GPU-bound run would never time a frame otherwise.
-        if (gpu::Fence& oldest = s.fences[s.nextFence]; oldest) {
-            s.device->wait(oldest);
-            readGpuTime(s, oldest);
+        if (s.fences[s.nextFence]) {
+            s.device->wait(s.fences[s.nextFence]);
+            readGpuTime(s, s.nextFence);
         }
     } else {
         swapchain = commands.acquireSwapchainTexture(s.window.get());
@@ -356,6 +384,8 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
         return false;
     }
     s.fences[s.nextFence] = std::move(*fence);
+    s.fencePerf[s.nextFence] = s.perf ? s.perf->serial : 0;
+    if (s.perf && s.device->caps().gpuTiming) ++s.perf->timedFrames;
     s.nextFence = (s.nextFence + 1) % s.fences.size();
 
     if (!capturePath.empty()) {
@@ -403,23 +433,6 @@ void updateStats(AppState& s, double realDt, double cpuMs, int ticks) {
         s.perf->thermalMax = std::max(s.perf->thermalMax, s.stats.thermal);
         s.perf->frameMs.push_back(realDt * 1000.0);
         s.perf->cpuMs.push_back(cpuMs);
-        if (s.stats.gpuMs >= 0.0) s.perf->gpuMs.push_back(s.stats.gpuMs);
-        double sum = 0.0, start = 1e30, end = 0.0;
-        for (const gpu::GpuTiming& t : s.stats.gpuPasses) {
-            auto it = std::find_if(s.perf->passMs.begin(), s.perf->passMs.end(),
-                                   [&t](const auto& entry) { return entry.first == t.name; });
-            if (it == s.perf->passMs.end()) it = s.perf->passMs.insert(it, {t.name, {}});
-            it->second.push_back(t.milliseconds);
-            if (t.depth > 0) continue;
-            sum += t.milliseconds;
-            start = std::min(start, t.startMilliseconds);
-            end = std::max(end, t.endMilliseconds);
-        }
-        if (end > 0.0) {
-            s.perf->passSumMs.push_back(sum);
-            s.perf->passSpanMs.push_back(end - start);
-            if (s.stats.gpuMs > 0.0) s.perf->passShare.push_back((end - start) / s.stats.gpuMs);
-        }
     }
 }
 

@@ -55,9 +55,13 @@ struct ImGuiContextGuard {
 // Frame-time statistics of a scenario's perf_begin .. perf_end region.
 struct PerfRegion {
     std::string label;
+    std::uint64_t serial = 0; // the frames' fences carry it (AppState::fencePerf)
     std::vector<double> frameMs;
     std::vector<double> cpuMs;
+    // One sample per frame of the region, read when the frame's fence has signalled (later than the frame itself);
+    // timedFrames: the region's frames on a device that times them.
     std::vector<double> gpuMs;
+    std::size_t timedFrames = 0;
     // GPU busy time per timed range (FrameStats::gpuPasses), by name in the order first seen; per frame the sum of the
     // top-level ranges, the time they span together and its share of the frame's GPU time.
     std::vector<std::pair<std::string, std::vector<double>>> passMs;
@@ -138,6 +142,7 @@ struct AppState {
     gpu::Texture frameTexture; // --frame-size
     UiComposite uiComposite;   // HDR output
     std::array<gpu::Fence, 3> fences;
+    std::array<std::uint64_t, 3> fencePerf{}; // the serial of the perf region each fence's frame belongs to; 0: none
     std::size_t nextFence = 0;
 
     // Captures and quitting.
@@ -156,6 +161,7 @@ struct AppState {
     glm::vec2 touchMouse{0.0f};                      // the mouse position SDL would synthesize from the scripted finger
     std::vector<std::unique_ptr<char[]>> textInputs; // TEXT_INPUT payloads stay alive until dispatched
     std::optional<PerfRegion> perf;
+    std::uint64_t perfSerial = 0;
     bool passTimingRequested = false;                       // App::requestPassTiming in this frame
     std::map<std::string, double, std::less<>> perfValues;  // of the last finished region: perf_frame_avg, ...
     std::map<std::string, double, std::less<>> audioValues; // of the last audio_measure: audio_rms, ...

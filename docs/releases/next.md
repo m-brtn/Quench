@@ -33,6 +33,9 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   MoltenVK. The GPU layer now waits on a signalled fence (which does not block) before it releases it: 676 MB, flat.
   The demo's switch cycle now also runs on Vulkan (`batch.txt`; `batch_metal.txt` is gone): +34 MB in its third
   round, below the bound of 64 MB, where it grew by 459 MB before.
+- **Perf regions count each frame's GPU time once, in its own region:** before, every frame repeated the last GPU
+  time read (a frame read late, twice, or one of the previous region's). New values `perf_gpu_samples` and
+  `perf_gpu_lost`; hello's batches check that no timed frame is lost (`perf.txt`, `hello_perf_<backend>`).
 
 ## Changes for games
 
@@ -59,5 +62,8 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   `anisotropy` and `anisotropyDirection`: a custom surface that fills a `QuenchSurface` itself sets `anisotropy` to
   0 (or its own value) and `anisotropyDirection` to its tangent. A custom surface gets the area lights without
   changes.
+- **`app::PerfReport::gpuSamples`** (and the perf line's sample count) is the number of frames whose GPU time was
+  read, a few less than `frames` (the frames in flight at the end), where it equalled `frames` before; GPU times of
+  a region come only from its own frames.
 - No new dependency library: the LTC data is code and a table in `quench_render` (BSD-2-Clause, with the paper
   reference its licence asks for).

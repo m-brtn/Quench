@@ -44,7 +44,12 @@ build/release/examples/hello/hello --onscreen --frame-size 1920x1080 --script ex
 frames are not presented, so a perf region there warns and measures no display pacing; the benchmark needs the
 window. Offscreen regions run unpaced and keep their GPU times (also GPU-bound ones since 2026-11-06; before, a
 frame that waited for the oldest frame in flight replaced it unread, and such regions had no GPU sample): enough
-for an A/B of costs. It is the one automated run that shows a window: start it by hand, not from a test.
+for an A/B of costs. Since the same day each frame gives one GPU sample, to the region it was in (before, every
+frame repeated the last time read, which could be a frame of the previous region or a frame read twice). Offscreen,
+three frames are in flight and a frame's GPU time runs from its command buffer's start to its end, so these spans
+overlap: in a GPU-bound region the GPU p50 can exceed the frame interval (11.5 against 10.8 ms in the tunnel's
+A/B). Compare GPU times with GPU times, and take the busy times per range as the costs. It is the one automated run
+that shows a window: start it by hand, not from a test.
 `--audio-device null` (since stage 7): miniaudio's null backend pulls the mix on its own thread like a real output,
 without sound; the stage 7 runs below used it.
 
@@ -439,7 +444,9 @@ Stage 11 (ray-traced lighting), 2026-11-06 17:20-18:00, Release, Mac, Apple M4 P
 at 60 Hz the GPU clock follows the load and the ranges of light regions read up to four times longer (`rays` of
 `rt_shadows_ao`: 8.02 ms at 60 Hz, 1.88 ms unpaced), so the 60 Hz runs (17:28-17:29, stage 10 and stage 11, one each)
 give no costs. Offscreen perf regions were tried first and dropped: their GPU timings lagged behind the region or
-were missing (9 of 19 regions without a sample in a per-process run; an open question, not examined). GPU busy time
+were missing (9 of 19 regions without a sample in a per-process run; explained later the same day: a GPU-bound
+offscreen frame replaced the oldest frame's fence unread, and every frame repeated the last time read, so a region
+could start with the previous region's times; both fixed, see [The benchmark](#the-benchmark)). GPU busy time
 per range, medians over 4 s regions, in milliseconds; `game` is the renderer's whole frame, "frame" the interval
 between frames (unpaced: the throughput):
 
