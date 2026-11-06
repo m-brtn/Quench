@@ -6,7 +6,9 @@ sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#lay
 (see "Rendering" and [Render module](render.md)) and the engine demo ([Engine demo](demo.md)), and stage 6 apart from
 shader hot reload: the job system, `quench_assets` and `quench_cook` (see "Threads and jobs", "Assets" and
 [Jobs, assets and the cook](assets.md)), and stage 7: `quench_audio` and `quench_audio_device` (see "Audio" and
-[Audio](audio.md)); everything else here describes the intended structure and the reasons for it. The binding rules
+[Audio](audio.md)), and the first half of stage 9: the native Metal backend and GPU timestamps per pass (see
+"Native Metal backend"; the ray tracing of the second half is designed in "Ray tracing design"); everything else here
+describes the intended structure and the reasons for it. The binding rules
 are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
 
 ## Planned layout
@@ -26,7 +28,7 @@ src/<module>/              sources and internal headers, per module:
   audio/      mixer, sounds, streams, 3D sound, WAV writer, analysis (headless); the playback device and the
               iOS audio session (miniaudio)
   gpu/        the GPU layer (resources, pipelines, command recording, captures, timing) and its backends:
-              sdlgpu/, metal/ (planned)
+              sdlgpu/, metal/ (Apple platforms), shaders/ (the backends' own shaders)
   render/     retained scene, standard frame, render modules (shadows, post, screen-space effects, sky, particles,
               terrain, ray tracing)
   app/        SDL main callbacks, window, input actions, ImGui, game interface, common flags, scenario runner
@@ -58,7 +60,7 @@ docs/releases/        release notes per version
 | `quench_audio` | mixer, buses, sounds (the `"sound"` asset type), streams, generators, 3D sound, WAV writer, signal analysis | core, assets, GLM, miniaudio (decoders) | yes |
 | `quench_audio_device` | playback device, iOS audio session | audio, miniaudio (device API), Core Audio, AVFoundation on iOS | no |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
-| `quench_gpu` | GPU layer and backends | core, gpu_shaders, SDL3 | no |
+| `quench_gpu` | GPU layer and backends (SDL GPU; native Metal on Apple platforms) | core, gpu_shaders, SDL3; GLM (private); Metal, QuartzCore on Apple platforms | no |
 | `quench_render` | retained scene, standard frame, render modules, GPU skinning, `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, GLM | no |
 | `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log, the app's job system and asset manager | core, assets, audio, audio_device, gpu, GLM, ImGui, SDL3 | no |
 | `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
@@ -82,8 +84,10 @@ intact (no fsync: a power loss right after the rename is not covered).
 All graphics goes through `quench::gpu`: engine-owned handles for buffers, textures, samplers and pipelines,
 descriptor structs, and command recording. Backends:
 
-- **SDL GPU** (first, portable): Metal on Apple platforms, Vulkan and D3D12 elsewhere; WebGPU only if SDL ships it.
-- **Metal** (planned, native): for what SDL GPU does not offer.
+- **SDL GPU** (first, portable, the default): Metal on Apple platforms, Vulkan and D3D12 elsewhere; WebGPU only if SDL
+  ships it.
+- **Metal** (native, since stage 9; Apple platforms): for what SDL GPU does not offer. Built and at parity with SDL
+  GPU's Metal driver (see "Native Metal backend"); GPU timestamps per pass so far, ray tracing and MetalFX to follow.
 
 Why a native backend at all: SDL GPU deliberately targets a roughly ten-year-old common feature set. In reply to a
 request for a ray tracing API, its maintainers stated that features missing from the API were omitted intentionally
@@ -103,7 +107,10 @@ one machine and compared pixel by pixel.
 ### The layer as built (stage 2)
 
 Headers in `include/quench/gpu/` (`Device.h`, `CommandBuffer.h`, `Resources.h`, `Types.h`), the SDL GPU backend in
-`src/gpu/sdlgpu/`. There is one backend, so there is no virtual dispatch yet; the native Metal backend will bring it.
+`src/gpu/sdlgpu/`. Since stage 9 the public classes forward to a backend interface, `detail::DeviceImpl`
+(`src/gpu/Backend.h`, one virtual call per operation, opaque handles), with two implementations: SDL GPU and the
+native Metal backend (`src/gpu/metal/`, below). The front end (`src/gpu/Device.cpp`, `CommandBuffer.cpp`) keeps the
+checks that do not depend on the backend: the asserts below, live resource counts, pass state.
 
 - **Close to the SDL GPU model**: device, command buffers, render and copy passes, transfer buffers, uniforms pushed
   per stage and slot. The games' renderers are written against SDL GPU, so porting them is mechanical. No SDL type
@@ -120,13 +127,16 @@ Headers in `include/quench/gpu/` (`Device.h`, `CommandBuffer.h`, `Resources.h`, 
   draws need `Caps::indirectDraw`); SDL checks some of these only in its own debug mode. Failures the caller can
   handle return `Result` errors: creation, an unsupported format, usage or sample count, submission.
 - **Reversed depth by default**: `DepthState::compare` is `GreaterOrEqual` and `DepthTarget::clearDepth` is 0.
-- **`gpu::Caps`**: driver, device name, shader format, and the differences found so far: `gpuTiming` (Metal only:
-  `SdlGpuTimingMetal.m` reads SDL's internal fence, as TrailForge does), `depthClamp` (not in the iOS Simulator, where
+- **`gpu::Caps`**: backend, driver, device name, shader format, and the differences found so far: `gpuTiming` (Metal
+  only: on SDL GPU `SdlGpuTimingMetal.m` reads SDL's internal fence, as TrailForge does; the native backend reads the
+  command buffer's GPU times), `gpuPassTiming` (native Metal backend only, see "GPU timestamps per pass"),
+  `depthClamp` (not in the iOS Simulator, where
   the SDL patch skips the depth clip mode), `depthBiasClamp` (not on SDL's Vulkan backend, which does not enable the
   device feature), `indirectDraw` (not in the iOS Simulator: its Metal device is GPU family Apple2), `bcTextures`,
   `astcTextures`; per format `supportsFormat` and `supportsSampleCount`.
-- **SDL video**: SDL GPU needs SDL's video subsystem for every driver. The device holds a reference to it, so it is
-  created and destroyed on the main thread.
+- **SDL video**: SDL GPU needs SDL's video subsystem for every driver. Its device holds a reference to it, so it is
+  created and destroyed on the main thread. The native Metal device needs video only for windows, which the app
+  creates (offscreen tests run without it).
 - **Transfers**: `Device::upload` submits without waiting; `Device::download` blocks and is meant for captures, tests
   and tools.
 - **Swapchain composition** (stage 5): `gpu::SwapchainComposition` (`Sdr`, `SdrLinear`, `HdrExtendedLinear`,
@@ -137,6 +147,110 @@ Headers in `include/quench/gpu/` (`Device.h`, `CommandBuffer.h`, `Resources.h`, 
   `ShaderBlob`, with its thread group size), `CommandBuffer::beginComputePass` with read-write storage buffers bound
   for the pass, and in the pass a pipeline, read-only storage buffers, uniforms and `dispatch`;
   `BufferUsage::ComputeStorageRead` and `ComputeStorageWrite`. No storage textures in compute yet (no need).
+
+### Native Metal backend
+
+Stage 9, first half (2026-11-06): `src/gpu/metal/` (`MetalDevice.mm`: device, resources, swapchain, fences, timestamps;
+`MetalCommands.mm`: command recording; Objective-C++ with ARC), built on Apple platforms only. It implements the whole
+`quench::gpu` surface that the SDL GPU backend does, from the same compiled shaders, and its behaviour follows SDL
+3.4.18's Metal backend (`SDL_gpu_metal.m`) wherever the engine could observe a difference.
+
+- **Selection**: `DeviceDesc::backend` (`gpu::Backend::Default`, `SdlGpu`, `Metal`); `Default` reads the
+  `QUENCH_GPU_BACKEND` environment variable (`sdl` or `metal`), else SDL GPU. In the app: `AppDesc::gpuBackend` and the
+  `--gpu-backend sdl|metal` flag ([App shell](app.md#command-line-flags)). Off Apple platforms a request for Metal logs a warning
+  and creates SDL GPU. `Caps::backend` says which one runs; the device's log line names it.
+- **Default stays SDL GPU** (decided without the user, 2026-11-06, as the stage plan says: "until parity is shown on
+  every platform"). Parity is shown on the Mac (below) and in the iOS Simulator's tests, not on the iPhone, which was
+  not available. The switch is a one-line change in `chooseBackend` (`src/gpu/Device.cpp`) after a device run.
+- **Shaders and bindings**: the same `quench_shaderc` metallib (or MSL source) as SDL GPU, so the slots are the ones
+  SPIRV-Cross assigns for SDL GPU's register spaces. Per stage: uniform block `b[n]` in `buffer(n)`; sampled texture
+  and sampler `t[n]`, `s[n]` in `texture(n)`, `sampler(n)`; storage textures in `texture(numSamplers + k)`; storage
+  buffers in `buffer(numUniformBuffers + k)`; vertex buffer slot `i` in `buffer(14 + i)`. Compute: read-only storage
+  buffers in `buffer(numUniformBuffers + k)`, read-write ones in `buffer(numUniformBuffers + numReadOnly + k)`,
+  uniforms in `buffer(n)`. Uniforms go into 32 KB shared chunks at 256-byte offsets; a slot the pipeline declares but
+  nothing pushed reads a zeroed buffer (SDL binds a pooled buffer with whatever it held). Bindings are applied lazily at the draw or dispatch, and reset at
+  the end of every pass.
+- **Resources**: textures and GPU buffers in private storage, transfer buffers in shared storage (write-combined for
+  uploads) with one backing per cycle that the GPU still uses. `cycle` on a GPU buffer or texture is a no-op: Metal's
+  hazard tracking orders the writes after earlier reads (SDL keeps several copies instead; the pixels are the same,
+  the overlap of frames may differ). Releasing a resource drops the reference at once; command buffers retain what
+  they use. Depth24Stencil8 only on macOS.
+- **Passes**: render, compute (serial dispatch) and copy passes on their own encoders; at the start of a render pass
+  the viewport and scissor cover the smallest target, blend constants are 1 and the stencil reference 0; no depth
+  clip mode in the iOS Simulator (`Caps::depthClamp` false, as with the SDL patch). `CommandBuffer::blit` is a render
+  pass with the engine's blit shader (`src/gpu/shaders/blit.hlsl`), for 2D and 2D array sources (3D and cube sources
+  log an error; nothing in the engine blits them). Mipmaps through the blit encoder.
+- **Swapchain**: `SDL_Metal_CreateView` and its `CAMetalLayer`; at most two frames in flight per window; `Sdr` is
+  BGRA8, `SdrLinear` BGRA8 sRGB, `HdrExtendedLinear` RGBA16F in extended linear sRGB with EDR, `Hdr10` RGB10A2 in
+  BT.2100 PQ (macOS only, as SDL). Vsync everywhere, immediate on macOS (`displaySyncEnabled`), no mailbox. The
+  drawable is presented before the commit, as in SDL.
+- **Differences kept**: cube arrays are created with `layers / 6` cubes (SDL GPU passes the layer count to
+  `arrayLength`, six times the memory); debug labels and groups only with `DeviceDesc::debug`, as in SDL.
+- **Not covered**: anything SDL GPU itself lacks (storage textures in compute, multiple command queues), and the
+  native features for which the backend exists apart from timestamps (ray tracing, MetalFX: second half of stage 9).
+- **Verified** (2026-11-06, Mac, M4 Pro, `MTL_DEBUG_LAYER=1`): every GPU device and render case
+  (`gpu_metal_native.*`, `render_metal_native.*`), hello and all eleven demo captures against the Metal golden
+  images, identical in Release (mean difference 0, no pixel different) and identical to SDL GPU's captures of the same
+  Debug build; the audio section's offline mix byte-identical. ctest keeps `hello_metal_native`,
+  `demo_animation_metal_native` and `demo_hdr_on_metal_native` (wall time); the other sections were run by hand. iOS
+  Simulator: see [Platforms](platforms.md).
+
+### GPU timestamps per pass
+
+`Caps::gpuPassTiming` (native Metal backend where the device samples timestamps at stage boundaries, which is how
+Apple GPUs sample them; SDL GPU reports false). `CommandBuffer::beginTiming(name)` / `endTiming()` around passes,
+outside passes, nesting allowed; after `submitWithFence`, `Device::gpuTimings(fence)` returns per range its GPU busy
+time, its start and end within the command buffer and its nesting depth (`gpu::GpuTiming`). The backend attaches a
+counter sample buffer (512 samples per command buffer, pooled) to every encoder that starts inside a range: start and
+end of the vertex and fragment stages of a render pass, start and end of a compute or blit pass. A range's busy time
+is the union of those stage intervals: on Apple GPUs the vertex stage of a pass runs while the previous pass still
+shades fragments, so a range from first to last timestamp would count the wait, and the sum of the ranges may exceed
+the frame. The timestamp period is measured once against the CPU clock (1.0000 ns on the M4 Pro). The renderer times
+`upload`, `shadows`, `hdr`, `taa`, `bloom` and `tonemap` inside the app's `game` range; the app adds `ui` and `blit`
+([Performance](performance.md#gpu-time-per-pass)).
+
+## Ray tracing design
+
+Second half of stage 9; design only, nothing of this is implemented. It builds on the native Metal backend and on the
+retained scene, and keeps the rules: effects are slots with fallbacks chosen by `gpu::Caps`, games do not change when
+a backend gains ray tracing, and no ray tracing type is backend-specific in a public header.
+
+- **Capability**: `Caps::rayQuery` (device support for acceleration structures and ray queries in fragment and compute
+  shaders: `supportsRaytracing` on Metal; false on SDL GPU, which has no ray tracing, and on Vulkan through MoltenVK,
+  which exposes no ray tracing extension). No ray tracing pipelines (hit groups, shader tables) at first: inline ray
+  queries cover shadows, ambient occlusion and reflections that read material data from buffers, and they map to
+  Metal's `intersection_query`, Vulkan's `VK_KHR_ray_query` and DXR 1.1's `RayQuery` alike.
+- **`quench::gpu` surface** (sketch): `AccelerationStructure` (move-only, like `Buffer`), created from
+  `BottomLevelDesc` (vertex buffer, offset, stride, format `Float3`, vertex count, index buffer, index format, triangle
+  count, opaque flag, `allowUpdate`) or `TopLevelDesc` (instance capacity, `allowUpdate`); its sizes from
+  `Device::accelerationStructureSizes` (build, update and scratch bytes). Building is a pass:
+  `CommandBuffer::beginAccelerationStructurePass()` with `build(target, desc, scratch)`, `update(target, desc,
+  scratch)` (refit), `compact` later. Instances for the top level come from a buffer of `gpu::RayInstance`
+  (`mat3x4` transform, 24-bit user id, 8-bit mask, bottom level index), written by the CPU through a transfer buffer
+  or by a compute pass. Shaders get the top level as a binding like a storage buffer
+  (`RenderPass::bindAccelerationStructure(stage, slot, ...)`, `ComputePass::...`); on Metal the backend also marks the
+  bottom levels resident (`useResource` / `useHeap`).
+- **Bottom levels**: one per registered `render::Scene` mesh, built when the mesh is created (the vertex positions of
+  the engine's vertex format, `Float3` at offset 0), compacted after the first build, rebuilt only when the mesh is
+  replaced. Skinned meshes: one bottom level per skinned instance over the skinned vertex buffer of stage 8 (the
+  compute skinning output), refit every frame after the skinning pass, rebuilt every N frames or when the refit
+  degrades (bounding box growth), since refits lose quality as the pose moves away from the build pose.
+- **Top level**: rebuilt every frame from the visible-or-shadow-casting instances (a fast build: it is small next to
+  the bottom levels), with the instance's material index as the user id and masks for "casts shadows" and
+  "translucent"; a refit when only transforms changed is a later optimisation. The renderer owns it; games see only
+  the effect settings.
+- **Shaders**: HLSL `RaytracingAccelerationStructure` and `RayQuery`, compiled with DXC for the SPIR-V step (glslang
+  cannot, see "Shaders"), then SPIRV-Cross to MSL 3.0 as today; the acceleration structure takes a buffer slot after
+  the storage buffers. Entries with ray queries are only created where `Caps::rayQuery` holds, so the other backends
+  never compile them.
+- **Fallback slots** in `render::RenderSettings` and `render::ActiveEffects`: sun shadows `ShadowMaps | RayTraced`
+  (ray-traced shadows first: one ray per pixel towards the sun with a cone for soft edges, denoised by the TAA history;
+  shadow maps are the fallback and stay the default until the iPhone measurement), then reflections (`ScreenSpace`
+  or `RayTraced`), ambient occlusion and indirect light (`None`, screen-space later, or `RayTraced`). Without
+  `Caps::rayQuery` the renderer takes the fallback and reports it, as it does for TAA and depth clamp today.
+- **Verification**: the same golden-capture rule (ray-traced captures get their own goldens per backend and device,
+  with the fallback's capture unchanged); performance against shadow maps on the iPhone at 120 Hz with the per-pass
+  timestamps above.
 
 ## Rendering
 
@@ -166,7 +280,8 @@ SDR: [App shell](app.md#hdr-output)). Games add passes at five stages
 engine lights. Fallbacks are chosen from the device's format support and `gpu::Caps` (TAA to FXAA, no shadows
 without a sampleable depth array, no depth clamp). The code is TrailForge's renderer and shaders (`b97883e`),
 generalized; not done in this stage: Ashfall's screen-space effects (ambient occlusion, bounce light, reflections,
-sun shafts), particles, terrain, quality presets, GPU timing per pass.
+sun shafts), particles, terrain, quality presets, GPU timing per pass (added in stage 9 where the backend has it:
+see "GPU timestamps per pass").
 
 ## Shaders
 
@@ -197,9 +312,34 @@ shader interface) and uniform structs defined once in headers read by both C++ a
 Planned changes:
 
 - WGSL output for the web (from SPIR-V through Tint or naga) once SDL has a WebGPU backend.
-- Ray queries need Shader Model 6.5. Whether glslang's HLSL front end can compile them is unverified; the likely path
-  is DXC (it emits SPIR-V and DXIL). For Metal, either SPIRV-Cross MSL output (ray query support unverified) or
-  Apple's Metal Shader Converter (DXIL -> metallib). Test on a small example before relying on either.
+- Ray queries (tested 2026-11-06 on a compute kernel with one `RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>`,
+  `TraceRayInline`, `Proceed`, `CommittedStatus`, `CommittedRayT` and a `RaytracingAccelerationStructure` at
+  `t0, space0`):
+  - **glslang's HLSL front end: no.** Homebrew's glslangValidator 16.6.0 stops at the first line
+    (`'declaration' : Expected`, "HLSL parsing failed"); the pinned glslang (`vulkan-sdk-1.4.357.0`) has no
+    `RaytracingAccelerationStructure`, `RayQuery` or `TraceRayInline` anywhere in `glslang/HLSL/`. The current
+    `quench_shaderc` cannot compile ray tracing shaders.
+  - **DXC: yes.** DXC 1.9 (`1.9.0.5512`, `01b62ad4`, the macOS build in the LunarG Vulkan SDK 1.4.363.1, installed
+    for the test and removed) with `-T cs_6_5 -spirv -fspv-target-env=vulkan1.2` emits SPIR-V with `RayQueryKHR` and
+    `SPV_KHR_ray_query` that `spirv-val` accepts; without `-spirv` it emits a DXIL container (`DXBC`, with
+    `dx.op.allocateRayQuery` and `rayQuery_TraceRayInline`; not run, no D3D12 device). DXC's licence is NCSA (as
+    for the Windows build already pinned). DXC publishes no macOS binary (its release has Windows and Linux
+    archives); a macOS build has to come from the Vulkan SDK or be built from source.
+  - **SPIRV-Cross to MSL: yes**, with the pinned SPIRV-Cross (`6c09849`): `spirv_msl.cpp` line 17165 emits
+    `raytracing::acceleration_structure<raytracing::instancing>` and line 17172
+    `raytracing::intersection_query<raytracing::instancing, raytracing::triangle_data>`; ray flags become an
+    `intersection_params` helper. The acceleration structure is listed in
+    `ShaderResources::acceleration_structures` and takes a buffer slot (`MSLResourceBinding::msl_buffer`); with MSL
+    3.0 the output compiles with `xcrun metal` for macOS 14 and iOS 26. The metallib ran on the M4 Pro
+    (`supportsRaytracing` 1) under `MTL_DEBUG_LAYER=1`: one triangle in a primitive acceleration structure, one
+    instance in an instance acceleration structure, bound with `setAccelerationStructure:atBufferIndex:` plus
+    `useResource:usage:` for the primitive structure; the committed distance was 1.0 as expected.
+  - Metal APIs the output needs: MSL 2.3+ `<metal_raytracing>` (`intersection_query`, `acceleration_structure`,
+    `intersection_params`), the `MTLAccelerationStructure` objects and their command encoder; Apple's Metal Shader
+    Converter (DXIL -> metallib) is not needed, and its licence is not one of the permitted ones.
+  - Consequence for the second half: ray tracing shaders need DXC (or another HLSL compiler with ray queries) for the
+    SPIR-V step on the Mac; `quench_shaderc` keeps glslang for everything else, maps acceleration structures to a
+    buffer slot after the storage buffers and requires SPIR-V 1.4 / Vulkan 1.2 for those entries.
 
 ## Main loop and game interface
 

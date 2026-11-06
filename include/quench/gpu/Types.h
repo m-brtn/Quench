@@ -1,7 +1,7 @@
 #pragma once
 
 // Plain types of the GPU layer: formats, flags and the descriptions resources, pipelines and passes are created from.
-// Backend types never appear here; the SDL GPU backend maps these in src/gpu/sdlgpu.
+// Backend types never appear here; the backends map these in src/gpu/sdlgpu and src/gpu/metal.
 
 #include <quench/core/Flags.h>
 

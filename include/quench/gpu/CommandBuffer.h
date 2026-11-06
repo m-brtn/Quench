@@ -241,6 +241,11 @@ public:
     void popDebugGroup();
     void insertDebugLabel(const char* text);
 
+    // A range of passes whose GPU time Device::gpuTimings reports after submitWithFence (Caps::gpuPassTiming;
+    // without it these do nothing). Outside passes; ranges nest, the name is copied.
+    void beginTiming(const char* name);
+    void endTiming();
+
     Result<void> submit();
     // Also returns a fence to wait for completion or read the GPU time (Device::gpuMilliseconds).
     Result<Fence> submitWithFence();

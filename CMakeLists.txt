@@ -8,6 +8,7 @@ endif()
 project(Quench VERSION 0.6.0 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJC)
+    enable_language(OBJCXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -123,17 +124,28 @@ target_include_directories(quench_gpu_shaders INTERFACE ${CMAKE_CURRENT_SOURCE_D
 target_compile_features(quench_gpu_shaders INTERFACE cxx_std_20)
 
 if(NOT QUENCH_HEADLESS)
-    # The GPU layer over SDL GPU (src/gpu/sdlgpu). SDL GPU types stay out of the public headers.
+    # The GPU layer: the front end (src/gpu), the SDL GPU backend (src/gpu/sdlgpu) and, on Apple platforms, the native
+    # Metal backend (src/gpu/metal). Backend types stay out of the public headers.
     add_library(quench_gpu STATIC
+        src/gpu/CommandBuffer.cpp
+        src/gpu/Device.cpp
         src/gpu/Format.cpp
         src/gpu/sdlgpu/SdlGpuCommands.cpp
         src/gpu/sdlgpu/SdlGpuDevice.cpp)
     if(APPLE)
-        target_sources(quench_gpu PRIVATE src/gpu/sdlgpu/SdlGpuTimingMetal.m)
-        target_link_libraries(quench_gpu PRIVATE "-framework Metal")
+        # Objective-C++ with ARC: the Metal objects are strong members of plain C++ structs.
+        target_sources(quench_gpu PRIVATE src/gpu/sdlgpu/SdlGpuTimingMetal.m src/gpu/metal/MetalCommands.mm
+                                          src/gpu/metal/MetalDevice.mm)
+        target_compile_options(quench_gpu PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+        target_link_libraries(quench_gpu PRIVATE "-framework Metal" "-framework QuartzCore" "-framework Foundation")
     endif()
     quench_configure_target(quench_gpu)
-    target_link_libraries(quench_gpu PUBLIC quench_core quench_gpu_shaders PRIVATE SDL3::SDL3-static)
+    target_link_libraries(quench_gpu PUBLIC quench_core quench_gpu_shaders PRIVATE SDL3::SDL3-static quench_glm)
+    if(APPLE)
+        # CommandBuffer::blit on the native Metal backend.
+        quench_add_shaders(quench_gpu NAME gpu_blit SOURCE src/gpu/shaders/blit.hlsl
+            ENTRIES fullscreen_vs:vertex blit_2d_fs:fragment blit_2d_array_fs:fragment)
+    endif()
     # The shader formats every quench_add_shaders() set of this build embeds.
     target_compile_definitions(quench_gpu PRIVATE
         QUENCH_SHADERS_METALLIB=$<AND:$<BOOL:${APPLE}>,$<BOOL:${QUENCH_SHADER_METAL_OK}>>

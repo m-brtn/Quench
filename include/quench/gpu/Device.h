@@ -1,8 +1,8 @@
 #pragma once
 
-// The GPU device: creates resources and command buffers, presents to windows. Backend: SDL GPU (Metal on Apple
-// platforms, Vulkan, Direct3D 12). Device capabilities are in caps() and the supports*() queries; effects choose
-// their fallbacks from them, never from the platform.
+// The GPU device: creates resources and command buffers, presents to windows. Backends: SDL GPU (Metal on Apple
+// platforms, Vulkan, Direct3D 12; the default) and native Metal (Apple platforms). Device capabilities are in caps()
+// and the supports*() queries; effects choose their fallbacks from them, never from the platform or the backend.
 
 #include <quench/core/Result.h>
 #include <quench/gpu/CommandBuffer.h>
@@ -26,19 +26,28 @@ enum class ShaderFormat : std::uint8_t { Spirv, Msl, Metallib, Dxil };
 
 const char* shaderFormatName(ShaderFormat format);
 
+// Default: the QUENCH_GPU_BACKEND environment variable ("sdl" or "metal"), else SDL GPU. Metal is the native backend
+// (Apple platforms only; elsewhere the device falls back to SDL GPU and logs it).
+enum class Backend : std::uint8_t { Default, SdlGpu, Metal };
+
+const char* backendName(Backend backend); // "default", "sdl", "metal"
+
 struct DeviceDesc {
     // "metal", "vulkan" or "direct3d12"; empty: the backend's choice (SDL: Metal, then Direct3D 12, then Vulkan; the
-    // SDL_GPU_DRIVER environment variable overrides it).
+    // SDL_GPU_DRIVER environment variable overrides it). The native Metal backend has only "metal".
     std::string_view driver{};
     bool debug = false; // backend validation
     bool preferLowPower = false;
+    Backend backend = Backend::Default;
 };
 
 struct Caps {
-    std::string driver;     // "metal", "vulkan", "direct3d12"
-    std::string deviceName; // as reported by the driver; may be empty
+    Backend backend = Backend::SdlGpu; // the backend in use (never Default)
+    std::string driver;                // "metal", "vulkan", "direct3d12"
+    std::string deviceName;            // as reported by the driver; may be empty
     ShaderFormat shaderFormat = ShaderFormat::Spirv;
     bool gpuTiming = false;      // Device::gpuMilliseconds (Metal only)
+    bool gpuPassTiming = false;  // Device::gpuTimings: GPU time per timed range of passes (native Metal backend only)
     bool depthClamp = false;     // RasterizerState::depthClip = false works (not in the iOS Simulator)
     bool depthBiasClamp = false; // RasterizerState::depthBiasClamp works (not on SDL's Vulkan backend)
     bool indirectDraw = false;   // RenderPass::draw*Indirect (not in the iOS Simulator)
@@ -46,10 +55,22 @@ struct Caps {
     bool astcTextures = false;   // ASTC 4x4 can be sampled
 };
 
+// GPU time of one range of passes (CommandBuffer::beginTiming .. endTiming). A GPU overlaps passes (on Apple GPUs the
+// vertex stage of a pass runs while the previous pass still shades fragments, then waits), so the busy time counts the
+// time any stage of the range's passes ran, without the waits, and the sum of several ranges can exceed the time
+// they span together.
+struct GpuTiming {
+    std::string name;
+    double milliseconds = 0.0;      // busy time
+    double startMilliseconds = 0.0; // first and last timestamp of its passes, from the command buffer's first one
+    double endMilliseconds = 0.0;
+    std::uint32_t depth = 0; // ranges it was opened in (0: a top-level range)
+};
+
 class Device {
 public:
     // The shader formats offered to the driver are the ones the engine's shader build embeds on this platform. Create
-    // and destroy the device on the main thread: it holds a reference to SDL's video subsystem, which SDL GPU needs.
+    // and destroy the device on the main thread: the SDL GPU device holds a reference to SDL's video subsystem.
     static Result<Device> create(const DeviceDesc& desc = {});
 
     Device(Device&& other) noexcept;
@@ -103,6 +124,10 @@ public:
     // GPU execution time of the command buffer behind a signalled fence; empty where unavailable (!Caps::gpuTiming)
     // or not yet signalled.
     std::optional<double> gpuMilliseconds(const Fence& fence) const;
+    // The timed ranges of the command buffer behind a signalled fence, in the order they began; empty where
+    // unavailable (!Caps::gpuPassTiming), not yet signalled or without ranges. A range whose passes could not all be
+    // timed (more passes than the backend samples per command buffer) is left out.
+    std::vector<GpuTiming> gpuTimings(const Fence& fence) const;
     void waitIdle();
 
     // Live resources created by this device (leak checks).

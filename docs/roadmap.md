@@ -217,12 +217,23 @@ Where ray tracing runs (discussed with the user, 2026-11-05):
 
 TODO for stage 9:
 
-- [ ] Check in MoltenVK's source whether it exposes any Vulkan ray tracing extension (`VK_KHR_acceleration_structure`,
-  `VK_KHR_ray_query`, `VK_KHR_ray_tracing_pipeline`). Said "no" from memory on 2026-11-05; not verified.
-- [ ] Test the ray query shader path before writing ray tracing shaders: HLSL through glslang's HLSL front end to
-  SPIR-V, then SPIRV-Cross to MSL; DXC if glslang cannot. Also the DXIL output.
-- [ ] Design the `quench::gpu` surface for acceleration structures (one bottom level per registered mesh, a top level
-  per frame from the scene's instances, refit or rebuild) in [Architecture](architecture.md), with the fallback slots.
+- [x] Check in MoltenVK's source whether it exposes any Vulkan ray tracing extension (`VK_KHR_acceleration_structure`,
+  `VK_KHR_ray_query`, `VK_KHR_ray_tracing_pipeline`). Checked 2026-11-06: no. MoltenVK's extension list,
+  `MoltenVK/MoltenVK/Layers/MVKExtensions.def`, has none of the three, neither at tag `v1.4.2` (commit `db66022`,
+  the version Homebrew installs here; 207 lines) nor on `main` at `a814250` (2026-10-03). Only prerequisites are
+  there: `KHR_buffer_device_address` (line 47) and `KHR_deferred_host_operations` (line 52) at `v1.4.2`. The
+  installed `libMoltenVK.dylib` contains no `VK_KHR_ray_*` or `VK_KHR_acceleration_structure` string either. Vulkan
+  through MoltenVK therefore always takes the fallbacks.
+- [x] Test the ray query shader path before writing ray tracing shaders (2026-11-06; details in
+  [Architecture](architecture.md#shaders)). glslang's HLSL front end cannot: it fails on
+  `RaytracingAccelerationStructure`. DXC can (SPIR-V and DXIL), and the pinned SPIRV-Cross turns DXC's SPIR-V into
+  MSL that runs: a kernel with one `RayQuery` hit a triangle at t = 1.0 on the M4 Pro under the Metal API validation
+  layer. Not kept as a CTest: the build has no DXC on macOS yet.
+- [x] Design the `quench::gpu` surface for acceleration structures (one bottom level per registered mesh, a top level
+  per frame from the scene's instances, refit or rebuild) in [Architecture](architecture.md#ray-tracing-design), with
+  the fallback slots. Design only (2026-11-06); not implemented.
+- [x] Native Metal backend of `quench::gpu` (`src/gpu/metal/`, selected with `--gpu-backend metal`; SDL GPU stays the
+  default) and GPU timestamps per pass (`Caps::gpuPassTiming`), 2026-11-06 ([Architecture](architecture.md#graphics-layer)).
 - [ ] Measure ray-traced shadows against shadow maps on the iPhone at 120 Hz and pick the default per device.
 - [ ] MetalFX upscaling (spatial and temporal) as an option, and how it combines with the TAA of stage 5.
 

@@ -454,6 +454,13 @@ private:
                 ImGui::Text("CPU %.2f ms, GPU %.2f ms", stats.cpuMs, stats.gpuMs);
             else
                 ImGui::Text("CPU %.2f ms, GPU time n/a", stats.cpuMs);
+            const gpu::Caps& caps = app.device().caps();
+            ImGui::Text("GPU backend %s, pass timing %s", gpu::backendName(caps.backend),
+                        caps.gpuPassTiming ? "on" : "n/a");
+            // GPU busy time per range and when it ran in the frame; nested ranges indented under theirs.
+            for (const gpu::GpuTiming& t : stats.gpuPasses)
+                ImGui::Text("%*s%-8s %.3f ms  (%.2f .. %.2f)", int(2 + 2 * t.depth), "", t.name.c_str(), t.milliseconds,
+                            t.startMilliseconds, t.endMilliseconds);
         }
         const render::RenderStats& s = m_renderer->stats();
         ImGui::Text("%u draws, %u shadow draws", s.draws, s.shadowDraws);

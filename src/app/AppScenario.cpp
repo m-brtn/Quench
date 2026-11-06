@@ -268,6 +268,21 @@ void finishPerf(AppState& s) {
               v["perf_frame_p95"], v["perf_frame_p99"], v["perf_frame_max"], v["perf_cpu_avg"], v["perf_cpu_p50"],
               v["perf_cpu_p95"], v["perf_cpu_p99"], v["perf_gpu_avg"], v["perf_gpu_min"], v["perf_gpu_p10"],
               v["perf_gpu_p50"], v["perf_gpu_p95"], r.gpuMs.size(), details.empty() ? "" : "; ", details);
+    if (!r.passMs.empty()) {
+        std::string passes;
+        for (const auto& [name, ms] : r.passMs) {
+            const double p50 = percentile(ms, 0.50);
+            v["perf_pass_" + name + "_p50"] = p50;
+            passes += std::format("{}{} {:.3f}", passes.empty() ? "" : ", ", name, p50);
+        }
+        v["perf_pass_sum_p50"] = percentile(r.passSumMs, 0.50);
+        v["perf_pass_span_p50"] = percentile(r.passSpanMs, 0.50);
+        v["perf_pass_share_p50"] = percentile(r.passShare, 0.50);
+        log::info("perf",
+                  "{}: GPU busy ms p50 per timed range: {}; top-level ranges: sum {:.3f}, span {:.3f} = {:.1f}% of "
+                  "the frame's GPU time",
+                  r.label, passes, v["perf_pass_sum_p50"], v["perf_pass_span_p50"], v["perf_pass_share_p50"] * 100.0);
+    }
     s.perf.reset();
 }
 

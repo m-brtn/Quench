@@ -121,6 +121,7 @@ void updateGpuTime(AppState& s) {
     for (gpu::Fence& fence : s.fences) {
         if (!fence || !s.device->isSignaled(fence)) continue;
         if (const auto ms = s.device->gpuMilliseconds(fence)) s.stats.gpuMs = *ms;
+        if (s.device->caps().gpuPassTiming) s.stats.gpuPasses = s.device->gpuTimings(fence);
         fence.reset();
     }
 }
@@ -199,7 +200,10 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
         gameTarget = *frameTarget;
     }
     Frame frame{commands, gameTarget, s.swapchainFormat, gameTarget.desc.width, gameTarget.desc.height, s.output};
+    commands.beginTiming("game");
     s.game->render(s.app, frame);
+    commands.endTiming();
+    commands.beginTiming("ui");
     if (s.output.hdr()) {
         s.uiComposite.composite(commands, *s.imguiRenderer, drawData, target, s.output.paperWhite);
     } else {
@@ -207,12 +211,15 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
         gpu::RenderPass pass = commands.beginRenderPass(color);
         if (pass) s.imguiRenderer->draw(pass, drawData, s.swapchainFormat, target.desc.width, target.desc.height);
     }
+    commands.endTiming();
     const bool offscreen = target.native != swapchain.native;
     if (offscreen) {
         const bool sameSize = target.desc.width == swapchain.desc.width && target.desc.height == swapchain.desc.height;
+        commands.beginTiming("blit");
         commands.blit({.source = {.texture = target},
                        .destination = {.texture = swapchain},
                        .filter = sameSize ? gpu::Filter::Nearest : gpu::Filter::Linear});
+        commands.endTiming();
     }
 
     submitCounter = SDL_GetPerformanceCounter();
@@ -261,6 +268,22 @@ void updateStats(AppState& s, double realDt, double cpuMs, int ticks) {
         s.perf->frameMs.push_back(realDt * 1000.0);
         s.perf->cpuMs.push_back(cpuMs);
         if (s.stats.gpuMs >= 0.0) s.perf->gpuMs.push_back(s.stats.gpuMs);
+        double sum = 0.0, start = 1e30, end = 0.0;
+        for (const gpu::GpuTiming& t : s.stats.gpuPasses) {
+            auto it = std::find_if(s.perf->passMs.begin(), s.perf->passMs.end(),
+                                   [&t](const auto& entry) { return entry.first == t.name; });
+            if (it == s.perf->passMs.end()) it = s.perf->passMs.insert(it, {t.name, {}});
+            it->second.push_back(t.milliseconds);
+            if (t.depth > 0) continue;
+            sum += t.milliseconds;
+            start = std::min(start, t.startMilliseconds);
+            end = std::max(end, t.endMilliseconds);
+        }
+        if (end > 0.0) {
+            s.perf->passSumMs.push_back(sum);
+            s.perf->passSpanMs.push_back(end - start);
+            if (s.stats.gpuMs > 0.0) s.perf->passShare.push_back((end - start) / s.stats.gpuMs);
+        }
     }
 }
 
@@ -466,8 +489,10 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
         SDL_CreateWindow(s.desc.name.c_str(), width, height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY));
     if (!s.window) return fail(std::format("SDL_CreateWindow: {}", SDL_GetError()));
 
-    Result<gpu::Device> device =
-        gpu::Device::create({.driver = s.options.gpuDriver, .debug = s.options.gpuDebug, .preferLowPower = false});
+    Result<gpu::Device> device = gpu::Device::create({.driver = s.options.gpuDriver,
+                                                      .debug = s.options.gpuDebug,
+                                                      .preferLowPower = false,
+                                                      .backend = s.options.gpuBackend.value_or(s.desc.gpuBackend)});
     if (!device) return fail(std::format("GPU device: {}", device.error()));
     s.device.emplace(std::move(*device));
     const gpu::PresentMode presentMode = s.options.presentMode.value_or(s.desc.presentMode);
@@ -475,8 +500,8 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
         return fail(std::format("GPU window: {}", claimed.error()));
     s.swapchainFormat = s.device->swapchainFormat(s.window.get());
     const gpu::Caps& caps = s.device->caps();
-    log::info("app", "GPU: {} ({}), swapchain {}", caps.driver, caps.deviceName.empty() ? "?" : caps.deviceName,
-              gpu::formatInfo(s.swapchainFormat).name);
+    log::info("app", "GPU: {} backend, {} ({}), swapchain {}", gpu::backendName(caps.backend), caps.driver,
+              caps.deviceName.empty() ? "?" : caps.deviceName, gpu::formatInfo(s.swapchainFormat).name);
     s.hdrMode = s.options.hdr.value_or(s.desc.hdr);
     updateOutput(s);
 

@@ -5,6 +5,7 @@
 
 #include <quench/app/App.h> // HdrMode
 #include <quench/core/Result.h>
+#include <quench/gpu/Device.h>
 #include <quench/gpu/Types.h>
 
 #include <optional>
@@ -24,6 +25,7 @@ struct Options {
     int windowHeight = 0;
     int frameWidth = 0; // > 0: every frame is rendered offscreen at this size and scaled to the window
     int frameHeight = 0;
+    std::optional<gpu::Backend> gpuBackend; // empty: AppDesc
     std::string gpuDriver;
     bool gpuDebug = false;
     std::optional<gpu::PresentMode> presentMode;

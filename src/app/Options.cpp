@@ -42,7 +42,9 @@ const char* optionsHelp() {
            "  --window WxH         window size in points (desktop)\n"
            "  --frame-size WxH     render every frame offscreen at W x H pixels and scale it to the window, so\n"
            "                       captures do not depend on the display density\n"
-           "  --gpu-driver NAME    metal, vulkan or direct3d12\n"
+           "  --gpu-backend NAME   sdl (SDL GPU, the default) or metal (the native Metal backend; Apple platforms,\n"
+           "                       elsewhere SDL GPU)\n"
+           "  --gpu-driver NAME    metal, vulkan or direct3d12 (SDL GPU's driver)\n"
            "  --gpu-debug          GPU validation (backend debug mode)\n"
            "  --present-mode MODE  vsync, immediate or mailbox\n"
            "  --hdr MODE           HDR output: off (SDR), on (where the GPU backend supports it) or auto (while\n"
@@ -127,6 +129,15 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
                 options.presentMode = gpu::PresentMode::Mailbox;
             else
                 return Error{std::format("--present-mode: '{}' is not vsync, immediate or mailbox", *v)};
+        } else if (flag == "--gpu-backend") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            if (*v == "sdl")
+                options.gpuBackend = gpu::Backend::SdlGpu;
+            else if (*v == "metal")
+                options.gpuBackend = gpu::Backend::Metal;
+            else
+                return Error{std::format("--gpu-backend: '{}' is not sdl or metal", *v)};
         } else if (flag == "--hdr") {
             Result<std::string_view> v = value();
             if (!v) return Error{v.error()};

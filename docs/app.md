@@ -42,7 +42,9 @@ game, [Jobs, assets and the cook](assets.md)), the audio system (`audio()`, crea
 [Audio](audio.md)), the window, `Input`, sizes in points and pixels, the safe area
 (notches, rounded corners),
 time, frame and tick counters, frame statistics (`FrameStats`: frame time, CPU time until the submit without the wait
-for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`), the display output (`output()`, `hdrMode()`,
+for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`, and GPU time per timed range where
+`gpu::Caps::gpuPassTiming`: the app times `game` around `Game::render`, `ui` and `blit`, the renderer its passes inside
+`game`; [Performance](performance.md#gpu-time-per-pass)), the display output (`output()`, `hdrMode()`,
 `hdrSupported()`, `displayHeadroom()`, `displayPotentialHeadroom()`), and actions: `requestCapture`,
 `setPresentMode`, `setHdrMode`, text input,
 `quit(exitCode)`. `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
@@ -92,7 +94,8 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--script FILE` | run a verification scenario; the exit code is 1 if a check failed. A host path; a relative path not found there is read from the user directory (on a device: copy the script there first) |
 | `--window WxH` | window size in points (desktop) |
 | `--frame-size WxH` | render every frame offscreen at W x H pixels and scale it to the window, so captures do not depend on the display density |
-| `--gpu-driver NAME` | `metal`, `vulkan` or `direct3d12` |
+| `--gpu-backend NAME` | `sdl` (SDL GPU) or `metal` (the native Metal backend, [Architecture](architecture.md#native-metal-backend); Apple platforms, elsewhere SDL GPU with a warning); default `AppDesc::gpuBackend`, which reads the `QUENCH_GPU_BACKEND` environment variable and otherwise takes SDL GPU |
+| `--gpu-driver NAME` | SDL GPU's driver: `metal`, `vulkan` or `direct3d12` (the native backend has only `metal`) |
 | `--gpu-debug` | GPU validation (the backend's debug mode) |
 | `--present-mode MODE` | `vsync`, `immediate` or `mailbox`; falls back to vsync where the window does not support it |
 | `--hdr MODE` | HDR output: `off` (SDR), `on` (wherever the GPU backend can composite the window in HDR) or `auto` (while the display reports HDR range); default `AppDesc::hdr`, normally off ([HDR output](#hdr-output)) |
@@ -160,7 +163,9 @@ in multiples of paper white; -1 before one), after `perf_end` `perf_frames`,
 `perf_frame_avg`, `perf_frame_p10`, `perf_frame_p50`, `perf_frame_p95`, `perf_frame_p99`, `perf_frame_max`,
 `perf_cpu_avg`, `perf_cpu_p50`, `perf_cpu_p95`, `perf_cpu_p99`, `perf_gpu_avg`, `perf_gpu_min`, `perf_gpu_p10`,
 `perf_gpu_p50`, `perf_gpu_p95` (milliseconds; -1 when
-there were no samples, for example GPU time without `gpu::Caps::gpuTiming`); after `audio_measure` `audio_rms`,
+there were no samples, for example GPU time without `gpu::Caps::gpuTiming`), with `gpu::Caps::gpuPassTiming` also
+`perf_pass_<range>_p50` per timed range, `perf_pass_sum_p50`, `perf_pass_span_p50` and `perf_pass_share_p50`
+([Performance](performance.md#gpu-time-per-pass)); after `audio_measure` `audio_rms`,
 `audio_rms_l`, `audio_rms_r`, `audio_peak` (linear, 1 is full scale), `audio_freq` (Hz), `audio_freq_level` (about 1
 for a full-scale sine) and `audio_measured` (seconds actually measured); at any time `audio_voices`, `audio_sounds`,
 `audio_pending`, `audio_streams`, `audio_played`, `audio_stolen`, `audio_rejected`, `audio_failed`,
@@ -225,6 +230,10 @@ differ. On failure `<name>_diff.png` (differences amplified four times) is left 
 Updating a golden image: run the test, look at the capture (never commit one unseen), copy it to `tests/golden/...`,
 and say in the devlog why it changed. Two runs of the same binary on Metal are identical (0 pixels differ); Metal and
 Vulkan differ in the driver name the sample prints, so each backend has its own image.
+
+`hello_metal_native` (and `demo_animation_metal_native`, `demo_hdr_on_metal_native`) run the same command with
+`--gpu-backend metal` and compare with the same `metal` golden images as SDL GPU's Metal driver: the native backend
+renders the same pixels (in Release identical, 2026-11-06), so it has no images of its own.
 
 ## Building games: `quench_add_game()`
 

@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstring>
 #include <format>
 #include <string>
 
@@ -67,8 +66,6 @@ TextureFormat sdl::fromSdl(SDL_GPUTextureFormat format) {
     return TextureFormat::Invalid;
 }
 
-// ------------------------------------------------------------------ resources
-
 namespace detail {
 
 double metalFenceMilliseconds(SDL_GPUFence* fence) {
@@ -80,36 +77,7 @@ double metalFenceMilliseconds(SDL_GPUFence* fence) {
 #endif
 }
 
-void release(DeviceImpl* device, Kind kind, void* native) noexcept {
-    SDL_GPUDevice* d = device->device;
-    switch (kind) {
-    case Kind::Buffer: SDL_ReleaseGPUBuffer(d, static_cast<SDL_GPUBuffer*>(native)); break;
-    case Kind::Texture: SDL_ReleaseGPUTexture(d, static_cast<SDL_GPUTexture*>(native)); break;
-    case Kind::Sampler: SDL_ReleaseGPUSampler(d, static_cast<SDL_GPUSampler*>(native)); break;
-    case Kind::TransferBuffer: SDL_ReleaseGPUTransferBuffer(d, static_cast<SDL_GPUTransferBuffer*>(native)); break;
-    case Kind::GraphicsPipeline:
-        SDL_ReleaseGPUGraphicsPipeline(d, static_cast<SDL_GPUGraphicsPipeline*>(native));
-        break;
-    case Kind::ComputePipeline: SDL_ReleaseGPUComputePipeline(d, static_cast<SDL_GPUComputePipeline*>(native)); break;
-    case Kind::Fence: SDL_ReleaseGPUFence(d, static_cast<SDL_GPUFence*>(native)); break;
-    }
-    device->live.fetch_sub(1, std::memory_order_relaxed);
-}
-
-} // namespace detail
-
 namespace {
-
-using detail::Access;
-using detail::DeviceImpl;
-
-template <class R>
-R adopt(DeviceImpl* device, void* native) {
-    R resource;
-    Access::adopt(resource, device, native);
-    device->live.fetch_add(1, std::memory_order_relaxed);
-    return resource;
-}
 
 // SDL properties holding a debug name; empty (0) without a name.
 class NameProps {
@@ -137,38 +105,6 @@ std::string describe(std::string_view kind, std::string_view name) {
 
 Error sdlError(std::string what) { return Error{std::format("{}: {}", what, SDL_GetError())}; }
 
-ShaderCode shaderCode(const ShaderBlob& blob, ShaderFormat format) {
-    switch (format) {
-    case ShaderFormat::Spirv: return blob.spirv;
-    case ShaderFormat::Msl: return blob.msl;
-    case ShaderFormat::Metallib: return blob.metallib;
-    case ShaderFormat::Dxil: return blob.dxil;
-    }
-    return {nullptr, 0};
-}
-
-Result<SDL_GPUShader*> createShader(DeviceImpl& device, const ShaderBlob& blob) {
-    const ShaderCode code = shaderCode(blob, device.caps.shaderFormat);
-    if (!code)
-        return Error{std::format("shader '{}' has no {} code in this build", blob.entry,
-                                 shaderFormatName(device.caps.shaderFormat))};
-    SDL_GPUShaderCreateInfo info{};
-    info.code = code.data;
-    info.code_size = code.size;
-    info.entrypoint = blob.entry;
-    info.format = device.shaderFormat;
-    info.stage = sdl::toSdl(blob.stage);
-    info.num_samplers = blob.resources.samplers;
-    info.num_storage_textures = blob.resources.storageTextures;
-    info.num_storage_buffers = blob.resources.storageBuffers;
-    info.num_uniform_buffers = blob.resources.uniformBuffers;
-    const NameProps props(blob.entry, SDL_PROP_GPU_SHADER_CREATE_NAME_STRING);
-    info.props = props.id();
-    SDL_GPUShader* shader = SDL_CreateGPUShader(device.device, &info);
-    if (!shader) return sdlError(std::format("cannot create shader '{}'", blob.entry));
-    return shader;
-}
-
 // The formats quench_add_shaders() embeds on this platform (cmake/QuenchShaders.cmake).
 SDL_GPUShaderFormat builtShaderFormats() {
     SDL_GPUShaderFormat formats = SDL_GPU_SHADERFORMAT_SPIRV;
@@ -186,26 +122,9 @@ SDL_GPUShaderFormat builtShaderFormats() {
 
 } // namespace
 
-// ------------------------------------------------------------------ TransferBuffer
+// ------------------------------------------------------------------ device
 
-std::span<std::byte> TransferBuffer::map(bool cycle) {
-    QUENCH_ASSERT(m_native, "map() on an empty TransferBuffer");
-    void* data = SDL_MapGPUTransferBuffer(m_device->device, static_cast<SDL_GPUTransferBuffer*>(m_native), cycle);
-    if (!data) {
-        log::error("gpu", "SDL_MapGPUTransferBuffer: {}", SDL_GetError());
-        return {};
-    }
-    return {static_cast<std::byte*>(data), m_info.size};
-}
-
-void TransferBuffer::unmap() {
-    QUENCH_ASSERT(m_native, "unmap() on an empty TransferBuffer");
-    SDL_UnmapGPUTransferBuffer(m_device->device, static_cast<SDL_GPUTransferBuffer*>(m_native));
-}
-
-// ------------------------------------------------------------------ Device
-
-Result<Device> Device::create(const DeviceDesc& desc) {
+Result<std::unique_ptr<DeviceImpl>> createSdlGpuDevice(const DeviceDesc& desc) {
     const SDL_GPUShaderFormat offered = builtShaderFormats();
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, desc.debug);
@@ -235,90 +154,113 @@ Result<Device> Device::create(const DeviceDesc& desc) {
         return error;
     }
 
-    Device device;
-    device.m_impl = std::make_unique<DeviceImpl>();
-    DeviceImpl& impl = *device.m_impl;
-    impl.device = sdlDevice;
-    Caps& caps = impl.caps;
+    const SDL_GPUShaderFormat supported = SDL_GetGPUShaderFormats(sdlDevice) & offered;
+    SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_INVALID;
+    ShaderFormat format = ShaderFormat::Spirv;
+    if (supported & SDL_GPU_SHADERFORMAT_METALLIB) {
+        shaderFormat = SDL_GPU_SHADERFORMAT_METALLIB;
+        format = ShaderFormat::Metallib;
+    } else if (supported & SDL_GPU_SHADERFORMAT_MSL) {
+        shaderFormat = SDL_GPU_SHADERFORMAT_MSL;
+        format = ShaderFormat::Msl;
+    } else if (supported & SDL_GPU_SHADERFORMAT_DXIL) {
+        shaderFormat = SDL_GPU_SHADERFORMAT_DXIL;
+        format = ShaderFormat::Dxil;
+    } else if (supported & SDL_GPU_SHADERFORMAT_SPIRV) {
+        shaderFormat = SDL_GPU_SHADERFORMAT_SPIRV;
+        format = ShaderFormat::Spirv;
+    }
+    // From here the device owns sdlDevice and the video reference.
+    auto impl = std::make_unique<SdlGpuDevice>(sdlDevice, shaderFormat);
+    Caps& caps = impl->caps;
+    caps.backend = Backend::SdlGpu;
     caps.driver = SDL_GetGPUDeviceDriver(sdlDevice);
     caps.deviceName = SDL_GetStringProperty(SDL_GetGPUDeviceProperties(sdlDevice), SDL_PROP_GPU_DEVICE_NAME_STRING, "");
-
-    const SDL_GPUShaderFormat supported = SDL_GetGPUShaderFormats(sdlDevice) & offered;
-    if (supported & SDL_GPU_SHADERFORMAT_METALLIB) {
-        impl.shaderFormat = SDL_GPU_SHADERFORMAT_METALLIB;
-        caps.shaderFormat = ShaderFormat::Metallib;
-    } else if (supported & SDL_GPU_SHADERFORMAT_MSL) {
-        impl.shaderFormat = SDL_GPU_SHADERFORMAT_MSL;
-        caps.shaderFormat = ShaderFormat::Msl;
-    } else if (supported & SDL_GPU_SHADERFORMAT_DXIL) {
-        impl.shaderFormat = SDL_GPU_SHADERFORMAT_DXIL;
-        caps.shaderFormat = ShaderFormat::Dxil;
-    } else if (supported & SDL_GPU_SHADERFORMAT_SPIRV) {
-        impl.shaderFormat = SDL_GPU_SHADERFORMAT_SPIRV;
-        caps.shaderFormat = ShaderFormat::Spirv;
-    } else {
+    if (shaderFormat == SDL_GPU_SHADERFORMAT_INVALID)
         return Error{std::format("GPU driver '{}' accepts none of the shader formats built in", caps.driver)};
-    }
+    caps.shaderFormat = format;
 
     const bool metal = caps.driver == "metal";
     const bool vulkan = caps.driver == "vulkan";
     caps.gpuTiming = QUENCH_PLATFORM_APPLE && metal;
+    caps.gpuPassTiming = false;
     // The SDL patch for the iOS Simulator skips setDepthClipMode (cmake/patches/SdlIosSimulator.cmake).
     caps.depthClamp = !(metal && QUENCH_PLATFORM_IOS_SIMULATOR);
     // SDL's Vulkan backend does not enable the depthBiasClamp device feature.
     caps.depthBiasClamp = !vulkan;
     // The Simulator's Metal device is GPU family Apple2, without indirect draws; SDL requires Apple3 on devices.
     caps.indirectDraw = !(metal && QUENCH_PLATFORM_IOS_SIMULATOR);
-    caps.bcTextures =
-        device.supportsFormat(TextureFormat::Bc1RgbaUnorm, TextureType::Texture2D, TextureUsage::Sampled) &&
-        device.supportsFormat(TextureFormat::Bc7RgbaUnorm, TextureType::Texture2D, TextureUsage::Sampled);
-    caps.astcTextures =
-        device.supportsFormat(TextureFormat::Astc4x4Unorm, TextureType::Texture2D, TextureUsage::Sampled);
-
-    log::info("gpu", "driver {}, device '{}', shaders {}", caps.driver, caps.deviceName,
-              shaderFormatName(caps.shaderFormat));
-    return device;
+    return std::unique_ptr<DeviceImpl>(std::move(impl));
 }
 
-Device::Device(Device&& other) noexcept = default;
-Device& Device::operator=(Device&& other) noexcept {
-    if (this != &other) {
-        const Device previous(std::move(*this));
-        m_impl = std::move(other.m_impl);
-    }
-    return *this;
-}
-
-Device::~Device() {
-    if (!m_impl) return;
-    DeviceImpl& impl = *m_impl;
-    SDL_WaitForGPUIdle(impl.device);
-    for (const detail::WindowEntry& entry : impl.windows) SDL_ReleaseWindowFromGPUDevice(impl.device, entry.window);
-    const std::int64_t live = impl.live.load();
-    if (live != 0) log::error("gpu", "{} GPU resources outlive their device", live);
-    QUENCH_ASSERT(live == 0, "GPU resources outlive their device (release them before the device)");
-    SDL_DestroyGPUDevice(impl.device);
+SdlGpuDevice::~SdlGpuDevice() {
+    SDL_DestroyGPUDevice(m_device);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
-const Caps& Device::caps() const { return m_impl->caps; }
-
-bool Device::supportsFormat(TextureFormat format, TextureType type, TextureUsage usage) const {
-    return SDL_GPUTextureSupportsFormat(m_impl->device, sdl::toSdl(format), sdl::toSdl(type), sdl::toSdl(usage));
+bool SdlGpuDevice::supportsFormat(TextureFormat format, TextureType type, TextureUsage usage) const {
+    return SDL_GPUTextureSupportsFormat(m_device, sdl::toSdl(format), sdl::toSdl(type), sdl::toSdl(usage));
 }
 
-bool Device::supportsSampleCount(TextureFormat format, std::uint32_t sampleCount) const {
-    if (!sdl::validSampleCount(sampleCount)) return false;
-    return sampleCount == 1 ||
-           SDL_GPUTextureSupportsSampleCount(m_impl->device, sdl::toSdl(format), sdl::sampleCountToSdl(sampleCount));
+bool SdlGpuDevice::supportsSampleCount(TextureFormat format, std::uint32_t sampleCount) const {
+    return SDL_GPUTextureSupportsSampleCount(m_device, sdl::toSdl(format), sdl::sampleCountToSdl(sampleCount));
 }
 
-std::int64_t Device::liveResources() const { return m_impl->live.load(); }
+void SdlGpuDevice::waitIdle() { SDL_WaitForGPUIdle(m_device); }
 
-Result<Texture> Device::createTexture(const TextureDesc& desc) {
-    QUENCH_ASSERT(desc.format != TextureFormat::Invalid && desc.format < TextureFormat::Count, "invalid format");
-    QUENCH_ASSERT(sdl::validSampleCount(desc.sampleCount), "sample count must be 1, 2, 4 or 8");
-    QUENCH_ASSERT(desc.width > 0 && desc.height > 0 && desc.layers > 0 && desc.mipLevels > 0, "empty texture");
+// ------------------------------------------------------------------ resources
+
+void SdlGpuDevice::release(Kind kind, void* native) noexcept {
+    SDL_GPUDevice* d = m_device;
+    switch (kind) {
+    case Kind::Buffer: SDL_ReleaseGPUBuffer(d, static_cast<SDL_GPUBuffer*>(native)); break;
+    case Kind::Texture: SDL_ReleaseGPUTexture(d, static_cast<SDL_GPUTexture*>(native)); break;
+    case Kind::Sampler: SDL_ReleaseGPUSampler(d, static_cast<SDL_GPUSampler*>(native)); break;
+    case Kind::TransferBuffer: SDL_ReleaseGPUTransferBuffer(d, static_cast<SDL_GPUTransferBuffer*>(native)); break;
+    case Kind::GraphicsPipeline:
+        SDL_ReleaseGPUGraphicsPipeline(d, static_cast<SDL_GPUGraphicsPipeline*>(native));
+        break;
+    case Kind::ComputePipeline: SDL_ReleaseGPUComputePipeline(d, static_cast<SDL_GPUComputePipeline*>(native)); break;
+    case Kind::Fence: SDL_ReleaseGPUFence(d, static_cast<SDL_GPUFence*>(native)); break;
+    }
+}
+
+std::span<std::byte> SdlGpuDevice::map(void* transferBuffer, std::uint32_t size, bool cycle) {
+    void* data = SDL_MapGPUTransferBuffer(m_device, static_cast<SDL_GPUTransferBuffer*>(transferBuffer), cycle);
+    if (!data) {
+        log::error("gpu", "SDL_MapGPUTransferBuffer: {}", SDL_GetError());
+        return {};
+    }
+    return {static_cast<std::byte*>(data), size};
+}
+
+void SdlGpuDevice::unmap(void* transferBuffer) {
+    SDL_UnmapGPUTransferBuffer(m_device, static_cast<SDL_GPUTransferBuffer*>(transferBuffer));
+}
+
+Result<SDL_GPUShader*> SdlGpuDevice::createShader(const ShaderBlob& blob) {
+    const ShaderCode code = shaderCodeFor(blob, caps.shaderFormat);
+    if (!code)
+        return Error{
+            std::format("shader '{}' has no {} code in this build", blob.entry, shaderFormatName(caps.shaderFormat))};
+    SDL_GPUShaderCreateInfo info{};
+    info.code = code.data;
+    info.code_size = code.size;
+    info.entrypoint = blob.entry;
+    info.format = m_shaderFormat;
+    info.stage = sdl::toSdl(blob.stage);
+    info.num_samplers = blob.resources.samplers;
+    info.num_storage_textures = blob.resources.storageTextures;
+    info.num_storage_buffers = blob.resources.storageBuffers;
+    info.num_uniform_buffers = blob.resources.uniformBuffers;
+    const NameProps props(blob.entry, SDL_PROP_GPU_SHADER_CREATE_NAME_STRING);
+    info.props = props.id();
+    SDL_GPUShader* shader = SDL_CreateGPUShader(m_device, &info);
+    if (!shader) return sdlError(std::format("cannot create shader '{}'", blob.entry));
+    return shader;
+}
+
+Result<void*> SdlGpuDevice::createTexture(const TextureDesc& desc) {
     SDL_GPUTextureCreateInfo info{};
     info.type = sdl::toSdl(desc.type);
     info.format = sdl::toSdl(desc.format);
@@ -328,42 +270,27 @@ Result<Texture> Device::createTexture(const TextureDesc& desc) {
     info.layer_count_or_depth = desc.layers;
     info.num_levels = desc.mipLevels;
     info.sample_count = sdl::sampleCountToSdl(desc.sampleCount);
-    // SDL checks these only in its debug mode.
-    if (!SDL_GPUTextureSupportsFormat(m_impl->device, info.format, info.type, info.usage))
-        return Error{std::format("cannot create {}: {} does not support this type and usage on {}",
-                                 describe("texture", desc.name), formatInfo(desc.format).name, m_impl->caps.driver)};
-    if (!supportsSampleCount(desc.format, desc.sampleCount))
-        return Error{std::format("cannot create {}: {} does not support {} samples on {}",
-                                 describe("texture", desc.name), formatInfo(desc.format).name, desc.sampleCount,
-                                 m_impl->caps.driver)};
     const NameProps props(desc.name, SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING);
     info.props = props.id();
-    SDL_GPUTexture* native = SDL_CreateGPUTexture(m_impl->device, &info);
+    SDL_GPUTexture* native = SDL_CreateGPUTexture(m_device, &info);
     if (!native)
         return sdlError(std::format("cannot create {} {}x{} {}", describe("texture", desc.name), desc.width,
                                     desc.height, formatInfo(desc.format).name));
-    Texture texture = adopt<Texture>(m_impl.get(), native);
-    Access::info(texture) = desc;
-    Access::info(texture).name = {};
-    return texture;
+    return static_cast<void*>(native);
 }
 
-Result<Buffer> Device::createBuffer(const BufferDesc& desc) {
-    QUENCH_ASSERT(desc.size > 0, "empty buffer");
+Result<void*> SdlGpuDevice::createBuffer(const BufferDesc& desc) {
     SDL_GPUBufferCreateInfo info{};
     info.usage = sdl::toSdl(desc.usage);
     info.size = desc.size;
     const NameProps props(desc.name, SDL_PROP_GPU_BUFFER_CREATE_NAME_STRING);
     info.props = props.id();
-    SDL_GPUBuffer* native = SDL_CreateGPUBuffer(m_impl->device, &info);
+    SDL_GPUBuffer* native = SDL_CreateGPUBuffer(m_device, &info);
     if (!native) return sdlError(std::format("cannot create {} of {} bytes", describe("buffer", desc.name), desc.size));
-    Buffer buffer = adopt<Buffer>(m_impl.get(), native);
-    Access::info(buffer) = desc;
-    Access::info(buffer).name = {};
-    return buffer;
+    return static_cast<void*>(native);
 }
 
-Result<Sampler> Device::createSampler(const SamplerDesc& desc) {
+Result<void*> SdlGpuDevice::createSampler(const SamplerDesc& desc) {
     SDL_GPUSamplerCreateInfo info{};
     info.min_filter = sdl::toSdl(desc.minFilter);
     info.mag_filter = sdl::toSdl(desc.magFilter);
@@ -380,37 +307,25 @@ Result<Sampler> Device::createSampler(const SamplerDesc& desc) {
     info.max_lod = desc.maxLod;
     const NameProps props(desc.name, SDL_PROP_GPU_SAMPLER_CREATE_NAME_STRING);
     info.props = props.id();
-    SDL_GPUSampler* native = SDL_CreateGPUSampler(m_impl->device, &info);
+    SDL_GPUSampler* native = SDL_CreateGPUSampler(m_device, &info);
     if (!native) return sdlError("cannot create " + describe("sampler", desc.name));
-    return adopt<Sampler>(m_impl.get(), native);
+    return static_cast<void*>(native);
 }
 
-Result<TransferBuffer> Device::createTransferBuffer(const TransferBufferDesc& desc) {
-    QUENCH_ASSERT(desc.size > 0, "empty transfer buffer");
+Result<void*> SdlGpuDevice::createTransferBuffer(const TransferBufferDesc& desc) {
     SDL_GPUTransferBufferCreateInfo info{};
     info.usage = desc.direction == TransferDirection::Upload ? SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD
                                                              : SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
     info.size = desc.size;
     const NameProps props(desc.name, SDL_PROP_GPU_TRANSFERBUFFER_CREATE_NAME_STRING);
     info.props = props.id();
-    SDL_GPUTransferBuffer* native = SDL_CreateGPUTransferBuffer(m_impl->device, &info);
+    SDL_GPUTransferBuffer* native = SDL_CreateGPUTransferBuffer(m_device, &info);
     if (!native)
         return sdlError(std::format("cannot create {} of {} bytes", describe("transfer buffer", desc.name), desc.size));
-    TransferBuffer buffer = adopt<TransferBuffer>(m_impl.get(), native);
-    Access::info(buffer) = desc;
-    Access::info(buffer).name = {};
-    return buffer;
+    return static_cast<void*>(native);
 }
 
-Result<GraphicsPipeline> Device::createPipeline(const GraphicsPipelineDesc& desc) {
-    QUENCH_ASSERT(desc.vertexShader && desc.vertexShader->stage == ShaderStage::Vertex, "vertex shader missing");
-    QUENCH_ASSERT(desc.fragmentShader && desc.fragmentShader->stage == ShaderStage::Fragment,
-                  "fragment shader missing");
-    QUENCH_ASSERT(desc.colorTargets.size() <= 4, "at most 4 color targets");
-    QUENCH_ASSERT(sdl::validSampleCount(desc.sampleCount), "sample count must be 1, 2, 4 or 8");
-    QUENCH_ASSERT(desc.vertexBuffers.size() <= 16 && desc.vertexAttributes.size() <= 16, "too many vertex inputs");
-    const Caps& caps = m_impl->caps;
-
+Result<void*> SdlGpuDevice::createPipeline(const GraphicsPipelineDesc& desc) {
     std::array<SDL_GPUVertexBufferDescription, 16> buffers{};
     for (std::size_t i = 0; i < desc.vertexBuffers.size(); ++i) {
         const VertexBufferLayout& in = desc.vertexBuffers[i];
@@ -424,10 +339,8 @@ Result<GraphicsPipeline> Device::createPipeline(const GraphicsPipelineDesc& desc
         attributes[i] = {in.location, in.slot, sdl::toSdl(in.format), in.offset};
     }
     std::array<SDL_GPUColorTargetDescription, 4> colors{};
-    detail::PipelineInfo pipelineInfo;
     for (std::size_t i = 0; i < desc.colorTargets.size(); ++i) {
         const ColorTargetDesc& in = desc.colorTargets[i];
-        QUENCH_ASSERT(in.format != TextureFormat::Invalid, "color target without a format");
         colors[i].format = sdl::toSdl(in.format);
         SDL_GPUColorTargetBlendState& blend = colors[i].blend_state;
         blend.enable_blend = in.blend.enabled;
@@ -439,11 +352,7 @@ Result<GraphicsPipeline> Device::createPipeline(const GraphicsPipelineDesc& desc
         blend.alpha_blend_op = sdl::toSdl(in.blend.alphaOp);
         blend.enable_color_write_mask = in.blend.writeMask != ColorWrite::All;
         blend.color_write_mask = sdl::toSdl(in.blend.writeMask);
-        pipelineInfo.colorFormats[i] = in.format;
     }
-    pipelineInfo.colorTargets = std::uint32_t(desc.colorTargets.size());
-    pipelineInfo.depthFormat = desc.depthFormat;
-    pipelineInfo.sampleCount = desc.sampleCount;
 
     SDL_GPUGraphicsPipelineCreateInfo info{};
     info.vertex_input_state.vertex_buffer_descriptions = buffers.data();
@@ -469,14 +378,12 @@ Result<GraphicsPipeline> Device::createPipeline(const GraphicsPipelineDesc& desc
     info.target_info.num_color_targets = std::uint32_t(desc.colorTargets.size());
     info.target_info.has_depth_stencil_target = desc.depthFormat != TextureFormat::Invalid;
     info.target_info.depth_stencil_format = sdl::toSdl(desc.depthFormat);
-    QUENCH_ASSERT(info.target_info.has_depth_stencil_target || (!desc.depth.test && !desc.depth.write),
-                  "depth test or write without a depth format");
 
-    Result<SDL_GPUShader*> vs = createShader(*m_impl, *desc.vertexShader);
+    Result<SDL_GPUShader*> vs = createShader(*desc.vertexShader);
     if (!vs) return Error{vs.error()};
-    Result<SDL_GPUShader*> fs = createShader(*m_impl, *desc.fragmentShader);
+    Result<SDL_GPUShader*> fs = createShader(*desc.fragmentShader);
     if (!fs) {
-        SDL_ReleaseGPUShader(m_impl->device, *vs);
+        SDL_ReleaseGPUShader(m_device, *vs);
         return Error{fs.error()};
     }
     info.vertex_shader = *vs;
@@ -486,28 +393,25 @@ Result<GraphicsPipeline> Device::createPipeline(const GraphicsPipelineDesc& desc
                                  : std::string(desc.name);
     const NameProps props(name, SDL_PROP_GPU_GRAPHICSPIPELINE_CREATE_NAME_STRING);
     info.props = props.id();
-    SDL_GPUGraphicsPipeline* native = SDL_CreateGPUGraphicsPipeline(m_impl->device, &info);
-    SDL_ReleaseGPUShader(m_impl->device, *vs);
-    SDL_ReleaseGPUShader(m_impl->device, *fs);
+    SDL_GPUGraphicsPipeline* native = SDL_CreateGPUGraphicsPipeline(m_device, &info);
+    SDL_ReleaseGPUShader(m_device, *vs);
+    SDL_ReleaseGPUShader(m_device, *fs);
     if (!native) return sdlError(std::format("cannot create pipeline '{}'", name));
-    GraphicsPipeline pipeline = adopt<GraphicsPipeline>(m_impl.get(), native);
-    Access::info(pipeline) = pipelineInfo;
-    return pipeline;
+    return static_cast<void*>(native);
 }
 
-Result<ComputePipeline> Device::createComputePipeline(const ComputePipelineDesc& desc) {
-    QUENCH_ASSERT(desc.shader && desc.shader->stage == ShaderStage::Compute, "compute shader missing");
+Result<void*> SdlGpuDevice::createComputePipeline(const ComputePipelineDesc& desc) {
     const ShaderBlob& blob = *desc.shader;
-    const ShaderCode code = shaderCode(blob, m_impl->caps.shaderFormat);
+    const ShaderCode code = shaderCodeFor(blob, caps.shaderFormat);
     if (!code)
-        return Error{std::format("shader '{}' has no {} code in this build", blob.entry,
-                                 shaderFormatName(m_impl->caps.shaderFormat))};
+        return Error{
+            std::format("shader '{}' has no {} code in this build", blob.entry, shaderFormatName(caps.shaderFormat))};
     const ShaderResources& r = blob.resources;
     SDL_GPUComputePipelineCreateInfo info{};
     info.code = code.data;
     info.code_size = code.size;
     info.entrypoint = blob.entry;
-    info.format = m_impl->shaderFormat;
+    info.format = m_shaderFormat;
     info.num_samplers = r.samplers;
     info.num_readonly_storage_textures = r.storageTextures;
     info.num_readonly_storage_buffers = r.storageBuffers;
@@ -520,193 +424,58 @@ Result<ComputePipeline> Device::createComputePipeline(const ComputePipelineDesc&
     const std::string name = desc.name.empty() ? std::string(blob.entry) : std::string(desc.name);
     const NameProps props(name, SDL_PROP_GPU_COMPUTEPIPELINE_CREATE_NAME_STRING);
     info.props = props.id();
-    SDL_GPUComputePipeline* native = SDL_CreateGPUComputePipeline(m_impl->device, &info);
+    SDL_GPUComputePipeline* native = SDL_CreateGPUComputePipeline(m_device, &info);
     if (!native) return sdlError(std::format("cannot create compute pipeline '{}'", name));
-    return adopt<ComputePipeline>(m_impl.get(), native);
-}
-
-// ------------------------------------------------------------------ convenience transfers
-
-Result<void> Device::upload(const BufferRef& destination, std::uint32_t offset, std::span<const std::byte> data) {
-    QUENCH_ASSERT(destination, "upload to an empty buffer");
-    QUENCH_ASSERT(offset + data.size() <= destination.desc.size, "upload past the end of the buffer");
-    if (data.empty()) return {};
-    Result<TransferBuffer> staging =
-        createTransferBuffer({TransferDirection::Upload, std::uint32_t(data.size()), "upload"});
-    if (!staging) return Error{staging.error()};
-    std::span<std::byte> mapped = staging->map();
-    if (mapped.empty()) return Error{"cannot map the upload buffer"};
-    std::memcpy(mapped.data(), data.data(), data.size());
-    staging->unmap();
-    CommandBuffer commands = acquireCommandBuffer();
-    if (!commands) return Error{"no command buffer for the upload"};
-    {
-        CopyPass copy = commands.beginCopyPass();
-        copy.upload(*staging, 0, destination, offset, std::uint32_t(data.size()));
-    }
-    return commands.submit();
-}
-
-Result<void> Device::upload(const TextureRegion& destination, std::span<const std::byte> data) {
-    QUENCH_ASSERT(destination.texture, "upload to an empty texture");
-    const SDL_GPUTextureRegion region = sdl::toSdlRegion(destination);
-    const std::uint64_t size = levelByteSize(destination.texture.desc.format, region.w, region.h, region.d);
-    QUENCH_ASSERT(data.size() == size, "texture upload size does not match the region");
-    if (data.size() != size)
-        return Error{std::format("texture upload of {} bytes, the region needs {}", data.size(), size)};
-    Result<TransferBuffer> staging =
-        createTransferBuffer({TransferDirection::Upload, std::uint32_t(data.size()), "upload"});
-    if (!staging) return Error{staging.error()};
-    std::span<std::byte> mapped = staging->map();
-    if (mapped.empty()) return Error{"cannot map the upload buffer"};
-    std::memcpy(mapped.data(), data.data(), data.size());
-    staging->unmap();
-    CommandBuffer commands = acquireCommandBuffer();
-    if (!commands) return Error{"no command buffer for the upload"};
-    {
-        CopyPass copy = commands.beginCopyPass();
-        copy.upload(*staging, 0, destination);
-    }
-    return commands.submit();
-}
-
-Result<std::vector<std::byte>> Device::download(const TextureRegion& source) {
-    QUENCH_ASSERT(source.texture, "download from an empty texture");
-    const SDL_GPUTextureRegion region = sdl::toSdlRegion(source);
-    const std::uint64_t size = levelByteSize(source.texture.desc.format, region.w, region.h, region.d);
-    Result<TransferBuffer> staging =
-        createTransferBuffer({TransferDirection::Download, std::uint32_t(size), "download"});
-    if (!staging) return Error{staging.error()};
-    CommandBuffer commands = acquireCommandBuffer();
-    if (!commands) return Error{"no command buffer for the download"};
-    {
-        CopyPass copy = commands.beginCopyPass();
-        copy.download(source, *staging, 0);
-    }
-    Result<Fence> fence = commands.submitWithFence();
-    if (!fence) return Error{fence.error()};
-    wait(*fence);
-    std::span<std::byte> mapped = staging->map();
-    if (mapped.size() < size) return Error{"cannot map the download buffer"};
-    std::vector<std::byte> bytes(mapped.begin(), mapped.begin() + std::ptrdiff_t(size));
-    staging->unmap();
-    return bytes;
-}
-
-Result<std::vector<std::byte>> Device::download(const BufferRef& source, std::uint32_t offset, std::uint32_t size) {
-    QUENCH_ASSERT(source, "download from an empty buffer");
-    QUENCH_ASSERT(std::uint64_t(offset) + size <= source.desc.size, "download past the end of the buffer");
-    Result<TransferBuffer> staging = createTransferBuffer({TransferDirection::Download, size, "download"});
-    if (!staging) return Error{staging.error()};
-    CommandBuffer commands = acquireCommandBuffer();
-    if (!commands) return Error{"no command buffer for the download"};
-    {
-        CopyPass copy = commands.beginCopyPass();
-        copy.download(source, offset, size, *staging, 0);
-    }
-    Result<Fence> fence = commands.submitWithFence();
-    if (!fence) return Error{fence.error()};
-    wait(*fence);
-    std::span<std::byte> mapped = staging->map();
-    if (mapped.size() < size) return Error{"cannot map the download buffer"};
-    std::vector<std::byte> bytes(mapped.begin(), mapped.begin() + size);
-    staging->unmap();
-    return bytes;
+    return static_cast<void*>(native);
 }
 
 // ------------------------------------------------------------------ presentation
 
-Result<void> Device::claimWindow(SDL_Window* window, PresentMode mode) {
-    QUENCH_ASSERT(window, "claimWindow(nullptr)");
-    QUENCH_ASSERT(!m_impl->find(window), "window claimed twice");
-    if (!SDL_ClaimWindowForGPUDevice(m_impl->device, window)) return sdlError("cannot claim the window for the GPU");
-    m_impl->windows.push_back({window});
-    setPresentMode(window, mode);
+Result<void> SdlGpuDevice::claimWindow(SDL_Window* window) {
+    if (!SDL_ClaimWindowForGPUDevice(m_device, window)) return sdlError("cannot claim the window for the GPU");
     return {};
 }
 
-void Device::releaseWindow(SDL_Window* window) {
-    auto it = std::find_if(m_impl->windows.begin(), m_impl->windows.end(),
-                           [window](const detail::WindowEntry& w) { return w.window == window; });
-    QUENCH_ASSERT(it != m_impl->windows.end(), "releaseWindow on a window that was not claimed");
-    if (it == m_impl->windows.end()) return;
-    SDL_WaitForGPUIdle(m_impl->device);
-    SDL_ReleaseWindowFromGPUDevice(m_impl->device, window);
-    m_impl->windows.erase(it);
+void SdlGpuDevice::releaseWindow(SDL_Window* window) { SDL_ReleaseWindowFromGPUDevice(m_device, window); }
+
+bool SdlGpuDevice::supportsPresentMode(SDL_Window* window, PresentMode mode) const {
+    return SDL_WindowSupportsGPUPresentMode(m_device, window, sdl::toSdl(mode));
 }
 
-bool Device::supportsPresentMode(SDL_Window* window, PresentMode mode) const {
-    return SDL_WindowSupportsGPUPresentMode(m_impl->device, window, sdl::toSdl(mode));
+bool SdlGpuDevice::supportsComposition(SDL_Window* window, SwapchainComposition composition) const {
+    return SDL_WindowSupportsGPUSwapchainComposition(m_device, window, sdl::toSdl(composition));
 }
 
-PresentMode Device::setPresentMode(SDL_Window* window, PresentMode mode) {
-    detail::WindowEntry* entry = m_impl->find(window);
-    QUENCH_ASSERT(entry, "setPresentMode on a window that was not claimed");
-    if (!entry) return PresentMode::Vsync;
-    if (!supportsPresentMode(window, mode)) mode = PresentMode::Vsync;
-    if (!SDL_SetGPUSwapchainParameters(m_impl->device, window, sdl::toSdl(entry->composition), sdl::toSdl(mode))) {
-        log::error("gpu", "SDL_SetGPUSwapchainParameters: {}", SDL_GetError());
-        return entry->presentMode;
+bool SdlGpuDevice::setSwapchainParameters(SDL_Window* window, SwapchainComposition composition, PresentMode mode) {
+    if (!SDL_SetGPUSwapchainParameters(m_device, window, sdl::toSdl(composition), sdl::toSdl(mode))) {
+        log::error("gpu", "SDL_SetGPUSwapchainParameters (composition {}): {}", swapchainCompositionName(composition),
+                   SDL_GetError());
+        return false;
     }
-    entry->presentMode = mode;
-    return mode;
+    return true;
 }
 
-bool Device::supportsComposition(SDL_Window* window, SwapchainComposition composition) const {
-    return SDL_WindowSupportsGPUSwapchainComposition(m_impl->device, window, sdl::toSdl(composition));
-}
-
-SwapchainComposition Device::setComposition(SDL_Window* window, SwapchainComposition composition) {
-    detail::WindowEntry* entry = m_impl->find(window);
-    QUENCH_ASSERT(entry, "setComposition on a window that was not claimed");
-    if (!entry) return SwapchainComposition::Sdr;
-    if (composition == entry->composition) return composition;
-    if (!supportsComposition(window, composition)) {
-        log::warning("gpu", "swapchain composition {} not supported by {} for this window: SDR",
-                     swapchainCompositionName(composition), m_impl->caps.driver);
-        composition = SwapchainComposition::Sdr;
-        if (composition == entry->composition) return composition;
-    }
-    SDL_WaitForGPUIdle(m_impl->device);
-    if (!SDL_SetGPUSwapchainParameters(m_impl->device, window, sdl::toSdl(composition),
-                                       sdl::toSdl(entry->presentMode))) {
-        log::error("gpu", "swapchain composition {}: {}", swapchainCompositionName(composition), SDL_GetError());
-        return entry->composition;
-    }
-    entry->composition = composition;
-    return composition;
-}
-
-SwapchainComposition Device::composition(SDL_Window* window) const {
-    const detail::WindowEntry* entry = m_impl->find(window);
-    return entry ? entry->composition : SwapchainComposition::Sdr;
-}
-
-TextureFormat Device::swapchainFormat(SDL_Window* window) const {
-    return sdl::fromSdl(SDL_GetGPUSwapchainTextureFormat(m_impl->device, window));
+TextureFormat SdlGpuDevice::swapchainFormat(SDL_Window* window) const {
+    return sdl::fromSdl(SDL_GetGPUSwapchainTextureFormat(m_device, window));
 }
 
 // ------------------------------------------------------------------ fences
 
-bool Device::isSignaled(const Fence& fence) const {
-    QUENCH_ASSERT(fence, "isSignaled on an empty fence");
-    return SDL_QueryGPUFence(m_impl->device, static_cast<SDL_GPUFence*>(Access::native(fence)));
+bool SdlGpuDevice::isSignaled(void* fence) const {
+    return SDL_QueryGPUFence(m_device, static_cast<SDL_GPUFence*>(fence));
 }
 
-void Device::wait(const Fence& fence) const {
-    QUENCH_ASSERT(fence, "wait on an empty fence");
-    SDL_GPUFence* native = static_cast<SDL_GPUFence*>(Access::native(fence));
-    if (!SDL_WaitForGPUFences(m_impl->device, true, &native, 1))
+void SdlGpuDevice::wait(void* fence) const {
+    SDL_GPUFence* native = static_cast<SDL_GPUFence*>(fence);
+    if (!SDL_WaitForGPUFences(m_device, true, &native, 1))
         log::error("gpu", "SDL_WaitForGPUFences: {}", SDL_GetError());
 }
 
-std::optional<double> Device::gpuMilliseconds(const Fence& fence) const {
-    if (!m_impl->caps.gpuTiming || !isSignaled(fence)) return std::nullopt;
-    const double ms = detail::metalFenceMilliseconds(static_cast<SDL_GPUFence*>(Access::native(fence)));
+std::optional<double> SdlGpuDevice::gpuMilliseconds(void* fence) const {
+    const double ms = metalFenceMilliseconds(static_cast<SDL_GPUFence*>(fence));
     if (ms < 0.0) return std::nullopt;
     return ms;
 }
 
-void Device::waitIdle() { SDL_WaitForGPUIdle(m_impl->device); }
-
+} // namespace detail
 } // namespace quench::gpu

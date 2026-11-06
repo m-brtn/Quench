@@ -252,6 +252,14 @@ pipelines created, and (stage 8) skinned instances and vertices posed this frame
 scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`, `moved`, `render_w`,
 `skinned_instances`, `skinned_vertices`).
 
+GPU time per pass (stage 9, where `gpu::Caps::gpuPassTiming`: the native Metal backend): `Renderer::render` wraps its
+passes in timed ranges of the command buffer it records into, `upload` (the instance and light buffers), `shadows`
+(the cascades and their transmittance maps), `hdr` (opaque, sky, transparent and the game's passes in them), `taa`
+(motion vectors and the resolve), `bloom` and `tonemap` (with FXAA and the overlay passes). A range whose effect is
+off records nothing; the game's `PostHdr` passes are in no range of the renderer. The app reads them per frame
+(`app::FrameStats::gpuPasses`, inside its `game` range); the skinning pass has its own command buffer and stays in
+`skinningGpuMs`. [Performance](performance.md#gpu-time-per-pass) has the numbers.
+
 ## Skinned meshes
 
 Stage 8 ([Animation](animation.md#gpu-skinning)). A mesh with `MeshDesc::skin` (one `SkinVertex` per vertex: four
@@ -292,4 +300,5 @@ pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; the
   local lights, at most 16 local lights per frame and no clustered or tiled light lists.
 - One render per scene and frame (several views of one scene need a scene per view).
 - Not in this stage, listed in the roadmap: Ashfall's screen-space effects (ambient occlusion, bounce light,
-  reflections, sun shafts), particles, terrain, decals, GPU timing per pass, quality presets.
+  reflections, sun shafts), particles, terrain, decals, quality presets. GPU timing per pass exists only on the
+  native Metal backend (SDL GPU has no timestamps inside a command buffer).

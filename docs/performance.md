@@ -20,8 +20,11 @@ perf: hello: 600 frames; frame ms avg 16.667 p10 16.243 p50 16.657 p95 17.248 p9
 - **frame**: wall time between frames. With vsync it is the display interval; it shows missed frames, not cost.
 - **cpu**: the frame's CPU work up to the submit, without the wait for a swapchain texture.
 - **gpu**: the GPU time of the frame's command buffer (`gpu::Caps::gpuTiming`: Metal only, through SDL's internal
-  fence), one sample per frame. Its minimum and 10th percentile are the frames least disturbed by other work on the
-  machine.
+  fence on SDL GPU, directly on the native Metal backend), one sample per frame. Its minimum and 10th percentile are
+  the frames least disturbed by other work on the machine.
+
+On the native Metal backend (`--gpu-backend metal`, since stage 9) a second line follows with the GPU time per pass
+([below](#gpu-time-per-pass)).
 
 Run it in Release, with vsync (the default), at a fixed render size on the Mac:
 
@@ -51,6 +54,30 @@ of the runs. At today's sizes the CPU time of one run swings by up to two times 
 0.257 ms on the Mac, below), so the 5% rule cannot resolve CPU changes yet; the GPU median is stable to 0.001 ms in
 normally paced runs (one run paced like a 120 Hz display read 0.587 ms, last table). Say in the devlog which numbers
 a claim rests on.
+
+## GPU time per pass
+
+With `gpu::Caps::gpuPassTiming` (the native Metal backend; SDL GPU has no timestamp queries, so it reports false and
+logs nothing of this) the frame's command buffer is timed per range of passes ([Architecture](architecture.md#gpu-timestamps-per-pass)):
+the app's `game` (around `Game::render`), `ui` and `blit`, and inside `game` the renderer's `upload` (its per-frame
+buffers), `shadows` (all cascades), `hdr` (the main pass with the sky), `taa`, `bloom` and `tonemap`. A range's time
+is its busy time: how long any stage of its passes ran, from timestamps at the stage boundaries. `perf_end` logs one
+more line after the perf line:
+
+```
+perf: materials: GPU busy ms p50 per timed range: game 3.908, upload 0.006, shadows 0.344, hdr 2.070, taa 0.860, bloom 0.471, tonemap 0.269, ui 0.081, blit 0.113; top-level ranges: sum 4.143, span 4.106 = 99.5% of the frame's GPU time
+```
+
+- **sum**: the busy times of the top-level ranges (`game`, `ui`, `blit`) added up, per frame.
+- **span**: from the first timestamp of the first top-level range to the last of the last, per frame.
+- **%**: span / the frame's GPU time (the command buffer's start to end), per frame. It shows how much of the
+  measured frame the ranges cover; 99 to 100 % means nothing big runs outside them.
+
+The values are medians per range over the region (scenario values `perf_pass_<range>_p50`, `perf_pass_sum_p50`,
+`perf_pass_span_p50`, `perf_pass_share_p50`), so they do not add up exactly. The sum can exceed the span: an Apple GPU
+starts the vertex stage of a pass while the previous pass still shades fragments, and that time counts for both. The
+demo's frame panel shows the last frame's ranges with their start and end in the frame. Not in the ranges: the
+skinning compute pass (its own command buffer, `RenderStats::skinningGpuMs`) and `Device::upload`s.
 
 ## Budgets
 
@@ -86,6 +113,69 @@ GPU p50 15 ms as for the other sections. It is above the sections' budget of 2.0
 instances). No iPhone budget for it yet: it has not run on the phone.
 
 ## Measurements
+
+Stage 9 (first half: the native Metal backend and GPU timestamps), 2026-11-06 06:41-07:10, Release, vsync, Mac,
+Apple M4 Pro, `--frame-size 1920x1080`, `--audio-device null`, interleaved with the order rotated: `3a96779` (its
+Release binaries, copied to `/tmp/quench-baseline`), the working tree on SDL GPU (the default) and the working tree
+on the native backend (`--gpu-backend metal`). The display paced at about 120 Hz (hello 1179 to 1199 frames in 10 s,
+the demo 456 to 587 in 5 s, its frame p95 near 25 ms as in the sessions below). Medians of the runs, `3a96779` / SDL
+GPU / native, in milliseconds; SDL GPU against `3a96779` and native against SDL GPU in parentheses. The focused rows
+ran the four sections alone (`section`, `wait 1`, 5 s region each) to resolve the full runs' differences:
+
+| Run | Runs | CPU p50 | CPU p99 | GPU p50 |
+|---|---|---|---|---|
+| hello | 6 + 6 + 6 | 0.267 / 0.258 (-3.2 %) / 0.264 (+2.1 %) | 0.440 / 0.451 (+2.5 %) / 0.462 (+2.3 %) | 0.551 / 0.550 / 0.550 |
+| demo materials | 3 + 3 + 3 | 1.032 / 1.029 (-0.3 %) / 1.055 (+2.5 %) | 1.437 / 1.419 (-1.3 %) / 1.478 (+4.2 %) | 4.852 / 4.674 / 4.112 |
+| demo shadows | 3 + 3 + 3 | 0.883 / 0.991 (+12.2 %) / 0.993 (+0.2 %) | 1.224 / 1.318 (+7.7 %) / 1.342 (+1.8 %) | 3.315 / 5.402 / 4.343 |
+| demo shadows (focused) | 6 + 6 + 6 | 0.905 / 0.897 (-0.8 %) / 0.981 (+9.4 %) | 1.231 / 1.279 (+3.9 %) / 1.353 (+5.8 %) | 3.415 / 3.389 / 4.554 |
+| demo sky | 3 + 3 + 3 | 0.880 / 0.897 (+1.9 %) / 0.982 (+9.5 %) | 1.226 / 1.251 (+2.0 %) / 1.375 (+9.9 %) | 4.443 / 5.051 / 5.246 |
+| demo sky (focused) | 6 + 6 + 6 | 0.910 / 0.905 (-0.5 %) / 1.004 (+11.0 %) | 1.250 / 1.200 (-4.0 %) / 1.372 (+14.3 %) | 5.475 / 3.734 / 5.692 |
+| demo post | 3 + 3 + 3 | 0.913 / 0.934 (+2.3 %) / 1.019 (+9.1 %) | 1.283 / 1.263 (-1.6 %) / 1.368 (+8.3 %) | 3.680 / 4.207 / 4.957 |
+| demo hdr | 3 + 3 + 3 | 0.892 / 0.842 (-5.6 %) / 0.905 (+7.5 %) | 1.270 / 1.101 (-13.3 %) / 1.295 (+17.6 %) | 3.759 / 2.750 / 2.776 |
+| demo hdr_on | 3 + 3 + 3 | 0.928 / 0.887 (-4.4 %) / 0.914 (+3.0 %) | 1.262 / 1.253 (-0.7 %) / 1.227 (-2.1 %) | 2.931 / 3.060 / 3.051 |
+| demo physics | 3 + 3 + 3 | 0.961 / 0.986 (+2.6 %) / 1.034 (+4.9 %) | 1.382 / 1.460 (+5.6 %) / 1.442 (-1.2 %) | 2.956 / 2.883 / 2.863 |
+| demo physics (focused) | 6 + 6 + 6 | 0.909 / 0.907 (-0.3 %) / 0.959 (+5.8 %) | 1.291 / 1.246 (-3.5 %) / 1.367 (+9.7 %) | 2.881 / 2.920 / 2.878 |
+| demo assets | 3 + 3 + 3 | 0.971 / 0.934 (-3.8 %) / 0.974 (+4.3 %) | 1.344 / 1.300 (-3.3 %) / 1.448 (+11.4 %) | 4.767 / 3.404 / 3.393 |
+| demo audio | 3 + 3 + 3 | 0.879 / 0.843 (-4.1 %) / 1.008 (+19.6 %) | 1.291 / 1.204 (-6.7 %) / 1.367 (+13.5 %) | 3.779 / 3.443 / 4.367 |
+| demo audio (focused) | 6 + 6 + 6 | 0.955 / 0.953 (-0.2 %) / 1.051 (+10.3 %) | 1.251 / 1.304 (+4.3 %) / 1.437 (+10.2 %) | 3.963 / 4.558 / 5.659 |
+| demo animation | 3 + 3 + 3 | 2.633 / 2.617 (-0.6 %) / 2.578 (-1.5 %) | 3.540 / 3.568 (+0.8 %) / 3.468 (-2.8 %) | 5.261 / 5.338 / 5.300 |
+
+SDL GPU against `3a96779`: within 5 % in hello and in every focused row (the full runs' shadows +12.2 % and
+physics p99 +5.6 % did not repeat with six runs each); the default path is unchanged. Native against SDL GPU: the
+same GPU time (hello 0.550 ms both; the demo's GPU medians move with the GPU clock run to run, as before) and in
+the demo 6 to 11 % more CPU time in the focused rows. That is the timestamps, not the backend: in a second
+interleaved set (07:02-07:08, the four focused sections, 5 + 5 + 5 runs) with the timestamps switched off by a
+temporary change (removed again), the native backend without timestamps / SDL GPU / native with them read CPU p50
+0.868 / 0.909 / 1.014 (shadows), 0.915 / 0.892 / 0.998 (physics), 0.852 / 0.914 / 0.925 (sky) and 0.937 / 0.930 /
+1.030 (audio): without timestamps the native backend is within 7 % of SDL GPU either way, and the timestamps add
+about 0.1 ms per frame. Of that, measured with temporary timers in one run: resolving the previous frame's samples
+(`Device::gpuTimings`) 19 µs per frame, and the demo's frame panel lines for the ranges 22 µs (their drawing comes
+on top); the rest is presumably the driver's work for the sample attachments of each encoder (not measured on its
+own). hello has three ranges and no panel lines, and shows +2.1 %.
+
+GPU busy time per range on the native backend, medians of the runs (`perf_pass_*`, [above](#gpu-time-per-pass)), in
+milliseconds; "span %" is the span of the top-level ranges as a share of the frame's GPU time:
+
+| Run | game | upload | shadows | hdr | taa | bloom | tonemap | ui | blit | sum | span | span % |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| hello | 0.341 | | | | | | | 0.041 | 0.204 | 0.587 | 0.548 | 100.0 |
+| demo materials | 3.895 | 0.006 | 0.346 | 2.067 | 0.858 | 0.464 | 0.267 | 0.074 | 0.112 | 4.123 | 4.085 | 99.5 |
+| demo shadows | 4.115 | 0.007 | 0.239 | 1.520 | 0.888 | 0.499 | 0.275 | 0.078 | 0.118 | 4.363 | 4.337 | 99.8 |
+| demo sky | 4.959 | 0.011 | 0.449 | 2.087 | 0.872 | 0.509 | 0.277 | 0.071 | 0.123 | 5.228 | 5.220 | 99.8 |
+| demo post | 4.562 | 0.009 | 0.382 | 2.064 | 0.933 | 0.502 | 0.275 | 0.073 | 0.120 | 4.809 | 4.929 | 99.8 |
+| demo hdr | 2.610 | 0.006 | 0.253 | 0.874 | 0.820 | 0.470 | 0.268 | 0.061 | 0.112 | 2.797 | 2.768 | 99.7 |
+| demo hdr_on | 2.779 | 0.006 | 0.268 | 0.879 | 0.741 | 0.428 | 0.274 | 0.522 | 0.101 | 3.690 | 3.039 | 99.7 |
+| demo physics | 2.702 | 0.006 | 0.234 | 0.811 | 0.682 | 0.380 | 0.212 | 0.062 | 0.094 | 2.886 | 2.856 | 99.7 |
+| demo assets | 3.229 | 0.007 | 0.224 | 1.510 | 0.834 | 0.409 | 0.216 | 0.068 | 0.098 | 3.429 | 3.386 | 99.8 |
+| demo audio | 4.128 | 0.006 | 0.234 | 1.578 | 0.878 | 0.498 | 0.274 | 0.077 | 0.120 | 4.396 | 4.362 | 99.8 |
+| demo animation | 4.683 | 0.010 | 0.583 | 2.562 | 1.535 | 0.458 | 0.268 | 0.061 | 0.112 | 4.845 | 5.229 | 99.7 |
+
+Plausibility: the top-level ranges cover 99.5 to 100 % of the frame's GPU time in every run, so hardly any GPU work
+of the frame runs outside them; the sum of the busy times is within 0.4 ms of the span
+except in `hdr_on` (the UI in the HDR composition takes 0.52 ms there; which passes overlap was not examined). The
+renderer's ranges add up to slightly more than `game` (materials: 4.02 against 3.90 ms) because consecutive passes
+overlap. The main HDR pass is the largest everywhere (0.8 to 2.6 ms), then TAA (0.7 to 0.9 ms; 1.5 ms in the
+animation section, cause not examined) and bloom (0.4 to 0.5 ms). The animation section's skinning compute is in its own command buffer and not in this table.
 
 Stage 8 with the shadow fix, 2026-11-06 05:01-05:32, Release, vsync, Mac, Apple M4 Pro, `--frame-size 1920x1080`,
 `--audio-device null`, interleaved: `5bace7f` (`/tmp/qs8head`), stage 8 alone (`2117093`, from `git archive` in

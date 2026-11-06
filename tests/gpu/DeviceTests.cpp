@@ -42,11 +42,15 @@ QUENCH_TEST(format_info) {
 QUENCH_TEST(caps) {
     QUENCH_GPU_DEVICE(device);
     const Caps& caps = device.caps();
-    std::printf(
-        "  driver %s, device '%s', shaders %s, gpuTiming %d, depthClamp %d, depthBiasClamp %d, indirectDraw %d, "
-        "BC %d, ASTC %d\n",
-        caps.driver.c_str(), caps.deviceName.c_str(), shaderFormatName(caps.shaderFormat), caps.gpuTiming,
-        caps.depthClamp, caps.depthBiasClamp, caps.indirectDraw, caps.bcTextures, caps.astcTextures);
+    std::printf("  backend %s, driver %s, device '%s', shaders %s, gpuTiming %d, gpuPassTiming %d, depthClamp %d, "
+                "depthBiasClamp %d, indirectDraw %d, BC %d, ASTC %d\n",
+                backendName(caps.backend), caps.driver.c_str(), caps.deviceName.c_str(),
+                shaderFormatName(caps.shaderFormat), caps.gpuTiming, caps.gpuPassTiming, caps.depthClamp,
+                caps.depthBiasClamp, caps.indirectDraw, caps.bcTextures, caps.astcTextures);
+    CHECK(caps.backend != Backend::Default, "the device reports the default backend");
+    // SDL GPU has no timestamps inside a command buffer; Apple silicon Macs sample them at pass boundaries.
+    if (caps.backend == Backend::SdlGpu) CHECK(!caps.gpuPassTiming, "SDL GPU with pass timing");
+    if (caps.backend == Backend::Metal && QUENCH_PLATFORM_MACOS) CHECK(caps.gpuPassTiming, "no pass timing");
     if (caps.driver == "metal") {
         CHECK(caps.shaderFormat == (QUENCH_TEST_METALLIB ? ShaderFormat::Metallib : ShaderFormat::Msl), "shaders %s",
               shaderFormatName(caps.shaderFormat));
@@ -302,4 +306,67 @@ QUENCH_TEST(gpu_timing) {
     } else {
         CHECK(!ms, "GPU time without Caps::gpuTiming");
     }
+}
+
+QUENCH_TEST(gpu_pass_timing) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Texture> target = device.createTexture({.usage = TextureUsage::ColorTarget, .width = 512, .height = 512});
+    Result<Buffer> buffer = device.createBuffer({.usage = BufferUsage::Vertex, .size = 1 << 20});
+    Result<TransferBuffer> transfer = device.createTransferBuffer({.size = 1 << 20});
+    const ColorTargetDesc color{.format = TextureFormat::Rgba8Unorm};
+    Result<GraphicsPipeline> pipeline = device.createPipeline({.vertexShader = shaders::render.find("fullscreen_vs"),
+                                                               .fragmentShader = shaders::render.find("uniform_fs"),
+                                                               .colorTargets = {&color, 1}});
+    REQUIRE(target && buffer && transfer && pipeline, "creation failed");
+    const auto draw = [&](CommandBuffer& commands, int draws) {
+        RenderPass pass = commands.beginRenderPass(ColorTarget{.texture = *target});
+        pass.bindPipeline(*pipeline);
+        pass.pushUniforms(ShaderStage::Fragment, 0, Color{1, 0, 0, 1});
+        for (int i = 0; i < draws; ++i) pass.draw(3);
+    };
+
+    // Ranges "a" and "b" at the top level, "c" inside "b", "empty" without a pass (left out of the results).
+    CommandBuffer commands = device.acquireCommandBuffer();
+    commands.beginTiming("a");
+    draw(commands, 16);
+    commands.endTiming();
+    commands.beginTiming("b");
+    commands.beginCopyPass().upload(*transfer, 0, *buffer, 0, 1 << 20);
+    commands.beginTiming("c");
+    draw(commands, 32);
+    commands.endTiming();
+    commands.endTiming();
+    commands.beginTiming("empty");
+    commands.endTiming();
+    Result<Fence> fence = commands.submitWithFence();
+    REQUIRE(fence, "submit: %s", fence.error().c_str());
+    device.wait(*fence);
+
+    const std::vector<GpuTiming> timings = device.gpuTimings(*fence);
+    if (!device.caps().gpuPassTiming) {
+        CHECK(timings.empty(), "%zu ranges without Caps::gpuPassTiming", timings.size());
+        return;
+    }
+    REQUIRE(timings.size() == 3, "%zu ranges", timings.size());
+    const std::optional<double> ms = device.gpuMilliseconds(*fence);
+    REQUIRE(ms, "no GPU time");
+    const char* names[] = {"a", "b", "c"};
+    const std::uint32_t depths[] = {0, 0, 1};
+    for (std::size_t i = 0; i < 3; ++i) {
+        const GpuTiming& t = timings[i];
+        std::printf("  %s: %.4f ms busy, %.4f .. %.4f ms\n", t.name.c_str(), t.milliseconds, t.startMilliseconds,
+                    t.endMilliseconds);
+        CHECK(t.name == names[i] && t.depth == depths[i], "range %zu: '%s' at depth %u", i, t.name.c_str(), t.depth);
+        CHECK(t.milliseconds > 0.0 && t.milliseconds <= t.endMilliseconds - t.startMilliseconds + 1e-6,
+              "'%s': %.4f ms busy in %.4f .. %.4f ms", names[i], t.milliseconds, t.startMilliseconds,
+              t.endMilliseconds);
+        // Within the command buffer's GPU time (another clock: a margin for its rounding).
+        CHECK(t.startMilliseconds >= 0.0 && t.endMilliseconds <= *ms * 1.05 + 0.01,
+              "'%s' at %.4f .. %.4f ms, command buffer %.4f ms", names[i], t.startMilliseconds, t.endMilliseconds, *ms);
+    }
+    CHECK(timings[2].milliseconds <= timings[1].milliseconds &&
+              timings[2].startMilliseconds >= timings[1].startMilliseconds &&
+              timings[2].endMilliseconds <= timings[1].endMilliseconds,
+          "c outside b");
+    std::printf("  command buffer %.4f ms\n", *ms);
 }

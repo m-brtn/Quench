@@ -1,8 +1,8 @@
 #pragma once
 
-// GPU resources. Each class owns one backend object and releases it when destroyed or reset; the backend defers the
-// release until the GPU has finished with the object, so a resource may be dropped right after recording commands
-// that use it. Resources are created by gpu::Device and must not outlive it. The *Ref types are non-owning views
+// GPU resources. Each class owns one backend object and releases it when destroyed or reset; the backend keeps the
+// object alive until the GPU has finished with it, so a resource may be dropped right after recording commands that
+// use it. Resources are created by gpu::Device and must not outlive it. The *Ref types are non-owning views
 // for bindings and pass targets (also of the swapchain texture); they must not outlive what they view.
 
 #include <quench/gpu/Types.h>

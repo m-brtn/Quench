@@ -128,7 +128,7 @@ xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_device_tests
 # A new game from templates/game, built against this checkout and started once
 python3 tools/new_game.py "My Game" ../my-game
 # The engine demo (docs/demo.md), one section or the menu; its package for dist/ at the end of a stage
-build/release/examples/demo/quench-demo --section shadows
+build/release/examples/demo/quench-demo --section shadows   # --gpu-backend metal: the native Metal backend
 tools/package_demo.sh                    # --ios also builds a development-signed .ipa (ios-xcode, not installed)
 # The asset cooker (docs/assets.md); games and the demo cook at build time through quench_cook_assets()
 build/debug/quench_cook --help
@@ -145,7 +145,9 @@ every case runs twice: `gpu_device.*` on the default driver (Metal, with the Met
 found; with `vulkan-validationlayers` installed, a validation error or warning in the output fails the case). With
 the driver named in `QUENCH_TEST_GPU_DRIVER` (set by CTest) a missing device fails the case instead of
 skipping it. `gpu_device.window_present` opens a small window for a moment; it is skipped in the iOS Simulator test
-executables (no app lifecycle there) and runs in the iPhone test app, which runs every case as `SDL_main`.
+executables (no app lifecycle there) and runs in the iPhone test app, which runs every case as `SDL_main`. On Apple
+platforms the GPU device and render cases run a third time on the native Metal backend (`gpu_metal_native.*`,
+`render_metal_native.*`: `QUENCH_GPU_BACKEND=metal` with `MTL_DEBUG_LAYER=1`; also in `ios-sim-tests`).
 
 The sample's checks are CTest tests too: `hello_metal` and `hello_vulkan` render it at 1280 x 720 and compare the
 capture (`build/<preset>/tests/captures/<test>.png`) with `tests/golden/<backend>/<device>/hello.png`;
@@ -153,7 +155,10 @@ capture (`build/<preset>/tests/captures/<test>.png`) with `tests/golden/<backend
 scenario commands, captures and golden images: `docs/app.md`. The demo's checks are the same kind:
 `demo_<section>_metal` and `demo_<section>_vulkan` run `examples/demo/scenarios/<section>.txt` and compare the
 capture at its end with `tests/golden/<backend>/<device>/demo_<section>.png`; `demo_menu` checks the menu
-navigation (`docs/demo.md`). The renderer's own cases are `render.*` and `render_vulkan.*`.
+navigation (`docs/demo.md`). The renderer's own cases are `render.*` and `render_vulkan.*`. The native Metal backend
+(`--gpu-backend metal`, not the default) is compared with the same `metal` golden images: `hello_metal_native`,
+`demo_animation_metal_native` and `demo_hdr_on_metal_native` (a subset of the demo, for the wall time; a change to
+`src/gpu/metal/` also runs every demo section with `--gpu-backend metal` against its golden image).
 
 All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
 
@@ -202,11 +207,11 @@ Details and rationale: `docs/architecture.md`.
   their own namespaces and prefixes.
 - **Headless core.** Simulation, physics, assets, animation, navigation and the audio mixer must not depend on
   windowing, the GPU or rendering, so they run in CTest without a window (and under Node.js for the web check).
-- **Graphics goes through `quench::gpu`.** Backends: SDL GPU (portable, the first one) and native Metal (planned).
-  The Metal backend exists for hardware ray tracing, GPU timestamps and MetalFX: SDL GPU does not offer them, and its
-  maintainers decline to expose native object handles (libsdl-org/SDL#11147, #12094). SDL GPU types never appear in
-  public engine headers, and games do not call SDL GPU directly. A new backend or a native feature is added only for a
-  named need and verified on real hardware.
+- **Graphics goes through `quench::gpu`.** Backends: SDL GPU (portable, the first one, the default) and native Metal
+  (since stage 9, `--gpu-backend metal`). The Metal backend exists for hardware ray tracing, GPU timestamps and
+  MetalFX: SDL GPU does not offer them, and its maintainers decline to expose native object handles
+  (libsdl-org/SDL#11147, #12094). SDL GPU types never appear in public engine headers, and games do not call SDL GPU
+  directly. A new backend or a native feature is added only for a named need and verified on real hardware.
 - **Rendering.** The engine renders a standard frame (shadows, main HDR pass, sky, post-processing chain) assembled
   from modules a game enables; games add their own passes and material shading through engine APIs. The scene is
   retained in the engine: meshes, instances, materials and lights are registered, not resubmitted as per-frame draw
@@ -451,7 +456,9 @@ src/                   sources and internal headers per module (src/core/Platfor
                        src/assets/: the asset manager, KTX2, cooked models, streaming; src/audio/: the mixer,
                        decoders, streams, the device and the iOS audio session (AudioSessionApple.m);
                        src/animation/: skeletons, clips, graphs, the character update, IK, the animation system
-                       (ozz-animation inside); src/gpu/sdlgpu/: the SDL GPU backend; src/app/Main.cpp: quench_main;
+                       (ozz-animation inside); src/gpu/Backend.h: the backend interface; src/gpu/sdlgpu/: the
+                       SDL GPU backend; src/gpu/metal/: the native Metal backend (Objective-C++, ARC; Apple
+                       platforms); src/gpu/shaders/: the backends' own shaders (blit); src/app/Main.cpp: quench_main;
                        src/render/: the scene, SceneAssets, the frame modules and their shaders, GPU skinning)
 shaders/quench/        the engine shader library (#include "quench/..."): BRDF, shadows, sky, fog, tone curves,
                        surface shaders; SceneUniforms.h, the uniform structs shared by C++ and HLSL

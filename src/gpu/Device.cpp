@@ -1,0 +1,395 @@
+// gpu::Device and the resources: argument checks and the parts every backend shares; the work is the backend's
+// (src/gpu/Backend.h).
+
+#include "gpu/Backend.h"
+
+#include <quench/core/Assert.h>
+#include <quench/core/Log.h>
+
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <format>
+#include <string>
+
+namespace quench::gpu {
+
+const char* backendName(Backend backend) {
+    switch (backend) {
+    case Backend::Default: return "default";
+    case Backend::SdlGpu: return "sdl";
+    case Backend::Metal: return "metal";
+    }
+    return "unknown";
+}
+
+namespace detail {
+
+void release(DeviceImpl* device, Kind kind, void* native) noexcept {
+    device->release(kind, native);
+    device->live.fetch_sub(1, std::memory_order_relaxed);
+}
+
+} // namespace detail
+
+namespace {
+
+using detail::Access;
+using detail::DeviceImpl;
+
+bool validSampleCount(std::uint32_t count) { return count == 1 || count == 2 || count == 4 || count == 8; }
+
+template <class R>
+R adopt(DeviceImpl* device, void* native) {
+    R resource;
+    Access::adopt(resource, device, native);
+    device->live.fetch_add(1, std::memory_order_relaxed);
+    return resource;
+}
+
+Backend chooseBackend(Backend requested) {
+    if (requested == Backend::Default) {
+        requested = Backend::SdlGpu;
+        if (const char* env = std::getenv("QUENCH_GPU_BACKEND"); env && *env) {
+            const std::string_view value(env);
+            if (value == "metal")
+                requested = Backend::Metal;
+            else if (value != "sdl")
+                log::warning("gpu", "QUENCH_GPU_BACKEND={} is not sdl or metal: SDL GPU", value);
+        }
+    }
+    if (requested == Backend::Metal && !QUENCH_PLATFORM_APPLE) {
+        log::warning("gpu", "the native Metal backend exists only on Apple platforms: SDL GPU");
+        requested = Backend::SdlGpu;
+    }
+    return requested;
+}
+
+} // namespace
+
+// ------------------------------------------------------------------ TransferBuffer
+
+std::span<std::byte> TransferBuffer::map(bool cycle) {
+    QUENCH_ASSERT(m_native, "map() on an empty TransferBuffer");
+    return m_device->map(m_native, m_info.size, cycle);
+}
+
+void TransferBuffer::unmap() {
+    QUENCH_ASSERT(m_native, "unmap() on an empty TransferBuffer");
+    m_device->unmap(m_native);
+}
+
+// ------------------------------------------------------------------ Device
+
+Result<Device> Device::create(const DeviceDesc& desc) {
+    const Backend backend = chooseBackend(desc.backend);
+    Result<std::unique_ptr<DeviceImpl>> impl = Error{"no backend"};
+#if QUENCH_PLATFORM_APPLE
+    if (backend == Backend::Metal) impl = detail::createMetalDevice(desc);
+#endif
+    if (backend == Backend::SdlGpu) impl = detail::createSdlGpuDevice(desc);
+    if (!impl) return Error{impl.error()};
+
+    Device device;
+    device.m_impl = std::move(*impl);
+    Caps& caps = device.m_impl->caps;
+    caps.backend = backend;
+    caps.bcTextures =
+        device.supportsFormat(TextureFormat::Bc1RgbaUnorm, TextureType::Texture2D, TextureUsage::Sampled) &&
+        device.supportsFormat(TextureFormat::Bc7RgbaUnorm, TextureType::Texture2D, TextureUsage::Sampled);
+    caps.astcTextures =
+        device.supportsFormat(TextureFormat::Astc4x4Unorm, TextureType::Texture2D, TextureUsage::Sampled);
+    log::info("gpu", "backend {}, driver {}, device '{}', shaders {}", backendName(caps.backend), caps.driver,
+              caps.deviceName, shaderFormatName(caps.shaderFormat));
+    return device;
+}
+
+Device::Device(Device&& other) noexcept = default;
+Device& Device::operator=(Device&& other) noexcept {
+    if (this != &other) {
+        const Device previous(std::move(*this));
+        m_impl = std::move(other.m_impl);
+    }
+    return *this;
+}
+
+Device::~Device() {
+    if (!m_impl) return;
+    DeviceImpl& impl = *m_impl;
+    impl.waitIdle();
+    for (const detail::WindowEntry& entry : impl.windows) impl.releaseWindow(entry.window);
+    impl.windows.clear();
+    const std::int64_t live = impl.live.load();
+    if (live != 0) log::error("gpu", "{} GPU resources outlive their device", live);
+    QUENCH_ASSERT(live == 0, "GPU resources outlive their device (release them before the device)");
+    m_impl.reset();
+}
+
+const Caps& Device::caps() const { return m_impl->caps; }
+
+bool Device::supportsFormat(TextureFormat format, TextureType type, TextureUsage usage) const {
+    return m_impl->supportsFormat(format, type, usage);
+}
+
+bool Device::supportsSampleCount(TextureFormat format, std::uint32_t sampleCount) const {
+    if (!validSampleCount(sampleCount)) return false;
+    return sampleCount == 1 || m_impl->supportsSampleCount(format, sampleCount);
+}
+
+std::int64_t Device::liveResources() const { return m_impl->live.load(); }
+
+Result<Texture> Device::createTexture(const TextureDesc& desc) {
+    QUENCH_ASSERT(desc.format != TextureFormat::Invalid && desc.format < TextureFormat::Count, "invalid format");
+    QUENCH_ASSERT(validSampleCount(desc.sampleCount), "sample count must be 1, 2, 4 or 8");
+    QUENCH_ASSERT(desc.width > 0 && desc.height > 0 && desc.layers > 0 && desc.mipLevels > 0, "empty texture");
+    const std::string what = desc.name.empty() ? std::string("texture") : std::format("texture '{}'", desc.name);
+    if (!supportsFormat(desc.format, desc.type, desc.usage))
+        return Error{std::format("cannot create {}: {} does not support this type and usage on {}", what,
+                                 formatInfo(desc.format).name, m_impl->caps.driver)};
+    if (!supportsSampleCount(desc.format, desc.sampleCount))
+        return Error{std::format("cannot create {}: {} does not support {} samples on {}", what,
+                                 formatInfo(desc.format).name, desc.sampleCount, m_impl->caps.driver)};
+    Result<void*> native = m_impl->createTexture(desc);
+    if (!native) return Error{native.error()};
+    Texture texture = adopt<Texture>(m_impl.get(), *native);
+    Access::info(texture) = desc;
+    Access::info(texture).name = {};
+    return texture;
+}
+
+Result<Buffer> Device::createBuffer(const BufferDesc& desc) {
+    QUENCH_ASSERT(desc.size > 0, "empty buffer");
+    Result<void*> native = m_impl->createBuffer(desc);
+    if (!native) return Error{native.error()};
+    Buffer buffer = adopt<Buffer>(m_impl.get(), *native);
+    Access::info(buffer) = desc;
+    Access::info(buffer).name = {};
+    return buffer;
+}
+
+Result<Sampler> Device::createSampler(const SamplerDesc& desc) {
+    Result<void*> native = m_impl->createSampler(desc);
+    if (!native) return Error{native.error()};
+    return adopt<Sampler>(m_impl.get(), *native);
+}
+
+Result<TransferBuffer> Device::createTransferBuffer(const TransferBufferDesc& desc) {
+    QUENCH_ASSERT(desc.size > 0, "empty transfer buffer");
+    Result<void*> native = m_impl->createTransferBuffer(desc);
+    if (!native) return Error{native.error()};
+    TransferBuffer buffer = adopt<TransferBuffer>(m_impl.get(), *native);
+    Access::info(buffer) = desc;
+    Access::info(buffer).name = {};
+    return buffer;
+}
+
+Result<GraphicsPipeline> Device::createPipeline(const GraphicsPipelineDesc& desc) {
+    QUENCH_ASSERT(desc.vertexShader && desc.vertexShader->stage == ShaderStage::Vertex, "vertex shader missing");
+    QUENCH_ASSERT(desc.fragmentShader && desc.fragmentShader->stage == ShaderStage::Fragment,
+                  "fragment shader missing");
+    QUENCH_ASSERT(desc.colorTargets.size() <= 4, "at most 4 color targets");
+    QUENCH_ASSERT(validSampleCount(desc.sampleCount), "sample count must be 1, 2, 4 or 8");
+    QUENCH_ASSERT(desc.vertexBuffers.size() <= 16 && desc.vertexAttributes.size() <= 16, "too many vertex inputs");
+    QUENCH_ASSERT(desc.depthFormat != TextureFormat::Invalid || (!desc.depth.test && !desc.depth.write),
+                  "depth test or write without a depth format");
+    detail::PipelineInfo info;
+    for (std::size_t i = 0; i < desc.colorTargets.size(); ++i) {
+        QUENCH_ASSERT(desc.colorTargets[i].format != TextureFormat::Invalid, "color target without a format");
+        info.colorFormats[i] = desc.colorTargets[i].format;
+    }
+    info.colorTargets = std::uint32_t(desc.colorTargets.size());
+    info.depthFormat = desc.depthFormat;
+    info.sampleCount = desc.sampleCount;
+    Result<void*> native = m_impl->createPipeline(desc);
+    if (!native) return Error{native.error()};
+    GraphicsPipeline pipeline = adopt<GraphicsPipeline>(m_impl.get(), *native);
+    Access::info(pipeline) = info;
+    return pipeline;
+}
+
+Result<ComputePipeline> Device::createComputePipeline(const ComputePipelineDesc& desc) {
+    QUENCH_ASSERT(desc.shader && desc.shader->stage == ShaderStage::Compute, "compute shader missing");
+    Result<void*> native = m_impl->createComputePipeline(desc);
+    if (!native) return Error{native.error()};
+    return adopt<ComputePipeline>(m_impl.get(), *native);
+}
+
+// ------------------------------------------------------------------ convenience transfers
+
+Result<void> Device::upload(const BufferRef& destination, std::uint32_t offset, std::span<const std::byte> data) {
+    QUENCH_ASSERT(destination, "upload to an empty buffer");
+    QUENCH_ASSERT(offset + data.size() <= destination.desc.size, "upload past the end of the buffer");
+    if (data.empty()) return {};
+    Result<TransferBuffer> staging =
+        createTransferBuffer({TransferDirection::Upload, std::uint32_t(data.size()), "upload"});
+    if (!staging) return Error{staging.error()};
+    std::span<std::byte> mapped = staging->map();
+    if (mapped.empty()) return Error{"cannot map the upload buffer"};
+    std::memcpy(mapped.data(), data.data(), data.size());
+    staging->unmap();
+    CommandBuffer commands = acquireCommandBuffer();
+    if (!commands) return Error{"no command buffer for the upload"};
+    {
+        CopyPass copy = commands.beginCopyPass();
+        copy.upload(*staging, 0, destination, offset, std::uint32_t(data.size()));
+    }
+    return commands.submit();
+}
+
+Result<void> Device::upload(const TextureRegion& destination, std::span<const std::byte> data) {
+    QUENCH_ASSERT(destination.texture, "upload to an empty texture");
+    const std::uint64_t size = levelByteSize(destination.texture.desc.format, detail::regionWidth(destination),
+                                             detail::regionHeight(destination), destination.depth);
+    QUENCH_ASSERT(data.size() == size, "texture upload size does not match the region");
+    if (data.size() != size)
+        return Error{std::format("texture upload of {} bytes, the region needs {}", data.size(), size)};
+    Result<TransferBuffer> staging =
+        createTransferBuffer({TransferDirection::Upload, std::uint32_t(data.size()), "upload"});
+    if (!staging) return Error{staging.error()};
+    std::span<std::byte> mapped = staging->map();
+    if (mapped.empty()) return Error{"cannot map the upload buffer"};
+    std::memcpy(mapped.data(), data.data(), data.size());
+    staging->unmap();
+    CommandBuffer commands = acquireCommandBuffer();
+    if (!commands) return Error{"no command buffer for the upload"};
+    {
+        CopyPass copy = commands.beginCopyPass();
+        copy.upload(*staging, 0, destination);
+    }
+    return commands.submit();
+}
+
+Result<std::vector<std::byte>> Device::download(const TextureRegion& source) {
+    QUENCH_ASSERT(source.texture, "download from an empty texture");
+    const std::uint64_t size = levelByteSize(source.texture.desc.format, detail::regionWidth(source),
+                                             detail::regionHeight(source), source.depth);
+    Result<TransferBuffer> staging =
+        createTransferBuffer({TransferDirection::Download, std::uint32_t(size), "download"});
+    if (!staging) return Error{staging.error()};
+    CommandBuffer commands = acquireCommandBuffer();
+    if (!commands) return Error{"no command buffer for the download"};
+    {
+        CopyPass copy = commands.beginCopyPass();
+        copy.download(source, *staging, 0);
+    }
+    Result<Fence> fence = commands.submitWithFence();
+    if (!fence) return Error{fence.error()};
+    wait(*fence);
+    std::span<std::byte> mapped = staging->map();
+    if (mapped.size() < size) return Error{"cannot map the download buffer"};
+    std::vector<std::byte> bytes(mapped.begin(), mapped.begin() + std::ptrdiff_t(size));
+    staging->unmap();
+    return bytes;
+}
+
+Result<std::vector<std::byte>> Device::download(const BufferRef& source, std::uint32_t offset, std::uint32_t size) {
+    QUENCH_ASSERT(source, "download from an empty buffer");
+    QUENCH_ASSERT(std::uint64_t(offset) + size <= source.desc.size, "download past the end of the buffer");
+    Result<TransferBuffer> staging = createTransferBuffer({TransferDirection::Download, size, "download"});
+    if (!staging) return Error{staging.error()};
+    CommandBuffer commands = acquireCommandBuffer();
+    if (!commands) return Error{"no command buffer for the download"};
+    {
+        CopyPass copy = commands.beginCopyPass();
+        copy.download(source, offset, size, *staging, 0);
+    }
+    Result<Fence> fence = commands.submitWithFence();
+    if (!fence) return Error{fence.error()};
+    wait(*fence);
+    std::span<std::byte> mapped = staging->map();
+    if (mapped.size() < size) return Error{"cannot map the download buffer"};
+    std::vector<std::byte> bytes(mapped.begin(), mapped.begin() + size);
+    staging->unmap();
+    return bytes;
+}
+
+// ------------------------------------------------------------------ presentation
+
+Result<void> Device::claimWindow(SDL_Window* window, PresentMode mode) {
+    QUENCH_ASSERT(window, "claimWindow(nullptr)");
+    QUENCH_ASSERT(!m_impl->find(window), "window claimed twice");
+    if (Result<void> claimed = m_impl->claimWindow(window); !claimed) return claimed;
+    m_impl->windows.push_back({window});
+    setPresentMode(window, mode);
+    return {};
+}
+
+void Device::releaseWindow(SDL_Window* window) {
+    auto it = std::find_if(m_impl->windows.begin(), m_impl->windows.end(),
+                           [window](const detail::WindowEntry& w) { return w.window == window; });
+    QUENCH_ASSERT(it != m_impl->windows.end(), "releaseWindow on a window that was not claimed");
+    if (it == m_impl->windows.end()) return;
+    m_impl->waitIdle();
+    m_impl->releaseWindow(window);
+    m_impl->windows.erase(it);
+}
+
+bool Device::supportsPresentMode(SDL_Window* window, PresentMode mode) const {
+    return m_impl->supportsPresentMode(window, mode);
+}
+
+PresentMode Device::setPresentMode(SDL_Window* window, PresentMode mode) {
+    detail::WindowEntry* entry = m_impl->find(window);
+    QUENCH_ASSERT(entry, "setPresentMode on a window that was not claimed");
+    if (!entry) return PresentMode::Vsync;
+    if (!supportsPresentMode(window, mode)) mode = PresentMode::Vsync;
+    if (!m_impl->setSwapchainParameters(window, entry->composition, mode)) return entry->presentMode;
+    entry->presentMode = mode;
+    return mode;
+}
+
+bool Device::supportsComposition(SDL_Window* window, SwapchainComposition composition) const {
+    return m_impl->supportsComposition(window, composition);
+}
+
+SwapchainComposition Device::setComposition(SDL_Window* window, SwapchainComposition composition) {
+    detail::WindowEntry* entry = m_impl->find(window);
+    QUENCH_ASSERT(entry, "setComposition on a window that was not claimed");
+    if (!entry) return SwapchainComposition::Sdr;
+    if (composition == entry->composition) return composition;
+    if (!supportsComposition(window, composition)) {
+        log::warning("gpu", "swapchain composition {} not supported by {} for this window: SDR",
+                     swapchainCompositionName(composition), m_impl->caps.driver);
+        composition = SwapchainComposition::Sdr;
+        if (composition == entry->composition) return composition;
+    }
+    m_impl->waitIdle();
+    if (!m_impl->setSwapchainParameters(window, composition, entry->presentMode)) return entry->composition;
+    entry->composition = composition;
+    return composition;
+}
+
+SwapchainComposition Device::composition(SDL_Window* window) const {
+    const detail::WindowEntry* entry = m_impl->find(window);
+    return entry ? entry->composition : SwapchainComposition::Sdr;
+}
+
+TextureFormat Device::swapchainFormat(SDL_Window* window) const { return m_impl->swapchainFormat(window); }
+
+// ------------------------------------------------------------------ fences
+
+bool Device::isSignaled(const Fence& fence) const {
+    QUENCH_ASSERT(fence, "isSignaled on an empty fence");
+    return m_impl->isSignaled(Access::native(fence));
+}
+
+void Device::wait(const Fence& fence) const {
+    QUENCH_ASSERT(fence, "wait on an empty fence");
+    m_impl->wait(Access::native(fence));
+}
+
+std::optional<double> Device::gpuMilliseconds(const Fence& fence) const {
+    QUENCH_ASSERT(fence, "gpuMilliseconds on an empty fence");
+    if (!m_impl->caps.gpuTiming || !isSignaled(fence)) return std::nullopt;
+    return m_impl->gpuMilliseconds(Access::native(fence));
+}
+
+std::vector<GpuTiming> Device::gpuTimings(const Fence& fence) const {
+    QUENCH_ASSERT(fence, "gpuTimings on an empty fence");
+    if (!m_impl->caps.gpuPassTiming || !isSignaled(fence)) return {};
+    return m_impl->gpuTimings(Access::native(fence));
+}
+
+void Device::waitIdle() { m_impl->waitIdle(); }
+
+} // namespace quench::gpu

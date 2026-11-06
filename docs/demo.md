@@ -26,7 +26,9 @@ ends with a packaged build of it in `dist/` (`tools/package_demo.sh`, below).
 
 Every section has a "Frame and fallbacks" panel: the 3D resolution, draws, culled instances, lights, shadow draws,
 what runs after the device fallbacks (cascades, depth clamp, anti-aliasing), the HDR and depth formats and the device
-capabilities.
+capabilities. The menu window shows the frame, CPU and GPU times and, outside deterministic runs, the GPU backend and,
+where it has timestamps per pass (the native Metal backend: `--gpu-backend metal`), the GPU time of every timed range
+with where in the frame it ran ([Performance](performance.md#gpu-time-per-pass)).
 
 Common controls:
 

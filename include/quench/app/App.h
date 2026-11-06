@@ -48,6 +48,8 @@ struct AppDesc {
     int width = 1280;                // window size in points (desktop; mobile windows fill the screen)
     int height = 720;
     double fixedStep = 1.0 / 120.0; // simulation tick
+    // Default: SDL GPU, or the QUENCH_GPU_BACKEND environment variable (sdl, metal); --gpu-backend overrides it.
+    gpu::Backend gpuBackend = gpu::Backend::Default;
     gpu::PresentMode presentMode = gpu::PresentMode::Vsync;
     HdrMode hdr = HdrMode::Off;    // --hdr overrides it
     audio::AudioSettings audio;    // the mixer: sample rate, voices, buses
@@ -71,6 +73,9 @@ struct FrameStats {
     double cpuMs = 0.0;  // last frame: main thread work until the submit, without the wait for a swapchain texture
     double gpuMs = -1.0; // last measured GPU time of a frame; -1 where unavailable (!gpu::Caps::gpuTiming)
     int ticks = 0;       // simulation ticks in the last frame
+    // GPU time per timed range of passes of the last measured frame, in the order they began (gpu::Caps::gpuPassTiming;
+    // empty without it): the app's "game" (around Game::render, with the renderer's ranges inside), "ui" and "blit".
+    std::vector<gpu::GpuTiming> gpuPasses;
 };
 
 struct WindowRect {

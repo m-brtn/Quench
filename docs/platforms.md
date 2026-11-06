@@ -28,7 +28,8 @@ Nothing of the engine has run in a browser.
 Audio (stage 7, see "Audio" below) has run only on the null backend and offline, on the Mac, in the iOS Simulator
 and under Node.js; nothing was listened to, and the stage 7 code has not run on the iPhone. Animation and GPU
 skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator and (without rendering) under
-Node.js; not on the iPhone.
+Node.js; not on the iPhone. The native Metal backend (stage 9, not the default; see "Native Metal backend" below)
+ran on the Mac and in the iOS Simulator; not on the iPhone.
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
@@ -46,8 +47,9 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
 
 - Deployment target 14.0 in both games; the metallibs are compiled for the same minimum version.
 - GPU time is measured through SDL's internal Metal fence struct (`GpuTimingMetal.m` in the games,
-  `src/gpu/sdlgpu/SdlGpuTimingMetal.m` in the engine), tied to the SDL 3.4.18 layout. A native Metal backend replaces
-  this hack.
+  `src/gpu/sdlgpu/SdlGpuTimingMetal.m` in the engine), tied to the SDL 3.4.18 layout. The native Metal backend
+  (stage 9, `--gpu-backend metal`, see "Native Metal backend" below) reads the command buffer's own GPU times and
+  timestamps per pass; while SDL GPU stays the default, the hack stays for it.
 - Present modes on Metal: `vsync` and `immediate`; `mailbox` is not supported and falls back to vsync. A window is
   paced to its display (60 Hz on the LG UltraFine 5K used here) even with `immediate`, and then the measured GPU time
   grows to about 15.5 ms (0.6 ms with vsync), probably a drawable wait counted inside the command buffer (not
@@ -106,6 +108,18 @@ iOS and HDR10 (PQ) on macOS only; the Vulkan backend needs `VK_EXT_swapchain_col
   the brightness changes; the app's own reading on Apple platforms does not depend on it.
 - HDR10 swapchains can be created on the Mac, but the renderer does not write PQ: such output gets SDR values with a
   warning ([Render module](render.md#tone-mapping-and-hdr-output)).
+
+## Native Metal backend
+
+The engine's own Metal backend of `quench::gpu` (stage 9, `--gpu-backend metal`, [Architecture](architecture.md#native-metal-backend));
+SDL GPU stays the default. Built for macOS and iOS (device and Simulator); nothing of it exists elsewhere, and a
+request for it there creates SDL GPU with a warning.
+
+| Where | Run so far |
+|---|---|
+| Mac, M4 Pro | `gpu_metal_native.*` and `render_metal_native.*` with the Metal API validation layer; hello and every demo section's capture identical to the Metal golden images in Release (2026-11-06); the four swapchain compositions created and presented; `Caps::gpuPassTiming` true (timestamp period 1.0000 ns); benchmarks in [Performance](performance.md#gpu-time-per-pass) |
+| iOS Simulator (iPhone 18 Pro Max) | `gpu_metal_native.*` and `render_metal_native.*` in `ios-sim-tests` (49 passed; the two window cases skipped as on SDL GPU: no app lifecycle in a test executable); `Caps::gpuPassTiming` false (the Simulator's GPU has no stage boundary sampling), no depth clamp, no indirect draws, as on SDL GPU there |
+| iPhone 18 Pro Max | built (`ios-device-release`); not run (the phone was not available on 2026-11-06) |
 
 ## Audio
 

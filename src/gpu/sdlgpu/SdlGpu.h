@@ -1,42 +1,114 @@
 #pragma once
 
-// SDL GPU backend internals: the device state behind gpu::Device and the mapping of engine types to SDL GPU types.
+// SDL GPU backend internals: the device behind gpu::Device and the mapping of engine types to SDL GPU types. Native
+// handles are the SDL objects themselves (SDL_GPUTexture*, SDL_GPUCommandBuffer*, SDL_GPURenderPass*, ...).
 
-#include <quench/gpu/Device.h>
+#include "gpu/Backend.h"
 
 #include <SDL3/SDL_gpu.h>
 
-#include <algorithm>
-#include <atomic>
 #include <cstdint>
-#include <vector>
 
 namespace quench::gpu::detail {
-
-// A claimed window and its swapchain parameters (SDL sets both at once).
-struct WindowEntry {
-    SDL_Window* window = nullptr;
-    PresentMode presentMode = PresentMode::Vsync;
-    SwapchainComposition composition = SwapchainComposition::Sdr;
-};
-
-struct DeviceImpl {
-    SDL_GPUDevice* device = nullptr;
-    Caps caps;
-    SDL_GPUShaderFormat shaderFormat = SDL_GPU_SHADERFORMAT_INVALID;
-    std::atomic<std::int64_t> live{0};
-    std::vector<WindowEntry> windows;
-
-    WindowEntry* find(SDL_Window* window) {
-        for (WindowEntry& w : windows)
-            if (w.window == window) return &w;
-        return nullptr;
-    }
-};
 
 // GPU execution time of the command buffer behind a signalled SDL Metal fence (SdlGpuTimingMetal.m); < 0 when
 // unknown.
 double metalFenceMilliseconds(SDL_GPUFence* fence);
+
+class SdlGpuDevice final : public DeviceImpl {
+public:
+    SdlGpuDevice(SDL_GPUDevice* device, SDL_GPUShaderFormat shaderFormat)
+        : m_device(device), m_shaderFormat(shaderFormat) {}
+    ~SdlGpuDevice() override;
+
+    bool supportsFormat(TextureFormat format, TextureType type, TextureUsage usage) const override;
+    bool supportsSampleCount(TextureFormat format, std::uint32_t sampleCount) const override;
+    Result<void*> createTexture(const TextureDesc& desc) override;
+    Result<void*> createBuffer(const BufferDesc& desc) override;
+    Result<void*> createSampler(const SamplerDesc& desc) override;
+    Result<void*> createTransferBuffer(const TransferBufferDesc& desc) override;
+    Result<void*> createPipeline(const GraphicsPipelineDesc& desc) override;
+    Result<void*> createComputePipeline(const ComputePipelineDesc& desc) override;
+    void release(Kind kind, void* native) noexcept override;
+    std::span<std::byte> map(void* transferBuffer, std::uint32_t size, bool cycle) override;
+    void unmap(void* transferBuffer) override;
+    void waitIdle() override;
+
+    void* acquireCommandBuffer() override;
+    void* beginRenderPass(void* commands, std::span<const ColorTarget> colors, const DepthTarget* depth) override;
+    void* beginCopyPass(void* commands) override;
+    void* beginComputePass(void* commands, std::span<const StorageBufferWrite> writes) override;
+    void endRenderPass(void* commands, void* pass) override;
+    void endCopyPass(void* commands, void* pass) override;
+    void endComputePass(void* commands, void* pass) override;
+    void pushUniforms(void* commands, ShaderStage stage, std::uint32_t slot, const void* data,
+                      std::uint32_t size) override;
+    void generateMipmaps(void* commands, const TextureRef& texture) override;
+    void blit(void* commands, const BlitDesc& blit) override;
+    TextureRef acquireSwapchainTexture(void* commands, SDL_Window* window) override;
+    void pushDebugGroup(void* commands, const char* name) override;
+    void popDebugGroup(void* commands) override;
+    void insertDebugLabel(void* commands, const char* text) override;
+    void beginTiming(void*, const char*) override {}
+    void endTiming(void*) override {}
+    Result<void> submit(void* commands) override;
+    Result<void*> submitWithFence(void* commands) override;
+    void cancel(void* commands) override;
+
+    void bindPipeline(void* pass, void* pipeline) override;
+    void setViewport(void* pass, const Viewport& viewport) override;
+    void setScissor(void* pass, const Rect& scissor) override;
+    void setBlendConstants(void* pass, const Color& color) override;
+    void bindVertexBuffers(void* pass, std::uint32_t firstSlot, std::span<const BufferBinding> buffers) override;
+    void bindIndexBuffer(void* pass, const BufferBinding& buffer, IndexFormat format) override;
+    void bindSamplers(void* pass, ShaderStage stage, std::uint32_t firstSlot,
+                      std::span<const TextureSamplerBinding> bindings) override;
+    void bindStorageBuffers(void* pass, ShaderStage stage, std::uint32_t firstSlot,
+                            std::span<const BufferRef> buffers) override;
+    void bindStorageTextures(void* pass, ShaderStage stage, std::uint32_t firstSlot,
+                             std::span<const TextureRef> textures) override;
+    void draw(void* pass, std::uint32_t vertexCount, std::uint32_t instanceCount, std::uint32_t firstVertex,
+              std::uint32_t firstInstance) override;
+    void drawIndexed(void* pass, std::uint32_t indexCount, std::uint32_t instanceCount, std::uint32_t firstIndex,
+                     std::int32_t vertexOffset, std::uint32_t firstInstance) override;
+    void drawIndirect(void* pass, const BufferRef& buffer, std::uint32_t offset, std::uint32_t drawCount) override;
+    void drawIndexedIndirect(void* pass, const BufferRef& buffer, std::uint32_t offset,
+                             std::uint32_t drawCount) override;
+
+    void bindComputePipeline(void* pass, void* pipeline) override;
+    void bindComputeStorageBuffers(void* pass, std::uint32_t firstSlot, std::span<const BufferRef> buffers) override;
+    void dispatch(void* pass, std::uint32_t groupsX, std::uint32_t groupsY, std::uint32_t groupsZ) override;
+
+    void uploadToBuffer(void* pass, void* transferBuffer, std::uint32_t sourceOffset, const BufferRef& destination,
+                        std::uint32_t destinationOffset, std::uint32_t size, bool cycle) override;
+    void uploadToTexture(void* pass, void* transferBuffer, std::uint32_t sourceOffset, const TextureRegion& destination,
+                         bool cycle) override;
+    void downloadFromTexture(void* pass, const TextureRegion& source, void* transferBuffer,
+                             std::uint32_t destinationOffset) override;
+    void downloadFromBuffer(void* pass, const BufferRef& source, std::uint32_t sourceOffset, std::uint32_t size,
+                            void* transferBuffer, std::uint32_t destinationOffset) override;
+    void copyBuffer(void* pass, const BufferRef& source, std::uint32_t sourceOffset, const BufferRef& destination,
+                    std::uint32_t destinationOffset, std::uint32_t size, bool cycle) override;
+    void copyTexture(void* pass, const TextureRegion& source, const TextureRegion& destination, bool cycle) override;
+
+    Result<void> claimWindow(SDL_Window* window) override;
+    void releaseWindow(SDL_Window* window) override;
+    bool supportsPresentMode(SDL_Window* window, PresentMode mode) const override;
+    bool supportsComposition(SDL_Window* window, SwapchainComposition composition) const override;
+    bool setSwapchainParameters(SDL_Window* window, SwapchainComposition composition, PresentMode mode) override;
+    TextureFormat swapchainFormat(SDL_Window* window) const override;
+
+    bool isSignaled(void* fence) const override;
+    void wait(void* fence) const override;
+    std::optional<double> gpuMilliseconds(void* fence) const override;
+    std::vector<GpuTiming> gpuTimings(void*) const override { return {}; }
+
+private:
+    Result<SDL_GPUShader*> createShader(const ShaderBlob& blob);
+
+    SDL_GPUDevice* m_device = nullptr;
+    SDL_GPUShaderFormat m_shaderFormat = SDL_GPU_SHADERFORMAT_INVALID;
+};
 
 } // namespace quench::gpu::detail
 
@@ -257,11 +329,7 @@ inline SDL_FColor toSdl(const Color& color) { return {color.r, color.g, color.b,
 
 inline SDL_GPUTexture* texture(const TextureRef& ref) { return static_cast<SDL_GPUTexture*>(ref.native); }
 
-inline std::uint32_t mipExtent(std::uint32_t size, std::uint32_t level) { return std::max(1u, size >> level); }
-
-// Width and height 0 extend the region to the edge of the level.
 inline SDL_GPUTextureRegion toSdlRegion(const TextureRegion& in) {
-    const TextureDesc& desc = in.texture.desc;
     SDL_GPUTextureRegion region{};
     region.texture = texture(in.texture);
     region.mip_level = in.mipLevel;
@@ -269,8 +337,8 @@ inline SDL_GPUTextureRegion toSdlRegion(const TextureRegion& in) {
     region.x = in.x;
     region.y = in.y;
     region.z = in.z;
-    region.w = in.width ? in.width : mipExtent(desc.width, in.mipLevel) - in.x;
-    region.h = in.height ? in.height : mipExtent(desc.height, in.mipLevel) - in.y;
+    region.w = detail::regionWidth(in);
+    region.h = detail::regionHeight(in);
     region.d = in.depth;
     return region;
 }

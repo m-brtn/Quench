@@ -210,6 +210,13 @@ if(NOT QUENCH_HEADLESS)
     target_compile_definitions(quench_gpu_device_tests PRIVATE
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
 
+    # The same cases on the native Metal backend (src/gpu/metal), with the Metal API validation layer.
+    if(APPLE)
+        set(metal_native_environment QUENCH_GPU_BACKEND=metal MTL_DEBUG_LAYER=1 QUENCH_TEST_GPU_DRIVER=metal)
+        quench_add_test_variant(quench_gpu_device_tests PREFIX gpu_metal_native
+            ENVIRONMENT ${metal_native_environment})
+    endif()
+
     # The same cases on Vulkan through MoltenVK (macOS with Homebrew's vulkan-loader and molten-vk): checks the SPIR-V
     # path, not a real Vulkan driver. SDL looks the loader up by bare names, which dlopen does not search for in
     # Homebrew's lib directory.
@@ -252,6 +259,9 @@ if(NOT QUENCH_HEADLESS)
             ENVIRONMENT ${vulkan_environment}
             FAIL_REGEX "Validation (Error|Warning)")
     endif()
+    if(APPLE)
+        quench_add_test_variant(quench_render_tests PREFIX render_metal_native ENVIRONMENT ${metal_native_environment})
+    endif()
 
     # ---------------------------------------------------------------- examples (host builds)
     if(TARGET quench_hello AND NOT CMAKE_CROSSCOMPILING)
@@ -289,6 +299,9 @@ if(NOT QUENCH_HEADLESS)
 
         quench_add_capture_test(hello_metal IMAGE hello BACKEND metal APP quench_hello ARGS ${hello_args}
             ENVIRONMENT MTL_DEBUG_LAYER=1)
+        # The native Metal backend against the same golden images as SDL GPU's Metal driver.
+        quench_add_capture_test(hello_metal_native IMAGE hello BACKEND metal APP quench_hello
+            ARGS ${hello_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1)
         if(QUENCH_TEST_VULKAN_LOADER)
             quench_add_capture_test(hello_vulkan IMAGE hello BACKEND vulkan APP quench_hello ARGS ${hello_args} --gpu-driver vulkan
                 ENVIRONMENT ${vulkan_environment})
@@ -310,7 +323,11 @@ if(NOT QUENCH_HEADLESS)
             # the offline mix written as WAV next to the capture. Immediate present: the deterministic frames are held
             # to their own cap (120 per second) instead of the display's rate where the window is not paced to the
             # display (docs/platforms.md), with the same pixels and the same mix; the hello checks and demo_menu keep
-            # the default vsync.
+            # the default vsync. The native Metal backend runs a subset, for the wall time: the animation section (compute
+            # skinning, shadows, TAA, bloom and the UI) and demo_hdr_on below (HDR output); render_metal_native covers
+            # the frame's modules one by one, and every section matched its golden image when the backend was added
+            # (docs/architecture.md, "Native Metal backend").
+            set(demo_native_sections animation)
             foreach(entry materials:2 shadows:2 sky:2 post:2 hdr:2 physics:2 input:3 assets:1.5 audio:1.65
                   animation:2.4)
                 string(REPLACE ":" ";" entry "${entry}")
@@ -330,6 +347,11 @@ if(NOT QUENCH_HEADLESS)
                 quench_add_capture_test(demo_${section}_metal IMAGE demo_${section} BACKEND metal APP quench_demo
                     ARGS ${demo_args} ${demo_audio_metal} ENVIRONMENT MTL_DEBUG_LAYER=1
                     OUTPUTS ${demo_outputs_metal})
+                if(section IN_LIST demo_native_sections)
+                    quench_add_capture_test(demo_${section}_metal_native IMAGE demo_${section} BACKEND metal
+                        APP quench_demo ARGS ${demo_args} --audio-device null --gpu-backend metal
+                        ENVIRONMENT MTL_DEBUG_LAYER=1)
+                endif()
                 if(QUENCH_TEST_VULKAN_LOADER)
                     quench_add_capture_test(demo_${section}_vulkan IMAGE demo_${section} BACKEND vulkan
                         APP quench_demo ARGS ${demo_args} ${demo_audio_vulkan} --gpu-driver vulkan
@@ -357,6 +379,8 @@ if(NOT QUENCH_HEADLESS)
                 --hdr on --hdr-headroom 4 --script ${demo_scenarios}/hdr_on.txt --capture-at 2 --audio-device null)
             quench_add_capture_test(demo_hdr_on_metal IMAGE demo_hdr_on BACKEND metal APP quench_demo
                 ARGS ${demo_hdr_args} ENVIRONMENT MTL_DEBUG_LAYER=1)
+            quench_add_capture_test(demo_hdr_on_metal_native IMAGE demo_hdr_on BACKEND metal APP quench_demo
+                ARGS ${demo_hdr_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1)
             if(QUENCH_TEST_VULKAN_LOADER)
                 quench_add_capture_test(demo_hdr_on_vulkan IMAGE demo_hdr_on BACKEND vulkan APP quench_demo
                     ARGS ${demo_hdr_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment})

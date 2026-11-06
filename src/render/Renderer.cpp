@@ -1257,7 +1257,11 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     }
     stats.instances = std::uint32_t(opaque.size() + transparent.size());
     stats.movedInstances = std::uint32_t(moved.size());
-    if (!ensureBuffers(commands)) {
+    // Timed ranges (gpu::Caps::gpuPassTiming): upload, shadows, hdr, taa, bloom, tonemap.
+    commands.beginTiming("upload");
+    const bool buffers = ensureBuffers(commands);
+    commands.endTiming();
+    if (!buffers) {
         commands.popDebugGroup();
         return;
     }
@@ -1303,6 +1307,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
 
     // ---- 1. Sun shadow cascades (standard depth), then the transmittance of their translucent casters
     bool transmittanceCycled = false;
+    commands.beginTiming("shadows");
     for (int c = 0; c < shadow.count; ++c) {
         const gpu::DepthTarget dt{.texture = shadowMap,
                                   .layer = std::uint32_t(c),
@@ -1340,6 +1345,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         drawBatches(tpass, transmittanceBatches[std::size_t(c)], c, stats.transmittanceDraws);
         tpass.end();
     }
+    commands.endTiming();
 
     // ---- 2. HDR pass: opaque surfaces, game passes, sky, transparent surfaces
     bool hasLaterPasses = false;
@@ -1349,6 +1355,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             hasLaterPasses = true;
     const bool keepDepth = taa || hasLaterPasses;
     const glm::vec3 clear = settings.sky ? glm::vec3(0.0f) : settings.clearColor;
+    commands.beginTiming("hdr");
     {
         const gpu::ColorTarget color{.texture = hdr, .clear = {clear.r, clear.g, clear.b, 1.0f}, .cycle = true};
         const gpu::DepthTarget dt{.texture = depth,
@@ -1384,10 +1391,12 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             pass.end();
         }
     }
+    commands.endTiming();
 
     // ---- 3. Motion vectors and TAA
     gpu::TextureRef image = hdr;
     if (taa) {
+        commands.beginTiming("taa");
         {
             const gpu::ColorTarget color{.texture = velocity, .cycle = true};
             gpu::RenderPass pass = commands.beginRenderPass(color);
@@ -1429,6 +1438,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             pass.draw(3);
             pass.end();
         }
+        commands.endTiming();
         historyIndex = write;
         historyValid = true;
         image = history[std::size_t(write)];
@@ -1445,6 +1455,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     // ---- 5. Bloom
     const bool bloomOn = effects.bloom && bloomLevels > 0;
     if (bloomOn) {
+        commands.beginTiming("bloom");
         for (int i = 0; i < bloomLevels; ++i) {
             const gpu::TextureRef src = i == 0 ? image : gpu::TextureRef(bloom[std::size_t(i - 1)]);
             const gpu::ColorTarget color{
@@ -1474,6 +1485,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             pass.draw(3);
             pass.end();
         }
+        commands.endTiming();
     }
 
     // ---- 6. Tone mapping (and FXAA) into the target, then the overlay passes
@@ -1482,6 +1494,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     const gpu::GraphicsPipeline* tonemap = outputPipeline(tonemapPipelines, "tonemap_fs", toneFormat);
     const gpu::GraphicsPipeline* fxaaPipe = fxaa ? outputPipeline(fxaaPipelines, "fxaa_fs", outFormat) : nullptr;
     if (tonemap && (!fxaa || fxaaPipe)) {
+        commands.beginTiming("tonemap");
         // Target encoding (quenchToTarget in frame.hlsl): 0 display values, 1 linear for sRGB formats, 2 HDR linear.
         const float targetMode = hdrOut ? 2.0f : isSrgb(outFormat) ? 1.0f : 0.0f;
         const HdrKnee knee = hdrKnee(settings.toneCurve);
@@ -1536,6 +1549,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.end();
             }
         }
+        commands.endTiming();
     }
     commands.popDebugGroup();
 

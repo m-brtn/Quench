@@ -54,6 +54,12 @@ struct PerfRegion {
     std::vector<double> frameMs;
     std::vector<double> cpuMs;
     std::vector<double> gpuMs;
+    // GPU busy time per timed range (FrameStats::gpuPasses), by name in the order first seen; per frame the sum of the
+    // top-level ranges, the time they span together and its share of the frame's GPU time.
+    std::vector<std::pair<std::string, std::vector<double>>> passMs;
+    std::vector<double> passSumMs;
+    std::vector<double> passSpanMs;
+    std::vector<double> passShare;
 };
 
 // Multi-frame scenario input (tap, click, touch): what the next frames still have to send.

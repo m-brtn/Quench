@@ -30,6 +30,7 @@ QUENCH_TEST(options_engine_flags) {
     CHECK(options->frameWidth == 1280 && options->frameHeight == 720, "%dx%d", options->frameWidth,
           options->frameHeight);
     CHECK(options->gpuDriver == "vulkan", "%s", options->gpuDriver.c_str());
+    CHECK(!options->gpuBackend, "no backend given: AppDesc's");
     CHECK(options->gpuDebug, "gpu debug");
     CHECK(options->presentMode == gpu::PresentMode::Mailbox, "present mode");
     CHECK(options->deterministic(), "script and capture runs are deterministic");
@@ -71,6 +72,9 @@ QUENCH_TEST(options_errors) {
     CHECK(!parse({"--window", "0x600"}).ok(), "zero width");
     CHECK(!parse({"--frame-size", "1280x720x2"}).ok(), "three numbers");
     CHECK(!parse({"--present-mode", "fast"}).ok(), "unknown present mode");
+    CHECK(parse({"--gpu-backend", "metal"})->gpuBackend == gpu::Backend::Metal, "--gpu-backend metal");
+    CHECK(parse({"--gpu-backend=sdl"})->gpuBackend == gpu::Backend::SdlGpu, "--gpu-backend=sdl");
+    CHECK(!parse({"--gpu-backend", "vulkan"}).ok(), "unknown backend");
     CHECK(!parse({"--capture="}).ok(), "empty path");
     CHECK(parse({"--version"})->printVersion, "--version");
     CHECK(parse({"--help"})->printHelp, "--help");
