@@ -25,6 +25,16 @@
 // surface_shadow_fs:fragment and surface_transmittance_fs:fragment and pass them as SurfaceDesc::shadowFragmentShader
 // and transmittanceShader, so that their holes and opacity are the surface's own (without them the standard surface's
 // opacity is used). There, QuenchSurfaceInput::view points toward the sun and pixel is the shadow map texel.
+//
+// Optional: the entry surface_basic_fs:fragment, passed as SurfaceDesc::basicFragmentShader, is surface_fs without
+// the area lights and anisotropy (QUENCH_SURFACE_FULL is 0 in it); the renderer draws with it in frames without area
+// lights and for materials without anisotropy, which then pay nothing for those paths.
+
+#if defined(QUENCH_ENTRY_surface_basic_fs)
+#define QUENCH_SURFACE_FULL 0
+#else
+#define QUENCH_SURFACE_FULL 1
+#endif
 
 #include "quench/AreaLights.hlsli"
 #include "quench/Brdf.hlsli"
@@ -156,12 +166,16 @@ QuenchSurface quenchStandardSurface(QuenchSurfaceInput i) {
     }
     s.emissive = quenchMaterial.emissive.rgb * quenchTexture3.Sample(quenchSampler3, i.uv).rgb;
     s.occlusion = 1.0;
-    s.anisotropy = quenchMaterial.shading.x;
     s.anisotropyDirection = i.tangent.xyz;
+#if QUENCH_SURFACE_FULL
+    s.anisotropy = quenchMaterial.shading.x;
     [branch] if (s.anisotropy > 0.0) {
         const float3 B = cross(i.normal, i.tangent.xyz) * i.tangent.w;
         s.anisotropyDirection = i.tangent.xyz * quenchMaterial.shading.y + B * quenchMaterial.shading.z;
     }
+#else
+    s.anisotropy = 0.0;
+#endif
     return s;
 }
 
@@ -185,12 +199,14 @@ float3 quenchDirectLight(QuenchSurface s, float3 V, float3 L, float3 E) {
     const float3 F0 = lerp(((float3)(0.04)), s.albedo, s.metallic);
     const float3 F = fresnelSchlick(F0, saturate(dot(V, H)));
     const float3 kd = (1.0 - F) * (1.0 - s.metallic);
+#if QUENCH_SURFACE_FULL
     [branch] if (s.anisotropy > 0.0) {
         float3 T, B;
         ggxAnisotropicFrame(N, s.anisotropyDirection, T, B);
         const float spec = ggxSpecAnisotropic(N, T, B, V, L, ggxAnisotropicAlpha(s.roughness, s.anisotropy));
         return (kd * s.albedo / QUENCH_PI + F * spec) * E * NdotL;
     }
+#endif
     return (kd * s.albedo / QUENCH_PI + F * ggxSpec(NdotH, NdotV, NdotL, s.roughness)) * E * NdotL;
 }
 
@@ -198,13 +214,16 @@ float3 quenchDirectLight(QuenchSurface s, float3 V, float3 L, float3 E) {
 // a reflection blurred toward the ambient with roughness (TrailForge's shadeSplitEnv without its game terms). The
 // shape of an area light (MaterialUniforms::shading.w) shows its radiance only, on its emitting faces.
 float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
+#if QUENCH_SURFACE_FULL
     [branch] if (quenchMaterial.shading.w > 0.5) return i.front || quenchMaterial.shading.w > 1.5 ? s.emissive : 0.0;
+#endif
     const float3 V = i.view;
     const float3 N = s.normal;
     const float NdotV = max(dot(N, V), 1e-3);
     // An anisotropic lobe reflects the sky and the area lights around its bent normal, with the mean roughness.
     float3 lobeNormal = N;
     float lobeRoughness = s.roughness;
+#if QUENCH_SURFACE_FULL
     [branch] if (s.anisotropy > 0.0) {
         float3 T, B;
         ggxAnisotropicFrame(N, s.anisotropyDirection, T, B);
@@ -212,6 +231,7 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
         const float2 alpha = ggxAnisotropicAlpha(s.roughness, s.anisotropy);
         lobeRoughness = sqrt(sqrt(alpha.x * alpha.y));
     }
+#endif
     float shadow = 1.0;
     float3 color = float3(0.0, 0.0, 0.0);
     const uint rayTraced = uint(quenchFrame.options.w);
@@ -244,7 +264,9 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     for (int k = 0; k < lights; ++k) {
         const LocalLight light = quenchLights.lights[k];
         const int type = int(light.color.w);
+#if QUENCH_SURFACE_FULL
         if (type >= QUENCH_LIGHT_RECT) continue;
+#endif
         float3 L = -light.direction.xyz;
         float attenuation = 1.0;
         if (type != 0) {
@@ -268,6 +290,7 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
         if (attenuation > 0.0) color += quenchDirectLight(s, V, L, light.color.rgb * attenuation);
     }
     // The area lights in a loop of their own, so that the LTC state does not add to the registers of the punctual loop.
+#if QUENCH_SURFACE_FULL
     [branch] if (quenchLights.count.y > 0.0) {
         const QuenchLtc ltc = quenchLtcAt(quenchAreaTable, N, lobeNormal, V, lobeRoughness, s.albedo, s.metallic);
         for (int k = 0; k < lights; ++k) {
@@ -281,6 +304,7 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
             if (a > 0.0) color += quenchAreaLight(light, i.world, ltc) * a;
         }
     }
+#endif
     const float3 F0 = lerp(((float3)(0.04)), s.albedo, s.metallic);
     const float2 screenUv = i.pixel * quenchFrame.screen.zw;
     // The indirect light: traced per pixel (it has its own occlusion), the probe grid, or the sky's ambient.

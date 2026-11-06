@@ -106,8 +106,8 @@ asset hot reload on a device (stage 6 remaining work), browser audio, HRTF, reve
 work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
 work), the native backend as the default, the `accel` timing split into `blas` / `tlas`, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
-ray tracing (stage 9 and 11 remaining work), surface shader variants without the area light and anisotropy paths
-or shadows of area lights without ray tracing (stage 12 remaining work) yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
+ray tracing (stage 9 and 11 remaining work) or shadows of area lights without ray tracing (stage 12 remaining work)
+yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is
 built, `docs/architecture.md` the design with the native backend and ray tracing as built; the rest of `docs/` is

@@ -41,7 +41,7 @@ constexpr ShaderStage kFragment = ShaderStage::Fragment;
 constexpr int kBloomLevels = 5;
 constexpr float kTaaCurrentWeight = 0.1f;
 constexpr float kShadowNormalOffset = 1.6f; // in shadow texels of the cascade
-constexpr std::uint32_t kVariants = 6;      // 3 blend modes x single / double sided
+constexpr std::uint32_t kVariants = 12;     // 3 blend modes x single / double sided x full / basic shading
 // The transmittance maps of translucent casters have 1 / kTransmittanceScale of the shadow map size per side: their
 // shadows are soft, and a full-size Rgba16Float array would take twice the depth array's memory.
 constexpr std::uint32_t kTransmittanceScale = 2;
@@ -86,7 +86,10 @@ constexpr std::uint32_t kSkinGroup = 64;     // [numthreads] of skin_cs
 constexpr std::uint32_t kNotSkinned = ~0u;   // RendererImpl::skinnedOffsets
 constexpr std::size_t kSkinTimingFences = 4; // skinning passes whose GPU time is still to be read
 
-std::uint32_t variantOf(BlendMode blend, bool doubleSided) { return std::uint32_t(blend) * 2 + (doubleSided ? 1 : 0); }
+// basic: the surface's basicFragment (no area lights, no anisotropy).
+std::uint32_t variantOf(BlendMode blend, bool doubleSided, bool basic) {
+    return std::uint32_t(blend) * 2 + (doubleSided ? 1 : 0) + (basic ? 6 : 0);
+}
 
 ShadowMode shadowModeOf(const MaterialDesc& m) {
     if (m.shadows != ShadowMode::Auto) return m.shadows;
@@ -111,6 +114,7 @@ gpu::RasterizerState shadowRasterizer(const gpu::Caps& caps) {
 struct SurfaceEntry {
     const ShaderBlob* vertex = nullptr;
     const ShaderBlob* fragment = nullptr;
+    const ShaderBlob* basicFragment = nullptr; // null: fragment draws the basic variants too
     const ShaderBlob* shadowVertex = nullptr;
     const ShaderBlob* shadowFragment = nullptr;        // null: the standard surface's
     const ShaderBlob* transmittanceFragment = nullptr; // null: the standard surface's
@@ -588,11 +592,13 @@ Result<void> RendererImpl::init() {
 
     standard.vertex = shaders::render_standard.find("surface_vs");
     standard.fragment = shaders::render_standard.find("surface_fs");
+    standard.basicFragment = shaders::render_standard.find("surface_basic_fs");
     standard.shadowFragment = shaders::render_standard.find("surface_shadow_fs");
     standard.transmittanceFragment = shaders::render_standard.find("surface_transmittance_fs");
     standard.gbufferFragment = shaders::render_standard.find("surface_gbuffer_fs");
     standard.name = "standard";
-    if (!surfacePipeline(standard, variantOf(BlendMode::Opaque, false)))
+    if (!surfacePipeline(standard, variantOf(BlendMode::Opaque, false, false)) ||
+        !surfacePipeline(standard, variantOf(BlendMode::Opaque, false, true)))
         return Error{"render: the standard surface pipeline failed (logged)"};
     applySettings();
     log::info("render",
@@ -671,15 +677,16 @@ void RendererImpl::applySettings() {
 const gpu::GraphicsPipeline* RendererImpl::surfacePipeline(SurfaceEntry& surface, std::uint32_t variant) {
     if (surface.pipelines[variant]) return &surface.pipelines[variant];
     if (surface.failed[variant]) return nullptr;
-    const auto blend = BlendMode(variant / 2);
+    const auto blend = BlendMode(variant % 6 / 2);
     const bool doubleSided = variant % 2 != 0;
+    const bool basic = variant >= 6 && surface.basicFragment;
     gpu::ColorTargetDesc color{hdrFormat};
     if (blend == BlendMode::AlphaBlend) color.blend = gpu::BlendState::alpha();
     if (blend == BlendMode::Additive) color.blend = gpu::BlendState::additive();
     const std::string name = std::format("surface {} ({})", surface.name, variant);
     Result<gpu::GraphicsPipeline> p = createPipeline({
         .vertexShader = surface.vertex,
-        .fragmentShader = surface.fragment,
+        .fragmentShader = basic ? surface.basicFragment : surface.fragment,
         .vertexBuffers = {&kVertexLayout, 1},
         .vertexAttributes = kVertexAttributes,
         .rasterizer = {.cull = doubleSided ? gpu::CullMode::None : gpu::CullMode::Back},
@@ -1543,7 +1550,9 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         const bool needNormal = inView || (cascades > 0 && inst->desc.castsShadows);
         if (needNormal) normalMatrices[i] = glm::transpose(glm::inverse(model));
         if (inView) {
-            const std::uint32_t variant = variantOf(m.blend, m.doubleSided);
+            const bool basic =
+                areaCount == 0 && !(m.anisotropy > 0.0f) && material->light == 0 && surface->basicFragment;
+            const std::uint32_t variant = variantOf(m.blend, m.doubleSided, basic);
             const gpu::GraphicsPipeline* pipeline = surfacePipeline(*surface, variant);
             if (pipeline) {
                 const bool skinnedHere = skinnedOffset(*inst, i, *mesh) != kNotSkinned;
@@ -2238,6 +2247,7 @@ Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
     const std::string name(desc.name.empty() ? std::string_view("surface") : desc.name);
     if (!desc.vertexShader || !desc.fragmentShader || desc.vertexShader->stage != ShaderStage::Vertex ||
         desc.fragmentShader->stage != ShaderStage::Fragment ||
+        (desc.basicFragmentShader && desc.basicFragmentShader->stage != ShaderStage::Fragment) ||
         (desc.shadowVertexShader && desc.shadowVertexShader->stage != ShaderStage::Vertex) ||
         (desc.shadowFragmentShader && desc.shadowFragmentShader->stage != ShaderStage::Fragment) ||
         (desc.transmittanceShader && desc.transmittanceShader->stage != ShaderStage::Fragment) ||
@@ -2246,12 +2256,14 @@ Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
     detail::SurfaceEntry entry;
     entry.vertex = desc.vertexShader;
     entry.fragment = desc.fragmentShader;
+    entry.basicFragment = desc.basicFragmentShader;
     entry.shadowVertex = desc.shadowVertexShader;
     entry.shadowFragment = desc.shadowFragmentShader;
     entry.transmittanceFragment = desc.transmittanceShader;
     entry.gbufferFragment = desc.gbufferShader;
     entry.name = name;
-    if (!m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false)))
+    if (!m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false, false)) ||
+        (entry.basicFragment && !m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false, true))))
         return Error{std::format("surface '{}': the pipeline could not be created (logged)", name)};
     return m_impl->surfaces.add(std::move(entry));
 }

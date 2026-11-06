@@ -97,6 +97,7 @@ Result<void> DemoGame::init(App& app) {
     Result<render::SurfaceId> surface = m_renderer->addSurface({
         .vertexShader = shaders::demo_checker.find("surface_vs"),
         .fragmentShader = shaders::demo_checker.find("surface_fs"),
+        .basicFragmentShader = shaders::demo_checker.find("surface_basic_fs"),
         .name = "checker",
     });
     if (surface)

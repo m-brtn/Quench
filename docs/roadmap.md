@@ -410,8 +410,9 @@ BRDF; own procedural content only. No release (the version stays 0.9.0); "Change
   Pro about 0.05 ms of GPU and CPU time; the iPhone 17 held 60 Hz in motion at the nominal thermal state on both
   backends, after phones without ray tracing went to three quarters of the size
   ([Performance](performance.md#the-tunnel-in-motion)). A check mode item (33 in all).
-- [ ] Surface shader variants without the area light and anisotropy paths, for frames and materials that do not
-  use them (the 5 to 8 % above); custom surface shaders would compile them too.
+- [x] Surface shader variants without the area light and anisotropy paths, for frames and materials that do not
+  use them (`surface_basic_fs`, `SurfaceDesc::basicFragmentShader`; after stage 12, 2026-11-06): such a frame is
+  back to before stage 12 within 0.6% ([Performance](performance.md#the-tunnel)).
 - [ ] Look at the tunnel in motion and on the iPhone's screen (the lamps' shading and shadows, the brushed
   aluminium, the puddle): by the user (the demo's check mode).
 - [ ] The tunnel on the iPhone 18 Pro Max.
@@ -442,8 +443,8 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    device (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
    dual quaternion skinning and blend shapes (stage 8); the `accel` timing split into `blas` / `tlas`, normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
-   devices without ray tracing, a denser or cascaded probe grid (stage 11); surface shader variants without the
-   area light and anisotropy paths, shadows of area lights without ray tracing, normal maps in ray hits (stage 12).
+   devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray
+   tracing, normal maps in ray hits (stage 12).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. An

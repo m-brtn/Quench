@@ -180,8 +180,11 @@ struct ActiveEffects {
 
 // A surface shader built with quench_add_shaders() from a file that includes quench/SurfaceEntries.hlsli.
 struct SurfaceDesc {
-    const ShaderBlob* vertexShader = nullptr;       // surface_vs
-    const ShaderBlob* fragmentShader = nullptr;     // surface_fs
+    const ShaderBlob* vertexShader = nullptr;   // surface_vs
+    const ShaderBlob* fragmentShader = nullptr; // surface_fs
+    // surface_basic_fs: surface_fs without the area lights and anisotropy, drawn in frames without area lights for
+    // materials without anisotropy. Without it surface_fs draws everything, paying for those paths in every pixel.
+    const ShaderBlob* basicFragmentShader = nullptr;
     const ShaderBlob* shadowVertexShader = nullptr; // surface_shadow_vs, for surfaces with QUENCH_SURFACE_VERTEX
     // The shadows of cut-out and translucent materials of this surface: surface_shadow_fs and
     // surface_transmittance_fs. Without them those shadows take the standard surface's opacity (base color alpha

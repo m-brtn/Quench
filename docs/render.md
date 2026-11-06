@@ -438,13 +438,15 @@ QuenchSurface checker(QuenchSurfaceInput i) {
 ```
 
 ```cmake
-quench_add_shaders(my_game NAME my_surface SOURCE shaders/checker.hlsl ENTRIES surface_vs:vertex surface_fs:fragment)
+quench_add_shaders(my_game NAME my_surface SOURCE shaders/checker.hlsl
+    ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment)
 ```
 
 ```cpp
 const render::SurfaceId checker = *renderer.addSurface({
     .vertexShader = quench::shaders::my_surface.find("surface_vs"),
-    .fragmentShader = quench::shaders::my_surface.find("surface_fs"), .name = "checker"});
+    .fragmentShader = quench::shaders::my_surface.find("surface_fs"),
+    .basicFragmentShader = quench::shaders::my_surface.find("surface_basic_fs"), .name = "checker"});
 scene.addMaterial({.surface = checker, .params = {...}});
 ```
 
@@ -467,8 +469,15 @@ scene.addMaterial({.surface = checker, .params = {...}});
   surface's opacity (base color alpha, texture 0 alpha, vertex alpha). In these entries `QuenchSurfaceInput::view`
   points toward the sun and `pixel` is the shadow map texel; `surface_vs` projects with the cascade there
   (`DrawUniforms::info.z`).
-- `addSurface` creates the opaque pipeline at once, so a shader that does not fit the interface fails there with an
-  error, not at the first draw.
+- `surface_basic_fs:fragment`, passed as `SurfaceDesc::basicFragmentShader` (since 2026-11-06, after stage 12), is
+  `surface_fs` compiled without the area lights, the anisotropic lobe and the area light shapes (`QUENCH_SURFACE_FULL`
+  is 0 in it). The renderer draws with it in frames without area lights, for materials without anisotropy that are
+  not an area light's shape; elsewhere with `surface_fs`. The standard surface and the demo's checker have it.
+  Without it a surface draws everything with `surface_fs` and pays for those paths in every pixel (5 to 8% of the M4
+  Pro's unpaced frame rate at 1080p in the demo's sections; with it within 0.6% of before stage 12;
+  [Performance](performance.md#the-tunnel)).
+- `addSurface` creates the opaque pipeline at once (and the basic one), so a shader that does not fit the interface
+  fails there with an error, not at the first draw.
 
 ### Shader library and shared uniforms
 

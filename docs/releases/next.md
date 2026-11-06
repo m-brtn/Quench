@@ -17,8 +17,10 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   12 the tunnel in motion: moving and turning lamps with their fixtures, a camera that drives a loop through the
   tunnel, a pause and a free camera; phones without ray tracing render the tunnel at three quarters of the size
   ([Performance](../performance.md#the-tunnel-in-motion)).
-- The standard surface shader is 5 to 8 % slower in frames that use neither (unpaced, M4 Pro;
-  [Performance](../performance.md#the-tunnel)).
+- Surface shader variants: `surface_basic_fs`, the surface shader without the area light and anisotropy paths,
+  draws materials without anisotropy in frames without area lights. Without it the standard surface was 5 to 8 %
+  slower in such frames than before stage 12 (unpaced, M4 Pro); with it within 0.6 %
+  ([Performance](../performance.md#the-tunnel)).
 - `RenderStats::localShadowChanges`: the lights that took another light's ray-traced shadow channel this frame.
 - Offscreen perf regions also time GPU-bound frames on the GPU (before, they had no GPU sample and no times per
   range); unpaced offscreen A/B runs of GPU costs need no window now.
@@ -61,7 +63,9 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   holds the area lights' table: a custom surface must not use it. `QuenchSurface` has two new fields,
   `anisotropy` and `anisotropyDirection`: a custom surface that fills a `QuenchSurface` itself sets `anisotropy` to
   0 (or its own value) and `anisotropyDirection` to its tangent. A custom surface gets the area lights without
-  changes.
+  changes. It also builds `surface_basic_fs:fragment` and passes it as **`SurfaceDesc::basicFragmentShader`**
+  (new, after `fragmentShader`) to skip those paths where a frame does not need them; `QUENCH_SURFACE_FULL` is 0
+  in that entry, for code of its own around area lights or anisotropy. Without it nothing changes.
 - **`app::PerfReport::gpuSamples`** (and the perf line's sample count) is the number of frames whose GPU time was
   read, a few less than `frames` (the frames in flight at the end), where it equalled `frames` before; GPU times of
   a region come only from its own frames.

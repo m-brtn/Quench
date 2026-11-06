@@ -195,9 +195,29 @@ The experiments compiled the paths out (anisotropy fixed at 0, the area light bl
 kept. About half of the remaining cost is the anisotropic lobe, the rest the area light block; with neither, the
 frame is back to before within 0.4% (sky, post) and 1.7% (materials). The same holds on SDL GPU: the demo
 benchmark offscreen, two runs each, alternated, 6 to 8% fewer frames in every section (before `9b024a4`). At 1080p
-this is 0.08 to 0.14 ms per frame on the M4 Pro; with vsync the frame times are the display's in both builds. Surface
-shader variants without these paths would take it back; they are not built (custom surface shaders would have to
-compile the variants too).
+this is 0.08 to 0.14 ms per frame on the M4 Pro; with vsync the frame times are the display's in both builds.
+
+**Surface shader variants** (2026-11-06, after stage 12): `surface_basic_fs`, the surface shader without the area
+lights, the anisotropic lobe and the area light shapes, draws every material without anisotropy in frames without
+area lights ([Render module](render.md#surface-shaders)). Frames in 4 s, unpaced offscreen at 1920 x 1080
+(`--present-mode immediate`), means of three rounds with the builds alternated: first `1ae3117` (before stage 12)
+against stage 12 without the variants (22:50), then `1ae3117` against the variants (23:00):
+
+| Section | before | without variants | before | with variants |
+|---|---|---|---|---|
+| SDL GPU: materials | 2435 | 2250 (-7.6%) | 2433 | 2421 (-0.5%) |
+| SDL GPU: sky | 2943 | 2779 (-5.6%) | 2946 | 2927 (-0.6%) |
+| SDL GPU: post | 3103 | 2931 (-5.6%) | 3104 | 3106 (+0.0%) |
+| SDL GPU: shadows | 2997 | 2808 (-6.3%) | 2994 | 2993 (-0.0%) |
+| native: materials | 2337 | 2151 (-8.0%) | 2375 | 2370 (-0.2%) |
+| native: sky | 2774 | 2670 (-3.8%) | 2914 | 2909 (-0.2%) |
+| native: post | 2940 | 2786 (-5.2%) | 3034 | 3040 (+0.2%) |
+| native: shadows | 2735 | 2611 (-4.5%) | 2942 | 2942 (-0.0%) |
+
+The native rounds vary more than SDL GPU's (the first run's "before" rounds by up to 4%). The native means with
+variants are of two rounds: the third ran 3 to 6% slower in every section, the shadows section too, whose shading
+the variants do not change, and the "before" round just ahead of it was 3% slower in shadows (with it: materials
+-2.3%, shadows -1.1%). A frame without area lights and anisotropy is back to before within 0.6%.
 
 **The CPU (the 5% rule).** The demo benchmark's CPU times on SDL GPU, same offscreen A/B (11 sections, the sum of
 the sections' values; per section the runs of one build differ by up to 2 times): CPU p50 5.20 ms before, 5.25 ms
