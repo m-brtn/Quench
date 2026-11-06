@@ -36,9 +36,10 @@ ray query entries through DXC built from source) and the engine shader library i
 shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain compositions for HDR and compute;
 beside it, opt-in with `--gpu-backend metal`, a native Metal backend with GPU timestamps per pass, acceleration
 structures and ray queries, and MetalFX upscaling), `quench_app` and `quench_main` (SDL main callbacks,
-the game interface, input actions, ImGui, common flags (`--orientation`, `--user-dir` among them), scenarios with
-points in window points, percent or names a game gives (`Game::scenarioPoint`), HDR display output (`--hdr
-auto|on|off`, an HDR tone curve up to the display's headroom, read every frame on Apple platforms; the UI at paper
+the game interface, input actions, ImGui, common flags (`--orientation`, `--user-dir` among them), offscreen
+automated runs (no window on the screen, no input from real devices, `--onscreen` to show one), scenarios with
+parts (`include`) and points in window points, percent or names a game gives (`Game::scenarioPoint`), HDR display
+output (`--hdr auto|on|off`, an HDR tone curve up to the display's headroom, read every frame on Apple platforms; the UI at paper
 white; SDR captures), captures, perf regions a game starts (`App::beginPerf` / `endPerf`), the process's memory
 footprint, a relaunch with other arguments on desktops), `quench_render` (the
 retained scene: meshes, textures, materials, instances and lights by handle; the standard frame of cascaded sun
@@ -56,7 +57,8 @@ cross-fades, events, root motion, masked and additive layers, two-bone and aim I
 attachments, the update in parallel on the job system) and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons and clips).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (finished in stage 10: a section per feature,
-each in its own file with a scripted check and golden captures; one panel layout and one camera control for every
+each in its own file with a scripted check and golden captures of the scene, checked in one batch run per GPU
+backend; one panel layout and one camera control for every
 section; a wide layout and a compact one for phones with touch-sized controls; a tour, a check mode over the checks
 waiting for a person (`checks.json` in the user directory, kept across launches) and a benchmark of every section
 (`benchmark.json`); About, versioned settings; `tools/package_demo.sh` packages it into `dist/`); `templates/game` and
@@ -126,83 +128,102 @@ M4 Pro, about 365 MB of scratch space while it builds, 27 MB kept in `~/Library/
 cache to save space, the next configure builds it again; `docs/dependencies.md`, "Added in stage 9").
 
 ```sh
+tools/check.sh quick              # a small change: format, incremental release build, ctest of the touched labels
+tools/check.sh full               # shared foundations, the end of a stage; tools/check.sh release adds the package
 cmake --preset debug && cmake --build --preset debug && ctest --preset debug -j8   # also release, asan, tsan
 cmake --preset headless && cmake --build --preset headless && ctest --preset headless -j8   # no SDL, no GPU
 tools/format.sh --check            # tools/format.sh without arguments formats in place
 # iOS: the shaders and assets are compiled by a macOS quench_shaderc and quench_cook from the host-tools preset
 cmake --preset host-tools && cmake --build --preset host-tools
 cmake --preset ios-sim-release && cmake --build --preset ios-sim-release        # or ios-device-release (libraries)
-# Tests in the iOS Simulator, run through `xcrun simctl spawn booted` (build and ctest need a booted Simulator)
+# Tests in the iOS Simulator, run through `xcrun simctl spawn booted` (build and ctest need a booted Simulator;
+# `simctl boot` starts it without the Simulator app's window)
 xcrun simctl boot "iPhone 18 Pro Max"
 cmake --preset ios-sim-tests && cmake --build --preset ios-sim-tests && ctest --preset ios-sim-tests -j4
 # Web check: headless tests as WebAssembly under Node.js, single-threaded (needs host-tools and Homebrew's
 # emscripten; the preset points EMSDK_PYTHON at Homebrew's python3, Xcode's is too old)
 emcmake cmake --preset wasm-node && cmake --build --preset wasm-node && ctest --preset wasm-node -j8
-# The sample: flags with --help; the benchmark (docs/performance.md) in Release with vsync; automated runs make no
-# sound (--audio-device null or --no-audio)
-build/release/examples/hello/hello --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt \
- --audio-device null
+# The sample: flags with --help; the benchmark (docs/performance.md) in Release with vsync, in a window on the screen
+build/release/examples/hello/hello --onscreen --frame-size 1920x1080 \
+    --script examples/hello/scenarios/benchmark.txt --audio-device null
 # iPhone: an Xcode project with Automatic signing; install and launch with devicectl (docs/app.md, "iOS runs").
 # The user's paid team (Xcode's accounts) with plain bundle ids; a free Personal Team: 3 apps, 7-day profiles
 cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id> -DQUENCH_IOS_BUNDLE_ID_SUFFIX=
 xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_device_tests -configuration Release \
     -destination id=<device udid> -allowProvisioningUpdates build                  # also -scheme quench_hello
-# A new game from templates/game, built against this checkout and started once
+# A new game from templates/game, built against this checkout and started once (offscreen)
 python3 tools/new_game.py "My Game" ../my-game
 # The engine demo (docs/demo.md), one section or the menu; its package for dist/ at the end of a stage
 build/release/examples/demo/quench-demo --section shadows   # --gpu-backend metal: the native Metal backend
-# Ray tracing and MetalFX options one by one on the native backend (docs/performance.md)
-build/release/examples/demo/quench-demo --frame-size 1920x1080 --gpu-backend metal --audio-device null \
+# Ray tracing and MetalFX options one by one on the native backend (docs/performance.md), on the screen
+build/release/examples/demo/quench-demo --onscreen --frame-size 1920x1080 --gpu-backend metal --audio-device null \
     --script examples/demo/scenarios/raytracing_benchmark.txt
 tools/package_demo.sh                    # --ios also builds a development-signed .ipa (ios-xcode, not installed)
 # The asset cooker (docs/assets.md); games and the demo cook at build time through quench_cook_assets()
 build/debug/quench_cook --help
 ```
 
-Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...). A test
-executable runs one case by name (`build/debug/tests/quench_core_tests json_round_trip`), all cases without
-arguments, and lists them with `--list`. A case that cannot run in a build (threads in the single-threaded web build)
-calls `QUENCH_SKIP` and is reported as skipped, not passed.
+Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...) with its
+module's label (`ctest -L animation`; labels: core, physics, assets, audio, animation, cook, gpu, app, render, hello,
+demo). A test executable runs one case by name (`build/debug/tests/quench_core_tests json_round_trip`), all cases
+without arguments, and lists them with `--list`. A case that cannot run in a build (threads in the single-threaded
+web build) calls `QUENCH_SKIP` and is reported as skipped, not passed.
+
+**Automated runs show nothing on the screen** (user decision, 2026-11-06): app runs with `--script`, `--capture` or
+`--quit-after` are offscreen on desktops (a hidden window, frames rendered offscreen, no Dock icon, also as a bundled
+app, no focus), take no input from real devices and make no sound (`docs/app.md`, "Offscreen runs"); test
+executables create hidden windows only. Never start a run that shows a window (`--onscreen`, the benchmarks,
+`QUENCH_WINDOW_TESTS=1`) without telling the user first.
 
 GPU tests (`quench_gpu_device_tests`) render small offscreen targets and check the pixels they read back. On the Mac
 every case runs twice: `gpu_device.*` on the default driver (Metal, with the Metal API validation layer,
 `MTL_DEBUG_LAYER=1`) and `gpu_vulkan.*` on Vulkan through MoltenVK (registered when Homebrew's `vulkan-loader` is
 found; with `vulkan-validationlayers` installed, a validation error or warning in the output fails the case). With
 the driver named in `QUENCH_TEST_GPU_DRIVER` (set by CTest) a missing device fails the case instead of
-skipping it. `gpu_device.window_present` opens a small window for a moment; it is skipped in the iOS Simulator test
-executables (no app lifecycle there) and runs in the iPhone test app, which runs every case as `SDL_main`. On Apple
-platforms the GPU device and render cases run a third time on the native Metal backend (`gpu_metal_native.*`,
-`render_metal_native.*`: `QUENCH_GPU_BACKEND=metal` with `MTL_DEBUG_LAYER=1`; also in `ios-sim-tests`).
+skipping it. On Apple platforms the GPU device and render cases run a third time on the native Metal backend
+(`gpu_metal_native.*`, `render_metal_native.*`: `QUENCH_GPU_BACKEND=metal` with `MTL_DEBUG_LAYER=1`; also in
+`ios-sim-tests`). The window cases (`window_present`, `window_swapchain_compositions`) need a window on the screen
+for a swapchain: they are skipped unless `QUENCH_WINDOW_TESTS=1` is set (never in a default run or in
+`tools/check.sh`), skipped in the iOS Simulator test executables (no app lifecycle there), and run in the iPhone test
+app, which runs every case as `SDL_main`.
 
-The sample's checks are CTest tests too: `hello_metal` and `hello_vulkan` render it at 1280 x 720 and compare the
-capture (`build/<preset>/tests/captures/<test>.png`) with `tests/golden/<backend>/<device>/hello.png`;
-`hello_input` runs `examples/hello/scenarios/input.txt` (scripted keyboard, gamepad and touch input). Flags,
-scenario commands, captures and golden images: `docs/app.md`. The demo's checks are the same kind:
-`demo_<section>_metal` and `demo_<section>_vulkan` run `examples/demo/scenarios/<section>.txt` and compare the
-capture at its end with `tests/golden/<backend>/<device>/demo_<section>.png`; `demo_menu` checks the menu
-navigation (`docs/demo.md`). The renderer's own cases are `render.*` and `render_vulkan.*`. The native Metal backend
-(`--gpu-backend metal`, not the default) is compared with the same `metal` golden images: `hello_metal_native`,
-`demo_animation_metal_native` and `demo_hdr_on_metal_native` (a subset of the demo, for the wall time; a change to
-`src/gpu/metal/` also runs every demo section with `--gpu-backend metal` against its golden image). The ray tracing
-section renders differently where ray tracing runs: `demo_raytracing_metal_native` has its own golden image
-(`demo_raytracing_native.png`), and `demo_raytracing_metal` and `demo_raytracing_vulkan` check the fallbacks
-(`demo_raytracing.png`).
+The apps' checks run in batches (`docs/app.md`, "Captures and golden images"): one offscreen process per GPU backend
+runs every check of an app as a part of one scenario (`include`), and a CTest test per part checks the part's result
+and compares its capture with `tests/golden/<backend>/<device>/<name>.png`. Hello: `hello_batch_<backend>` with
+`hello_frame_*` (the frame at 1 s, `hello.png`) and `hello_input_*`; the demo: `demo_batch_<backend>` with
+`demo_<part>_<backend>` per section, the layouts, the menu, the mix checks and the switch cycle (`docs/demo.md`,
+"Checks"). Backends: `metal` (SDL GPU's Metal driver), `metal_native` (the native Metal backend, compared with the
+same `metal` images except `demo_raytracing_native.png`, where ray tracing runs) and `vulkan` (through MoltenVK). The
+section captures show the scene without the demo's windows; `demo_ui` and the compact layouts show the UI. Batches
+and captures run in Release builds only (`QUENCH_TEST_CAPTURES`); Debug and the sanitizer builds run the unit and
+headless tests and one demo smoke run. The renderer's own cases are `render.*` and `render_vulkan.*`.
 
-All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
+All checks run locally; there is no CI (user decision, 2026-11-05). The gates are proportional to the change (user
+decision, 2026-11-06); `tools/check.sh` runs them, offscreen:
 
-- **Every code change:** build `debug` and `release`, run `ctest` for both (it includes the capture checks of the
-  sample and the demo against their golden images), `tools/format.sh --check`, and look at the captures in
-  `build/debug/tests/captures/` (do not assume).
-- **Core, job system, assets or anything threaded:** also `ctest` under the `asan` preset (AddressSanitizer and
-  UndefinedBehaviorSanitizer); job system and threading changes also under `tsan` (ThreadSanitizer).
-- **Headless modules (core, physics, assets, animation, navigation, audio mixer):** also the `wasm-node` web check.
-- **Platform, GPU or app code:** also build for iOS and run `ios-sim-tests`; when the change can behave differently
-  on the device, run the device test app and the sample on the iPhone (`ios-xcode`, `devicectl`) after asking the
-  user, and ask the user to check what is on the screen.
-- **`cmake/QuenchGame.cmake`, the template or anything a game's build uses:** also `tools/new_game.py` into a
-  temporary directory: it builds the new game against this checkout and starts it.
-- **Rendering or frame-time-sensitive code:** run the benchmark and compare with the numbers before the change (see
-  "Verification").
+- **A change inside a module, an example or a test (the default): `tools/check.sh quick`.** The format of the
+  changed C and C++ files, an incremental build of `release` and `ctest -L` for the labels the changed files map to
+  (`tools/check.sh quick demo render` names them; `--preset debug` for assertions). Seconds, at most about a minute.
+  Look at a capture when its check fails or its golden image changes, not at all of them every time. Add the one step
+  that can break where the change can: `tools/check.sh step asan` or `step tsan` (threaded code), `step wasm` (a
+  headless module), `step ios` (platform code), `step new-game` (what a game's build uses: `cmake/QuenchGame.cmake`,
+  the template).
+- **Shared foundations (core, the job system and threads, the GPU layer, the app loop, the build and CMake) and the
+  end of a stage: `tools/check.sh full`.** format; `debug`, `release`, `asan` and `tsan` (build and ctest each; the
+  captures of every backend in `release`); `wasm-node`; `host-tools`, `ios-sim-release` and `ios-sim-tests`;
+  `tools/new_game.py` into a temporary directory. `quick` says when a change touches a shared foundation.
+- **The end of a stage and a release: `tools/check.sh release`.** `full`, then `tools/package_demo.sh` (it reuses
+  the release ctest's demo checks). The stage adds its section to the demo (`examples/demo`, with its part in the
+  batches and golden captures for Metal and Vulkan through MoltenVK), and the package goes to `dist/` (user decision,
+  2026-11-05): Release, `dist/QuenchDemo-<version>-<shorthash>-macos.zip` with the app, `LICENSE` and
+  `THIRD_PARTY_LICENSES`; the script unzips the archive, starts the app once (offscreen) and saves a capture next to
+  it (look at it). `--ios` also builds a development-signed `.ipa` into `dist/QuenchDemo-<version>-<shorthash>-ios.zip`
+  (`ios-xcode`, signed by a paid team: `--team ID` or `QUENCH_IOS_TEAM`; it refuses a free Personal Team and installs
+  nothing). `dist/` is not committed; say in the devlog which files it holds.
+- **Code that can behave differently on the device:** also the device test app and the sample on the iPhone
+  (`ios-xcode`, `devicectl`) after asking the user, and ask the user to check what is on the screen.
+- **Rendering or frame-time-sensitive code:** the benchmark, compared with the numbers before the change (see
+  "Verification"); it runs in a window on the screen (`--onscreen`).
 - **The games are not built or tested in engine work** (user decision, 2026-11-05 21:34): neither
   `tools/check_games.sh` nor the games' own gates run unless the user asks. The engine is verified by its own tests,
   the samples and the demo. When asked: `tools/check_games.sh` builds every game against the local engine and checks
@@ -212,14 +233,6 @@ All checks run locally; there is no CI (user decision, 2026-11-05). Gates:
   `tools/scenarios/full_check.txt`; Ashfall: `debug` + `release`, `ctest`, the capture check in its `AGENTS.md`;
   captures compared before and after with `compare_captures.py`. Problems inside a game are not fixed in engine
   work.
-- **At the end of each stage:** the stage adds its section to the demo (`examples/demo`, with a scripted check and
-  golden captures for Metal and Vulkan through MoltenVK), and `tools/package_demo.sh` builds the demo into `dist/`
-  (user decision, 2026-11-05): Release, `dist/QuenchDemo-<version>-<shorthash>-macos.zip` with the app, `LICENSE`
-  and `THIRD_PARTY_LICENSES`; it runs the demo's checks, unzips the archive, starts the app once and saves a capture
-  next to it (look at it). `--ios` also builds a development-signed `.ipa` into
-  `dist/QuenchDemo-<version>-<shorthash>-ios.zip` (`ios-xcode`, signed by a paid team: `--team ID` or
-  `QUENCH_IOS_TEAM`; it refuses a free Personal Team and installs nothing). `dist/` is not committed; say in the
-  devlog which files it holds.
 
 ## Architecture rules
 
@@ -353,10 +366,9 @@ are built:
   in the devlog. References are per backend and device (Metal and Vulkan through MoltenVK on the Mac today). Two
   Metal runs of the same binary have been identical so far; TrailForge's captures differ slightly between runs, so
   identity claims about a game need a same-process A/B.
-- **Performance.** The sample's benchmark scenario (`examples/hello/scenarios/benchmark.txt`, a 10 s region in real
-  time, so the frame count follows the display) reports frame, CPU and GPU time (average and percentiles; GPU time per
-  frame, per pass later). Budgets
-  per device and how to compare runs: `docs/performance.md`. A change that makes the CPU median or 99th percentile
+- **Performance.** The sample's benchmark scenario (`examples/hello/scenarios/benchmark.txt` with `--onscreen`, a
+  10 s region in real time, so the frame count follows the display) reports frame, CPU and GPU time (average and
+  percentiles; GPU time per frame, per pass later). Budgets per device and how to compare runs: `docs/performance.md`. A change that makes the CPU median or 99th percentile
   more than 5% worse is explained in the devlog or not made. Timings drift between runs: compare before and after in
   the same session. iPhone numbers come from runs on the user's iPhone (launched through `devicectl` after asking the
   user, or by the user).
@@ -511,14 +523,15 @@ tools/assets/          make_demo_assets.py: writes the demo's procedural source 
 tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the icons of the sample and the demo
 tools/new_game.py      creates a game from templates/game
+tools/check.sh         the gates: quick (a small change), full, release, single steps
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
 tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a development-signed .ipa)
 tools/format.sh        clang-format over the C and C++ sources (--check)
 tests/                 harness/, core/ (job system included), physics/, assets/, audio/ (mixer, streams, decoders,
                        device; data/: CC0 test sounds), animation/, cook/ (and CookCli.cmake), gpu/ (shader tests;
                        GPU device tests and their shaders; RayTracingTests: acceleration structures, MetalFX), app/,
-                       render/ (scene, scene assets, skinning and frame tests), header check, RunCapture.cmake
-                       (capture checks); golden/ (reference captures)
+                       render/ (scene, scene assets, skinning and frame tests), header check, RunBatch.cmake
+                       and CheckPart.cmake (the apps' batch runs and their parts); golden/ (reference captures)
 docs/                  documentation (index docs/README.md): architecture, app shell, jobs, assets and the cook,
                        audio, animation, render module, engine demo, performance, platforms, dependencies,
                        migration, roadmap, releases/
