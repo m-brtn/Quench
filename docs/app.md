@@ -379,8 +379,10 @@ and Xcode looks at the folder (the demo ran on the iPhone with a mannequin of th
 rejected). Checked on 2026-11-06 after stage 12 (Xcode 27.2, CMake 4.4.4, the demo, `-target` and `-scheme` builds
 without signing): a changed plain asset and a new file in a cooked subfolder reached the bundle in the build that
 merged them, and a build without changes cooks, compiles and copies nothing (1.4 s, the targets' own script
-phases). The build right after one in which CMake regenerated the project (a changed `CMakeLists.txt`) runs the
-steps whose commands changed once more (all shaders of a target that got a new entry, and what includes them).
+phases). A build in which CMake regenerates the project (a changed `CMakeLists.txt`) still runs the old commands,
+so its app can be stale (a shader entry added in CMake was missing from it on 2026-11-06, and the app crashed at
+its first pipeline); the next build runs the new ones. After a CMake change, run `cmake --preset ios-xcode` before
+`xcodebuild` (`tools/package_demo.sh` does) or build twice.
 `tools/package_demo.sh` still builds `<target>_assets` first, in its own `xcodebuild`, and compares the bundle's
 `assets/` with the merged folder.
 
