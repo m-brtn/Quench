@@ -218,15 +218,25 @@ Result<ComputePipeline> Device::createComputePipeline(const ComputePipelineDesc&
 
 Result<AccelerationStructure> Device::createAccelerationStructure(const AccelerationStructureDesc& desc) {
     if (!m_impl->caps.rayTracing) return Error{std::format("no ray tracing on {}", m_impl->caps.deviceName)};
-    QUENCH_ASSERT(desc.level == AccelerationStructureLevel::Top ? desc.instanceCapacity > 0
-                                                                : desc.vertexCount > 0 && desc.triangleCount > 0,
+    QUENCH_ASSERT(desc.compactedSize == 0 || (desc.level == AccelerationStructureLevel::Bottom && !desc.allowRefit),
+                  "compactedSize is for a bottom level that receives a compacted copy, without refits");
+    QUENCH_ASSERT(desc.level == AccelerationStructureLevel::Top
+                      ? desc.instanceCapacity > 0
+                      : desc.compactedSize > 0 || (desc.vertexCount > 0 && desc.triangleCount > 0),
                   "empty acceleration structure");
     Result<void*> native = m_impl->createAccelerationStructure(desc);
     if (!native) return Error{native.error()};
     AccelerationStructure structure = adopt<AccelerationStructure>(m_impl.get(), *native);
-    Access::info(structure) = desc;
-    Access::info(structure).name = {};
+    Access::info(structure).desc = desc;
+    Access::info(structure).desc.name = {};
+    Access::info(structure).bytes = m_impl->accelerationStructureBytes(*native);
     return structure;
+}
+
+std::optional<std::uint32_t> Device::compactedSize(const AccelerationStructure& bottomLevel) const {
+    QUENCH_ASSERT(bottomLevel && bottomLevel.desc().level == AccelerationStructureLevel::Bottom,
+                  "compactedSize needs a bottom level");
+    return m_impl->compactedSize(Access::native(bottomLevel));
 }
 
 Result<Upscaler> Device::createUpscaler(const UpscalerDesc& desc) {

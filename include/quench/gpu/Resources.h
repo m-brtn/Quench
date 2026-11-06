@@ -78,6 +78,11 @@ struct PipelineInfo {
     std::uint32_t sampleCount = 1;
 };
 
+struct AccelerationStructureInfo {
+    AccelerationStructureDesc desc{};
+    std::uint64_t bytes = 0;
+};
+
 } // namespace detail
 
 class Texture : public detail::Resource<detail::Kind::Texture, TextureDesc> {
@@ -112,9 +117,12 @@ class Fence : public detail::Resource<detail::Kind::Fence, detail::NoInfo> {};
 
 // Geometry for ray queries (Caps::rayTracing), built and updated in an AccelerationStructurePass. A top level keeps
 // the bottom levels of its last build in use: they must live as long as it is bound.
-class AccelerationStructure : public detail::Resource<detail::Kind::AccelerationStructure, AccelerationStructureDesc> {
+class AccelerationStructure
+    : public detail::Resource<detail::Kind::AccelerationStructure, detail::AccelerationStructureInfo> {
 public:
-    const AccelerationStructureDesc& desc() const { return m_info; }
+    const AccelerationStructureDesc& desc() const { return m_info.desc; }
+    // The GPU memory it was allocated with, in bytes (memory statistics).
+    std::uint64_t bytes() const { return m_info.bytes; }
 };
 
 // Scales a frame to a larger output (Caps::spatialUpscaling, Caps::temporalUpscaling): CommandBuffer::upscale.

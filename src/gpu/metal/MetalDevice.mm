@@ -619,17 +619,23 @@ Result<void*> MetalDevice::createComputePipeline(const ComputePipelineDesc& desc
 
 Result<void*> MetalDevice::createAccelerationStructure(const AccelerationStructureDesc& desc) {
     @autoreleasepool {
-        MTLAccelerationStructureDescriptor* d = nil;
-        if (desc.level == AccelerationStructureLevel::Bottom) {
-            d = metal::bottomLevelDescriptor(nullptr, desc.triangleCount, desc.allowRefit);
-        } else {
-            MTLInstanceAccelerationStructureDescriptor* top = [MTLInstanceAccelerationStructureDescriptor descriptor];
-            top.instanceCount = desc.instanceCapacity;
-            top.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeUserID;
-            top.usage = desc.allowRefit ? MTLAccelerationStructureUsageRefit : MTLAccelerationStructureUsageNone;
-            d = top;
+        // The destination of a compacted copy: the size its query reported, no scratch (never built).
+        MTLAccelerationStructureSizes sizes{};
+        sizes.accelerationStructureSize = desc.compactedSize;
+        if (desc.compactedSize == 0) {
+            MTLAccelerationStructureDescriptor* d = nil;
+            if (desc.level == AccelerationStructureLevel::Bottom) {
+                d = metal::bottomLevelDescriptor(nullptr, desc.triangleCount, desc.allowRefit);
+            } else {
+                MTLInstanceAccelerationStructureDescriptor* top =
+                    [MTLInstanceAccelerationStructureDescriptor descriptor];
+                top.instanceCount = desc.instanceCapacity;
+                top.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeUserID;
+                top.usage = desc.allowRefit ? MTLAccelerationStructureUsageRefit : MTLAccelerationStructureUsageNone;
+                d = top;
+            }
+            sizes = [m_device accelerationStructureSizesWithDescriptor:d];
         }
-        const MTLAccelerationStructureSizes sizes = [m_device accelerationStructureSizesWithDescriptor:d];
         id<MTLAccelerationStructure> handle =
             [m_device newAccelerationStructureWithSize:sizes.accelerationStructureSize];
         if (!handle)
@@ -644,6 +650,24 @@ Result<void*> MetalDevice::createAccelerationStructure(const AccelerationStructu
         structure->allowRefit = desc.allowRefit;
         return static_cast<void*>(structure.release());
     }
+}
+
+std::uint64_t MetalDevice::accelerationStructureBytes(void* structure) const {
+    return static_cast<MetalAccelerationStructure*>(structure)->handle.size;
+}
+
+std::optional<std::uint32_t> MetalDevice::compactedSize(void* structure) const {
+    const MetalAccelerationStructure& as = *static_cast<MetalAccelerationStructure*>(structure);
+    if (!as.sizeQuery) return std::nullopt;
+    bool done = as.sizeQuery->completed.load(std::memory_order_acquire);
+    if (!done) {
+        id<MTLCommandBuffer> commands = as.sizeQuery->commands;
+        done = commands && commands.status == MTLCommandBufferStatusCompleted;
+    }
+    if (!done) return std::nullopt;
+    std::uint32_t size = 0;
+    std::memcpy(&size, static_cast<const std::byte*>(as.sizePage.contents) + as.sizeOffset, sizeof(size));
+    return size;
 }
 
 Result<void*> MetalDevice::createUpscaler(const UpscalerDesc& desc) {
@@ -706,7 +730,12 @@ void MetalDevice::release(Kind kind, void* native) noexcept {
         case Kind::GraphicsPipeline: delete static_cast<MetalGraphicsPipeline*>(native); break;
         case Kind::ComputePipeline: delete static_cast<MetalComputePipeline*>(native); break;
         case Kind::Fence: delete static_cast<MetalFence*>(native); break;
-        case Kind::AccelerationStructure: delete static_cast<MetalAccelerationStructure*>(native); break;
+        case Kind::AccelerationStructure: {
+            auto* structure = static_cast<MetalAccelerationStructure*>(native);
+            if (structure->sizePage) m_sizeSlots.push_back({structure->sizePage, structure->sizeOffset});
+            delete structure;
+            break;
+        }
         case Kind::Upscaler: delete static_cast<MetalUpscaler*>(native); break;
         }
     }

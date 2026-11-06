@@ -100,6 +100,10 @@ public:
     Result<ComputePipeline> createComputePipeline(const ComputePipelineDesc& desc);
     // Caps::rayTracing; built in an AccelerationStructurePass.
     Result<AccelerationStructure> createAccelerationStructure(const AccelerationStructureDesc& desc);
+    // The bytes a compacted copy of the bottom level needs (AccelerationStructurePass::queryCompactedSize), once the
+    // command buffer that recorded its last query has completed on the GPU; empty before that or without a query.
+    // Does not wait.
+    std::optional<std::uint32_t> compactedSize(const AccelerationStructure& bottomLevel) const;
     // Caps::spatialUpscaling or Caps::temporalUpscaling, by type.
     Result<Upscaler> createUpscaler(const UpscalerDesc& desc);
 

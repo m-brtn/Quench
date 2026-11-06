@@ -282,6 +282,9 @@ struct AccelerationStructureDesc {
     std::uint32_t triangleCount = 0;    // bottom level
     std::uint32_t instanceCapacity = 0; // top level
     bool allowRefit = false; // AccelerationStructurePass::refit: deforming meshes (bottom), moving instances (top)
+    // Bottom level: the size Device::compactedSize reported for another one. This one is then the destination of its
+    // compacted copy (AccelerationStructurePass::copyAndCompact), without counts, builds or refits.
+    std::uint32_t compactedSize = 0;
     std::string_view name{}; // not kept after creation
 };
 

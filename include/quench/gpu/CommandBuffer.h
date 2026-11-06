@@ -237,7 +237,7 @@ private:
 };
 
 // Builds and updates acceleration structures (Caps::rayTracing). A top level built in the pass sees the bottom
-// levels built or refitted before it in the same pass; later passes see all of them.
+// levels built, refitted or compacted before it in the same pass; later passes see all of them.
 class AccelerationStructurePass {
 public:
     AccelerationStructurePass() = default;
@@ -261,6 +261,13 @@ public:
     // same order as its last build. Faster than a build; the structure degrades when instances move far from where it
     // was built. Builds instead when the bottom levels differ, before the first build or without allowRefit.
     void refit(const AccelerationStructure& topLevel, std::span<const RayInstance> instances);
+
+    // Compaction of a built bottom level that no longer changes (static meshes). queryCompactedSize records writing
+    // the size its compacted copy needs (Device::compactedSize, once the command buffer has completed);
+    // copyAndCompact copies it into a bottom level created with that AccelerationStructureDesc::compactedSize, which
+    // top levels then use instead.
+    void queryCompactedSize(const AccelerationStructure& bottomLevel);
+    void copyAndCompact(const AccelerationStructure& source, const AccelerationStructure& destination);
 
 private:
     friend class CommandBuffer;

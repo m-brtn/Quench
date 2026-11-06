@@ -332,6 +332,90 @@ QUENCH_TEST(ray_query_top_level_refit) {
     check("another bottom level", 8, 8, 11.0f);
 }
 
+// A bottom level of a height field (512 triangles) compacted: smaller, and rays see the same hits through it.
+QUENCH_TEST(ray_query_compaction) {
+    QUENCH_GPU_DEVICE(device);
+    if (!device.caps().rayTracing) QUENCH_SKIP("no ray tracing (gpu::Caps::rayTracing)");
+    const ShaderBlob* rayFs = shaders::render.find("ray_fs");
+    if (!rayFs) QUENCH_SKIP("no ray query shaders in this build");
+    constexpr std::uint32_t kCells = 16, kRow = kCells + 1;
+    std::vector<float> vertices;
+    for (std::uint32_t j = 0; j < kRow; ++j) {
+        for (std::uint32_t i = 0; i < kRow; ++i) {
+            const float x = -0.75f + 1.5f * float(i) / kCells, y = -0.75f + 1.5f * float(j) / kCells;
+            vertices.insert(vertices.end(), {x, y, 0.3f * std::sin(4.0f * x) * std::cos(3.0f * y)});
+        }
+    }
+    std::vector<std::uint32_t> indices;
+    for (std::uint32_t j = 0; j < kCells; ++j) {
+        for (std::uint32_t i = 0; i < kCells; ++i) {
+            const std::uint32_t v = j * kRow + i;
+            indices.insert(indices.end(), {v, v + 1, v + kRow + 1, v, v + kRow + 1, v + kRow});
+        }
+    }
+    const std::uint32_t vertexCount = kRow * kRow, triangleCount = kCells * kCells * 2;
+    std::optional<RayScene> s = rayScene(device, vertices, indices, rayFs);
+    Result<AccelerationStructure> bottom =
+        device.createAccelerationStructure({.vertexCount = vertexCount, .triangleCount = triangleCount});
+    Result<AccelerationStructure> top =
+        device.createAccelerationStructure({.level = AccelerationStructureLevel::Top, .instanceCapacity = 1});
+    REQUIRE(s && bottom && top, "creation failed");
+    CHECK(!device.compactedSize(*bottom), "a compacted size without a query");
+
+    const auto submitAndWait = [&](CommandBuffer& commands) {
+        Result<Fence> fence = commands.submitWithFence();
+        if (fence) device.wait(*fence);
+        return bool(fence);
+    };
+    {
+        CommandBuffer commands = device.acquireCommandBuffer();
+        AccelerationStructurePass pass = commands.beginAccelerationStructurePass();
+        pass.build(*bottom, {.vertices = s->vertices,
+                             .vertexCount = vertexCount,
+                             .indices = s->indices,
+                             .triangleCount = triangleCount});
+        pass.queryCompactedSize(*bottom);
+        const RayInstance instance{.bottomLevel = &*bottom, .id = 2};
+        pass.build(*top, {&instance, 1});
+        pass.end();
+        CHECK(!device.compactedSize(*bottom), "a compacted size before the command buffer was submitted");
+        REQUIRE(submitAndWait(commands), "build failed");
+    }
+    const std::optional<std::uint32_t> size = device.compactedSize(*bottom);
+    REQUIRE(size, "no compacted size after the command buffer completed");
+    const std::vector<Rgba8> original = trace(device, *s, *top);
+    REQUIRE(original.size() == kSize * kSize, "readback failed");
+
+    Result<AccelerationStructure> compacted = device.createAccelerationStructure({.compactedSize = *size});
+    REQUIRE(compacted, "creation of the compacted bottom level failed");
+    std::printf("  %u triangles: %llu bytes built, %u bytes compacted (%.0f%%), allocated %llu\n", triangleCount,
+                static_cast<unsigned long long>(bottom->bytes()), *size, 100.0 * *size / double(bottom->bytes()),
+                static_cast<unsigned long long>(compacted->bytes()));
+    CHECK(*size > 0 && *size < bottom->bytes(), "compacted %u bytes of %llu", *size,
+          static_cast<unsigned long long>(bottom->bytes()));
+    CHECK(compacted->bytes() >= *size, "allocated %llu of %u bytes",
+          static_cast<unsigned long long>(compacted->bytes()), *size);
+    {
+        CommandBuffer commands = device.acquireCommandBuffer();
+        AccelerationStructurePass pass = commands.beginAccelerationStructurePass();
+        pass.copyAndCompact(*bottom, *compacted);
+        const RayInstance instance{.bottomLevel = &*compacted, .id = 2};
+        pass.build(*top, {&instance, 1});
+        pass.end();
+        REQUIRE(submitAndWait(commands), "copy failed");
+    }
+    bottom->reset();
+    const std::vector<Rgba8> copy = trace(device, *s, *top);
+    REQUIRE(copy.size() == kSize * kSize, "readback failed");
+    int differing = 0, hits = 0;
+    for (std::size_t i = 0; i < copy.size(); ++i) {
+        differing += !test::near(copy[i], original[i]);
+        hits += copy[i].r > 127;
+    }
+    std::printf("  %d of %u pixels hit, %d differ from the original\n", hits, kSize * kSize, differing);
+    CHECK(hits > 0 && differing == 0, "%d hits, %d pixels differ from the original", hits, differing);
+}
+
 namespace {
 
 float halfToFloat(std::uint16_t h) {

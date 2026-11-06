@@ -23,6 +23,7 @@
 #include <SDL3/SDL_metal.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -43,6 +44,8 @@ constexpr std::uint32_t kUniformSlots = 4;
 constexpr std::uint32_t kMaxAccelerationStructures = 2;
 // Acceleration structure build scratch: offsets of the builds in one encoder are this far apart.
 constexpr NSUInteger kScratchAlignment = 256;
+// Compacted sizes of bottom levels: 4-byte slots in shared pages of this size.
+constexpr NSUInteger kSizePageBytes = 4096;
 // Uniform data is copied into 32 KB chunks at 256-byte offsets, as in SDL GPU.
 constexpr std::uint32_t kUniformChunkSize = 32768;
 constexpr std::uint32_t kUniformAlignment = 256;
@@ -95,6 +98,13 @@ struct MetalStageCounts {
     std::uint32_t accelerationStructures = 0; // at buffer indices after the storage buffers
 };
 
+// A queryCompactedSize: done when the command buffer that recorded it has completed (its completed handler, or its
+// status while something else keeps it alive).
+struct MetalSizeQuery {
+    __weak id<MTLCommandBuffer> commands;
+    std::atomic<bool> completed{false};
+};
+
 struct MetalAccelerationStructure {
     id<MTLAccelerationStructure> handle;
     AccelerationStructureLevel level = AccelerationStructureLevel::Bottom;
@@ -106,6 +116,10 @@ struct MetalAccelerationStructure {
     NSArray<id<MTLAccelerationStructure>>* bottomLevels = nil;
     std::vector<__unsafe_unretained id<MTLResource>> residency;
     std::vector<std::uint32_t> instanceBottomLevels;
+    // Bottom level: the slot its compacted size is written to (taken at the first query) and the last query.
+    id<MTLBuffer> sizePage;
+    NSUInteger sizeOffset = 0;
+    std::shared_ptr<MetalSizeQuery> sizeQuery;
 };
 
 struct MetalUpscaler {
@@ -320,6 +334,10 @@ public:
     void endAccelerationStructurePass(void* commands, void* pass) override;
     void buildBottomLevel(void* pass, void* structure, const RayGeometry& geometry, bool refit) override;
     void buildTopLevel(void* pass, void* structure, std::span<const RayInstance> instances, bool refit) override;
+    void queryCompactedSize(void* pass, void* structure) override;
+    void copyAndCompact(void* pass, void* source, void* destination) override;
+    std::uint64_t accelerationStructureBytes(void* structure) const override;
+    std::optional<std::uint32_t> compactedSize(void* structure) const override;
     void bindAccelerationStructure(void* pass, ShaderStage stage, std::uint32_t slot, void* structure) override;
     void upscale(void* commands, void* upscaler, const UpscaleDesc& desc) override;
 
@@ -371,6 +389,9 @@ private:
     // Acceleration structure passes: an encoder (with timestamps when a range is open), scratch memory for one build
     // of the open encoder, and shared memory for instance descriptors.
     bool beginAccelerationEncoder(MetalCommandBuffer& commands);
+    // Builds in one encoder may run at the same time: work that reads bottom levels goes after those built in the open
+    // encoder, in a new one. False when it cannot begin (logged).
+    bool afterBottomLevelBuilds(MetalCommandBuffer& commands);
     NSUInteger scratch(MetalCommandBuffer& commands, NSUInteger size);
     id<MTLBuffer> instanceBuffer(MetalCommandBuffer& commands, NSUInteger size);
 
@@ -383,6 +404,12 @@ private:
     // it one after another: Metal tracks the hazard between them.
     id<MTLBuffer> m_scratch;
     std::vector<id<MTLBuffer>> m_instancePool;
+    // Free compacted-size slots: a bottom level takes one at its first query, release() gives it back.
+    struct SizeSlot {
+        id<MTLBuffer> page;
+        NSUInteger offset;
+    };
+    std::vector<SizeSlot> m_sizeSlots;
     // Two texels copied by the timestamp encoders around MetalFX's passes (upscale), private.
     id<MTLBuffer> m_markerBuffer;
 

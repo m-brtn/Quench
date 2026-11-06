@@ -768,6 +768,12 @@ void* MetalDevice::beginAccelerationStructurePass(void* commands) {
     }
 }
 
+bool MetalDevice::afterBottomLevelBuilds(MetalCommandBuffer& c) {
+    if (!c.accelBottomBuilt) return true;
+    [c.accel endEncoding];
+    return beginAccelerationEncoder(c);
+}
+
 void MetalDevice::endAccelerationStructurePass(void*, void* pass) {
     MetalCommandBuffer& c = commandsOf(pass);
     [c.accel endEncoding];
@@ -835,11 +841,7 @@ void MetalDevice::buildTopLevel(void* pass, void* structure, std::span<const Ray
     @autoreleasepool {
         MetalCommandBuffer& c = commandsOf(pass);
         MetalAccelerationStructure& as = *static_cast<MetalAccelerationStructure*>(structure);
-        if (c.accelBottomBuilt) {
-            // Builds in one encoder may run at the same time: the top level goes after the bottom levels it uses.
-            [c.accel endEncoding];
-            if (!beginAccelerationEncoder(c)) return;
-        }
+        if (!afterBottomLevelBuilds(c)) return;
 
         // The distinct bottom levels, in first-use order; instances refer to them by index.
         NSMutableArray<id<MTLAccelerationStructure>>* bottomLevels = [NSMutableArray array];
@@ -910,6 +912,48 @@ void MetalDevice::buildTopLevel(void* pass, void* structure, std::span<const Ray
         as.instanceBottomLevels = std::move(indices);
         as.residency.clear();
         for (id<MTLAccelerationStructure> bottom in bottomLevels) as.residency.push_back(bottom);
+    }
+}
+
+void MetalDevice::queryCompactedSize(void* pass, void* structure) {
+    @autoreleasepool {
+        MetalCommandBuffer& c = commandsOf(pass);
+        MetalAccelerationStructure& as = *static_cast<MetalAccelerationStructure*>(structure);
+        if (!as.sizePage) {
+            if (m_sizeSlots.empty()) {
+                id<MTLBuffer> page = [m_device newBufferWithLength:metal::kSizePageBytes
+                                                           options:MTLResourceStorageModeShared];
+                if (!page) {
+                    log::error("gpu", "cannot allocate {} bytes for compacted sizes", metal::kSizePageBytes);
+                    return;
+                }
+                if (m_debug) page.label = @"compacted acceleration structure sizes";
+                for (NSUInteger offset = metal::kSizePageBytes; offset > 0; offset -= sizeof(std::uint32_t))
+                    m_sizeSlots.push_back({page, offset - sizeof(std::uint32_t)});
+            }
+            as.sizePage = m_sizeSlots.back().page;
+            as.sizeOffset = m_sizeSlots.back().offset;
+            m_sizeSlots.pop_back();
+        }
+        if (!afterBottomLevelBuilds(c)) return;
+        [c.accel writeCompactedAccelerationStructureSize:as.handle toBuffer:as.sizePage offset:as.sizeOffset];
+        auto query = std::make_shared<MetalSizeQuery>();
+        query->commands = c.handle;
+        as.sizeQuery = query;
+        [c.handle addCompletedHandler:^(id<MTLCommandBuffer> commands) {
+          if (commands.status == MTLCommandBufferStatusCompleted)
+              query->completed.store(true, std::memory_order_release);
+        }];
+    }
+}
+
+void MetalDevice::copyAndCompact(void* pass, void* source, void* destination) {
+    @autoreleasepool {
+        MetalCommandBuffer& c = commandsOf(pass);
+        if (!afterBottomLevelBuilds(c)) return;
+        [c.accel copyAndCompactAccelerationStructure:static_cast<MetalAccelerationStructure*>(source)->handle
+                             toAccelerationStructure:static_cast<MetalAccelerationStructure*>(destination)->handle];
+        c.accelBottomBuilt = true; // a top level built after it in the pass uses the copy
     }
 }
 

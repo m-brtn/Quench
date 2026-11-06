@@ -479,6 +479,7 @@ void AccelerationStructurePass::build(const AccelerationStructure& bottomLevel, 
     QUENCH_ASSERT(m_native, "build outside an acceleration structure pass");
     QUENCH_ASSERT(bottomLevel && bottomLevel.desc().level == AccelerationStructureLevel::Bottom,
                   "build(geometry) needs a bottom level");
+    QUENCH_ASSERT(bottomLevel.desc().compactedSize == 0, "a compacted bottom level is filled by copyAndCompact");
     QUENCH_ASSERT(fits(bottomLevel.desc(), geometry), "geometry larger than the bottom level or incomplete");
     m_commands->m_device->buildBottomLevel(m_native, Access::native(bottomLevel), geometry, false);
 }
@@ -508,6 +509,24 @@ void AccelerationStructurePass::refit(const AccelerationStructure& topLevel, std
     QUENCH_ASSERT(instances.size() <= topLevel.desc().instanceCapacity, "more instances than the top level holds");
     QUENCH_ASSERT(validInstances(instances), "a top-level instance needs a bottom level and a 24-bit id");
     m_commands->m_device->buildTopLevel(m_native, Access::native(topLevel), instances, topLevel.desc().allowRefit);
+}
+
+void AccelerationStructurePass::queryCompactedSize(const AccelerationStructure& bottomLevel) {
+    QUENCH_ASSERT(m_native, "queryCompactedSize outside an acceleration structure pass");
+    QUENCH_ASSERT(bottomLevel && bottomLevel.desc().level == AccelerationStructureLevel::Bottom,
+                  "queryCompactedSize needs a bottom level");
+    m_commands->m_device->queryCompactedSize(m_native, Access::native(bottomLevel));
+}
+
+void AccelerationStructurePass::copyAndCompact(const AccelerationStructure& source,
+                                               const AccelerationStructure& destination) {
+    QUENCH_ASSERT(m_native, "copyAndCompact outside an acceleration structure pass");
+    QUENCH_ASSERT(source && source.desc().level == AccelerationStructureLevel::Bottom && destination &&
+                      destination.desc().level == AccelerationStructureLevel::Bottom,
+                  "copyAndCompact copies bottom levels");
+    QUENCH_ASSERT(destination.desc().compactedSize > 0,
+                  "copyAndCompact into a bottom level created with AccelerationStructureDesc::compactedSize");
+    m_commands->m_device->copyAndCompact(m_native, Access::native(source), Access::native(destination));
 }
 
 } // namespace quench::gpu

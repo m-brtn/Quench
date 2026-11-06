@@ -121,6 +121,11 @@ struct DeviceImpl {
     virtual void buildBottomLevel(void*, void*, const RayGeometry&, bool) {}
     // refit: when the bottom levels are those of the last build (else it builds).
     virtual void buildTopLevel(void*, void*, std::span<const RayInstance>, bool) {}
+    virtual void queryCompactedSize(void*, void*) {}
+    virtual void copyAndCompact(void*, void*, void*) {}
+    // AccelerationStructure::bytes and Device::compactedSize.
+    virtual std::uint64_t accelerationStructureBytes(void*) const { return 0; }
+    virtual std::optional<std::uint32_t> compactedSize(void*) const { return std::nullopt; }
     virtual void bindAccelerationStructure(void*, ShaderStage, std::uint32_t, void*) {}
     virtual void upscale(void*, void*, const UpscaleDesc&) {}
 
