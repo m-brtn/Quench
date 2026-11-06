@@ -182,7 +182,7 @@ if [[ $IOS -eq 1 ]]; then
     cmake --preset host-tools >/dev/null
     cmake --build --preset host-tools
     cmake --preset ios-xcode -DQUENCH_IOS_TEAM="$TEAM" >/dev/null
-    # Xcode decides whether to copy the staged assets/ when a build starts: merge first, compare after (docs/app.md).
+    # The assets merged in a build of their own (once needed, not reproduced since; docs/app.md), compared after.
     xcodebuild -project "$XBUILD/Quench.xcodeproj" -target quench_demo_assets -configuration Release \
         -sdk iphoneos -quiet build
     xcodebuild -project "$XBUILD/Quench.xcodeproj" -scheme quench_demo -configuration Release \

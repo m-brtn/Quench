@@ -3,8 +3,7 @@
 # folder itself changed, not when a file nested in it did, so the folder is touched whenever a file was copied; with
 # copy_directory_if_different a re-cooked file in a subfolder never reached the bundle. A file counts as changed when
 # it is missing in the stage or differs from it in size or content, and is copied (file(COPY) keeps the source's
-# time); one that differs only in its modification time (the Xcode build cooks every file again in every build) gets
-# the source's time. Files removed from a source stay in the stage, as copy_directory_if_different leaves them.
+# time); one that differs only in its modification time (cooked again with the same result) gets the source's time. Files removed from a source stay in the stage, as copy_directory_if_different leaves them.
 
 if(NOT STAGE OR NOT SOURCES)
     message(FATAL_ERROR "StageAssets.cmake: -DSTAGE=<dir> -DSOURCES=<dir>|<dir>... are required")

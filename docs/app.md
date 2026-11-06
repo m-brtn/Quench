@@ -373,13 +373,16 @@ $DEVICECTL device copy from --device <udid> --domain-type appDataContainer --dom
 ```
 
 In the Xcode build a game's plain and cooked assets are merged into one folder (`<target>_assets`,
-`cmake/StageAssets.cmake`), which Xcode copies into the bundle as a folder reference and signs with it. Xcode decides
-whether to copy that folder when a build starts, before any target of the build runs, so a changed asset merged by a
-build reaches the bundle with the next build; building `<target>_assets` first, in its own `xcodebuild`, brings it in
-the same one (`tools/package_demo.sh` does). Until 2026-11-06 a re-cooked file in a subfolder never reached the
-bundle: the merge rewrote the file but not the folder, and Xcode looks at the folder (the demo ran on the iPhone with
-a mannequin of the old model format, which it rejected). The Xcode build also cooks every asset again in every build
-and copies the whole folder each time (about a second for the demo; not looked into).
+`cmake/StageAssets.cmake`), which Xcode copies into the bundle as a folder reference and signs with it. Until
+2026-11-06 a re-cooked file in a subfolder never reached the bundle: the merge rewrote the file but not the folder,
+and Xcode looks at the folder (the demo ran on the iPhone with a mannequin of the old model format, which it
+rejected). Checked on 2026-11-06 after stage 12 (Xcode 27.2, CMake 4.4.4, the demo, `-target` and `-scheme` builds
+without signing): a changed plain asset and a new file in a cooked subfolder reached the bundle in the build that
+merged them, and a build without changes cooks, compiles and copies nothing (1.4 s, the targets' own script
+phases). The build right after one in which CMake regenerated the project (a changed `CMakeLists.txt`) runs the
+steps whose commands changed once more (all shaders of a target that got a new entry, and what includes them).
+`tools/package_demo.sh` still builds `<target>_assets` first, in its own `xcodebuild`, and compares the bundle's
+`assets/` with the merged folder.
 
 The bundle ids are the `BUNDLE_ID` of each target plus `QUENCH_IOS_BUNDLE_ID_SUFFIX`: with the default suffix,
 `org.quench.hello.<login name>`. Team ids are listed in Xcode's accounts, or with

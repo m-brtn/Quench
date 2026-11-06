@@ -447,11 +447,10 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    tracing, normal maps in ray hits (stage 12).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
-5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. An
-   Xcode build of a game still copies a change merged by that build into the app only with the next build (Xcode
-   decides when the build starts; probably what left the licence files out of one stage 10 build, not reproduced
-   then); building `<game>_assets` first avoids it ([App shell](app.md#ios-runs)). The Xcode build also cooks every
-   asset and copies the whole folder in every build (about a second for the demo).
+5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. The
+   Xcode build's late asset copies and re-cooks were not reproduced after stage 12 (2026-11-06: a change reached the
+   bundle in the same build, a build without changes did nothing; [App shell](app.md#ios-runs)); what left the
+   licence files out of one stage 10 build is not known.
 6. Other modules when a game needs them and the later platforms when the user asks (below).
 
 ## Other modules (when a game needs them)

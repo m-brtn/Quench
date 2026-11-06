@@ -164,9 +164,7 @@ function(quench_add_game target)
         if(_asset_dirs)
             # One folder reference named assets/ (Xcode copies it to the bundle root and signs it): the plain and the
             # cooked assets are merged into it first, and the folder is touched when a file in it changed
-            # (StageAssets.cmake). Xcode decides whether to copy the folder when a build starts, before any target of
-            # it runs: a change merged by a build reaches the bundle with the next one, or with this one when
-            # <target>_assets is built first (docs/app.md, "iOS runs"; tools/package_demo.sh).
+            # (StageAssets.cmake); Xcode copies it again when the folder changed (docs/app.md, "iOS runs").
             set(_stage ${_gen}/assets)
             file(MAKE_DIRECTORY ${_stage})
             string(REPLACE ";" "|" _sources "${_asset_dirs}")
