@@ -518,7 +518,9 @@ holds the section's phone defaults for a minute at the display's rate and for a 
 `scenarios/tunnel_phone.txt` measures each option at half size (and the lamps at 0.67 and full size), then holds the
 section's phone defaults at 60 Hz for 40 s with the lamps still, then 20 s in motion (`tunnel_moving_60hz`), and
 captures them and the path tracer; `tunnel_phone_fallback.txt` runs the fallback frame on SDL GPU, still and in
-motion. Copy the file into the app's user directory and launch it with `devicectl`
+motion. `scenarios/phone_sustained.txt` holds the ray tracing section's phone defaults for five minutes and then the
+tunnel's, in motion, for five more, at 60 Hz in 20 s regions from the nominal thermal state. Copy the file into the
+app's user directory and launch it with `devicectl`
 ([App shell](app.md#ios-runs)); the perf lines carry the thermal state of each region.
 
 ## Packaged builds: `tools/package_demo.sh`

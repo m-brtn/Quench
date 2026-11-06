@@ -367,7 +367,9 @@ scaler.
   model format): the merged `assets/` folder is touched when a file in it changes, and `<game>_assets` is built
   first ([App shell](app.md#ios-runs)).
 - [ ] The phone defaults on the iPhone 18 Pro Max, a ten-minute run at 60 Hz, and whether that phone should start
-  at 120 Hz.
+  at 120 Hz. On the iPhone 17 (2026-11-06, `scenarios/phone_sustained.txt`): the ray tracing defaults held 60 Hz
+  for five minutes; the tunnel's, after them, missed a few intervals per 20 s after about 8 minutes of load and the
+  phone turned serious at about 9 ([Performance](performance.md#ten-minutes-on-the-iphone)).
 - [ ] Look at the effects in motion (noise, lag of the temporal denoiser, MetalFX denoising, reflections and
   probe light while the sun turns): by the user, on the Mac and the iPhone (the demo's check mode).
 - [x] Full test tier, `tools/package_demo.sh` (macOS), release notes [docs/releases/v0.9.0.md](releases/v0.9.0.md);

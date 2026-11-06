@@ -359,6 +359,30 @@ the puddle; the crates under the turning amber spot differ by 0.58. A lamp that 
 at the frame of the change 0.74 levels, against 0.85 at a frame without one (960 x 540). Nothing was tuned. What to
 look at in motion is the check mode's item "Lamps and camera in motion" ([Engine demo](demo.md#check-mode-on-the-iphone)).
 
+### Ten minutes on the iPhone
+
+iPhone 17, 2026-11-06 23:37-23:47 (`scenarios/phone_sustained.txt`, the code of `6a822b7`; Release, `ios-xcode`,
+the native Metal backend, 1206 x 2622, launched through `devicectl` on its cable; nobody looked at the screen): the
+ray tracing section's phone defaults (half size, MetalFX spatial, no probe grid) for five minutes, then the tunnel's
+phone defaults in motion for five more, all at 60 Hz in 20 s regions, from the nominal thermal state, without a pause.
+
+| Regions | Thermal | Frames per region | Frame p99 / max ms | CPU p50 ms | GPU p50 / p95 ms |
+|---|---|---|---|---|---|
+| Ray tracing 1 | nominal | 1200 | 16.779 / 20.408 | 2.540 | 7.652 / 13.575 |
+| Ray tracing 2-15 | nominal, fair from region 9 (about 3 min) | 1200 each | at most 16.776 / 16.869 | 2.221-2.245 | 15.318-15.334 / at most 15.617 |
+| Tunnel 1-8 | fair | 1200 each | at most 16.763 / 16.921 | 1.727-1.780 | 15.297-15.350 / at most 15.571 |
+| Tunnel 9 | fair | 1200 | 16.753 / 16.834 | 1.799 | 13.601 / 26.919 |
+| Tunnel 10-15 | fair, serious from region 12 (about 9 min) | 1179, 1196, 1195, 1196, 1197, 1196 | 25.021 in region 10, else at most 16.818 / 25.016-25.159 | 1.755-1.792 | 15.347-16.451 / 28.860-31.387 |
+
+The ray tracing defaults held 60 Hz for five minutes with no missed interval. From the second region on, every
+range takes twice its first-region time (`raytrace` 4.80 against 9.70 to 9.72 ms): the GPU's clock lowered to fill the
+interval, the work is the same. The tunnel held 60 Hz for its first 160 s; after about 8 minutes of load some of its
+frames took two intervals (21 of 1200 in region 10, then 3 to 5 per region; GPU p95 near 29 ms), and the phone
+turned serious at about 9 minutes. The process's share on performance cores read 0% in all 30 regions (process CPU
+4.7 ms per frame with ray tracing, 3.8 ms in the tunnel); whether iOS counts performance-core time in
+`TASK_POWER_INFO_V2` is not known, since no phone region has read anything else yet. The run had no capture before a
+region, so it does not show the fix of the frame before a region on the phone (shown on the Mac only).
+
 ### Stage 11 on the iPhone
 
 iPhone 17 (A19 GPU, iOS 27.0.1), 2026-11-06 18:42-18:56: Release (`ios-xcode`), the native size 1206 x 2622 in

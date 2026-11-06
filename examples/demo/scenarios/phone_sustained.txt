@@ -1,0 +1,122 @@
+# The phone defaults of the ray tracing section and of the tunnel held for ten minutes at 60 Hz (docs/performance.md,
+# "Ten minutes on the iPhone"): five minutes of each in 20 s regions, from the nominal thermal state and without a
+# pause between them; each region's perf line carries its thermal state:
+#   copy this file into the app's user directory, launch with --gpu-backend metal --script phone_sustained.txt
+
+section raytracing
+until rt_ready == 1 5
+expect limit_60hz == 1
+expect max_frame_rate == 60
+
+# Cool down: the cheapest frame, few of them (as in raytracing_phone.txt); reset_section brings the defaults back.
+set sun_shadows maps
+set ao none
+set local_shadows 0
+set reflections sky
+set upscaling bilinear
+max_frame_rate 20
+until thermal_state <= 0 300
+reset_section
+until rt_ready == 1 5
+expect max_frame_rate == 60
+wait 0.5
+perf_begin raytracing_60hz_01
+wait 20
+perf_end
+perf_begin raytracing_60hz_02
+wait 20
+perf_end
+perf_begin raytracing_60hz_03
+wait 20
+perf_end
+perf_begin raytracing_60hz_04
+wait 20
+perf_end
+perf_begin raytracing_60hz_05
+wait 20
+perf_end
+perf_begin raytracing_60hz_06
+wait 20
+perf_end
+perf_begin raytracing_60hz_07
+wait 20
+perf_end
+perf_begin raytracing_60hz_08
+wait 20
+perf_end
+perf_begin raytracing_60hz_09
+wait 20
+perf_end
+perf_begin raytracing_60hz_10
+wait 20
+perf_end
+perf_begin raytracing_60hz_11
+wait 20
+perf_end
+perf_begin raytracing_60hz_12
+wait 20
+perf_end
+perf_begin raytracing_60hz_13
+wait 20
+perf_end
+perf_begin raytracing_60hz_14
+wait 20
+perf_end
+perf_begin raytracing_60hz_15
+wait 20
+perf_end
+
+# The tunnel's phone defaults in motion: the lamps move, the camera drives its loop.
+section tunnel
+until tunnel_ready == 1 10
+expect max_frame_rate == 60
+expect local_shadows == 2
+set animate 1
+set drive 1
+wait 0.5
+perf_begin tunnel_60hz_01
+wait 20
+perf_end
+perf_begin tunnel_60hz_02
+wait 20
+perf_end
+perf_begin tunnel_60hz_03
+wait 20
+perf_end
+perf_begin tunnel_60hz_04
+wait 20
+perf_end
+perf_begin tunnel_60hz_05
+wait 20
+perf_end
+perf_begin tunnel_60hz_06
+wait 20
+perf_end
+perf_begin tunnel_60hz_07
+wait 20
+perf_end
+perf_begin tunnel_60hz_08
+wait 20
+perf_end
+perf_begin tunnel_60hz_09
+wait 20
+perf_end
+perf_begin tunnel_60hz_10
+wait 20
+perf_end
+perf_begin tunnel_60hz_11
+wait 20
+perf_end
+perf_begin tunnel_60hz_12
+wait 20
+perf_end
+perf_begin tunnel_60hz_13
+wait 20
+perf_end
+perf_begin tunnel_60hz_14
+wait 20
+perf_end
+perf_begin tunnel_60hz_15
+wait 20
+perf_end
+quit
