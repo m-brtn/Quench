@@ -1,6 +1,9 @@
-# The compact layout (ctest: demo_compact_portrait and demo_compact_landscape, a phone-sized window): the bar, the
-# sections sheet, the controls sheet, About and Settings over the screen; the capture shows the controls sheet.
+# The compact layout in a phone-sized window (included by compact_portrait.txt and compact_landscape.txt): the bar,
+# the sections sheet, the controls sheet, About and Settings over the screen; it ends with the controls sheet open,
+# for their captures.
 
+section materials
+sheet none
 wait 0.1
 expect compact == 1
 expect sheet == 0

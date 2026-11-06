@@ -1,7 +1,8 @@
-# Sky and fog (ctest: demo_sky_metal, demo_sky_vulkan): the daylight palette, the atmosphere model and its gradient
-# fallback, no sky, fog. The capture is taken at 2 s with the start state (sun 9 degrees high, fog 0.006 /m) turned to
-# azimuth 15 degrees, so the sun is in view: at this height the disc and the inner glow are both above SDR white (the
-# disc is never darker than the glow; render.renderer_sun_disc_outshines_its_glow checks it in SDR and HDR).
+# Sky and fog (ctest: demo_sky_<backend>, a part of batch.txt): the daylight palette, the atmosphere model and its
+# gradient fallback, no sky, fog. The capture is taken at 2 s with the start state (sun 9 degrees high, fog 0.006 /m)
+# turned to azimuth 15 degrees, so the sun is in view: at this height the disc and the inner glow are both above SDR
+# white (the disc is never darker than the glow; render.renderer_sun_disc_outshines_its_glow checks it in SDR and HDR).
+section sky
 
 set dither 0
 wait 0.2
@@ -31,5 +32,8 @@ set fog 0.006
 set sun_azimuth 15
 wait 0.1
 expect fog_density > 0.005
-until time >= 2.1 3
+until time >= 2 3
+windows off
+capture demo_sky.png
+windows on
 quit

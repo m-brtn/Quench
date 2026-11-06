@@ -1,4 +1,4 @@
-// quench_image_compare: compares a capture with a golden image (PNG) for the capture checks (tests/RunCapture.cmake).
+// quench_image_compare: compares a capture with a golden image (PNG) for the capture checks (tests/CheckPart.cmake).
 //
 //   quench_image_compare ACTUAL EXPECTED [--diff OUT.png] [--threshold T] [--max-mean M] [--max-over F]
 //

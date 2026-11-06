@@ -188,6 +188,7 @@ private:
 
     // Windows
     bool m_showUi = true;
+    bool m_windowsOff = false; // the scenario's `windows off`: the scene and the section's overlay only (captures)
     bool m_uiReappears = false;
     Sheet m_sheet = Sheet::None;
     bool m_aboutOpen = false, m_settingsOpen = false;

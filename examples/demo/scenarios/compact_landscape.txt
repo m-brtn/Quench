@@ -1,0 +1,10 @@
+# The compact layout of phones in landscape (ctest: demo_compact_landscape_<backend>, a part of batch.txt): the window
+# resized to 720 x 320 points, compact.txt's walk through the bar and the sheets, then the capture with the controls
+# sheet on the right. The window goes back to 960 x 540 at the end.
+resize 720 320
+until window_w == 720 1
+include compact.txt
+capture demo_compact_landscape.png
+resize 960 540
+until window_w == 960 1
+quit

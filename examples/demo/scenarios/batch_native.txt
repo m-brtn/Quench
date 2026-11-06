@@ -1,0 +1,24 @@
+# Every check of the demo in one run on the native Metal backend (ctest: demo_batch_metal_native): batch.txt with ray
+# tracing itself (raytracing.txt) instead of its fallbacks, and section switching (cycle.txt). Run with
+# --gpu-backend metal --hdr-headroom 4.
+include materials.txt
+include shadows.txt
+include sky.txt
+include post.txt
+include hdr.txt
+include hdr_on.txt
+include physics.txt
+include input.txt
+include assets.txt
+include audio.txt
+include animation.txt
+include raytracing.txt
+include ui.txt
+include compact_portrait.txt
+include compact_landscape.txt
+include menu.txt
+include audio_tone.txt
+include audio_flyby.txt
+include audio_music.txt
+include cycle.txt
+quit

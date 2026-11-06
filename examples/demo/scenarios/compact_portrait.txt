@@ -1,0 +1,10 @@
+# The compact layout of phones in portrait (ctest: demo_compact_portrait_<backend>, a part of batch.txt): the window
+# resized to 400 x 720 points, compact.txt's walk through the bar and the sheets, then the capture with the controls
+# sheet at the bottom. The window goes back to 960 x 540 at the end.
+resize 400 720
+until window_w == 400 1
+include compact.txt
+capture demo_compact_portrait.png
+resize 960 540
+until window_w == 960 1
+quit

@@ -165,8 +165,9 @@ public:
     }
 
     void update(Context& c, double frameDt) override {
+        (void)c;
         (void)frameDt;
-        if (m_animate) m_animTime = c.app.time();
+        if (m_animate) m_animTime = sectionTime;
         animate(m_animTime);
     }
 

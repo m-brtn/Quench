@@ -1,5 +1,5 @@
-# Input check of the hello example (ctest: hello_input). Keyboard, gamepad and touch input goes through real SDL
-# events to the game's actions. Deterministic run: one fixed step (1/120 s) per frame.
+# Input check of the hello example (ctest: hello_input_<backend>, a part of check.txt). Keyboard, gamepad and touch
+# input goes through real SDL events to the game's actions. Deterministic run: one fixed step (1/120 s) per frame.
 
 wait 0.1
 expect paused == 0

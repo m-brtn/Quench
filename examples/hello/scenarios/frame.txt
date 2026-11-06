@@ -1,0 +1,5 @@
+# The hello example's frame at 1 s (ctest: hello_frame_<backend>, a part of check.txt): the spinning lit mesh and the
+# ImGui window, against the golden image hello.png.
+until time >= 1 2
+capture hello.png
+quit

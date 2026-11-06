@@ -103,6 +103,11 @@ void DemoGame::ui(App& app) {
         return;
     }
     if (currentReady()) current().overlay(*m_context);
+    if (m_windowsOff) {
+        m_bottomTop = 1.0e9f;
+        m_bottomLeft = m_bottomRight = 0.0f;
+        return;
+    }
     if (compact())
         compactLayout(app);
     else

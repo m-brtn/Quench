@@ -88,8 +88,9 @@ public:
     }
 
     void update(Context& c, double frameDt) override {
+        (void)c;
         (void)frameDt;
-        if (m_spin) m_spinTime = c.app.time();
+        if (m_spin) m_spinTime = sectionTime;
         animate(m_spinTime);
     }
 

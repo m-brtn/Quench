@@ -1,13 +1,21 @@
-# An HDR frame in the capture (ctest: demo_hdr_on_metal, demo_hdr_on_vulkan, run with --hdr on --hdr-headroom 4): the
-# output is HDR extended linear with headroom 4 whatever the display reports. The capture at 2 s is the frame clipped
-# at paper white (golden demo_hdr_on); its brightest value, before clipping, is above paper white and at most the
-# headroom.
-
+# An HDR frame in the capture (ctest: demo_hdr_on_<backend>, a part of batch.txt, which runs with --hdr-headroom 4):
+# the HDR section from its start state with the output switched to HDR extended linear, headroom 4 whatever the
+# display reports. The capture at 2 s is the frame clipped at paper white (golden demo_hdr_on); its brightest value,
+# before clipping, is above paper white and at most the headroom. The output goes back to SDR at the end.
+section hdr
+reset_section
+reset_camera
+hdr on
 set dither 0
 wait 0.2
 expect hdr == 1
 expect hdr_headroom == 4
-until capture_peak > 0 3
+until time >= 2 3
+windows off
+capture demo_hdr_on.png
+windows on
 expect capture_peak > 2
 expect capture_peak <= 4.01
+hdr off
+until hdr == 0 1
 quit

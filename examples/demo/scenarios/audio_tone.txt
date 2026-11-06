@@ -1,7 +1,9 @@
-# Audio mix check (ctest: demo_audio_tone, default backend only): a tone the demo computes (a Generator), placed around
-# the head: its frequency, the stereo pan, the distance models, a frequency glide; then a burst of pings beyond the
-# voice limit. The test runs with --audio-capture, so the mix is computed offline on the frame clock (400 frames per
-# frame at 48 kHz) and audio_measure analyses exactly what the capture WAV holds.
+# Audio mix check (ctest: demo_audio_tone_<backend>, a part of batch.txt): a tone the demo computes (a Generator),
+# placed around the head: its frequency, the stereo pan, the distance models, a frequency glide; then a burst of pings
+# beyond the voice limit. Offscreen runs mix offline on the frame clock (400 frames per frame at 48 kHz), so
+# audio_measure analyses the mix of exactly these frames.
+section audio
+reset_section
 
 set orbit 0
 set flyby 0

@@ -187,7 +187,10 @@ void DemoGame::update(App& app, double frameDt) {
     m_camera.update(app, current(), float(frameDt), !m_menuFocus, [this](glm::vec2 point) { click(point); });
 
     updateMode(app, frameDt);
-    if (currentReady()) current().update(*m_context, frameDt);
+    if (currentReady()) {
+        current().sectionTime += frameDt;
+        current().update(*m_context, frameDt);
+    }
     if (!(m_renderer->settings() == current().settings)) m_renderer->setSettings(current().settings);
 
     if (app.hdrMode() != m_lastHdr) {
@@ -210,7 +213,7 @@ void DemoGame::render(App& app, app::Frame& frame) {
                             .fovY = section.camera.fovFor(aspect),
                             .nearPlane = 0.1f,
                             .cut = m_cut,
-                            .time = m_context->app.time()};
+                            .time = section.sectionTime};
     m_renderer->render(currentScene(), view, frame.commands, frame.target, section.output(frame.output));
     m_targetWidth = frame.width;
     m_cut = false;
@@ -670,6 +673,12 @@ app::ScenarioExec DemoGame::scenarioCommand(App& app, const app::ScenarioCommand
     }
     if (command.op == "reset_section") {
         resetSection();
+        return done;
+    }
+    if (command.op == "windows") {
+        // windows off|on: off leaves the scene and the section's overlay, for a capture without the demo's windows.
+        if (args.size() != 1 || (args[0] != "off" && args[0] != "on")) return fail("windows off|on");
+        m_windowsOff = args[0] == "off";
         return done;
     }
     if (command.op == "reset_camera") {

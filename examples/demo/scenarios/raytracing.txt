@@ -1,7 +1,8 @@
-# Ray tracing on the native Metal backend (ctest: demo_raytracing_metal_native): ray-traced shadows and ambient
-# occlusion replace the cascades, the shadow maps come back when asked, and MetalFX upscales at half size. The
-# capture is taken at 2.5 s with ray-traced shadows and occlusion at full size, the sun and the character moving.
-# The fallbacks on SDL GPU run raytracing_fallback.txt.
+# Ray tracing on the native Metal backend (ctest: demo_raytracing_metal_native, a part of batch_native.txt): ray-traced
+# shadows and ambient occlusion replace the cascades, the shadow maps come back when asked, and MetalFX upscales at half
+# size. The capture is taken at 2.5 s with ray-traced shadows and occlusion at full size, the sun and the character
+# moving. The fallbacks on SDL GPU run raytracing_fallback.txt.
+section raytracing
 
 set dither 0
 until rt_ready == 1 5
@@ -36,5 +37,8 @@ wait 0.05
 expect upscaling == 0
 expect render_scale == 1
 expect sun_shadows == 1
-until time >= 2.6 3
+until time >= 2.5 3
+windows off
+capture demo_raytracing_native.png
+windows on
 quit

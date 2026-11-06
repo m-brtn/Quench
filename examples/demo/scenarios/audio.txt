@@ -1,7 +1,8 @@
-# Audio (ctest: demo_audio_metal, demo_audio_vulkan): the section's picture with every source playing, captured at
-# 1.65 s, and the mix written as WAV (--audio-capture). The mix is computed offline on the frame clock, so both
-# backends write the same bytes (ctest: demo_audio_wav_match). The checks on the mix itself are audio_tone.txt,
-# audio_flyby.txt and audio_music.txt (ctest: demo_audio_tone, demo_audio_flyby, demo_audio_music).
+# Audio (ctest: demo_audio_<backend>, a part of batch.txt): the section's picture with every source playing, captured
+# at 1.65 s. Offscreen runs mix offline on the frame clock. The checks on the mix itself are audio_tone.txt,
+# audio_flyby.txt and audio_music.txt (ctest: demo_audio_tone_<backend>, demo_audio_flyby_<backend>,
+# demo_audio_music_<backend>).
+section audio
 
 set orbit 0
 set flyby 0
@@ -22,7 +23,10 @@ set tone_z -1
 set tone 1
 set music 2
 set burst 40
-until time >= 1.75 3
+until time >= 1.65 3
+windows off
+capture demo_audio.png
+windows on
 expect audio_underruns == 0
 expect audio_clipped == 0
 quit

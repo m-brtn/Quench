@@ -6,12 +6,15 @@
 #   tools/package_demo.sh --ios          # also iOS: dist/QuenchDemo-<version>-<hash>-ios.zip (development signed)
 #   tools/package_demo.sh --ios --team ID  # the team that signs it (default: $QUENCH_IOS_TEAM, else build/ios-xcode's)
 #   tools/package_demo.sh --preset NAME  # the macOS configure and build preset (default: release)
+#   tools/package_demo.sh --no-checks    # skip the demo's CTest checks (tools/check.sh release ran them on this build)
 #
-# macOS: build quench_demo with the preset, run the demo's CTest checks, assemble QuenchDemo.app (the executable, an
+# macOS: build quench_demo with the preset, run the demo's CTest checks (ctest -L demo: one batch run per GPU
+# backend and the runs with files of their own; docs/demo.md, "Checks"), assemble QuenchDemo.app (the executable, an
 # Info.plist, an icns made from examples/demo/icon/icon.png, the licences, the assets), check its version, minimum
 # macOS and dynamic dependencies (system libraries only), sign it ad hoc and zip it together with LICENSE and
-# THIRD_PARTY_LICENSES. Then the app is started from a fresh unzip with examples/demo/scenarios/smoke.txt: exit code 0
-# and a capture, left in dist/ to be looked at.
+# THIRD_PARTY_LICENSES. Then the app is started from a fresh unzip with examples/demo/scenarios/smoke.txt (offscreen,
+# like every scripted run: no window on the screen, no sound): exit code 0 and a capture, left in dist/ to be looked
+# at.
 # iOS: the ios-xcode preset, configured with the team (an Apple ID signed in to Xcode), builds quench_demo with
 # Automatic signing; the signed app is packed as an .ipa. Nothing is installed on a device. A free Personal Team is
 # refused (Xcode's account data marks it): its profiles expire after 7 days (docs/app.md, "iOS runs").
@@ -23,13 +26,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
 PRESET=release
 IOS=0
+CHECKS=1
 TEAM="${QUENCH_IOS_TEAM:-}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --ios) IOS=1 ;;
     --team) TEAM="${2:?--team ID}"; shift ;;
     --preset) PRESET="${2:?--preset NAME}"; shift ;;
-    -h | --help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-checks) CHECKS=0 ;;
+    -h | --help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -57,8 +62,10 @@ cmake --preset "$PRESET" >/dev/null
 cmake --build --preset "$PRESET" --target quench_demo quench_image_compare
 [[ "$("$EXE" --version)" == "Quench Demo $VERSION" ]] || fail "binary version mismatch"
 
-step "demo checks (ctest -R ^demo_)"
-ctest --preset "$PRESET" -R '^demo_' --output-on-failure
+if [[ $CHECKS -eq 1 ]]; then
+    step "demo checks (ctest -L demo)"
+    (cd "$ROOT" && ctest --preset "$PRESET" -L '^demo$' -j8 --output-on-failure)
+fi
 
 step "assemble QuenchDemo.app"
 STAGE="$DIST/$NAME-macos"
@@ -146,10 +153,8 @@ codesign --verify --deep --strict "$UNZIPPED/QuenchDemo.app"
 CAPTURE="$DIST/$NAME-macos-smoke.png"
 LOG="$DIST/$NAME-macos-smoke.log"
 rm -f "$CAPTURE"
-# The null audio device: the smoke run makes no sound.
 (cd / && "$UNZIPPED/QuenchDemo.app/Contents/MacOS/quench-demo" --window 960x540 --frame-size 960x540 \
-    --audio-device null --script "$ROOT/examples/demo/scenarios/smoke.txt" --capture "$CAPTURE" --capture-at 1.5) \
-    >"$LOG" 2>&1 ||
+    --script "$ROOT/examples/demo/scenarios/smoke.txt" --capture "$CAPTURE" --capture-at 1.5) >"$LOG" 2>&1 ||
     { cat "$LOG"; fail "smoke run failed (log: $LOG)"; }
 grep -E "scenario: .*: [0-9]+ passed, 0 failed" "$LOG" || { cat "$LOG"; fail "smoke scenario did not pass"; }
 [[ -s "$CAPTURE" ]] || fail "smoke run wrote no capture"

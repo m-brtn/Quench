@@ -8,8 +8,8 @@
 string(REPLACE "|" ";" environment "${ENVIRONMENT}")
 
 function(run_demo)
-    execute_process(COMMAND ${CMAKE_COMMAND} -E env ${environment} ${APP} --window 960x540 --audio-device null
-                            --present-mode immediate --user-dir ${USER_DIR} ${ARGN}
+    execute_process(COMMAND ${CMAKE_COMMAND} -E env ${environment} ${APP} --window 960x540 --user-dir ${USER_DIR}
+                            ${ARGN}
                     RESULT_VARIABLE result OUTPUT_VARIABLE out ERROR_VARIABLE out)
     message("${out}")
     if(NOT result EQUAL 0)

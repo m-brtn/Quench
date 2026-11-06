@@ -1,0 +1,24 @@
+# Every check of the demo in one run on Vulkan through MoltenVK (ctest: demo_batch_vulkan); SDL GPU's Metal driver
+# runs it from batch_metal.txt, the native Metal backend runs batch_native.txt. Each file is a part with its own time
+# from 0 and its own checks; a section's part ends in its capture without the demo's windows, written to the user
+# directory under its golden image's name (docs/demo.md, "Checks"). Run with --hdr-headroom 4 (hdr_on.txt).
+include materials.txt
+include shadows.txt
+include sky.txt
+include post.txt
+include hdr.txt
+include hdr_on.txt
+include physics.txt
+include input.txt
+include assets.txt
+include audio.txt
+include animation.txt
+include raytracing_fallback.txt
+include ui.txt
+include compact_portrait.txt
+include compact_landscape.txt
+include menu.txt
+include audio_tone.txt
+include audio_flyby.txt
+include audio_music.txt
+quit

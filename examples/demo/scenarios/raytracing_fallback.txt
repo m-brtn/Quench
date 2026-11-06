@@ -1,7 +1,8 @@
-# Ray tracing's fallbacks on SDL GPU (ctest: demo_raytracing_metal, demo_raytracing_vulkan): the section asks for
-# ray-traced shadows and ambient occlusion and for MetalFX, and gets the cascaded shadow maps, no occlusion and
+# Ray tracing's fallbacks on SDL GPU (ctest: demo_raytracing_fallback_<backend>, a part of batch.txt): the section asks
+# for ray-traced shadows and ambient occlusion and for MetalFX, and gets the cascaded shadow maps, no occlusion and
 # bilinear scaling, and the renderer names each fallback (Renderer::fallbacks). The capture is taken at 2.5 s, as in
 # raytracing.txt.
+section raytracing
 
 set dither 0
 until rt_ready == 1 5
@@ -25,5 +26,8 @@ set upscaling bilinear
 set scale 1
 wait 0.05
 expect render_scale == 1
-until time >= 2.6 3
+until time >= 2.5 3
+windows off
+capture demo_raytracing.png
+windows on
 quit

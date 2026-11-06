@@ -1,5 +1,7 @@
-# Menu navigation of the engine demo (ctest: demo_menu): keyboard, gamepad, mouse and touch switch sections, H hides
-# the windows. Any window size: the click and the touch go to the menu entries the demo names (`@menu:<section>`).
+# Menu navigation of the engine demo (ctest: demo_menu_<backend>, a part of batch.txt): keyboard, gamepad, mouse and
+# touch switch sections, H hides the windows. Any window size: the click and the touch go to the menu entries the demo
+# names (`@menu:<section>`).
+section materials
 
 wait 0.1
 expect section == 0

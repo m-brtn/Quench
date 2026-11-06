@@ -1,7 +1,7 @@
 # `cmake -P` script run after a test executable is built: writes one add_test() per case it lists (`EXE --list`) into
 # OUTPUT, which CTest includes. Parameters: EXE, PREFIX, OUTPUT, WORKING_DIRECTORY, SKIP_RETURN_CODE and optionally
 # EMULATOR (CMAKE_CROSSCOMPILING_EMULATOR, Node.js for WebAssembly builds), ENVIRONMENT (NAME=value entries
-# separated by '|') and FAIL_REGEX (output that fails a case).
+# separated by '|'), FAIL_REGEX (output that fails a case) and LABEL (the module's CTest label).
 cmake_minimum_required(VERSION 3.28)
 execute_process(COMMAND ${EMULATOR} ${EXE} --list OUTPUT_VARIABLE _out RESULT_VARIABLE _res)
 if(NOT _res EQUAL 0)
@@ -19,6 +19,9 @@ if(ENVIRONMENT)
 endif()
 if(FAIL_REGEX)
     string(APPEND _properties " FAIL_REGULAR_EXPRESSION [=[${FAIL_REGEX}]=]")
+endif()
+if(LABEL)
+    string(APPEND _properties " LABELS [=[${LABEL}]=]")
 endif()
 string(REPLACE "\n" ";" _names "${_out}")
 set(_content "")

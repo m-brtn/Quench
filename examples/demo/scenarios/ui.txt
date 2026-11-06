@@ -1,0 +1,12 @@
+# The demo's windows in the wide layout (ctest: demo_ui_<backend>, a part of batch.txt): the menu with the mode
+# buttons, the performance panel (timings hidden in deterministic runs) and the key hints, the section window with
+# its controls and stats, and the caption, over the materials section from its start state. The section captures
+# leave the windows out (`windows off`); this one is where they are checked.
+section materials
+reset_section
+reset_camera
+sheet none
+wait 1
+expect compact == 0
+capture demo_ui.png
+quit

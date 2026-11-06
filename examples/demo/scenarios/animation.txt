@@ -1,7 +1,8 @@
-# Animation (ctest: demo_animation_metal, demo_animation_vulkan): the character's assets load (a skinned model, its
+# Animation (ctest: demo_animation_<backend>, a part of batch.txt): the character's assets load (a skinned model, its
 # skeleton, clips and graph), every character binds and skins; from a restart at a fixed time on, the hero walks its
 # circle by root motion with footstep events, jumps and lands, then waves; the stands' feet reach the slope and the
 # step; the torch stays in the hero's hand. The capture is taken at 2.4 s, the hero walking and waving.
+section animation
 
 set dither 0
 until anim_ready == 1 3
@@ -35,6 +36,9 @@ expect slope_pelvis < -0.01
 expect held_distance < 0.12
 
 set wave 1
-until time >= 2.45 2
+until time >= 2.4 2
+windows off
+capture demo_animation.png
+windows on
 expect hero_angle > -20
 quit

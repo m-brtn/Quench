@@ -1,6 +1,8 @@
-# Materials and lights (ctest: demo_materials_metal, demo_materials_vulkan): light switches, the game's render pass
-# and surface shader, the shadows of the cut-out fence and the translucent glass. Deterministic run (one 1/120 s step per frame); the capture is taken at 2 s, after the scene is
-# back to its start state. Dithering is off so the golden PNG stays small.
+# Materials and lights (ctest: demo_materials_<backend>, a part of batch.txt): light switches, the game's render pass
+# and surface shader, the shadows of the cut-out fence and the translucent glass. Deterministic run (one 1/120 s step
+# per frame); the capture is taken at 2 s, after the scene is back to its start state. Dithering is off so the golden
+# PNG stays small.
+section materials
 
 set dither 0
 wait 0.2
@@ -51,5 +53,8 @@ wait 0.1
 expect lights == 4
 expect marker_draws == 4
 expect shadow_draws > 0
-until time >= 2.1 3
+until time >= 2 3
+windows off
+capture demo_materials.png
+windows on
 quit

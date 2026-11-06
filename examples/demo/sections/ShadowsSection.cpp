@@ -74,11 +74,12 @@ public:
     }
 
     void update(Context& c, double frameDt) override {
+        (void)c;
         if (m_animateSun) {
             m_azimuth = std::fmod(m_azimuth + float(frameDt) * 12.0f, 360.0f);
             applySun();
         }
-        animate(c.app.time());
+        animate(sectionTime);
     }
 
     void controls(Context& c) override {

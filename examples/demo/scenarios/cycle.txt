@@ -1,35 +1,47 @@
-# Section switching (ctest: demo_cycle): three rounds through every section, a reset of each in the third.
-# The first round creates every section (and waits for the assets of those that load some); after it, switching
-# leaves the scene and the log as they are, the GPU resources within 3 (fences and transfer buffers of the frames
-# and uploads in flight come and go), the memory grows by less than 32 MB (allocator noise; a section that leaked
-# its scene at every switch would be far more), and a reset makes the same section again (the assets section logs
-# its broken and missing model again, on purpose).
+# Section switching (ctest: demo_cycle_<backend>, a part of batch_metal.txt and batch_native.txt): three rounds through
+# every section, with a reset of each in the first and the third. The first round creates or resets every section (and
+# waits for the assets of those that load some), so that the parts before it in a batch leave no settings behind; after
+# it, switching leaves the scene and the log as they are, the GPU resources within 3 (fences and transfer buffers of the
+# frames and uploads in flight come and go), the memory grows by less than 32 MB (allocator noise; a section that leaked
+# its scene at every switch would be far more), and a reset makes the same section again (the assets section logs its
+# broken and missing model again, on purpose).
 
 wait 0.1
 section materials
+reset_section
 wait 0.03
 section shadows
+reset_section
 wait 0.03
 section sky
+reset_section
 wait 0.03
 section post
+reset_section
 wait 0.03
 section hdr
+reset_section
 wait 0.03
 section physics
+reset_section
 wait 0.03
 section input
+reset_section
 wait 0.03
 section assets
+reset_section
 wait 0.03
 until assets_idle == 1 3
 section audio
+reset_section
 wait 0.03
 until sounds_ready == 1 3
 section animation
+reset_section
 wait 0.03
 until anim_ready == 1 3
 section raytracing
+reset_section
 wait 0.03
 until rt_ready == 1 3
 section materials

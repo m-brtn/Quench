@@ -1,6 +1,8 @@
-# Audio mix check (ctest: demo_audio_music, default backend only): the streamed music, its drone, the crossfade to the
-# other track, the music bus. The test runs with --audio-capture, so the mix is computed offline on the frame clock and
-# audio_measure analyses exactly what the capture WAV holds.
+# Audio mix check (ctest: demo_audio_music_<backend>, a part of batch.txt): the streamed music, its drone, the
+# crossfade to the other track, the music bus. Offscreen runs mix offline on the frame clock, so audio_measure
+# analyses the mix of exactly these frames.
+section audio
+reset_section
 
 set orbit 0
 set flyby 0

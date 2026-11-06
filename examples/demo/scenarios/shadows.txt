@@ -1,5 +1,6 @@
-# Shadows (ctest: demo_shadows_metal, demo_shadows_vulkan): cascade count, map size and filter, the sun. The capture
+# Shadows (ctest: demo_shadows_<backend>, a part of batch.txt): cascade count, map size and filter, the sun. The capture
 # is taken at 2 s with the defaults (3 cascades of 2048 px over 80 m, 12 taps).
+section shadows
 
 set dither 0
 wait 0.2
@@ -32,5 +33,8 @@ set sun_elevation 32
 wait 0.1
 expect cascades == 3
 expect shadow_draws > 0
-until time >= 2.1 3
+until time >= 2 3
+windows off
+capture demo_shadows.png
+windows on
 quit

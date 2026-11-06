@@ -1,6 +1,8 @@
-# Audio mix check (ctest: demo_audio_flyby, default backend only): the fly-by at 30 m/s, Doppler up while it
-# approaches, down while it leaves. The test runs with --audio-capture, so the mix is computed offline on the frame
-# clock and audio_measure analyses exactly what the capture WAV holds.
+# Audio mix check (ctest: demo_audio_flyby_<backend>, a part of batch.txt): the fly-by at 30 m/s, Doppler up while it
+# approaches, down while it leaves. Offscreen runs mix offline on the frame clock, so audio_measure analyses the mix
+# of exactly these frames.
+section audio
+reset_section
 
 set orbit 0
 set flyby 0

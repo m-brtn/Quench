@@ -259,21 +259,66 @@ are not marked).
 
 ## Checks
 
+The demo's checks run in three batches ([App shell](app.md#captures-and-golden-images)): one offscreen app process
+per GPU backend, `--window 960x540 --gpu-debug --hdr-headroom 4`, runs every check as a part of one scenario.
+
+| Batch | Scenario | Backend |
+|---|---|---|
+| `demo_batch_metal` | `batch_metal.txt`: `batch.txt`, then `cycle.txt` | SDL GPU's Metal driver, with the Metal API validation layer |
+| `demo_batch_metal_native` | `batch_native.txt`: `batch.txt` with `raytracing.txt` in place of `raytracing_fallback.txt`, then `cycle.txt` | the native Metal backend, with the validation layer; compared with the Metal golden images |
+| `demo_batch_vulkan` | `batch.txt` | Vulkan through MoltenVK with the Khronos validation layer (an error or warning fails the batch) |
+
+`batch.txt` includes, in this order: materials, shadows, sky, post, hdr, hdr_on, physics, input, assets, audio,
+animation, raytracing_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone, audio_flyby, audio_music.
+Every part selects its section first (and resets it where it needs the defaults), so it does not depend on the parts
+before it, and its `time` starts at 0. A test per part and backend, `demo_<part>_<backend>`, checks the part's line
+in the batch's log (`part <file>: N passed, 0 failed`) and compares its capture with
+`tests/golden/<backend>/<device>/<golden>.png`. The batches run in Release builds (`QUENCH_TEST_CAPTURES`); Debug
+and the sanitizer builds run `demo_smoke` instead (`smoke.txt`: every section once, offscreen, with assertions or
+under the sanitizers). The scenarios point at the window in percent or at named points (`@menu:<section>`,
+`@floor`), so their checks also pass in a portrait phone window (the captures are compared on the Mac only).
+
+The section captures show the scene only: before each, the part sends `windows off`, which hides the menu, the
+section's panel, the caption, the hints and the top bar, and `windows on` after it. A section's own on-screen
+elements stay where they are what is checked. The menu and the layouts have captures of their own.
+
+| Part | What it checks | Capture |
+|---|---|---|
+| `materials`, `shadows`, `sky`, `post`, `hdr`, `physics` | the section's options switched one by one, the renderer's and the section's values, the start state put back | `demo_<part>.png` at 2 s: the scene |
+| `hdr_on` | `hdr on`: the output is HDR extended linear with headroom 4 and the capture's peak is above 2 and at most 4 times paper white; `hdr off` returns to SDR | `demo_hdr_on.png` at 2 s (clipped at paper white): the scene |
+| `input` | keyboard, gamepad and touch actions, the virtual stick | `demo_input.png` at 3 s: the scene (the touch overlay, fingers and stick, is drawn only while a finger is down) |
+| `assets` | below | `demo_assets.png` at 1.5 s: the scene with the section's overlay (each model's load state, the streaming rings, the reload note), which is what the section shows |
+| `audio` | every emitter, the tone, the crossfade to music B and a burst of 40 pings, no underruns or clipped samples (the mix runs offline on the frame clock, as in every offscreen run) | `demo_audio.png` at 1.65 s: the scene |
+| `animation` | below | `demo_animation.png` at 2.4 s: the scene |
+| `raytracing` (native batch) | ray-traced shadows and occlusion run (no cascades, no shadow draws, at least 12 instances in the top level, the character skinned), shadow maps come back when asked, MetalFX temporal at scale 0.5 resolves in TAA's place, spatial runs, bilinear at scale 1 again | `demo_raytracing_native.png` at 2.5 s (rays and occlusion at full size, the sun and the character moving): the scene |
+| `raytracing_fallback` (Metal, Vulkan) | the requests fall back (cascades, no occlusion, no top level, bilinear at scale 0.5), and the renderer lists the fallbacks | `demo_raytracing.png` at 2.5 s: the scene |
+| `ui` | the wide layout with its windows | `demo_ui.png`: the materials section with the menu, its panel and the caption |
+| `compact_portrait`, `compact_landscape` | `compact.txt` in a phone-sized frame (400 x 720 and 720 x 320 points): the compact layout, the bar's arrows, the menu sheet, About and its licences, the controls sheet | `demo_compact_portrait.png`, `demo_compact_landscape.png`: the controls sheet over the materials section |
+| `menu` | switching sections by keys, gamepad, a click and a tap on the list; the menu by Tab, the arrows and Enter and by the D-pad, A and B; hiding the windows | none |
+| `audio_tone`, `audio_flyby`, `audio_music` | the checks on the mix itself (below) | none |
+| `cycle` (the Metal batches) | every section three times (created or reset, switched, reset), with the memory, the live GPU resources, the scene's instances and the error count marked after the first round: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 32 MB; no instance more; no new error) | none |
+
+The cycle does not run on Vulkan through MoltenVK: there the memory grows by hundreds of MB in the reset round (459
+MB in the batch with the validation layer, 2026-11-06; the cycle never ran on Vulkan before the batches), which is
+not explained yet. Its first round resets every section, so the settings the parts before it changed do not count
+as growth.
+
+Every section has a clock of its own (`Section::sectionTime`), which runs only while the section is shown: its
+animations and the surface shaders' time follow it, so a capture does not depend on how long the batch ran before
+the part. The renderer's own state still does in part: the native ray tracing capture from a run of its own and
+from the batch differ by a mean of 0.32 (0.09% of the pixels by more than 16), within the thresholds. Two batch runs
+of the same binary give the same bytes in every capture (48 captures, 2026-11-06).
+
+Outside the batches, with runs of their own because they need flags or files of their own:
+
 | CTest test | What it runs |
 |---|---|
-| `demo_<section>_metal`, `demo_<section>_vulkan` | `--section <id> --script examples/demo/scenarios/<id>.txt` at 960 x 540 (`--window` and `--frame-size`), with GPU validation and `--present-mode immediate` (below); the scenario switches the section's options and checks the renderer's and the section's values, puts the start state back, and the frame at 2 s (input: 3 s, assets: 1.5 s, animation: 2.4 s) is compared with `tests/golden/<backend>/<device>/demo_<id>.png`. The scenarios point at the window in percent or at named points (`@menu:<section>`, `@floor`), so their checks also pass in a portrait phone window (the captures are compared on the Mac only). The captures show the windows: the menu, the section's panel and the caption |
-| `demo_hdr_on_metal`, `demo_hdr_on_vulkan` | the HDR section with `--hdr on --hdr-headroom 4` and `scenarios/hdr_on.txt`: the output is HDR extended linear with headroom 4 and the capture's peak is above 2 and at most 4 times paper white; the capture (clipped at paper white) is compared with `demo_hdr_on.png` |
-| `demo_audio_metal`, `demo_audio_vulkan` | the audio section with `--audio-capture` (offline mixing on the frame clock, the WAV next to the capture) and `scenarios/audio.txt`: every emitter, the tone, the crossfade to music B and a burst of 40 pings, no underruns or clipped samples; the frame at 1.65 s is compared with `demo_audio.png` |
-| `demo_audio_tone`, `demo_audio_flyby`, `demo_audio_music` | the checks on the mix itself (below), on the default backend only: `scenarios/audio_tone.txt`, `audio_flyby.txt` and `audio_music.txt` with `--audio-capture` and `--present-mode immediate`, no capture |
-| `demo_audio_wav_match` | (with Vulkan through MoltenVK) the WAV files of `demo_audio_metal` and `demo_audio_vulkan` are the same bytes: the offline mix does not depend on the GPU backend, which is why the mix checks run on one backend |
-| `demo_raytracing_metal_native` | the ray tracing section on `--gpu-backend metal` with `scenarios/raytracing.txt`: ray-traced shadows and occlusion run (no cascades, no shadow draws, at least 12 instances in the top level, the character skinned), shadow maps come back when asked, MetalFX temporal at scale 0.5 resolves in TAA's place, spatial runs, bilinear at scale 1 again; the frame at 2.5 s (rays and occlusion at full size, the sun and the character moving) is compared with `tests/golden/metal/<device>/demo_raytracing_native.png` |
-| `demo_raytracing_metal`, `demo_raytracing_vulkan` | the same section on SDL GPU with `scenarios/raytracing_fallback.txt`: the requests fall back (cascades, no occlusion, no top level, bilinear at scale 0.5), and the renderer lists the fallbacks; the frame at 2.5 s is compared with `demo_raytracing.png` |
-| `demo_compact_portrait_metal`, `demo_compact_landscape_metal` | `scenarios/compact.txt` in a phone-sized window (400 x 720 and 720 x 320 points): the compact layout, the bar's arrows, the menu sheet, About and its licences, the controls sheet; the frame at 1.5 s (the controls sheet over the materials section) is compared with `demo_compact_portrait.png` and `demo_compact_landscape.png` (Metal only: the layout does not depend on the backend) |
-| `demo_menu` | `scenarios/menu.txt`: switching sections by keys, gamepad, a click and a tap on the list; the menu by Tab, the arrows and Enter and by the D-pad, A and B; hiding the windows |
 | `demo_tour` | `--tour 0.1` with `scenarios/tour.txt`: a full round back to the first section, every section initialized, a key stops it, `mode tour` starts it again from the current section |
-| `demo_cycle` | `scenarios/cycle.txt`: every section three times (switched, then reset), with the memory, the live GPU resources, the scene's instances and the error count marked after the first round: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 32 MB; no instance more; no new error) |
 | `demo_checks`, `demo_settings`, `demo_benchmark` | `tests/DemoUserFiles.cmake` runs the demo on a fresh `--user-dir` and reads the file it wrote: the check mode's marks by command and by the buttons, read back by a second run, a corrupt `checks.json` starts empty (`checks*.txt`); settings saved, read back, a corrupt file gives the defaults and is written again, `--no-settings` leaves it (`settings_*.txt`); `mode benchmark 0.1` writes a report with 11 sections (`benchmark_all.txt`) |
 | `demo_version`, `demo_bad_section`, `demo_bad_flag` | `--version` prints "Quench Demo <version>"; an unknown `--section` fails; `--tour` with `--checks` fails |
+
+The batches write no WAV file: `demo_audio_wav_match`, which compared the WAV files of the Metal and the Vulkan audio
+check, is gone. The audio part's checks run on all three backends.
 
 The assets check (`scenarios/assets.txt`, about 3.6 s per backend) loads with a simulated latency of 0.2 s and checks
 the placeholders first (loads in flight, no model ready), then waits for the manager to be idle: three models ready,
@@ -297,8 +342,8 @@ the mix with `audio_measure` ([App shell](app.md#scenarios)) and ends with no un
 1 kHz at 2 m in front (RMS 0.058 to 0.067, 998 to 1002 Hz), moved to the right (left channel below 0.002), at 8 m
 with the inverse, linear and no attenuation, gliding to 1500 Hz, then a burst of 40 pings steals voices. The fly-by's
 fundamental approaching (477 to 486 Hz from 440 Hz at 30 m/s) and receding (401 to 410 Hz). Music A (110 Hz), the
-crossfade to B (two streams, then one, 147 Hz), the music bus at 0 (silent). All other demo tests run with
-`--audio-device null`, so no test plays through the speakers.
+crossfade to B (two streams, then one, 147 Hz), the music bus at 0 (silent). Every test runs offscreen, where the mix
+is offline, so no test plays through the speakers.
 
 Named points: `menu:<section id>` (a menu entry while the menu is shown), `ui:<name>` (the windows' buttons:
 `ui:sections`, `ui:prev`, `ui:title`, `ui:next`, `ui:controls`, `ui:close`, `ui:tour`, `ui:checks`,
@@ -306,12 +351,9 @@ Named points: `menu:<section id>` (a menu entry while the menu is shown), `ui:<n
 `ui:relaunch`, `ui:stop`, `ui:check_ok`, `ui:check_problem`, `ui:check_skip`, `ui:check_prev`, `ui:check_next`,
 `ui:check_end`, `ui:check_note`), and the section's (`floor`, ...).
 
-The capture checks and the audio mix checks run with `--present-mode immediate`. Every frame of a scripted run is one
-fixed step, and frames are held to 120 per second; with vsync they wait for the 60 Hz display as well, which doubles a
-check's time without changing a pixel or a sample (measured 2026-11-06: the same capture and WAV, the old single
-audio check 18.5 s with vsync, 9.8 s with immediate). Where a window is paced to its display even with `immediate`
-([Platforms](platforms.md)), the checks are as slow as with vsync and otherwise the same. The hello checks and
-`demo_menu` keep the default vsync.
+Offscreen frames are not paced ([App shell](app.md#command-line-flags)), except while assets load: the three
+batches together take about 9 s (2026-11-06, in parallel; each 7 to 9 s for 290 to 310 checks). On the screen
+(`--onscreen`) a scripted run holds every frame to 120 per second, and with vsync also to the display.
 
 The scenarios turn dithering off (`set dither 0`), which keeps the golden PNGs at 120 to 380 KB. Deterministic runs
 (`--script`, `--capture`; not inside a perf region) hide the timings, the memory and the Log panel's counts, which change from run to run.
@@ -360,13 +402,13 @@ physics, assets, audio, animation and ray tracing sections for 5 s each in real 
 first loads have finished; the audio region plays the three emitters, the tone and the music; the animation region
 has a crowd of 256 (259 characters), and its perf line ends with the section's own times over its last 240 frames:
 `anim_update_ms` (mean) and `anim_update_max_ms` of `AnimationSystem::update`, `anim_threads`, and
-`skinning_gpu_ms`, the mean of the skinning pass's GPU time (-1 without GPU timing). Automated runs add
-`--audio-device null` (the mix runs
-on miniaudio's null device thread, without sound):
+`skinning_gpu_ms`, the mean of the skinning pass's GPU time (-1 without GPU timing). It runs in a window on the
+screen (`--onscreen`: scripted runs are offscreen otherwise, where frames are not presented) with `--audio-device
+null` (the mix runs on miniaudio's null device thread, without sound):
 
 ```sh
-build/release/examples/demo/quench-demo --frame-size 1920x1080 --script examples/demo/scenarios/benchmark.txt \
-    --audio-device null
+build/release/examples/demo/quench-demo --onscreen --frame-size 1920x1080 \
+    --script examples/demo/scenarios/benchmark.txt --audio-device null
 ```
 
 The benchmark mode (`--benchmark-all`, above) measures every section the same way, with the windows as they are
@@ -375,8 +417,8 @@ the crowd of 256).
 
 `scenarios/raytracing_benchmark.txt` measures the ray tracing section's options one by one, 5 s each: rays for
 shadows and occlusion, shadows alone, hard shadows (1 ray), shadow maps, then MetalFX temporal at scale 1, 0.67 and
-0.5, spatial and bilinear at 0.5. Run it with `--gpu-backend metal` (on SDL GPU every region measures the fallbacks);
-the perf lines carry the GPU time per timed range ([Performance](performance.md#measurements)).
+0.5, spatial and bilinear at 0.5. Run it with `--onscreen --gpu-backend metal` (on SDL GPU every region measures the
+fallbacks); the perf lines carry the GPU time per timed range ([Performance](performance.md#measurements)).
 
 ## Packaged builds: `tools/package_demo.sh`
 
@@ -387,7 +429,8 @@ tools/package_demo.sh --ios    # also iOS: dist/QuenchDemo-<version>-<hash>-ios.
 
 `<hash>` is the short commit hash, with `-dirty` when the working tree has changes (the build is then not exactly
 that commit). The script builds `quench_demo` with the `release` preset (`--preset NAME` for another), runs the
-`demo_*` tests, and then:
+demo's tests (`ctest -L demo`: the batches and the runs with files of their own; `--no-checks` skips them when
+`tools/check.sh release` has just run them on the same build), and then:
 
 - **macOS**: assembles `QuenchDemo.app` (the executable, an Info.plist with the version and the binary's minimum
   macOS as `LSMinimumSystemVersion`, an icns made from `examples/demo/icon/icon.png`, `LICENSE` and
@@ -396,8 +439,8 @@ that commit). The script builds `quench_demo` with the `release` preset (`--pres
   zips it with `LICENSE` and `THIRD_PARTY_LICENSES` next to it. The archives carry no extended attributes: `ditto`
   would store them as AppleDouble `._` files, which a plain `unzip` turns into files inside the bundle that break its
   signature; the script fails on any `._` entry. It then unzips the archive with a plain `unzip` into a temporary
-  directory, verifies the signature and starts the app from `/` with `scenarios/smoke.txt` (every section once, with
-  `--audio-device null`: no sound): exit code 0, the scenario
+  directory, verifies the signature and starts the app from `/` with `scenarios/smoke.txt` (every section once,
+  offscreen: no window on the screen, no sound): exit code 0, the scenario
   passed, and a capture (`dist/<name>-macos-smoke.png`) to look at. The app is signed ad hoc and not notarized: a
   copy downloaded on another Mac is quarantined, and Gatekeeper opens it only after it is allowed in System Settings,
   Privacy & Security (not tried on another Mac yet).

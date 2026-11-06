@@ -75,20 +75,24 @@ quench_configure_target(quench_test_harness)
 target_include_directories(quench_test_harness PUBLIC harness)
 target_compile_definitions(quench_test_harness PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
-# quench_add_test_executable(<name> PREFIX <ctest prefix> SOURCES <file>... LIBS <target>... [ENVIRONMENT <NAME=value>...])
+# Every test has the label of the module it checks (ctest -L <label>; tools/check.sh quick picks them from the changed
+# files): core, physics, assets, audio, animation, cook, gpu, render, app, hello, demo.
+# quench_add_test_executable(<name> PREFIX <ctest prefix> LABEL <label> SOURCES <file>... LIBS <target>...
+#                            [ENVIRONMENT <NAME=value>...])
 function(quench_add_test_executable name)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "PREFIX" "SOURCES;LIBS;ENVIRONMENT")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "" "PREFIX;LABEL" "SOURCES;LIBS;ENVIRONMENT")
     add_executable(${name} ${arg_SOURCES})
     quench_configure_target(${name})
     target_link_libraries(${name} PRIVATE quench_test_harness ${arg_LIBS})
-    quench_add_test_variant(${name} PREFIX ${arg_PREFIX} ENVIRONMENT ${arg_ENVIRONMENT})
+    quench_add_test_variant(${name} PREFIX ${arg_PREFIX} LABEL ${arg_LABEL} ENVIRONMENT ${arg_ENVIRONMENT})
 endfunction()
 
 # Registers every case of a test executable under PREFIX, run with the given environment. A second call with another
 # prefix runs the same cases again (another GPU driver, for example). A case whose output matches FAIL_REGEX fails.
-# quench_add_test_variant(<name> PREFIX <ctest prefix> [ENVIRONMENT <NAME=value>...] [FAIL_REGEX <regex>])
+# quench_add_test_variant(<name> PREFIX <ctest prefix> LABEL <label> [ENVIRONMENT <NAME=value>...]
+#                         [FAIL_REGEX <regex>])
 function(quench_add_test_variant name)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "PREFIX;FAIL_REGEX" "ENVIRONMENT")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "" "PREFIX;LABEL;FAIL_REGEX" "ENVIRONMENT")
     if(CMAKE_CROSSCOMPILING_EMULATOR MATCHES "simctl" AND arg_ENVIRONMENT)
         # simctl passes only SIMCTL_CHILD_ variables to the process, without the prefix.
         list(TRANSFORM arg_ENVIRONMENT PREPEND SIMCTL_CHILD_)
@@ -97,7 +101,7 @@ function(quench_add_test_variant name)
     set(list_file ${CMAKE_CURRENT_BINARY_DIR}/${arg_PREFIX}_cases.cmake)
     add_custom_command(TARGET ${name} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:${name}> -DPREFIX=${arg_PREFIX} -DOUTPUT=${list_file}
-                -DWORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR} -DSKIP_RETURN_CODE=77
+                -DWORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR} -DSKIP_RETURN_CODE=77 -DLABEL=${arg_LABEL}
                 "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" "-DENVIRONMENT=${environment}"
                 "-DFAIL_REGEX=${arg_FAIL_REGEX}" -P ${CMAKE_CURRENT_SOURCE_DIR}/DiscoverTests.cmake
         VERBATIM)
@@ -107,12 +111,13 @@ function(quench_add_test_variant name)
     include([=[${list_file}]=])
 else()
     add_test([=[${arg_PREFIX}_NOT_BUILT]=] [=[${arg_PREFIX}_NOT_BUILT]=])
+    set_tests_properties([=[${arg_PREFIX}_NOT_BUILT]=] PROPERTIES LABELS [=[${arg_LABEL}]=])
 endif()
 ")
     set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES ${include_file})
 endfunction()
 
-quench_add_test_executable(quench_core_tests PREFIX core
+quench_add_test_executable(quench_core_tests PREFIX core LABEL core
     SOURCES
         core/AssertTests.cpp
         core/FileSystemTests.cpp
@@ -124,11 +129,11 @@ quench_add_test_executable(quench_core_tests PREFIX core
         core/ThreadTests.cpp
     LIBS quench_core)
 
-quench_add_test_executable(quench_physics_tests PREFIX physics
+quench_add_test_executable(quench_physics_tests PREFIX physics LABEL physics
     SOURCES physics/PhysicsWorldTests.cpp
     LIBS quench_physics)
 
-quench_add_test_executable(quench_assets_tests PREFIX assets
+quench_add_test_executable(quench_assets_tests PREFIX assets LABEL assets
     SOURCES
         assets/AssetManagerTests.cpp
         assets/ModelTests.cpp
@@ -136,18 +141,18 @@ quench_add_test_executable(quench_assets_tests PREFIX assets
         assets/TextureTests.cpp
     LIBS quench_assets)
 
-quench_add_test_executable(quench_audio_tests PREFIX audio
+quench_add_test_executable(quench_audio_tests PREFIX audio LABEL audio
     SOURCES audio/AudioTests.cpp ${audio_test_data}
     LIBS quench_audio)
 
-quench_add_test_executable(quench_animation_tests PREFIX animation
+quench_add_test_executable(quench_animation_tests PREFIX animation LABEL animation
     SOURCES animation/AnimationTests.cpp
     LIBS quench_animation)
 
 # quench_cook (host builds that build the cook themselves): the library's cases, and the command line run twice on the
 # demo's sources and its generated character with byte-identical outputs.
 if(TARGET quench_cook_lib)
-    quench_add_test_executable(quench_cook_tests PREFIX cook
+    quench_add_test_executable(quench_cook_tests PREFIX cook LABEL cook
         SOURCES cook/CookTests.cpp
         LIBS quench_cook_lib quench_glm)
     target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_SOURCE_DIR="${Quench_SOURCE_DIR}")
@@ -161,10 +166,11 @@ if(TARGET quench_cook_lib)
              -DSOURCES=${Quench_SOURCE_DIR}/examples/demo/assets_src -DSOUNDS=${CMAKE_CURRENT_SOURCE_DIR}/audio/data
              ${_character_args}
              -DOUT=${CMAKE_CURRENT_BINARY_DIR}/tmp/cook_cli -P ${CMAKE_CURRENT_SOURCE_DIR}/CookCli.cmake)
+    set_tests_properties(cook_cli PROPERTIES LABELS cook)
     add_dependencies(quench_cook_tests quench_cook)
 endif()
 
-quench_add_test_executable(quench_gpu_tests PREFIX gpu
+quench_add_test_executable(quench_gpu_tests PREFIX gpu LABEL gpu
     SOURCES gpu/ShaderTests.cpp
     LIBS quench_gpu_shaders)
 quench_add_shaders(quench_gpu_tests NAME test SOURCE gpu/shaders/test.hlsl
@@ -176,7 +182,7 @@ target_compile_definitions(quench_gpu_tests PRIVATE
     QUENCH_TEST_SHADER_DIR="${CMAKE_CURRENT_BINARY_DIR}/quench_shaders/test")
 
 if(NOT QUENCH_HEADLESS)
-    quench_add_test_executable(quench_app_tests PREFIX app
+    quench_add_test_executable(quench_app_tests PREFIX app LABEL app
         SOURCES
             app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
@@ -188,7 +194,7 @@ if(NOT QUENCH_HEADLESS)
         LIBS quench_app)
 
     # The audio device on miniaudio's null backend (no sound), the opt-in default output, the iOS audio session.
-    quench_add_test_executable(quench_audio_device_tests PREFIX audio_device
+    quench_add_test_executable(quench_audio_device_tests PREFIX audio_device LABEL audio
         SOURCES audio/DeviceTests.cpp
         LIBS quench_audio_device)
 
@@ -197,7 +203,7 @@ if(NOT QUENCH_HEADLESS)
     if(APPLE)
         set(gpu_environment MTL_DEBUG_LAYER=1 QUENCH_TEST_GPU_DRIVER=metal)
     endif()
-    quench_add_test_executable(quench_gpu_device_tests PREFIX gpu_device
+    quench_add_test_executable(quench_gpu_device_tests PREFIX gpu_device LABEL gpu
         SOURCES
             gpu/DeviceTests.cpp
             gpu/GpuTest.cpp
@@ -215,7 +221,7 @@ if(NOT QUENCH_HEADLESS)
     # The same cases on the native Metal backend (src/gpu/metal), with the Metal API validation layer.
     if(APPLE)
         set(metal_native_environment QUENCH_GPU_BACKEND=metal MTL_DEBUG_LAYER=1 QUENCH_TEST_GPU_DRIVER=metal)
-        quench_add_test_variant(quench_gpu_device_tests PREFIX gpu_metal_native
+        quench_add_test_variant(quench_gpu_device_tests PREFIX gpu_metal_native LABEL gpu
             ENVIRONMENT ${metal_native_environment})
     endif()
 
@@ -237,14 +243,14 @@ if(NOT QUENCH_HEADLESS)
                 list(APPEND vulkan_environment DYLD_FALLBACK_LIBRARY_PATH=${layer_dir}:/usr/local/lib:/usr/lib)
             endif()
             # Without a debug messenger (SDL registers none) the layer prints its messages to stdout.
-            quench_add_test_variant(quench_gpu_device_tests PREFIX gpu_vulkan
+            quench_add_test_variant(quench_gpu_device_tests PREFIX gpu_vulkan LABEL gpu
                 ENVIRONMENT ${vulkan_environment}
                 FAIL_REGEX "Validation (Error|Warning)")
         endif()
     endif()
 
     # The render module: CPU cases and offscreen renders, on the default driver and on Vulkan through MoltenVK.
-    quench_add_test_executable(quench_render_tests PREFIX render
+    quench_add_test_executable(quench_render_tests PREFIX render LABEL render
         SOURCES
             gpu/GpuTest.cpp
             render/RenderMathTests.cpp
@@ -257,12 +263,13 @@ if(NOT QUENCH_HEADLESS)
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment)
     if(QUENCH_TEST_VULKAN_LOADER)
-        quench_add_test_variant(quench_render_tests PREFIX render_vulkan
+        quench_add_test_variant(quench_render_tests PREFIX render_vulkan LABEL render
             ENVIRONMENT ${vulkan_environment}
             FAIL_REGEX "Validation (Error|Warning)")
     endif()
     if(APPLE)
-        quench_add_test_variant(quench_render_tests PREFIX render_metal_native ENVIRONMENT ${metal_native_environment})
+        quench_add_test_variant(quench_render_tests PREFIX render_metal_native LABEL render
+            ENVIRONMENT ${metal_native_environment})
     endif()
 
     # ---------------------------------------------------------------- examples (host builds)
@@ -281,161 +288,136 @@ if(NOT QUENCH_HEADLESS)
         set(QUENCH_GOLDEN_DEVICE "${golden_device}" CACHE STRING
             "Device folder of the golden images (tests/golden/<backend>/<device>)")
 
-        set(hello_args --window 640x360 --frame-size 1280x720 --capture-at 1 --quit-after 1 --gpu-debug
-            --audio-device null)
+        # The apps' checks run offscreen (the default of scripted runs on desktops: a hidden window, no Dock icon, no
+        # input from real devices; docs/app.md) and in batches: one app process per GPU backend runs every part of a
+        # scenario (`include`), writes each part's capture into its user directory, and a test per part checks the
+        # part's lines in the log and compares its capture with the golden image. The batches and the other app runs
+        # are registered where the captures are compared (QUENCH_TEST_CAPTURES, Release builds by default); other
+        # builds run one smoke run of the demo.
+        if(CMAKE_BUILD_TYPE STREQUAL "Release")
+            set(captures_default ON)
+        else()
+            set(captures_default OFF)
+        endif()
+        option(QUENCH_TEST_CAPTURES "Register the apps' batch runs and golden image checks" ${captures_default})
         set(capture_dir ${CMAKE_CURRENT_BINARY_DIR}/captures)
-        # quench_add_capture_test(<test> IMAGE <golden name> BACKEND <backend> APP <target> ARGS <arg>...
-        #                         [ENVIRONMENT <NAME=value>...] [OUTPUTS <file>...])
-        function(quench_add_capture_test name)
-            cmake_parse_arguments(PARSE_ARGV 1 arg "" "IMAGE;BACKEND;APP" "ARGS;ENVIRONMENT;OUTPUTS")
+        # The app runs start after the other tests (CTest starts the costliest first): beside the GPU device and
+        # render tests their frames wait for a shared GPU (the Metal batch: 9.6 s beside the headless tests, 21 s
+        # beside the GPU tests, 53 s in a full run where it started first; 2026-11-06).
+        set(app_run_cost 0.001)
+
+        # quench_add_batch(<prefix> <suffix> APP <target> SCRIPT <file> BACKEND <golden backend> ARGS <arg>...
+        #                  [ENVIRONMENT <NAME=value>...] [FAIL_REGEX <regex>] PARTS <file>[:<golden>]...)
+        # registers <prefix>_batch_<suffix> (the run, in captures/<prefix>_batch_<suffix>/) and per part
+        # <prefix>_<file>_<suffix>: the part <file>.txt passed its checks and its capture <golden>.png matches
+        # tests/golden/<backend>/<device>/<golden>.png. All have the label <prefix>.
+        function(quench_add_batch prefix suffix)
+            cmake_parse_arguments(PARSE_ARGV 2 arg "" "APP;SCRIPT;BACKEND;FAIL_REGEX" "ARGS;ENVIRONMENT;PARTS")
+            set(batch ${prefix}_batch_${suffix})
+            set(dir ${capture_dir}/${batch})
             list(JOIN arg_ARGS "|" args)
             list(JOIN arg_ENVIRONMENT "|" environment)
-            list(JOIN arg_OUTPUTS "|" outputs)
-            add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:${arg_APP}> "-DARGS=${args}"
-                     "-DENVIRONMENT=${environment}" "-DOUTPUTS=${outputs}" -DCAPTURE=${capture_dir}/${name}.png
-                     -DGOLDEN=${Quench_SOURCE_DIR}/tests/golden/${arg_BACKEND}/${QUENCH_GOLDEN_DEVICE}/${arg_IMAGE}.png
-                     -DCOMPARE=$<TARGET_FILE:quench_image_compare> -P ${CMAKE_CURRENT_SOURCE_DIR}/RunCapture.cmake)
-            set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "QUENCH_SKIP"
-                                 FAIL_REGULAR_EXPRESSION "Validation (Error|Warning)")
+            add_test(NAME ${batch} COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:${arg_APP}> "-DARGS=${args}"
+                     -DSCRIPT=${arg_SCRIPT} "-DENVIRONMENT=${environment}" -DUSER_DIR=${dir} -DLOG=${dir}.log
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/RunBatch.cmake)
+            set_tests_properties(${batch} PROPERTIES FIXTURES_SETUP ${batch} LABELS ${prefix} COST ${app_run_cost})
+            if(arg_FAIL_REGEX)
+                set_tests_properties(${batch} PROPERTIES FAIL_REGULAR_EXPRESSION "${arg_FAIL_REGEX}")
+            endif()
+            foreach(part IN LISTS arg_PARTS)
+                string(REPLACE ":" ";" part "${part}")
+                list(GET part 0 file)
+                set(capture_args "")
+                list(LENGTH part fields)
+                if(fields GREATER 1)
+                    list(GET part 1 golden)
+                    set(capture_args -DCAPTURE=${dir}/${golden}.png
+                        -DGOLDEN=${Quench_SOURCE_DIR}/tests/golden/${arg_BACKEND}/${QUENCH_GOLDEN_DEVICE}/${golden}.png
+                        -DCOMPARE=$<TARGET_FILE:quench_image_compare>)
+                endif()
+                add_test(NAME ${prefix}_${file}_${suffix} COMMAND ${CMAKE_COMMAND} -DLOG=${dir}.log -DPART=${file}.txt
+                         ${capture_args} -P ${CMAKE_CURRENT_SOURCE_DIR}/CheckPart.cmake)
+                set_tests_properties(${prefix}_${file}_${suffix} PROPERTIES FIXTURES_REQUIRED ${batch}
+                                     LABELS ${prefix} SKIP_REGULAR_EXPRESSION "QUENCH_SKIP")
+            endforeach()
         endfunction()
 
-        quench_add_capture_test(hello_metal IMAGE hello BACKEND metal APP quench_hello ARGS ${hello_args}
-            ENVIRONMENT MTL_DEBUG_LAYER=1)
-        # The native Metal backend against the same golden images as SDL GPU's Metal driver.
-        quench_add_capture_test(hello_metal_native IMAGE hello BACKEND metal APP quench_hello
-            ARGS ${hello_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1)
-        if(QUENCH_TEST_VULKAN_LOADER)
-            quench_add_capture_test(hello_vulkan IMAGE hello BACKEND vulkan APP quench_hello ARGS ${hello_args} --gpu-driver vulkan
-                ENVIRONMENT ${vulkan_environment})
+        # The hello example: its frame at 1 s against the golden image and the input check, on SDL GPU's Metal
+        # driver, on the native Metal backend (the same golden image) and on Vulkan through MoltenVK.
+        if(QUENCH_TEST_CAPTURES)
+            set(hello_args --window 640x360 --frame-size 1280x720 --gpu-debug)
+            set(hello_parts frame:hello input)
+            set(hello_script ${Quench_SOURCE_DIR}/examples/hello/scenarios/check.txt)
+            quench_add_batch(hello metal APP quench_hello SCRIPT ${hello_script} BACKEND metal ARGS ${hello_args}
+                ENVIRONMENT MTL_DEBUG_LAYER=1 PARTS ${hello_parts})
+            quench_add_batch(hello metal_native APP quench_hello SCRIPT ${hello_script} BACKEND metal
+                ARGS ${hello_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1 PARTS ${hello_parts})
+            if(QUENCH_TEST_VULKAN_LOADER)
+                quench_add_batch(hello vulkan APP quench_hello SCRIPT ${hello_script} BACKEND vulkan
+                    ARGS ${hello_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment}
+                    FAIL_REGEX "Validation (Error|Warning)" PARTS ${hello_parts})
+            endif()
         endif()
-
-        add_test(NAME hello_input COMMAND quench_hello --window 640x360 --audio-device null --script
-                 ${Quench_SOURCE_DIR}/examples/hello/scenarios/input.txt)
-        set_tests_properties(hello_input PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
-        add_test(NAME hello_version COMMAND quench_hello --version)
+        # Runs without a script start as interactive ones: --offscreen keeps the window and the Dock icon away until
+        # the bad flag ends the run.
+        add_test(NAME hello_version COMMAND quench_hello --offscreen --version)
         set_tests_properties(hello_version PROPERTIES PASS_REGULAR_EXPRESSION "^Quench Hello ${PROJECT_VERSION}\n$")
-        add_test(NAME hello_bad_argument COMMAND quench_hello --no-such-option)
-        add_test(NAME hello_bad_flag_value COMMAND quench_hello --quit-after soon)
+        add_test(NAME hello_bad_argument COMMAND quench_hello --offscreen --no-such-option)
+        add_test(NAME hello_bad_flag_value COMMAND quench_hello --offscreen --quit-after soon)
         set_tests_properties(hello_bad_argument hello_bad_flag_value PROPERTIES WILL_FAIL TRUE)
+        set_tests_properties(hello_version hello_bad_argument hello_bad_flag_value PROPERTIES LABELS hello)
 
         if(TARGET quench_demo)
-            # The engine demo: per section a scripted check that ends in a golden capture (section:capture time).
+            # The engine demo (docs/demo.md, "Checks"): batch.txt on Vulkan through MoltenVK, batch_metal.txt (batch.txt
+            # and cycle.txt) on SDL GPU's Metal driver, batch_native.txt (ray tracing itself instead of its fallbacks,
+            # and cycle.txt) on the native Metal backend, which compares with the Metal golden images except for ray tracing's own.
+            # A part with a golden name ends in a capture: the sections without the demo's windows, demo_ui and the
+            # compact layouts with them.
             set(demo_scenarios ${Quench_SOURCE_DIR}/examples/demo/scenarios)
-            # No test plays sound: the null audio device (a thread that discards the mix), or for the audio section
-            # the offline mix written as WAV next to the capture. Immediate present: the deterministic frames are held
-            # to their own cap (120 per second) instead of the display's rate where the window is not paced to the
-            # display (docs/platforms.md), with the same pixels and the same mix; the hello checks and demo_menu keep
-            # the default vsync. The native Metal backend runs a subset, for the wall time: the animation section (compute
-            # skinning, shadows, TAA, bloom and the UI) and demo_hdr_on below (HDR output); render_metal_native covers
-            # the frame's modules one by one, and every section matched its golden image when the backend was added
-            # (docs/architecture.md, "Native Metal backend").
-            set(demo_native_sections animation)
-            foreach(entry materials:2 shadows:2 sky:2 post:2 hdr:2 physics:2 input:3 assets:1.5 audio:1.65
-                  animation:2.4)
-                string(REPLACE ":" ";" entry "${entry}")
-                list(GET entry 0 section)
-                list(GET entry 1 capture_at)
-                set(demo_args --window 960x540 --frame-size 960x540 --gpu-debug --present-mode immediate
-                    --section ${section} --script ${demo_scenarios}/${section}.txt --capture-at ${capture_at})
-                foreach(backend metal vulkan)
-                    if(section STREQUAL "audio")
-                        set(demo_audio_${backend} --audio-capture ${capture_dir}/demo_audio_${backend}.wav)
-                        set(demo_outputs_${backend} ${capture_dir}/demo_audio_${backend}.wav)
-                    else()
-                        set(demo_audio_${backend} --audio-device null)
-                        set(demo_outputs_${backend} "")
-                    endif()
-                endforeach()
-                quench_add_capture_test(demo_${section}_metal IMAGE demo_${section} BACKEND metal APP quench_demo
-                    ARGS ${demo_args} ${demo_audio_metal} ENVIRONMENT MTL_DEBUG_LAYER=1
-                    OUTPUTS ${demo_outputs_metal})
-                if(section IN_LIST demo_native_sections)
-                    quench_add_capture_test(demo_${section}_metal_native IMAGE demo_${section} BACKEND metal
-                        APP quench_demo ARGS ${demo_args} --audio-device null --gpu-backend metal
-                        ENVIRONMENT MTL_DEBUG_LAYER=1)
+            set(demo_parts materials:demo_materials shadows:demo_shadows sky:demo_sky post:demo_post hdr:demo_hdr
+                hdr_on:demo_hdr_on physics:demo_physics input:demo_input assets:demo_assets audio:demo_audio
+                animation:demo_animation ui:demo_ui compact_portrait:demo_compact_portrait
+                compact_landscape:demo_compact_landscape menu audio_tone audio_flyby audio_music)
+            set(demo_args --window 960x540 --gpu-debug --hdr-headroom 4)
+            if(QUENCH_TEST_CAPTURES)
+                quench_add_batch(demo metal APP quench_demo SCRIPT ${demo_scenarios}/batch_metal.txt BACKEND metal
+                    ARGS ${demo_args} ENVIRONMENT MTL_DEBUG_LAYER=1
+                    PARTS ${demo_parts} raytracing_fallback:demo_raytracing cycle)
+                if(APPLE)
+                    quench_add_batch(demo metal_native APP quench_demo SCRIPT ${demo_scenarios}/batch_native.txt
+                        BACKEND metal ARGS ${demo_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1
+                        PARTS ${demo_parts} raytracing:demo_raytracing_native cycle)
                 endif()
                 if(QUENCH_TEST_VULKAN_LOADER)
-                    quench_add_capture_test(demo_${section}_vulkan IMAGE demo_${section} BACKEND vulkan
-                        APP quench_demo ARGS ${demo_args} ${demo_audio_vulkan} --gpu-driver vulkan
-                        ENVIRONMENT ${vulkan_environment} OUTPUTS ${demo_outputs_vulkan})
+                    quench_add_batch(demo vulkan APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND vulkan
+                        ARGS ${demo_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment}
+                        FAIL_REGEX "Validation (Error|Warning)" PARTS ${demo_parts} raytracing_fallback:demo_raytracing)
                 endif()
-            endforeach()
-            # The audio section's checks on the mix itself, split so that they run in parallel, on the default
-            # backend only: the offline mix does not depend on the GPU backend, which demo_audio_wav_match checks
-            # on the two backends' WAV of the section's capture run.
-            file(MAKE_DIRECTORY ${capture_dir})
-            foreach(part tone flyby music)
-                add_test(NAME demo_audio_${part} COMMAND quench_demo --window 960x540 --frame-size 960x540
-                         --section audio --present-mode immediate --script ${demo_scenarios}/audio_${part}.txt
-                         --audio-capture ${capture_dir}/demo_audio_${part}.wav)
-                set_tests_properties(demo_audio_${part} PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
-            endforeach()
-            if(QUENCH_TEST_VULKAN_LOADER)
-                add_test(NAME demo_audio_wav_match COMMAND ${CMAKE_COMMAND} -E compare_files
-                         ${capture_dir}/demo_audio_metal.wav ${capture_dir}/demo_audio_vulkan.wav)
-                set_tests_properties(demo_audio_metal demo_audio_vulkan PROPERTIES FIXTURES_SETUP demo_audio_wav)
-                set_tests_properties(demo_audio_wav_match PROPERTIES FIXTURES_REQUIRED demo_audio_wav)
+                # The tour (started by its flag), the check mode, the settings and benchmark-all with their files in a
+                # fresh user directory (they need runs of their own).
+                add_test(NAME demo_tour COMMAND quench_demo --window 960x540 --tour 0.1
+                         --script ${demo_scenarios}/tour.txt)
+                set_tests_properties(demo_tour PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line" LABELS demo
+                                     COST ${app_run_cost})
+                foreach(kind checks settings benchmark)
+                    add_test(NAME demo_${kind} COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:quench_demo>
+                             -DSCENARIOS=${demo_scenarios} -DUSER_DIR=${CMAKE_CURRENT_BINARY_DIR}/demo_user/${kind}
+                             -DKIND=${kind} -P ${CMAKE_CURRENT_SOURCE_DIR}/DemoUserFiles.cmake)
+                    set_tests_properties(demo_${kind} PROPERTIES LABELS demo COST ${app_run_cost})
+                endforeach()
+            else()
+                # Every section once, offscreen (with assertions in Debug builds, under the sanitizers in theirs).
+                add_test(NAME demo_smoke COMMAND quench_demo --window 960x540 --script ${demo_scenarios}/smoke.txt)
+                set_tests_properties(demo_smoke PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line" LABELS demo
+                                     COST ${app_run_cost})
             endif()
-            # Ray tracing: ray-traced shadows and occlusion on the native Metal backend (its own golden image), the
-            # fallbacks (shadow maps, no occlusion, bilinear) on SDL GPU's Metal and Vulkan drivers.
-            set(demo_rt_args --window 960x540 --frame-size 960x540 --gpu-debug --present-mode immediate
-                --section raytracing --capture-at 2.5 --audio-device null)
-            quench_add_capture_test(demo_raytracing_metal_native IMAGE demo_raytracing_native BACKEND metal
-                APP quench_demo ARGS ${demo_rt_args} --script ${demo_scenarios}/raytracing.txt --gpu-backend metal
-                ENVIRONMENT MTL_DEBUG_LAYER=1)
-            quench_add_capture_test(demo_raytracing_metal IMAGE demo_raytracing BACKEND metal APP quench_demo
-                ARGS ${demo_rt_args} --script ${demo_scenarios}/raytracing_fallback.txt ENVIRONMENT MTL_DEBUG_LAYER=1)
-            if(QUENCH_TEST_VULKAN_LOADER)
-                quench_add_capture_test(demo_raytracing_vulkan IMAGE demo_raytracing BACKEND vulkan APP quench_demo
-                    ARGS ${demo_rt_args} --script ${demo_scenarios}/raytracing_fallback.txt --gpu-driver vulkan
-                    ENVIRONMENT ${vulkan_environment})
-            endif()
-            # An HDR extended-linear frame with a fixed headroom; the capture is the frame clipped at paper white.
-            set(demo_hdr_args --window 960x540 --frame-size 960x540 --gpu-debug --present-mode immediate --section hdr
-                --hdr on --hdr-headroom 4 --script ${demo_scenarios}/hdr_on.txt --capture-at 2 --audio-device null)
-            quench_add_capture_test(demo_hdr_on_metal IMAGE demo_hdr_on BACKEND metal APP quench_demo
-                ARGS ${demo_hdr_args} ENVIRONMENT MTL_DEBUG_LAYER=1)
-            quench_add_capture_test(demo_hdr_on_metal_native IMAGE demo_hdr_on BACKEND metal APP quench_demo
-                ARGS ${demo_hdr_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1)
-            if(QUENCH_TEST_VULKAN_LOADER)
-                quench_add_capture_test(demo_hdr_on_vulkan IMAGE demo_hdr_on BACKEND vulkan APP quench_demo
-                    ARGS ${demo_hdr_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment})
-            endif()
-            # The compact layout of phones, in a phone-sized window: the bar and the controls sheet at the bottom
-            # (portrait) or on the right (landscape).
-            foreach(entry portrait:400x720 landscape:720x320)
-                string(REPLACE ":" ";" entry "${entry}")
-                list(GET entry 0 orientation)
-                list(GET entry 1 size)
-                quench_add_capture_test(demo_compact_${orientation}_metal IMAGE demo_compact_${orientation}
-                    BACKEND metal APP quench_demo ARGS --window ${size} --frame-size ${size} --gpu-debug
-                    --present-mode immediate --script ${demo_scenarios}/compact.txt --capture-at 1.5
-                    --audio-device null ENVIRONMENT MTL_DEBUG_LAYER=1)
-            endforeach()
-            # The menu by keyboard, gamepad, mouse and touch; the tour; section switching without growth (demo_cycle);
-            # the check mode, the settings and benchmark-all with their files in a fresh user directory.
-            add_test(NAME demo_menu COMMAND quench_demo --window 960x540 --audio-device null
-                     --script ${demo_scenarios}/menu.txt)
-            add_test(NAME demo_tour COMMAND quench_demo --window 960x540 --audio-device null --present-mode immediate
-                     --tour 0.1 --script ${demo_scenarios}/tour.txt)
-            add_test(NAME demo_cycle COMMAND quench_demo --window 960x540 --audio-device null --present-mode immediate
-                     --script ${demo_scenarios}/cycle.txt)
-            set_tests_properties(demo_menu demo_tour demo_cycle PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
-            # AddressSanitizer's quarantine keeps freed memory, which demo_cycle would count as growth.
-            if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
-                set_tests_properties(demo_cycle PROPERTIES ENVIRONMENT "ASAN_OPTIONS=quarantine_size_mb=0")
-            endif()
-            foreach(kind checks settings benchmark)
-                add_test(NAME demo_${kind} COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:quench_demo>
-                         -DSCENARIOS=${demo_scenarios} -DUSER_DIR=${CMAKE_CURRENT_BINARY_DIR}/demo_user/${kind}
-                         -DKIND=${kind} -P ${CMAKE_CURRENT_SOURCE_DIR}/DemoUserFiles.cmake)
-            endforeach()
-            add_test(NAME demo_version COMMAND quench_demo --version)
+            add_test(NAME demo_version COMMAND quench_demo --offscreen --version)
             set_tests_properties(demo_version PROPERTIES PASS_REGULAR_EXPRESSION
                                  "^Quench Demo ${PROJECT_VERSION}\n$")
-            add_test(NAME demo_bad_section COMMAND quench_demo --section nowhere)
-            add_test(NAME demo_bad_flag COMMAND quench_demo --tour 2 --checks)
+            add_test(NAME demo_bad_section COMMAND quench_demo --offscreen --section nowhere)
+            add_test(NAME demo_bad_flag COMMAND quench_demo --offscreen --tour 2 --checks)
             set_tests_properties(demo_bad_section demo_bad_flag PROPERTIES WILL_FAIL TRUE)
+            set_tests_properties(demo_version demo_bad_section demo_bad_flag PROPERTIES LABELS demo)
         endif()
     endif()
 endif()
