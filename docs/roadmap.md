@@ -110,7 +110,7 @@ code may be moved), verified with the engine's tests and the engine demo; no ver
   exposure.
 - Done: version 0.3.0, release notes in [docs/releases/v0.3.0.md](releases/v0.3.0.md).
 
-## Stage 6: assets (done 2026-11-05 except shader hot reload, version 0.4.0; games not switched)
+## Stage 6: assets (done 2026-11-05, version 0.4.0, shader hot reload 2026-11-07; games not switched)
 
 User decisions for this stage (2026-11-05): engine only (the games are not switched, built or tested), verified with
 the engine's tests and the demo's new "Assets" section. Described in [Jobs, assets and the cook](assets.md).
@@ -145,9 +145,13 @@ the engine's tests and the demo's new "Assets" section. Described in [Jobs, asse
   `QUENCH_ASSET_OVERLAY`), and `tools/push_assets.sh` copies files whose content changed into it with `devicectl`.
   Checked on the iPhone 17 with the demo's Assets section (`scenarios/hot_reload_device.txt`: one texture pushed,
   reloaded about a second later). Normal and emissive textures in the standard surface came with stage 11.
-- Not done, remaining: shader hot reload; Basis Universal for Android and the web. Shader hot reload stays open as
-  P1 (see the table below); the release went ahead without it (decided without the user, 2026-11-05, as
-  recommended).
+- Done (2026-11-07, after 0.9.0): shader hot reload on desktops. `quench_add_shaders()` writes a manifest per set
+  (the source, the included files, the build's compile commands); with `--hot-reload` the app watches the sets of
+  live pipelines, compiles a changed set again through `SDL_CreateProcess` without waiting for it and creates its
+  pipelines again behind the same handles; after a compile error the old code stays. Checked by
+  `gpu_device.shader_hot_reload` on the Mac's three backends and by an edit of the renderer's tone mapping in the
+  running demo (offscreen) on SDL GPU and the native backend ([App shell](app.md#shader-hot-reload)).
+- Not done, remaining: Basis Universal for Android and the web.
 - Done: version 0.4.0, release notes in [docs/releases/v0.4.0.md](releases/v0.4.0.md).
 
 ## Stage 7: audio (done 2026-11-06 except the checks on the iPhone and by ear, version 0.5.0; games not switched)
@@ -453,7 +457,7 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** shader hot reload and Basis Universal textures (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
    dual quaternion skinning and blend shapes (stage 8); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray
@@ -486,7 +490,7 @@ Priorities from the user's request of 2026-11-05.
 | Asset manager and cache | P0 | 6 (done) |
 | Asset pipeline (glTF / GLB, PNG, JPEG, KTX2 -> cooked formats) | P0 | 6 (done) |
 | Mipmaps and compression | P1 | 2 (GPU mipmaps), 6 (cooked, BC7; done) |
-| Hot reload | P1 | 6 (assets done, shaders remaining) |
+| Hot reload | P1 | 6 (assets on the Mac and on a device, shaders on desktops: done) |
 | Streaming by distance | P1 | 6 (done) |
 | Audio: mixer, buses, music, 3D sound, device output (added 2026-11-05) | P0 | 7 (done; not yet run on the iPhone or listened to) |
 | Skeletal animation and GPU skinning (ozz) | P0 | 8 (done; not yet looked at in motion or run on the iPhone) |

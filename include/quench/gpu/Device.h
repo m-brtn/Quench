@@ -76,6 +76,16 @@ struct GpuTiming {
     std::uint32_t depth = 0; // ranges it was opened in (0: a top-level range)
 };
 
+// Device::shaderReloadStatus.
+struct ShaderReloadStatus {
+    bool enabled = false;
+    bool compiling = false;
+    std::uint32_t reloads = 0;   // shader sets compiled again and swapped in
+    std::uint32_t failures = 0;  // compiles that failed (the old code stays)
+    std::uint32_t pipelines = 0; // pipelines created again
+    std::string lastError;       // the last failure: the command and its output
+};
+
 class Device {
 public:
     // The shader formats offered to the driver are the ones the engine's shader build embeds on this platform. Create
@@ -152,6 +162,20 @@ public:
     void setPassTiming(bool enabled);
     bool passTiming() const;
     void waitIdle();
+
+    // Shader hot reload, for development on desktops (docs/app.md, "Shader hot reload"): pipelines follow edits of
+    // their HLSL sources and the files those include. The shader sets of live pipelines that have a manifest
+    // (ShaderBlob::manifest) are watched; a set whose files changed is compiled again with the build's commands, in
+    // processes of their own, and once every entry compiled, its pipelines are created again behind the same handles
+    // (pipelines created later get the new code too). After a compile error, or where a pipeline cannot be created
+    // from the new code, the old code stays (logged). Edits that change a shader's resources need the C++ side too.
+    // buildDirectory: where the manifests' paths start; empty: the nearest directory with a CMakeCache.txt at or above
+    // the executable's. An error where there is none or processes cannot run (mobile platforms, the web).
+    Result<void> enableShaderHotReload(std::string_view buildDirectory = {});
+    // Between frames, on the thread that records them: checks the watched files every 0.5 s, advances the compiles
+    // without waiting for them and creates the pipelines again.
+    void pollShaderHotReload();
+    ShaderReloadStatus shaderReloadStatus() const;
 
     // Live resources created by this device (leak checks).
     std::int64_t liveResources() const;

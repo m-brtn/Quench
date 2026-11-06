@@ -3,9 +3,9 @@
 Design of the engine. Stages 1 to 3 exist (CMake, `quench_core`, `quench_physics`, the shader build, headless tests;
 `quench_gpu` over SDL GPU, see "The layer as built"; `quench_app` and `quench_main`, see [App shell](app.md); the
 sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#layout)), stage 5: `quench_render`
-(see "Rendering" and [Render module](render.md)) and the engine demo ([Engine demo](demo.md)), and stage 6 apart from
-shader hot reload: the job system, `quench_assets` and `quench_cook` (see "Threads and jobs", "Assets" and
-[Jobs, assets and the cook](assets.md)), and stage 7: `quench_audio` and `quench_audio_device` (see "Audio" and
+(see "Rendering" and [Render module](render.md)) and the engine demo ([Engine demo](demo.md)), and stage 6: the job
+system, `quench_assets`, `quench_cook` and shader hot reload (see "Threads and jobs", "Assets",
+[Jobs, assets and the cook](assets.md) and [App shell](app.md#shader-hot-reload)), and stage 7: `quench_audio` and `quench_audio_device` (see "Audio" and
 [Audio](audio.md)), and stage 9: the native Metal backend, GPU timestamps per pass, acceleration structures,
 ray-traced sun shadows and ambient occlusion, MetalFX upscaling (see "Native Metal backend" and "Ray tracing"), and
 stage 11: ray-traced local light shadows, reflections and indirect light, a probe grid, the engine's temporal
@@ -497,8 +497,11 @@ As built in stage 6 ([Jobs, assets and the cook](assets.md)):
 - **Hot reload**: the manager polls the modification time of loaded files and swaps a changed file in under the same
   ID and handles; rebuilding the game's assets target cooks the changed sources and copies the changed files. On a
   device, development builds read assets from an overlay in the user directory first (`fs::makeOverlayBackend`), and
-  `tools/push_assets.sh` copies changed files into it with `devicectl` (no network, no asset server). Shaders are not
-  reloaded yet (stage 6 remaining work: SDL GPU on Metal accepts MSL source compiled at run time).
+  `tools/push_assets.sh` copies changed files into it with `devicectl` (no network, no asset server). Shaders reload
+  on desktops (`gpu::Device::enableShaderHotReload`, [App shell](app.md#shader-hot-reload)): the build's compile
+  commands from a manifest per set run again as processes (`SDL_CreateProcess`), and pipelines, which live in slots
+  of the GPU layer, are created again behind the same handles. It reads the build tree directly, not through
+  `quench::fs`: a development tool on the machine that built the game, like the cook.
 - **Streaming by distance**: `StreamingGrid`, cells on a grid around any number of focus points with a load and a
   larger keep radius, nearest first; generalized from TrailForge's `TerrainTiles` (physics terrain tiles). What a cell
   holds is the game's (typically `AssetRef`s loaded with the distance as priority).

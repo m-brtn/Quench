@@ -7,7 +7,10 @@
 #   - Windows hosts: DXIL with the pinned DXC release.
 # Cross builds (iOS) cannot run a compiler built for the target: they take a macOS `quench_shaderc` through
 # QUENCH_HOST_SHADERC (the `host-tools` preset builds it). All blobs are embedded into the binary; no shader files are
-# read at run time.
+# read at run time, except by shader hot reload (gpu::Device::enableShaderHotReload): host builds with a
+# single-configuration generator write a manifest per set (<set>/manifest.json: the source, the build's depfiles and
+# the compile commands with {source} and {output} for the paths), and each blob names it relative to the build
+# directory.
 
 set(QUENCH_HOST_SHADERC "" CACHE FILEPATH "quench_shaderc built for the host (required for cross builds)")
 if(NOT QUENCH_HOST_SHADERC AND NOT CMAKE_CROSSCOMPILING)
@@ -47,10 +50,26 @@ if(APPLE)
                         "To install the toolchain: xcodebuild -downloadComponent MetalToolchain")
     endif()
 endif()
+if(APPLE)
+    find_program(QUENCH_SHADER_XCRUN xcrun)
+    mark_as_advanced(QUENCH_SHADER_XCRUN)
+endif()
 set(QUENCH_SHADER_METAL_OK ${_metal_ok} CACHE INTERNAL "")
 set(QUENCH_SHADER_METAL_SDK ${_metal_sdk} CACHE INTERNAL "")
 set(QUENCH_SHADER_METAL_TARGET ${_metal_target} CACHE INTERNAL "")
 set(QUENCH_SHADER_MSL_PLATFORM ${_msl_platform} CACHE INTERNAL "")
+
+# A JSON array of strings from a CMake list (the manifests).
+function(_quench_json_array out)
+    set(items "")
+    foreach(item IN LISTS ARGN)
+        string(REPLACE "\\" "\\\\" item "${item}")
+        string(REPLACE "\"" "\\\"" item "${item}")
+        list(APPEND items "\"${item}\"")
+    endforeach()
+    list(JOIN items ", " joined)
+    set(${out} "[${joined}]" PARENT_SCOPE)
+endfunction()
 
 # quench_add_shaders(<target> NAME <name> SOURCE <file.hlsl> ENTRIES <entry>:<vertex|fragment|compute>[:rayquery]...
 #                    [INCLUDE_DIRS <dir>...])
@@ -86,6 +105,19 @@ function(quench_add_shaders target)
     get_filename_component(source_name ${source} NAME)
     set(gen_dir ${CMAKE_CURRENT_BINARY_DIR}/quench_shaders/${arg_NAME})
     file(MAKE_DIRECTORY ${gen_dir})
+    # Shader hot reload runs the same commands with the compiler named here; a multi-configuration generator has one
+    # per configuration (not supported), a cross build none that runs on the target.
+    get_property(multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    set(manifest_entries "")
+    set(write_manifest OFF)
+    if(NOT CMAKE_CROSSCOMPILING AND NOT multi_config)
+        set(write_manifest ON)
+        if(QUENCH_HOST_SHADERC)
+            set(manifest_shaderc ${QUENCH_HOST_SHADERC})
+        else()
+            set(manifest_shaderc $<TARGET_FILE:quench_shaderc>)
+        endif()
+    endif()
 
     set(include_args "")
     set(dxc_include_args "")
@@ -160,6 +192,25 @@ function(quench_add_shaders target)
             VERBATIM)
         list(APPEND blobs ${outs})
 
+        if(write_manifest)
+            set(reload_msl "")
+            if(APPLE)
+                set(reload_msl --msl {output}/${entry}.msl --msl-platform ${QUENCH_SHADER_MSL_PLATFORM})
+            endif()
+            _quench_json_array(compile ${manifest_shaderc} --input {source} --entry ${entry} --stage ${stage}
+                --spirv {output}/${entry}.spv --reflect {output}/${entry}.reflect ${reload_msl} ${include_args}
+                --depfile {output}/${entry}.d ${dxc_args})
+            set(json_entry "    {\"entry\": \"${entry}\", \"depfile\": \"${gen_dir}/${entry}.d\",\n")
+            string(APPEND json_entry "     \"compile\": [${compile}]")
+            if(APPLE AND QUENCH_SHADER_METAL_OK AND QUENCH_SHADER_XCRUN)
+                _quench_json_array(air ${QUENCH_SHADER_XCRUN} -sdk ${QUENCH_SHADER_METAL_SDK} metal -x metal -c
+                    {output}/${entry}.msl -o {output}/${entry}.air ${QUENCH_SHADER_METAL_TARGET})
+                _quench_json_array(lib ${QUENCH_SHADER_XCRUN} -sdk ${QUENCH_SHADER_METAL_SDK} metallib
+                    {output}/${entry}.air -o {output}/${entry}.metallib)
+                string(APPEND json_entry ",\n     \"metallib\": [${air}, ${lib}]")
+            endif()
+        endif()
+
         if(APPLE AND QUENCH_SHADER_METAL_OK)
             add_custom_command(
                 OUTPUT ${gen_dir}/${entry}.metallib
@@ -199,8 +250,29 @@ function(quench_add_shaders target)
                 COMMENT "Compiling ${source_name}:${entry} -> DXIL (${profile})"
                 VERBATIM)
             list(APPEND blobs ${gen_dir}/${entry}.dxil)
+            if(write_manifest)
+                _quench_json_array(dxil ${QUENCH_SHADER_DXC} -nologo -T ${profile} -E ${entry}
+                    -D QUENCH_ENTRY_${entry}=1 -D ${stage_define} -HV 2021 -O3 ${dxc_include_args}
+                    -Fo {output}/${entry}.dxil {source})
+                string(APPEND json_entry ",\n     \"dxil\": [${dxil}]")
+            endif()
+        endif()
+        if(write_manifest)
+            list(APPEND manifest_entries "${json_entry}}")
         endif()
     endforeach()
+
+    set(manifest "")
+    if(write_manifest)
+        list(JOIN manifest_entries ",\n" entries_json)
+        file(GENERATE OUTPUT ${gen_dir}/manifest.json CONTENT
+"{\"set\": \"${arg_NAME}\", \"source\": \"${source}\", \"output\": \"${gen_dir}/reload\",
+ \"entries\": [
+${entries_json}
+ ]}
+")
+        file(RELATIVE_PATH manifest ${CMAKE_BINARY_DIR} ${gen_dir}/manifest.json)
+    endif()
 
     set(header ${gen_dir}/${arg_NAME}_shaders.h)
     file(CONFIGURE OUTPUT ${header} CONTENT
@@ -220,7 +292,7 @@ extern const ShaderTable ${arg_NAME};
         OUTPUT ${gen_dir}/${arg_NAME}_shaders.cpp
         COMMAND ${CMAKE_COMMAND} -DNAME=${arg_NAME} -DSOURCE_NAME=${source_name} -DENTRIES=${entries_csv}
                 -DFORMATS=${formats_csv} -DGEN_DIR=${gen_dir} -DOUTPUT=${gen_dir}/${arg_NAME}_shaders.cpp
-                -P ${embed_script}
+                -DMANIFEST=${manifest} -P ${embed_script}
         DEPENDS ${blobs} ${embed_script}
         COMMENT "Embedding shaders '${arg_NAME}' (${formats_csv})"
         VERBATIM)

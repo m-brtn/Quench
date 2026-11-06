@@ -724,6 +724,10 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
                                                       .backend = s.options.gpuBackend.value_or(s.desc.gpuBackend)});
     if (!device) return fail(std::format("GPU device: {}", device.error()));
     s.device.emplace(std::move(*device));
+    if (s.options.hotReload) {
+        if (Result<void> shaders = s.device->enableShaderHotReload(); !shaders)
+            log::info("app", "no shader hot reload: {}", shaders.error());
+    }
     if (!s.offscreen) {
         const gpu::PresentMode presentMode = s.options.presentMode.value_or(s.desc.presentMode);
         if (Result<void> claimed = s.device->claimWindow(s.window.get(), presentMode); !claimed)
@@ -821,6 +825,7 @@ SDL_AppResult iterate(AppState& s) {
     }
     s.time += frameDt;
     s.assets->update();
+    s.device->pollShaderHotReload();
     s.game->update(s.app, frameDt);
     updateAudio(s, frameDt);
 

@@ -20,8 +20,9 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-06, version 0.9.0): stages 1 to 3, 5, 7, 9 and 10 of `docs/roadmap.md` are in place, stage
-4 for TrailForge only, stage 6 except shader hot reload, stage 8 except retargeting, stage 11 (full ray tracing)
+**Current state (2026-11-07, version 0.9.0): stages 1 to 3, 5 to 7, 9 and 10 of `docs/roadmap.md` are in place
+(stage 6's shader hot reload, ASTC and asset hot reload on a device after 0.9.0, not released), stage
+4 for TrailForge only, stage 8 except retargeting, stage 11 (full ray tracing)
 except its runs on the iPhone 18 Pro Max, stage 12 (area lights and anisotropic GGX, after 0.9.0, not released) except
 its checks by eye; the plan the user left (stages 6 to 10) and stages 11 and 12 have been worked through, apart from
 the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the iPhone 18 Pro Max and the
@@ -37,8 +38,11 @@ in development builds, on a device through an asset overlay in the user director
 64-byte vertex), `quench_cook` (the host
 tool: glTF, GLB, PNG, JPEG, KTX2 to BC7, ASTC 4x4 (iOS builds, through astc-encoder) or RGBA8 KTX2 with mips and meshoptimizer models with tangents; sounds; skeletons and clips
 from glTF; `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
-ray query entries through DXC built from source) and the engine shader library in `shaders/quench/` (uniform structs
+ray query entries through DXC built from source, a manifest per set for shader hot reload) and the engine shader
+library in `shaders/quench/` (uniform structs
 shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain compositions for HDR and compute;
+shader hot reload on desktops with `--hot-reload`, pipelines created again behind their handles, checked on the
+Mac's three backends;
 beside it, opt-in with `--gpu-backend metal`, a native Metal backend with GPU timestamps per pass, acceleration
 structures with top-level refits and compaction, ray queries, and MetalFX upscaling and denoising), `quench_app`
 and `quench_main` (SDL main callbacks,
@@ -103,7 +107,7 @@ and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scen
 `d708783`, not yet moved to a release) with its own input layer fed through `Game::event` and its own physics clock;
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
-the asset system, the engine's audio or animation yet. No shader hot reload or Basis Universal textures
+the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio, HRTF, reverb or Vorbis (stage 7 remaining
 work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
 work), the native backend as the default, normal maps or custom

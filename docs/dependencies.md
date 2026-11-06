@@ -217,7 +217,16 @@ Checked in the 5.7.1 source and in the tests: `astcenc_compress_image` takes a s
 compresses rows in parallel on the job system with one context per worker (`astcenc_compress_reset` between
 images); the output is the same without workers and with 3 (`cook.cook_output_independent_of_threads`). A context
 allocated with a parent context (`astcenc_context_alloc`'s `parent` argument) converts the parent's already
-converted quality limit again, so the cook allocates each one from the configuration instead.
+converted quality limit again, so the cook allocates each one from the configuration instead. Every
+`astcenc_context_alloc` also writes the encoder's global angular tables (`prepare_angular_tables`), which contexts
+read while they compress: ThreadSanitizer reports the race (the values written are the same each time). The cook
+allocates contexts under an exclusive lock and compresses under a shared one.
+
+Asset hot reload on a device and shader hot reload (2026-11-07) add no library. Shader hot reload uses SDL's
+process API (pinned SDL 3.4.18). Checked in its source (`src/process/posix/SDL_posixprocess.c`): `posix_spawnp`, so
+a bare program name is looked up in `PATH`, and the app's ends of the pipes are non-blocking, so the frame reads a
+compiler's output and asks `SDL_WaitProcess(..., false, ...)` without waiting. On iOS SDL has no processes; the
+engine does not try them there.
 
 ## Planned
 

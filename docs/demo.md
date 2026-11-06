@@ -89,9 +89,10 @@ What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks
 | User files through `quench::fs` | Settings, the check mode, the benchmark | `settings.json`, `checks.json`, `benchmark.json`, screenshots (added) |
 | Scenarios, captures, perf regions | the checks | every section's check; the benchmark of every section on the same perf regions (added) |
 
-Not shown, because the engine does not have it yet: shader hot reload, normal maps, Basis Universal textures,
+Not shown, because the engine does not have it yet: normal maps, Basis Universal textures,
 HRTF, reverb, retargeting, blend spaces, ray-traced reflections and indirect
-light ([Roadmap](roadmap.md)).
+light ([Roadmap](roadmap.md)). Shader hot reload has no panel: with `--hot-reload` on the Mac, an edit of the
+engine's or the demo's shaders shows in the running demo ([Shader hot reload](app.md#shader-hot-reload)).
 
 ## Layouts
 

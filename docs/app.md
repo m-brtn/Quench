@@ -117,7 +117,7 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--orientation NAME` | `portrait`, `landscape` or `any`: the screen orientations of the window on phones and tablets (`SDL_HINT_ORIENTATIONS`, within those of the app's Info.plist, `quench_add_game(... ORIENTATIONS)`; default: all of those); desktops ignore it |
 | `--worker-threads N` | worker threads of the job system (0 to 64; default: hardware threads minus one); 0 runs jobs on the main thread, as in builds without threads |
 | `--asset-latency S` | every asset load waits S seconds (0 to 60) before it starts, to see the placeholders |
-| `--hot-reload` | load asset files again when they change on disk (the cooked files in the build tree on the Mac; on a device, files pushed into the asset overlay of a development build: [Hot reload on a device](assets.md#hot-reload-on-a-device)) |
+| `--hot-reload` | load asset files again when they change on disk (the cooked files in the build tree on the Mac; on a device, files pushed into the asset overlay of a development build: [Hot reload on a device](assets.md#hot-reload-on-a-device)); on desktops also shaders when their sources change ([Shader hot reload](#shader-hot-reload)) |
 | `--no-audio` | no audio device: the mix runs offline on the frame clock and is discarded |
 | `--audio-device NAME` | `default`, `null` (miniaudio's null backend: a device thread without sound, for tests and benchmarks) or the first output whose name contains NAME; default `AppDesc::audioDevice` |
 | `--audio-capture FILE.wav` | mix offline on the frame clock and write the whole mix as a 16-bit stereo WAV at exit (paths as for `--capture`); nothing is played |
@@ -231,7 +231,9 @@ for a full-scale sine) and `audio_measured` (seconds actually measured); at any 
 `audio_underruns`, `audio_clipped` (the `AudioStats` counters) and `audio_device` (1 with a device, 0 offline);
 `memory_mb` (`App::memoryFootprint` in MiB; -1 where unknown) and `gpu_resources` (`gpu::Device::liveResources`:
 textures, buffers, samplers, pipelines, transfer buffers and fences alive; fences and transfer buffers come and go
-with the frames and uploads in flight), for leak checks with `mark`; `thermal_state` (`FrameStats::thermal`: -1
+with the frames and uploads in flight), for leak checks with `mark`; `shader_reloads`, `shader_reload_failures` and
+`shader_reload_pipelines` (`gpu::Device::shaderReloadStatus`: [Shader hot reload](#shader-hot-reload));
+`thermal_state` (`FrameStats::thermal`: -1
 unknown, 0 nominal, 1 fair, 2 serious, 3 critical; `until thermal_state <= 0 600` waits for a cool device); then the game's (`Game::scenarioValue`). Unknown commands are offered
 to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N of FILE: ...`, and the
 run ends with `N passed, M failed`; tests match `FAIL line`. Scripts are read from host paths; on a device a relative
@@ -343,6 +345,39 @@ time, per file and only when a source changed ([Jobs, assets and the cook](asset
 
 New games start from `templates/game`: `python3 tools/new_game.py "My Game" <directory>` copies it, renames it, pins
 the engine to a commit of this checkout and checks that the game builds and starts (see the script's `--help`).
+
+## Shader hot reload
+
+With `--hot-reload` on a desktop, the app calls `gpu::Device::enableShaderHotReload()` and polls it every frame:
+an edit of an HLSL source, or of a file it includes, is compiled again while the game runs, and the pipelines that
+use the set are created again behind the same handles, the engine's (the renderer's sets) and the game's alike.
+Nothing changes in the game's code.
+
+- **The manifest.** `quench_add_shaders()` writes `quench_shaders/<set>/manifest.json` in the build tree: the source,
+  the build's depfiles (the included files) and the build's own compile commands, with `{source}` and `{output}` for
+  the paths. Each embedded blob names it relative to the build directory (`ShaderBlob::manifest`), so the binary holds
+  no absolute paths. The app looks for the build directory (`CMakeCache.txt`) at or above the executable's
+  directory. A packaged app has none and logs "no shader hot reload". Cross builds (iOS) and multi-configuration
+  generators write no manifests.
+- **Watching and compiling.** Every 0.5 s the times of the watched files are compared. A changed set is compiled
+  entry by entry (up to 4 processes at a time, through `SDL_CreateProcess`): `quench_shaderc` for SPIR-V, MSL and
+  the reflection, then `xcrun metal` and `metallib` where the device uses metallibs. The frame never waits for them.
+  The outputs go to `quench_shaders/<set>/reload/`, not over the build's.
+- **Swapping.** When every entry of the set compiled, its blobs are replaced, and every live pipeline that uses one
+  of them is created again. Pipelines created afterwards get the new code too. The log says "'<set>' reloaded,
+  N pipelines created again".
+- **Errors.** A failed compile logs the compiler's first lines ("the old code of '<set>' stays: ...") and keeps
+  every pipeline as it was. `ShaderReloadStatus::lastError` has the command and its whole output. A pipeline that
+  cannot be created from the new code keeps its old one (logged).
+- **Limits.** Edits that change a shader's resources (a new texture or uniform block) need the C++ side that binds
+  them, so a rebuild. New entries or sets need a configure. The engine's own sets reload like a game's: an edit of
+  `shaders/quench/Brdf.hlsli` recompiles every set that includes it, one set after another. Compiling the
+  renderer's `render_frame` (15 entries) took 3.7 to 4.2 s on the M4 Pro.
+
+Checked by `gpu_device.shader_hot_reload` on the Mac's three backends (SDL GPU on Metal, Vulkan through MoltenVK,
+the native Metal backend). It edits copies of a test set's source and include: red, then blue after the source
+edit, green after the include edit, still green after a syntax error. The scenario values are `shader_reloads`,
+`shader_reload_failures` and `shader_reload_pipelines`.
 
 ## iOS runs
 

@@ -45,6 +45,13 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   and `tools/push_assets.sh` copies files whose content changed into it with `devicectl`
   ([Assets](../assets.md#hot-reload-on-a-device)). On the iPhone 17 a pushed texture was reloaded about a second
   later. The demo's Assets section turns hot reload on with `--hot-reload` (before, only its switch did).
+- Shader hot reload on desktops (stage 6 remaining work): with `--hot-reload` an edit of an HLSL source or of a
+  file it includes is compiled again with the build's commands (`SDL_CreateProcess`, a manifest per set from
+  `quench_add_shaders()`), and the pipelines that use the set are created again behind the same handles; after a
+  compile error the old code stays ([App shell](../app.md#shader-hot-reload)). `gpu::Device::enableShaderHotReload`,
+  `pollShaderHotReload` and `shaderReloadStatus`; scenario values `shader_reloads`, `shader_reload_failures`,
+  `shader_reload_pipelines`. Checked on the Mac's three backends; the renderer's `render_frame` set (15 entries)
+  compiled again in 3.7 to 4.2 s while the demo kept rendering.
 
 ## Fixes
 
@@ -126,6 +133,10 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
 - **Debug builds read `asset_overlay/` in the user directory first:** a file at `asset_overlay/<path>` replaces the
   asset `<path>` in builds without `NDEBUG` (on the Mac too). A game that writes files of its own there, or wants
   Debug builds to read only the bundle, sets `-DQUENCH_ASSET_OVERLAY=OFF`. **`fs::makeOverlayBackend`** is new.
+- **`ShaderBlob::manifest`** is a new member at the end of `ShaderBlob` (filled by the generated tables). Code that
+  builds a `ShaderBlob` itself with a positional initializer warns under `-Wmissing-field-initializers` until it
+  adds it. **`--hot-reload` now reloads shaders too** on desktops (the build's sources); `quench_add_shaders()`
+  writes `quench_shaders/<set>/manifest.json` in host builds with a single-configuration generator.
 - **Xcode projects** (`quench_add_game` with the Xcode generator): the merged assets are no longer a folder
   reference in the target's resources but are copied by a `CMake PostBuild Rules` script phase; a game's own script
   that expects the folder in `Copy Bundle Resources` needs to change. The `<target>_assets` target stays.

@@ -87,6 +87,10 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   demo's assets section grew to 4.5 GB in 6 s this way (2026-11-06). The GPU layer waits on a signalled fence before
   it releases it (`SdlGpuDevice::release`), which runs that cleanup pass first: 676 MB, flat. SDL's Metal driver
   gives the caller a reference of its own and is not affected. Not reported upstream yet.
+- Shader hot reload (2026-11-07, [App shell](app.md#shader-hot-reload)) runs the build's compilers through
+  `SDL_CreateProcess` (`posix_spawnp` with non-blocking pipes in SDL 3.4.18): checked on the Mac on SDL GPU's Metal
+  driver, Vulkan through MoltenVK and the native Metal backend. Not on iOS (no processes, and the app has no build
+  tree) and not on Windows or Linux (no builds there yet; the code takes `\` as a separator too).
 
 ## iOS
 

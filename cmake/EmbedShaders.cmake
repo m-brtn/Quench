@@ -1,7 +1,8 @@
 # `cmake -P` script of quench_add_shaders(): embeds the compiled blobs of one shader set into a C++ source that
 # defines quench::shaders::<NAME>. Parameters: NAME, SOURCE_NAME, ENTRIES and FORMATS (comma-separated), GEN_DIR,
-# OUTPUT. Formats: spirv (<entry>.spv), msl (<entry>.msl), metallib (<entry>.metallib), dxil (<entry>.dxil). The stage,
-# resource counts and thread group size of each entry come from <entry>.reflect.
+# OUTPUT, MANIFEST (the set's manifest relative to the build directory, or empty). Formats: spirv (<entry>.spv), msl
+# (<entry>.msl), metallib (<entry>.metallib), dxil (<entry>.dxil). The stage, resource counts and thread group size of
+# each entry come from <entry>.reflect.
 cmake_minimum_required(VERSION 3.28)
 foreach(param NAME SOURCE_NAME ENTRIES FORMATS GEN_DIR OUTPUT)
     if(NOT DEFINED ${param})
@@ -17,6 +18,11 @@ set(_ext_dxil dxil)
 
 set(_arrays "")
 set(_rows "")
+set(_manifest nullptr)
+if(MANIFEST)
+    set(_arrays "const char kManifest[] = \"${MANIFEST}\";\n")
+    set(_manifest kManifest)
+endif()
 foreach(entry IN LISTS ENTRIES)
     # <entry>.reflect (written by quench_shaderc): "key=value" lines.
     file(STRINGS "${GEN_DIR}/${entry}.reflect" _lines)
@@ -63,7 +69,7 @@ foreach(entry IN LISTS ENTRIES)
             string(APPEND _row ", {nullptr, 0}")
         endif()
     endforeach()
-    string(APPEND _rows "${_row}},\n")
+    string(APPEND _rows "${_row}, ${_manifest}},\n")
 endforeach()
 list(LENGTH ENTRIES _count)
 

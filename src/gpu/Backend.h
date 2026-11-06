@@ -12,8 +12,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace quench::gpu::detail {
@@ -25,16 +28,37 @@ struct WindowEntry {
     SwapchainComposition composition = SwapchainComposition::Sdr;
 };
 
+// What a GraphicsPipeline or ComputePipeline holds: the backend's pipeline and its description, so that shader hot
+// reload can create it again behind the same handle. The shaders are the blobs it was created with (embedded ones);
+// the description's spans and name point into this slot.
+struct PipelineSlot {
+    void* native = nullptr;
+    bool compute = false;
+    GraphicsPipelineDesc graphics{};
+    ComputePipelineDesc computeDesc{};
+    std::vector<VertexBufferLayout> vertexBuffers;
+    std::vector<VertexAttribute> vertexAttributes;
+    std::vector<ColorTargetDesc> colorTargets;
+    std::string name;
+};
+
+class ShaderReloader;
+
 struct DeviceImpl {
-    DeviceImpl() = default;
+    DeviceImpl();
     DeviceImpl(const DeviceImpl&) = delete;
     DeviceImpl& operator=(const DeviceImpl&) = delete;
-    virtual ~DeviceImpl() = default;
+    virtual ~DeviceImpl();
 
     Caps caps;
     bool passTiming = false; // Device::setPassTiming
     std::atomic<std::int64_t> live{0};
     std::vector<WindowEntry> windows;
+    // Pipelines and shader hot reload (src/gpu/ShaderReload.cpp): `pipelines` and the reloader's blobs are guarded
+    // by `pipelineMutex` (pipelines may be created on any thread).
+    std::mutex pipelineMutex;
+    std::unordered_set<PipelineSlot*> pipelines;
+    std::unique_ptr<ShaderReloader> shaderReload;
 
     WindowEntry* find(SDL_Window* window) {
         for (WindowEntry& w : windows)

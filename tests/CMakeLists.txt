@@ -51,6 +51,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             gpu/GpuTest.cpp
             gpu/RayTracingTests.cpp
             gpu/RenderTests.cpp
+            gpu/ShaderReloadTests.cpp
             gpu/WindowTests.cpp
             render/RenderMathTests.cpp
             render/RendererTests.cpp
@@ -68,6 +69,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
     quench_add_shaders(quench_device_tests NAME render_test SOURCE render/shaders/custom.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment)
+    quench_add_shaders(quench_device_tests NAME reload_test SOURCE gpu/shaders/reload.hlsl
+        ENTRIES reload_vs:vertex reload_fs:fragment)
     return()
 endif()
 
@@ -214,14 +217,21 @@ if(NOT QUENCH_HEADLESS)
             gpu/GpuTest.cpp
             gpu/RayTracingTests.cpp
             gpu/RenderTests.cpp
+            gpu/ShaderReloadTests.cpp
             gpu/WindowTests.cpp
         LIBS quench_gpu SDL3::SDL3-static
         ENVIRONMENT ${gpu_environment})
     quench_add_shaders(quench_gpu_device_tests NAME render SOURCE gpu/shaders/render.hlsl
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
                 rects_vs:vertex scale_cs:compute ray_fs:fragment:rayquery ray_face_fs:fragment:rayquery)
+    quench_add_shaders(quench_gpu_device_tests NAME reload_test SOURCE gpu/shaders/reload.hlsl
+        ENTRIES reload_vs:vertex reload_fs:fragment)
     target_compile_definitions(quench_gpu_device_tests PRIVATE
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
+    if(NOT CMAKE_CROSSCOMPILING)
+        # The shader hot reload case reads the manifests of this build tree.
+        target_compile_definitions(quench_gpu_device_tests PRIVATE QUENCH_TEST_BUILD_DIR="${CMAKE_BINARY_DIR}")
+    endif()
 
     # The same cases on the native Metal backend (src/gpu/metal), with the Metal API validation layer.
     if(APPLE)

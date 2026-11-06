@@ -134,6 +134,7 @@ if(NOT QUENCH_HEADLESS)
         src/gpu/CommandBuffer.cpp
         src/gpu/Device.cpp
         src/gpu/Format.cpp
+        src/gpu/ShaderReload.cpp
         src/gpu/sdlgpu/SdlGpuCommands.cpp
         src/gpu/sdlgpu/SdlGpuDevice.cpp)
     if(APPLE)

@@ -441,6 +441,12 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
         return bytes ? double(*bytes) / double(1u << 20) : -1.0;
     }
     if (name == "gpu_resources") return double(s.device->liveResources());
+    if (name.starts_with("shader_")) {
+        const gpu::ShaderReloadStatus reload = s.device->shaderReloadStatus();
+        if (name == "shader_reloads") return double(reload.reloads);
+        if (name == "shader_reload_failures") return double(reload.failures);
+        if (name == "shader_reload_pipelines") return double(reload.pipelines);
+    }
     if (name == "thermal_state") return double(s.stats.thermal);
     if (name == "max_frame_rate") return s.maxFrameRate;
     if (const auto it = s.perfValues.find(name); it != s.perfValues.end()) return it->second;

@@ -249,7 +249,7 @@ void RenderPass::bindPipeline(const GraphicsPipeline& pipeline) {
                   "pipeline color formats differ from the pass targets");
     QUENCH_ASSERT(p.depthFormat == m_targets.depthFormat, "pipeline depth format differs from the pass target");
     QUENCH_ASSERT(p.sampleCount == m_targets.sampleCount, "pipeline sample count differs from the pass targets");
-    m_commands->m_device->bindPipeline(m_native, Access::native(pipeline));
+    m_commands->m_device->bindPipeline(m_native, static_cast<detail::PipelineSlot*>(Access::native(pipeline))->native);
     m_pipelineBound = true;
 }
 
@@ -352,7 +352,8 @@ void ComputePass::end() {
 void ComputePass::bindPipeline(const ComputePipeline& pipeline) {
     QUENCH_ASSERT(m_native, "bindPipeline outside a compute pass");
     QUENCH_ASSERT(pipeline, "bindPipeline with an empty pipeline");
-    m_commands->m_device->bindComputePipeline(m_native, Access::native(pipeline));
+    m_commands->m_device->bindComputePipeline(m_native,
+                                              static_cast<detail::PipelineSlot*>(Access::native(pipeline))->native);
     m_pipelineBound = true;
 }
 

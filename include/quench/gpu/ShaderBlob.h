@@ -40,6 +40,9 @@ struct ShaderBlob {
     ShaderCode msl;      // Metal source, only when the Metal toolchain was missing at build time
     ShaderCode metallib; // Metal, precompiled
     ShaderCode dxil;     // D3D12, Windows builds
+    // The set's manifest for shader hot reload, relative to the build directory (gpu::Device::enableShaderHotReload);
+    // nullptr in cross builds and with multi-configuration generators.
+    const char* manifest;
 };
 
 struct ShaderTable {

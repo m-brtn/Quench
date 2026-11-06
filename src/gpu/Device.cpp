@@ -2,6 +2,7 @@
 // (src/gpu/Backend.h).
 
 #include "gpu/Backend.h"
+#include "gpu/ShaderReload.h"
 
 #include <quench/core/Assert.h>
 #include <quench/core/Log.h>
@@ -27,8 +28,14 @@ bool backendAvailable(Backend backend) { return backend != Backend::Metal || QUE
 
 namespace detail {
 
+DeviceImpl::DeviceImpl() = default;
+DeviceImpl::~DeviceImpl() = default;
+
 void release(DeviceImpl* device, Kind kind, void* native) noexcept {
-    device->release(kind, native);
+    if (kind == Kind::GraphicsPipeline || kind == Kind::ComputePipeline)
+        removePipeline(*device, kind, native);
+    else
+        device->release(kind, native);
     device->live.fetch_sub(1, std::memory_order_relaxed);
 }
 
@@ -202,7 +209,17 @@ Result<GraphicsPipeline> Device::createPipeline(const GraphicsPipelineDesc& desc
     info.colorTargets = std::uint32_t(desc.colorTargets.size());
     info.depthFormat = desc.depthFormat;
     info.sampleCount = desc.sampleCount;
-    Result<void*> native = m_impl->createPipeline(desc);
+    auto slot = std::make_unique<detail::PipelineSlot>();
+    slot->vertexBuffers.assign(desc.vertexBuffers.begin(), desc.vertexBuffers.end());
+    slot->vertexAttributes.assign(desc.vertexAttributes.begin(), desc.vertexAttributes.end());
+    slot->colorTargets.assign(desc.colorTargets.begin(), desc.colorTargets.end());
+    slot->name = desc.name;
+    slot->graphics = desc;
+    slot->graphics.vertexBuffers = slot->vertexBuffers;
+    slot->graphics.vertexAttributes = slot->vertexAttributes;
+    slot->graphics.colorTargets = slot->colorTargets;
+    slot->graphics.name = slot->name;
+    Result<void*> native = detail::addPipeline(*m_impl, std::move(slot));
     if (!native) return Error{native.error()};
     GraphicsPipeline pipeline = adopt<GraphicsPipeline>(m_impl.get(), *native);
     Access::info(pipeline) = info;
@@ -211,7 +228,12 @@ Result<GraphicsPipeline> Device::createPipeline(const GraphicsPipelineDesc& desc
 
 Result<ComputePipeline> Device::createComputePipeline(const ComputePipelineDesc& desc) {
     QUENCH_ASSERT(desc.shader && desc.shader->stage == ShaderStage::Compute, "compute shader missing");
-    Result<void*> native = m_impl->createComputePipeline(desc);
+    auto slot = std::make_unique<detail::PipelineSlot>();
+    slot->compute = true;
+    slot->name = desc.name;
+    slot->computeDesc = desc;
+    slot->computeDesc.name = slot->name;
+    Result<void*> native = detail::addPipeline(*m_impl, std::move(slot));
     if (!native) return Error{native.error()};
     return adopt<ComputePipeline>(m_impl.get(), *native);
 }

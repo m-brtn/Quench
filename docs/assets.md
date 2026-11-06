@@ -2,8 +2,8 @@
 
 Stage 6 of the [Roadmap](roadmap.md): the engine's job system (`quench_core`), the asset system (`quench_assets`,
 with the render integration `SceneAssets` in `quench_render`) and the asset cooker `quench_cook` (a host tool). The
-engine demo's "Assets" section shows them ([Engine demo](demo.md)). Shader hot reload is not built yet (see
-[Limitations](#limitations)). Stage 7 adds sounds as an asset type and the cook's `sound` command
+engine demo's "Assets" section shows them ([Engine demo](demo.md)). Shader hot reload is the app's and the GPU
+layer's ([App shell](app.md#shader-hot-reload)). Stage 7 adds sounds as an asset type and the cook's `sound` command
 ([Audio](audio.md)); stage 8 skeletons, clip sets and animation graphs, skins in `.qmodel` and the cook's
 `skeleton` and `animation` commands ([Animation](animation.md)).
 
@@ -281,7 +281,7 @@ failures; Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_a
 
 ## Limitations
 
-- **Shader hot reload** is not built (stage 6 remaining work); only asset files reload. Hot reload works where the
+- **Hot reload** of assets works where the
   asset directory is a directory of the file system (the Mac) and, in development builds, through the asset overlay
   on a device: files are pushed from the Mac by `devicectl` (iOS only; not over the network, no asset server).
   A file removed from the overlay goes back to the bundled one, but the script does not remove files.
