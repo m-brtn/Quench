@@ -48,6 +48,11 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   start) went into the region of the next frame, so a region's first sample was the frame before it: a capture
   just before `perf_begin` put its PNG encoding into the region (708 ms on the iPhone 17, 610 ms on the M4 Pro at
   1206 x 2622), and the region's last frame was not counted. The capture still stalls its own frame.
+- **Motion vectors through the holes of a moving cut-out object:** its motion covered its holes, so TAA, the
+  temporal denoiser and MetalFX reprojected what is seen through them with the object's motion. Moving cut-out
+  instances now write their motion only where the frame's depth is their own (`velocity_cutout_fs`, without a depth
+  target): in `renderer_moving_cutout_motion_vectors` the motion vector in a hole of a panel moving 0.1 m per frame
+  read 251 of 255 in a temporary view of the motion vectors before, 0 after, on all three backends.
 
 ## Changes for games
 

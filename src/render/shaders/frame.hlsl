@@ -135,6 +135,19 @@ VelocityOut velocity_skin_vs(float3 position : TEXCOORD0, float3 prevPosition : 
 float4 velocity_obj_fs(VelocityOut vin) : SV_Target0 { return float4(clipToUv(vin.cur) - clipToUv(vin.prev), 0.0, 1.0); }
 #endif
 
+#if defined(QUENCH_ENTRY_velocity_cutout_fs)
+Texture2D<float> depthTex : QUENCH_TEXTURE(0);
+SamplerState depthSampler : QUENCH_SAMPLER(0);
+
+// Cut-out instances, drawn without a depth target: only where the frame's depth is the instance's own (within 0.1%
+// of the distance), so the holes keep the motion of what is seen through them. Reversed depth is near / distance.
+float4 velocity_cutout_fs(VelocityOut vin) : SV_Target0 {
+    const float d = depthTex.Load(int3(vin.position.xy, 0));
+    if (abs(d - vin.position.z) > 0.001 * vin.position.z) discard;
+    return float4(clipToUv(vin.cur) - clipToUv(vin.prev), 0.0, 1.0);
+}
+#endif
+
 #if defined(QUENCH_ENTRY_taa_fs)
 Texture2D<float4> current : QUENCH_TEXTURE(0);
 SamplerState currentSampler : QUENCH_SAMPLER(0);

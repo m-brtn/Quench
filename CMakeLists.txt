@@ -219,7 +219,7 @@ if(NOT QUENCH_HEADLESS)
     quench_add_shaders(quench_render NAME render_frame SOURCE src/render/shaders/frame.hlsl
         ENTRIES fullscreen_vs:vertex shadow_vs:vertex shadow_fs:fragment depth_vs:vertex sky_fs:fragment
                 velocity_fs:fragment velocity_obj_vs:vertex velocity_skin_vs:vertex velocity_obj_fs:fragment
-                taa_fs:fragment bloom_down_fs:fragment bloom_up_fs:fragment tonemap_fs:fragment fxaa_fs:fragment)
+                velocity_cutout_fs:fragment taa_fs:fragment bloom_down_fs:fragment bloom_up_fs:fragment tonemap_fs:fragment fxaa_fs:fragment)
     quench_add_shaders(quench_render NAME render_standard SOURCE src/render/shaders/standard.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment surface_gbuffer_fs:fragment)

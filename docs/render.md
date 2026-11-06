@@ -87,7 +87,8 @@ render, and switching cameras or scenes needs `View::cut`.
 2. **HDR pass** (`Rgba16Float`, reversed depth: near 1, far 0, infinite far plane): opaque surfaces sorted by
    pipeline and material, then game `Opaque` passes, then the sky (atmosphere or gradient, sun disc, fog toward the
    horizon), then alpha-blended and additive surfaces back to front, then game `Transparent` passes.
-3. **Motion vectors and TAA**: camera motion from the depth, moved instances drawn again into an `Rg16Float` target;
+3. **Motion vectors and TAA**: camera motion from the depth, moved instances drawn again into an `Rg16Float` target
+   (cut-out ones only where the depth is their own, so their holes keep what is behind them);
    TAA with a Halton (2, 3) jitter over 8 frames, the history clipped to the variance box of the 3 x 3 neighbourhood
    (YCoCg), then sharpening. Render scale below 1 renders the 3D part smaller; tone mapping scales it to the target,
    or MetalFX does (below), whose temporal upscaler takes the place of TAA's resolve.
@@ -583,8 +584,10 @@ pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; the
   custom surface without `surface_shadow_fs` / `surface_transmittance_fs` is cut by the standard opacity instead of
   its own.
 - The motion vectors use the instance transforms and skinning only: a `QUENCH_SURFACE_VERTEX` deformation does not
-  reach TAA (moving vertices smear a little under TAA), and a moving cut-out object's motion also covers its holes
-  (the background seen through them may smear under TAA).
+  reach TAA (moving vertices smear a little under TAA). A moving cut-out object writes its motion only where the
+  frame's depth is its own (within 0.1% of the distance), so its holes keep the motion of what is behind them; a
+  surface less than 0.1% of the distance behind a hole takes the object's motion. A moving alpha-blended object's
+  motion covers what is seen through it.
 - Skinning: four joints per vertex, linear blend (no dual quaternions), no blend shapes; every drawn skinned
   instance is skinned every frame (no caching of unchanged poses, no skinning LOD); the output buffers grow with the
   skinned vertices drawn (two copies).

@@ -260,7 +260,7 @@ struct RendererImpl {
     std::uint32_t pipelineCount = 0;
 
     gpu::GraphicsPipeline shadowPipeline, skyPipeline, velocityPipeline, velocityObjPipeline, velocitySkinPipeline,
-        taaPipeline, bloomDownPipeline, bloomUpPipeline;
+        velocityCutoutPipeline, velocitySkinCutoutPipeline, taaPipeline, bloomDownPipeline, bloomUpPipeline;
     std::array<gpu::GraphicsPipeline, 2> depthPipelines; // the ray tracing prepass of plain surfaces: [doubleSided]
     std::array<bool, 2> depthFailed{};
     gpu::ComputePipeline skinPipeline; // empty: skinned instances are drawn in their bind pose (logged at init)
@@ -295,7 +295,7 @@ struct RendererImpl {
     std::vector<std::uint8_t> drawable;
     std::vector<Item> opaque, transparent, moved;
     std::array<std::vector<Item>, kMaxCascades> shadowItems, transmittanceItems;
-    std::vector<Batch> opaqueBatches, transparentBatches, velocityBatches;
+    std::vector<Batch> opaqueBatches, transparentBatches, velocityBatches, velocityCutoutBatches;
     std::array<std::vector<Batch>, kMaxCascades> shadowBatches, transmittanceBatches;
 
     // Skinning: every frame writes the skinned vertices of the instances it draws into skinned[frameIndex & 1], so the
@@ -561,6 +561,22 @@ Result<void> RendererImpl::init() {
                                                          .colorTargets = {&velocityTarget, 1},
                                                          .depthFormat = depthFormat,
                                                          .name = "render velocity skinned"});
+            !r)
+            return r;
+        if (Result<void> r = make(velocityCutoutPipeline, {.vertexShader = frame.find("velocity_obj_vs"),
+                                                           .fragmentShader = frame.find("velocity_cutout_fs"),
+                                                           .vertexBuffers = {&kVertexLayout, 1},
+                                                           .vertexAttributes = kPositionAttribute,
+                                                           .colorTargets = {&velocityTarget, 1},
+                                                           .name = "render velocity cut-out"});
+            !r)
+            return r;
+        if (Result<void> r = make(velocitySkinCutoutPipeline, {.vertexShader = frame.find("velocity_skin_vs"),
+                                                               .fragmentShader = frame.find("velocity_cutout_fs"),
+                                                               .vertexBuffers = kSkinVelocityLayouts,
+                                                               .vertexAttributes = kSkinVelocityAttributes,
+                                                               .colorTargets = {&velocityTarget, 1},
+                                                               .name = "render velocity skinned cut-out"});
             !r)
             return r;
         if (Result<void> r = make(taaPipeline, {.vertexShader = fullscreen,
@@ -1656,12 +1672,16 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             glm::vec4(float(transmittanceMask), 1.0f / float(transmittanceMap.desc().width), 0.0f, 0.0f);
     velocityData.clear();
     velocityBatches.clear();
+    velocityCutoutBatches.clear();
     std::sort(moved.begin(), moved.end(), [&scene](const Item& a, const Item& b) {
         return scene.instances.slot(a.slot)->desc.mesh.index < scene.instances.slot(b.slot)->desc.mesh.index;
     });
     for (const Item& item : moved) {
         const InstanceEntry& inst = *scene.instances.slot(item.slot);
         const MeshEntry* mesh = scene.meshes.get(inst.desc.mesh);
+        const MaterialEntry* material = scene.materials.get(inst.desc.material);
+        const bool cutOut = material && material->desc.blend == BlendMode::Opaque && material->desc.alphaCutoff > 0.0f;
+        std::vector<Batch>& batches = cutOut ? velocityCutoutBatches : velocityBatches;
         const gpu::BufferBinding current = skinnedVerticesOf(item.slot);
         if (current.buffer) {
             const bool hasPrevious = !skinnedReset && inst.skinnedFrame != ~0ull && inst.skinnedFrame + 1 == frameIndex;
@@ -1669,13 +1689,14 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 hasPrevious ? gpu::BufferBinding{skinned[(frameIndex & 1) ^ 1],
                                                  inst.skinnedOffset * std::uint32_t(sizeof(Vertex))}
                             : current;
-            velocityBatches.push_back(
-                {&velocitySkinPipeline, mesh, nullptr, std::uint32_t(velocityData.size()), 1, current, previous});
+            batches.push_back({cutOut ? &velocitySkinCutoutPipeline : &velocitySkinPipeline, mesh, nullptr,
+                               std::uint32_t(velocityData.size()), 1, current, previous});
         } else {
-            if (velocityBatches.empty() || velocityBatches.back().mesh != mesh ||
-                velocityBatches.back().vertices.buffer)
-                velocityBatches.push_back({&velocityObjPipeline, mesh, nullptr, std::uint32_t(velocityData.size()), 0});
-            velocityBatches.back().count++;
+            if (batches.empty() || batches.back().mesh != mesh || batches.back().vertices.buffer ||
+                batches.back().first + batches.back().count != velocityData.size())
+                batches.push_back({cutOut ? &velocityCutoutPipeline : &velocityObjPipeline, mesh, nullptr,
+                                   std::uint32_t(velocityData.size()), 0});
+            batches.back().count++;
         }
         velocityData.push_back({inst.desc.transform, inst.previous});
     }
@@ -1800,6 +1821,18 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.bindStorageBuffers(kVertex, 0, {&movedBuffer, 1});
                 std::uint32_t draws = 0;
                 drawBatches(pass, velocityBatches, -1, draws);
+                pass.end();
+            }
+        }
+        if (!velocityCutoutBatches.empty()) {
+            const gpu::ColorTarget color{.texture = velocity, .load = gpu::LoadOp::Load};
+            gpu::RenderPass pass = commands.beginRenderPass(color);
+            if (pass) {
+                const gpu::BufferRef movedBuffer(velocityBuffer);
+                pass.bindStorageBuffers(kVertex, 0, {&movedBuffer, 1});
+                pass.bindSampler(kFragment, 0, {depthTexture, pointClamp});
+                std::uint32_t draws = 0;
+                drawBatches(pass, velocityCutoutBatches, -1, draws);
                 pass.end();
             }
         }

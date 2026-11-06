@@ -728,6 +728,45 @@ QUENCH_TEST(renderer_taa_motion_vectors_and_render_scale) {
     CHECK(sum(c) > 150, "the box is drawn: %d %d %d", c.r, c.g, c.b);
 }
 
+// A moving cut-out panel takes the motion vector pass without a depth target (velocity_cutout_fs): its solid half is
+// drawn, and the ground stays visible through its holes.
+QUENCH_TEST(renderer_moving_cutout_motion_vectors) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.antiAliasing = AntiAliasing::Taa;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId panel = addMesh(scene, planeMesh(glm::vec2(1.0f)));
+    const std::vector<std::byte> cut = halfCutPixels();
+    Result<TextureId> texture = scene.addTexture({.width = 16, .height = 16, .pixels = cut, .mipmaps = false});
+    REQUIRE(texture, "%s", texture.error().c_str());
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.1f, 0.1f, 0.6f, 1.0f)})});
+    MaterialDesc fence{.baseColor = glm::vec4(0.8f, 0.05f, 0.05f, 1.0f), .alphaCutoff = 0.5f};
+    fence.textures[0] = *texture;
+    const InstanceId moving =
+        scene.addInstance({.mesh = panel, .material = scene.addMaterial(fence), .transform = kPanelPlace});
+    scene.setEnvironment(sunOnly());
+    scene.addLight({.type = LightType::Directional, .color = glm::vec3(1.0f), .direction = glm::vec3(0, -1, 0)});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    std::vector<Rgba8> pixels;
+    float x = 0.0f;
+    for (int frame = 0; frame < 6; ++frame) {
+        x = 0.1f * float(frame);
+        scene.setTransform(moving, glm::translate(kPanelPlace, {x, 0, 0}));
+        pixels = renderOnce(device, *renderer, scene, kTopView, *target);
+        if (frame > 0)
+            CHECK(renderer->stats().movedInstances == 1, "frame %d: %u moved", frame, renderer->stats().movedInstances);
+    }
+    const Rgba8 solid = at(pixels, pixelOf(kTopView, {x + 0.5f, 2.0f, 0.3f}));
+    const Rgba8 hole = at(pixels, pixelOf(kTopView, {x - 0.5f, 2.0f, 0.3f}));
+    CHECK(solid.r > 2 * solid.b, "the solid half is drawn: %d %d %d", solid.r, solid.g, solid.b);
+    CHECK(hole.b > 2 * hole.r, "the ground through the hole: %d %d %d", hole.r, hole.g, hole.b);
+}
+
 namespace {
 
 // Two stacked boxes of 0.5 x 1 x 0.5 m: the lower one (y 0..1) moved by joint 0, the upper one (y 1..2) by joint 1;
