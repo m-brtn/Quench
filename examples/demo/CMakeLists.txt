@@ -64,6 +64,7 @@ quench_add_game(quench_demo
         Checks.cpp
         Common.cpp
         Demo.cpp
+        GraphicsPanel.cpp
         Modes.cpp
         Settings.cpp
         Ui.cpp

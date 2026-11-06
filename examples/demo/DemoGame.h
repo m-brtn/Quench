@@ -2,7 +2,7 @@
 
 // The app around the sections (Demo.h): the menu and the section panel in a wide and a compact layout (Ui.cpp), the
 // camera controls every 3D section shares (Camera.cpp), the tour, check and benchmark modes (Modes.cpp), the settings
-// (Settings.h) and the scenario hooks (Demo.cpp).
+// (Settings.h), the Graphics panel (GraphicsPanel.cpp) and the scenario hooks (Demo.cpp).
 
 #include "Checks.h"
 #include "Demo.h"
@@ -111,7 +111,7 @@ private:
         std::string error; // init failed: the message, shown in its panel
         double initMs = -1.0;
     };
-    enum class Sheet { None, Sections, Controls, About, Settings };
+    enum class Sheet { None, Sections, Controls, About, Settings, Graphics };
     enum class Mode { None, Tour, Checks, Benchmark };
 
     // ---- sections and scenario hooks (Demo.cpp)
@@ -153,6 +153,27 @@ private:
     ImGuiWindowFlags navFlags() const;
     void recordPoint(std::string name);
 
+    // ---- the Graphics panel (GraphicsPanel.cpp)
+    // Its values are not used while the check mode or the benchmark runs: they set up and measure each section as
+    // it is.
+    bool graphicsSuspended() const;
+    // A section's settings with the panel's values in their place: what the renderer gets.
+    quench::render::RenderSettings graphicsSettings(const quench::render::RenderSettings& own) const;
+    float graphicsExposure() const;
+    // Around a section's own controls (sectionPanel): they show the panel's values, and an edit of one goes there.
+    void graphicsNote();
+    quench::render::RenderSettings takeSectionEdits(const quench::render::RenderSettings& own,
+                                                    const quench::render::RenderSettings& edited);
+    void openGraphics(bool toggle);
+    // The wide layout's window, in the space between `min` and `max` where it fits (between the menu and the section's
+    // window), else over the middle; the compact layout's sheet at `pos`, `size`.
+    void graphicsWindow(quench::app::App& app, ImVec2 min, ImVec2 max);
+    void graphicsSheet(quench::app::App& app, ImVec2 pos, ImVec2 size);
+    void graphicsContents(quench::app::App& app, bool sheet);
+    // Shared with Settings and About.
+    void outputControls(quench::app::App& app);
+    void relaunchButtons(quench::app::App& app);
+
     // ---- modes (Modes.cpp)
     void startTour(float seconds);
     void startChecks();
@@ -181,7 +202,7 @@ private:
 
     // Input
     CameraControls m_camera;
-    quench::app::ActionId m_next = 0, m_prev = 0, m_toggleUi = 0;
+    quench::app::ActionId m_next = 0, m_prev = 0, m_toggleUi = 0, m_toggleGraphics = 0;
     std::vector<quench::app::ActionId> m_direct;
     bool m_menuFocus = false; // the keyboard and the gamepad drive the windows (Tab, the D-pad; Escape, B leave)
     bool m_focusMenuNow = false;
@@ -191,6 +212,7 @@ private:
     bool m_uiReappears = false;
     Sheet m_sheet = Sheet::None;
     bool m_aboutOpen = false, m_settingsOpen = false;
+    bool m_graphicsOpen = false; // the wide layout's window; in the compact layout Sheet::Graphics
     int m_aboutTab = 0;
     std::string m_licence, m_thirdParty; // read when the About window first shows them
     ImGuiStyle m_baseStyle;              // the engine's style for the display, before the demo's scale and touch sizes

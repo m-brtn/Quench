@@ -19,6 +19,7 @@ ends with a packaged build of it in `dist/` (`tools/package_demo.sh`, below).
 | `sections/<Name>Section.cpp` | one file per section: its scene, controls, numbers and scenario hooks |
 | `DemoGame.h`, `Demo.cpp` | the app around the sections (`quench::app::Game`): sections made at the start and initialized when first shown, switching, the settings, the scenario hooks, the flags (`createGame`) |
 | `Ui.cpp` | the two layouts, the menu, the Performance and Log panels, the section's panel, About and Settings |
+| `GraphicsPanel.h`, `GraphicsPanel.cpp` | the Graphics panel: render options for every section, what runs after the fallbacks, its part of `settings.json`; the display options and the relaunch shared with Settings and About |
 | `Camera.cpp` | the camera controls every 3D section shares |
 | `Modes.cpp`, `Checks.h`, `Checks.cpp` | the tour, the check mode with its items and `checks.json`, the benchmark of every section |
 | `Settings.h`, `Settings.cpp` | `settings.json` |
@@ -95,14 +96,20 @@ light ([Roadmap](roadmap.md)).
 Sizes follow the display's scale (the engine's ImGui style), times the UI scale of the settings.
 
 - **Wide** (a desktop window, a tablet): the menu at the top left (the sections numbered 1 to 11, the mode buttons
-  Tour, Checks and Benchmark, About, Settings, Hide, the Performance and Log panels, and a hint of the keys under
-  them: "Sections: keys 1-9, 0 = 10", "Previous, next: PgUp PgDn LB RB"); the section's window at the top right, or
-  under the menu where the window is too narrow for both; the description as a caption at the bottom; the windows of
-  the modes at the bottom in its place. Both windows collapse with their title's arrow.
+  Tour, Checks and Benchmark, About, Settings, Graphics, Hide, the Performance and Log panels, and a hint of the keys
+  under them: "Sections: keys 1-9, 0 = 10", "Previous, next: PgUp PgDn LB RB", "Graphics: G"); the section's window
+  at the top right, or under the menu where the window is too narrow for both; the description as a caption at the
+  bottom; the windows of the modes at the bottom in its place. Both windows collapse with their title's arrow. The
+  Graphics window opens between the menu and the section's window (over the middle where there is no room), closed
+  by default, with a close button in its title.
 - **Compact** (a safe area under 40 x 26 em: phones in either orientation, small windows): a bar at the top (Menu,
   previous, the section's title, next, Controls) and one sheet at a time: the menu on the left; the section's panel
   docked at the bottom in portrait and on the right in landscape, so the scene stays visible; About and Settings over
-  the screen. A drag on a sheet's background scrolls it.
+  the screen; Graphics (the menu sheet's button) docked as the section's panel is, at most half the screen's height
+  in portrait and 24 em wide in landscape, each option's name over a control as wide as the sheet. A drag on a
+  sheet's background scrolls it.
+- The Graphics button and the "Graphics: G" hint are left out of scripted runs (`--script`): every check compares
+  its capture with a golden image made without them. G and `sheet graphics` still open the panel there.
 - Both keep every window inside the safe area (the notch, the home indicator, rounded corners).
 - Touch-sized controls (taller items, wider scroll bars and grabs, a touch margin) where the device has a touch
   screen (iOS), or always or never by the setting. Touches on a Mac trackpad are not a touch screen.
@@ -119,11 +126,46 @@ Sizes follow the display's scale (the engine's ImGui style), times the UI scale 
 | A section | keys 1 to 9 for sections 1 to 9, 0 for section 10 (11 by next or previous); a click on the menu | | a tap on the menu |
 | Menu by keys and buttons | Tab, then the arrows and Enter; Escape goes back | the D-pad, then A; B goes back | |
 | Hide the windows | H | Start | Hide in the menu |
+| The Graphics panel | G (again: close); Graphics in the menu | | Graphics in the menu sheet (compact) |
 
 The camera's keys and sticks work while the scene has the keyboard and the gamepad: Tab or the D-pad hand them to
 the windows (ImGui navigation, focus on the current section), Escape, B or a click on the scene hand them back. The
 input section's character takes W A S D, the left stick and the fingers, so there only the mouse orbits and pans
 (every device still zooms); a section's own keys are in its description. The same list is in About, under Controls.
+
+## Graphics panel
+
+The render options of `RenderSettings` ([Render module](render.md#settings)) and the display's options, for every
+section at once: a value set here replaces that option in every section until it is given back. At the top a line
+with fps, frame, CPU and GPU time (as the Performance panel; hidden in deterministic runs), the section and its
+count of fallbacks, "Use section defaults" (gives every option back) and how many are set. The groups:
+
+| Group | Options (keys in `settings.json`) |
+|---|---|
+| Anti-aliasing and resolution | anti-aliasing `aa` (none, FXAA, TAA), sharpen `sharpen` (0 to 1), render scale `scale` (0.25 to 1), upscaling `upscaling` (bilinear, MetalFX spatial, MetalFX temporal) |
+| Sun shadows | `sun_shadows` (shadow maps, ray traced), `cascades` (0 to 4), map size `shadow_size` (512 to 4096), `shadow_distance` (m), filter `shadow_filter` (1, 4, 12 taps), translucent shadows `translucent_shadows` (transmittance map, dithered), shadow rays `shadow_rays` (1 to 8), softness `shadow_softness` (times the sun's angular radius) |
+| Ambient occlusion | `ao` (none, ray traced), rays `ao_rays` (1 to 8), radius `ao_radius` (m), strength `ao_strength` (0 to 1) |
+| Bloom, tone and sky | bloom `bloom` (on, off), `bloom_strength`, `bloom_threshold`, tone curve `tone` (ACES, AgX), `exposure` (a factor on each section's own exposure, 0.25 to 4), `vignette` (0 to 1), `dither` (on, off), `sky` (on, off) |
+| Display | HDR output (off, auto, on) and the present mode (vsync, immediate, mailbox): the same controls and values as in Settings, with the output in use (HDR, headroom, paper white) and a line when a present mode is not there for the window |
+| GPU backend | the backend, driver and device with ray tracing, MetalFX and GPU timing, why there is no ray tracing where there is none; on the Mac the relaunch with the other backend (as in About) |
+
+Every control shows the value in use: the panel's where it sets the option (its name in blue, with a Reset button
+whose tooltip gives the section's value), else the section's. Under an option a line says what runs instead after
+the device's fallbacks and why, from `Renderer::effects()` and the reasons of `Renderer::fallbacks()` (in yellow:
+"-> FXAA: ...", "-> shadow maps: ...", "-> bilinear: ...; the native Metal backend has it on Apple GPUs"), or how
+the option works now (in gray: sharpen only after TAA without MetalFX, MetalFX temporal in TAA's place, the 3D
+resolution of the render scale, spatial upscaling only below render scale 1, 0 cascades turn the ray-traced shadows
+off too, map size and filter only for shadow maps, rays and softness only for ray-traced shadows, bloom off at
+strength 0, no dither in HDR output).
+
+Options the panel does not set keep each section's values, and a section still changes them (the shadows section's
+turning sun, the sky section's day). Where a section changes an option the panel sets, the panel's value is the one
+the renderer gets; the section's panel says so under Controls ("Set in Graphics for every section: anti-aliasing,
+cascades. The controls here show those values and change them there.", with "Open Graphics"), and its controls and
+"Frame and fallbacks" show and change the panel's value. Reset section keeps the panel's values. The check mode
+and the benchmark run without them (each item and each measurement uses the section's own settings; the panel says
+so and its controls are off) and they come back when the mode ends. The values are kept in `settings.json` (below);
+Defaults in Settings gives every one back.
 
 ## Modes
 
@@ -175,11 +217,17 @@ on the Mac, `Library/Application Support/Quench/Quench Demo/` in the app's data 
 `quench::fs`.
 
 - `settings.json`: `section` (the last one), `show_ui`, `ui_scale` (0.5 to 3), `touch_controls` (`auto`, `on`,
-  `off`), `hdr` (`off`, `auto`, `on`), `present_mode` (`vsync`, `immediate`, `mailbox`), `tour_seconds` (1 to 120).
+  `off`), `hdr` (`off`, `auto`, `on`), `present_mode` (`vsync`, `immediate`, `mailbox`), `tour_seconds` (1 to 120),
+  `graphics` (the Graphics panel's options: an object with only the options it sets, under the keys of the table
+  above; the choices as names, `aa` `none`, `fxaa`, `taa`; `upscaling` `bilinear`, `spatial`, `temporal`;
+  `sun_shadows` `maps`, `rt`; `translucent_shadows` `map`, `dithered`; `ao` `none`, `rt`; `tone` `aces`, `agx`;
+  `bloom`, `dither` and `sky` as booleans, the rest as numbers; for example `"graphics": {"aa": "fxaa", "cascades":
+  2, "exposure": 1.5}`). Still version 1: a file without `graphics` (all earlier ones) loads with nothing set, an
+  unknown key or a bad value is skipped, a number is kept in the option's range, and an older demo ignores the key.
   Written half a second after a change and at the end. A file that cannot be read or parsed, or of another version,
   gives the defaults and a warning, and the next save writes a good one. `--hdr` and `--present-mode` on the command
   line win over the file. Scripted runs (`--script`) ignore the file unless `--settings-file` names one, so checks
-  start from the defaults and leave the user's file alone.
+  start from the defaults (no Graphics options) and leave the user's file alone.
 - `checks.json`: `app`, `app_version`, `build` (the build type and the commit), `backend`, `driver`, `device`,
   `platform`, `written` (UTC); `items`, one per check: `id`, `section`, `title`, `status` (`pending`, `ok`,
   `problem`, `skipped`), `note`, `backend` and `time` of the mark; `summary`: the count per status.
@@ -195,11 +243,12 @@ device with ray tracing, MetalFX and GPU timing, the window and its pixel densit
 device and the job threads; the controls; the engine's licence and the third-party licences (shipped as assets,
 `quench_cook_assets(... FILES ...)`, read when About first opens). On the Mac it has a button that starts the demo
 again with the other GPU backend (`App::relaunch`: the same command line with another `--gpu-backend`; the settings
-are saved first). iOS cannot start an app again from inside: the backend is chosen at launch, with
-`--gpu-backend metal` or the environment variable `QUENCH_GPU_BACKEND=metal` (below).
+are saved first; the same buttons are in the Graphics panel). iOS cannot start an app again from inside: the backend
+is chosen at launch, with `--gpu-backend metal` or the environment variable `QUENCH_GPU_BACKEND=metal` (below).
 
 Settings: the UI scale (applied when the slider is let go), touch-sized controls (auto, on, off), HDR output, the
-present mode, the tour's time, Defaults, and Screenshot (`screenshot-N.png` in the user directory).
+present mode (one piece of code with the Graphics panel's Display group), the tour's time, Defaults (also gives
+back every option of the Graphics panel), and Screenshot (`screenshot-N.png` in the user directory).
 
 ## Check mode on the iPhone
 
@@ -304,7 +353,8 @@ Named points: `menu:<section id>` (a menu entry while the menu is shown), `ui:<n
 `ui:sections`, `ui:prev`, `ui:title`, `ui:next`, `ui:controls`, `ui:close`, `ui:tour`, `ui:checks`,
 `ui:benchmark`, `ui:about`, `ui:settings`, `ui:hide`, `ui:job_test`, `ui:reset_section`, `ui:reset_camera`,
 `ui:relaunch`, `ui:stop`, `ui:check_ok`, `ui:check_problem`, `ui:check_skip`, `ui:check_prev`, `ui:check_next`,
-`ui:check_end`, `ui:check_note`), and the section's (`floor`, ...).
+`ui:check_end`, `ui:check_note`, `ui:graphics_defaults`; `ui:graphics` only outside scripted runs), and the
+section's (`floor`, ...).
 
 The capture checks and the audio mix checks run with `--present-mode immediate`. Every frame of a scripted run is one
 fixed step, and frames are held to 120 per second; with vsync they wait for the 60 Hz display as well, which doubles a
@@ -322,7 +372,7 @@ transmittance map, 1 dithered, after fallbacks), `moved`, `lights`, `render_w`, 
 (0 maps, 1 ray traced), `ambient_occlusion` (0 none, 1 ray traced), `upscaling` (0 bilinear, 1 spatial, 2 temporal),
 `render_scale`, `ray_instances`, `ray_builds`, `ray_refits` (all after fallbacks), `fallbacks` (their count),
 `camera_x`, `camera_z` (the target); the demo's own: `section_ready`, `sections_ready`, `init_ms`, `switch_ms`,
-`scene_instances`, `compact`, `sheet` (0 none, 1 the menu, 2 the controls, 3 About, 4 Settings), `menu_focus`,
+`scene_instances`, `compact`, `sheet` (0 none, 1 the menu, 2 the controls, 3 About, 4 Settings, 5 Graphics), `menu_focus`,
 `about`, `licence_bytes`, `ui_scale`, `touch_ui`, `settings_loaded` (1 read, 0 not, -1 unusable), `settings_writes`,
 `mode` (0 none, 1 tour, 2 checks, 3 benchmark), `tours`, `check_index`, `check_items`, `check_writes`,
 `checks_pending`, `checks_ok`, `checks_problem`, `checks_skipped`, `benchmark_sections`, `benchmark_written`,
@@ -336,7 +386,7 @@ section's own (for example `bodies`, `blasts`,
 jump), `hero_transition`, `hero_look_at`, `hero_angle`, `footsteps`, `landings`, `crowd`, `held_distance`,
 `slope_pelvis`, and per stand and leg `slope_leg0_offset` (also `_reached`, `_grounded`; `slope` or `step`, leg 0
 or 1); the ray tracing section's `rt_ready`, `sun_azimuth`). Game commands: `section ID`, `reset_section`, `reset_camera`,
-`sheet none|sections|controls|about|settings`, `mode off|tour|checks|benchmark [SECONDS]`,
+`sheet none|sections|controls|about|settings|graphics`, `mode off|tour|checks|benchmark [SECONDS]`,
 `check ok|problem|skip [NOTE]`, `check next|prev`, `job_test`, `settings_save` (now, not half a second later),
 `settings_corrupt` (overwrites the settings file with text that is not JSON),
 `camera YAW PITCH DISTANCE` (degrees, meters), `set NAME VALUE` (`ui_scale`, `touch_controls auto|on|off`; render settings: `aa none|fxaa|taa`,

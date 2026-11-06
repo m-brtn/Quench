@@ -124,6 +124,7 @@ Result<void> DemoGame::init(App& app) {
         m_direct.push_back(
             action(input, std::format("section_{}", i + 1), {*Binding::key(std::to_string((i + 1) % 10))}));
     m_toggleUi = action(input, "toggle_ui", {*Binding::key("H"), Binding::gamepad(GamepadButton::Start)});
+    m_toggleGraphics = action(input, "toggle_graphics", {*Binding::key("G")});
     m_camera.init(input);
 
     loadSettings(app);
@@ -184,11 +185,14 @@ void DemoGame::update(App& app, double frameDt) {
         m_uiReappears = m_showUi;
         noteSettings();
     }
+    if (input.pressed(m_toggleGraphics)) openGraphics(true);
     m_camera.update(app, current(), float(frameDt), !m_menuFocus, [this](glm::vec2 point) { click(point); });
 
     updateMode(app, frameDt);
     if (currentReady()) current().update(*m_context, frameDt);
-    if (!(m_renderer->settings() == current().settings)) m_renderer->setSettings(current().settings);
+    if (const render::RenderSettings settings = graphicsSettings(current().settings);
+        !(m_renderer->settings() == settings))
+        m_renderer->setSettings(settings);
 
     if (app.hdrMode() != m_lastHdr) {
         // Changed in the HDR section or in the settings (not by --hdr, which only applies to its run).
@@ -211,7 +215,17 @@ void DemoGame::render(App& app, app::Frame& frame) {
                             .nearPlane = 0.1f,
                             .cut = m_cut,
                             .time = m_context->app.time()};
-    m_renderer->render(currentScene(), view, frame.commands, frame.target, section.output(frame.output));
+    // The Graphics panel's exposure scales the section's own for this frame only.
+    render::Scene& scene = currentScene();
+    const render::Environment environment = scene.environment();
+    const float exposure = graphicsExposure();
+    if (exposure != 1.0f) {
+        render::Environment scaled = environment;
+        scaled.exposure *= exposure;
+        scene.setEnvironment(scaled);
+    }
+    m_renderer->render(scene, view, frame.commands, frame.target, section.output(frame.output));
+    if (exposure != 1.0f) scene.setEnvironment(environment);
     m_targetWidth = frame.width;
     m_cut = false;
 }
@@ -258,7 +272,7 @@ void DemoGame::select(std::size_t index) {
     m_current = index;
     m_entered = true;
     if (prepare(m_slots[index])) current().enter(*m_context);
-    m_renderer->setSettings(current().settings);
+    m_renderer->setSettings(graphicsSettings(current().settings));
     m_cut = true; // another scene: no motion vectors from the previous one
     m_camera.reset();
     m_switchMs = elapsedMs(start);
@@ -282,7 +296,7 @@ void DemoGame::resetSection() {
     slot.ready = false;
     slot.error.clear();
     if (prepare(slot)) slot.section->enter(*m_context);
-    m_renderer->setSettings(slot.section->settings);
+    m_renderer->setSettings(graphicsSettings(slot.section->settings));
     m_cut = true;
     m_camera.reset();
 }
@@ -677,13 +691,16 @@ app::ScenarioExec DemoGame::scenarioCommand(App& app, const app::ScenarioCommand
         return done;
     }
     if (command.op == "sheet") {
-        // sheet none|sections|controls|about|settings: the compact layout's sheets; About and Settings also wide.
-        if (args.size() != 1) return fail("sheet none|sections|controls|about|settings");
+        // sheet none|sections|controls|about|settings|graphics: the compact layout's sheets; About, Settings and
+        // Graphics also wide.
+        if (args.size() != 1) return fail("sheet none|sections|controls|about|settings|graphics");
         m_aboutOpen = args[0] == "about";
         m_settingsOpen = args[0] == "settings";
+        m_graphicsOpen = args[0] == "graphics";
         m_sheet = args[0] == "sections" ? Sheet::Sections : args[0] == "controls" ? Sheet::Controls : Sheet::None;
         if (compact() && m_aboutOpen) m_sheet = Sheet::About;
         if (compact() && m_settingsOpen) m_sheet = Sheet::Settings;
+        if (compact() && m_graphicsOpen) m_sheet = Sheet::Graphics;
         return done;
     }
     if (command.op == "mode") {
