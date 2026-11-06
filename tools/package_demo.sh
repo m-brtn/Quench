@@ -168,13 +168,17 @@ if [[ $IOS -eq 1 ]]; then
         TEAM="$(sed -n 's/^QUENCH_IOS_TEAM:STRING=//p' "$XBUILD/CMakeCache.txt")"
     fi
     [[ -n "$TEAM" ]] || fail "no team: --team ID, QUENCH_IOS_TEAM, or cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team>"
-    # Xcode's accounts list every team with isFreeProvisioningTeam; a team missing there cannot sign on this Mac.
+    # Xcode's accounts list every team with isFreeProvisioningTeam. The list can be empty while Xcode still signs
+    # with the account (seen 2026-11-06): then only the signed app's profile tells (below).
     TEAMS="$(defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier 2>/dev/null || true)"
     TEAM_ENTRY="$(grep -B1 -A2 "teamID = $TEAM;" <<<"$TEAMS" || true)"
-    [[ -n "$TEAM_ENTRY" ]] || fail "team $TEAM is not in Xcode's accounts (Xcode > Settings > Accounts)"
-    grep -q "isFreeProvisioningTeam = 1" <<<"$TEAM_ENTRY" &&
-        fail "team $TEAM is a free Personal Team (profiles expire after 7 days): use a paid team"
-    echo "team $TEAM: $(sed -n 's/.*teamName = "\{0,1\}\([^";]*\)"\{0,1\};/\1/p' <<<"$TEAM_ENTRY")"
+    if [[ -n "$TEAM_ENTRY" ]]; then
+        grep -q "isFreeProvisioningTeam = 1" <<<"$TEAM_ENTRY" &&
+            fail "team $TEAM is a free Personal Team (profiles expire after 7 days): use a paid team"
+        echo "team $TEAM: $(sed -n 's/.*teamName = "\{0,1\}\([^";]*\)"\{0,1\};/\1/p' <<<"$TEAM_ENTRY")"
+    else
+        echo "team $TEAM: not in Xcode's team list (Xcode > Settings > Accounts); the app's profile is checked instead"
+    fi
     cmake --preset host-tools >/dev/null
     cmake --build --preset host-tools
     cmake --preset ios-xcode -DQUENCH_IOS_TEAM="$TEAM" >/dev/null
@@ -196,7 +200,14 @@ if [[ $IOS -eq 1 ]]; then
     echo "profile: $(/usr/libexec/PlistBuddy -c 'Print :Name' "$DIST/.profile.plist"), expires" \
         "$(/usr/libexec/PlistBuddy -c 'Print :ExpirationDate' "$DIST/.profile.plist"), devices:" \
         "$(/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$DIST/.profile.plist" | grep -c -- '-')"
+    # A free Personal Team's profiles last 7 days; a paid team's a year.
+    profile_time() {
+        date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$(plutil -extract "$1" raw -o - "$DIST/.profile.plist")" +%s
+    }
+    PROFILE_DAYS=$((($(profile_time ExpirationDate) - $(profile_time CreationDate)) / 86400))
     rm -f "$DIST/.profile.plist"
+    ((PROFILE_DAYS > 7)) ||
+        fail "the profile lasts $PROFILE_DAYS days: team $TEAM is a free Personal Team, use a paid team"
 
     ISTAGE="$DIST/$NAME-ios"
     IZIP="$DIST/$NAME-ios.zip"
