@@ -93,6 +93,12 @@ QUENCH_TEST(input_fingers) {
     CHECK(input.fingers()[0].released, "released");
     frame(input, false);
     CHECK(input.fingers().empty(), "%zu", input.fingers().size());
+
+    // A trackpad's touches (positions on the pad) are not fingers.
+    SDL_Event pad = finger(SDL_EVENT_FINGER_DOWN, 8, 0.5f, 0.5f);
+    pad.tfinger.touchID = SDL_MOUSE_TOUCHID;
+    frame(input, false, pad);
+    CHECK(input.fingers().empty(), "trackpad touch as a finger: %zu", input.fingers().size());
 }
 
 QUENCH_TEST(input_mouse) {

@@ -1,0 +1,12 @@
+# Settings (ctest: demo_settings, with --settings-file and a fresh --user-dir): the section, the UI scale, the touch
+# controls and the hidden windows are saved; tests/DemoUserFiles.cmake reads the file afterwards.
+
+expect settings_loaded == 0
+set ui_scale 1.25
+set touch_controls on
+section shadows
+tap H
+until ui == 0 1
+settings_save
+expect settings_writes >= 1
+quit

@@ -133,6 +133,8 @@ void Input::handleEvent(const SDL_Event& e, float windowWidth, float windowHeigh
     case SDL_EVENT_FINGER_MOTION:
     case SDL_EVENT_FINGER_UP:
     case SDL_EVENT_FINGER_CANCELED: {
+        // SDL's macOS trackpad touches (and touches it makes from the mouse) come from the mouse's touch id.
+        if (e.tfinger.touchID == SDL_MOUSE_TOUCHID) break;
         const glm::vec2 position(e.tfinger.x * windowWidth, e.tfinger.y * windowHeight);
         auto it = std::find_if(m_fingers.begin(), m_fingers.end(),
                                [&](const Finger& f) { return f.id == e.tfinger.fingerID && !f.released; });

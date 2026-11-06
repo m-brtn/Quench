@@ -23,6 +23,8 @@ const char* backendName(Backend backend) {
     return "unknown";
 }
 
+bool backendAvailable(Backend backend) { return backend != Backend::Metal || QUENCH_PLATFORM_APPLE; }
+
 namespace detail {
 
 void release(DeviceImpl* device, Kind kind, void* native) noexcept {

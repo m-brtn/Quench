@@ -214,7 +214,9 @@ default stays shadow maps until the iPhone measurement ([Roadmap](roadmap.md#sta
 
 `Renderer::effects()` is what runs after the device check; `RenderSettings` is what the game asked for. The choice is
 made from what the device supports (`gpu::Device` format queries and `gpu::Caps`), never from the platform, and a
-change is logged once:
+change is logged once. `Renderer::fallbacks()` keeps those lines for the current settings, one per effect that
+fell back, with its reason ("ray-traced shadows: the device has no ray tracing (gpu::Caps::rayTracing); shadow
+maps"), so a game can show them (the demo's "Frame and fallbacks" panel); it is empty when every effect runs as set:
 
 | Effect | Needs | Fallback |
 |---|---|---|

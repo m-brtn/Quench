@@ -4,8 +4,6 @@
 
 #include "Demo.h"
 
-#include <quench/render/Daylight.h>
-
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/trigonometric.hpp>
 #include <imgui.h>
@@ -83,34 +81,33 @@ public:
         animate(c.app.time());
     }
 
-    void ui(Context& c) override {
+    void controls(Context& c) override {
         (void)c;
-        const float w = ImGui::GetFontSize() * 8.0f;
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderInt("Cascades", &settings.shadowCascades, 0, kMaxCascades);
         static constexpr std::array<std::uint32_t, 4> kSizes{512, 1024, 2048, 4096};
         int size = int(std::find(kSizes.begin(), kSizes.end(), settings.shadowMapSize) - kSizes.begin());
-        ImGui::SetNextItemWidth(w);
         if (ImGui::Combo("Map size", &size,
                          "512\0"
                          "1024\0"
                          "2048\0"
                          "4096\0"))
             settings.shadowMapSize = kSizes[std::size_t(size)];
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Distance (m)", &settings.shadowDistance, 10.0f, 200.0f, "%.0f");
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderInt("Filter", &settings.shadowFilter, 0, 2,
                          settings.shadowFilter == 0   ? "1 tap"
                          : settings.shadowFilter == 1 ? "4 taps"
                                                       : "12 taps");
         ImGui::Separator();
-        ImGui::SetNextItemWidth(w);
         bool changed = ImGui::SliderFloat("Sun elevation", &m_elevation, 2.0f, 90.0f, "%.0f deg");
-        ImGui::SetNextItemWidth(w);
         changed |= ImGui::SliderFloat("Sun azimuth", &m_azimuth, 0.0f, 360.0f, "%.0f deg");
         if (changed) applySun();
         ImGui::Checkbox("Turn the sun", &m_animateSun);
+    }
+
+    void stats(Context& c) override {
+        const RenderStats& r = c.renderer.stats();
+        ImGui::TextWrapped("Cascades %d: %u shadow draws, %u instances", c.renderer.effects().shadowCascades,
+                           r.shadowDraws, r.shadowInstances);
     }
 
     Scene& scene() override { return *m_scene; }
@@ -144,12 +141,7 @@ public:
     }
 
 private:
-    void applySun() {
-        const glm::vec3 towardSun = skyDirection(m_elevation, m_azimuth);
-        const Daylight day = daylightFor(towardSun);
-        m_scene->setEnvironment(day.environment);
-        m_scene->setLight(m_sun, {.type = LightType::Directional, .color = day.sunColor, .direction = -towardSun});
-    }
+    void applySun() { setDaylight(*m_scene, m_sun, m_elevation, m_azimuth); }
 
     void animate(double time) {
         const float t = float(time);

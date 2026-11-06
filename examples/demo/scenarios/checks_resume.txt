@@ -1,0 +1,9 @@
+# The check mode again on the same user directory: it starts at the first pending item with the earlier marks.
+
+expect mode == 2
+expect checks_ok == 2
+expect checks_problem == 1
+expect checks_skipped == 1
+expect checks_pending == 20
+expect check_index == 4
+quit

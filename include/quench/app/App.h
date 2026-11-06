@@ -79,6 +79,19 @@ struct FrameStats {
     std::vector<gpu::GpuTiming> gpuPasses;
 };
 
+// A perf region's numbers (App::endPerf; milliseconds, -1 where there were no samples).
+struct PerfReport {
+    std::string label;
+    std::size_t frames = 0;
+    double frameAvg = -1.0, frameP50 = -1.0, frameP99 = -1.0, frameMax = -1.0;
+    double cpuAvg = -1.0, cpuP50 = -1.0, cpuP99 = -1.0;
+    double gpuAvg = -1.0, gpuP50 = -1.0;
+    std::size_t gpuSamples = 0;
+    // GPU busy time p50 per timed range (FrameStats::gpuPasses), in the order first seen; empty without pass timing.
+    std::vector<std::pair<std::string, double>> passP50;
+    std::string details; // Game::perfDetails at the end
+};
+
 struct WindowRect {
     int x = 0;
     int y = 0;
@@ -192,6 +205,12 @@ public:
     // times (a frame panel). Also on during a scenario's perf region and with --gpu-pass-timing; otherwise the
     // ranges are not recorded (gpu::Device::setPassTiming), which saves CPU time per frame.
     void requestPassTiming();
+    // A frame-time region as a scenario's perf_begin .. perf_end, started by the game (a benchmark mode): the frames
+    // until endPerf() run in real time, then the perf line is logged and the perf_* scenario values are set. A new
+    // region (from either side) ends the running one without a report. endPerf() without a region: nullopt.
+    void beginPerf(std::string label);
+    bool perfRunning() const;
+    std::optional<PerfReport> endPerf();
     // The part of the window not covered by notches, rounded corners or system bars, in points.
     WindowRect safeArea() const;
 
@@ -218,6 +237,17 @@ public:
     void stopTextInput();
     // Ends the app after this frame. A non-zero code makes the process fail.
     void quit(int exitCode = 0);
+
+    // The command line the app was started with, without the program name (engine flags included).
+    std::span<const std::string> arguments() const;
+    // Whether relaunch() can start the app again: desktops; not phones, tablets or the web.
+    bool canRelaunch() const;
+    // Starts the program again as a new process with `args` (without the program name) and ends this one after the
+    // frame, as quit(0); an error, and the app goes on, where it cannot or the process does not start.
+    Result<void> relaunch(std::span<const std::string> args);
+    // Physical memory of the process in bytes (Apple platforms: the footprint the system charges it, as Xcode's
+    // memory gauge shows); nullopt where unknown. Scenario value memory_mb.
+    std::optional<std::uint64_t> memoryFootprint() const;
 
 private:
     friend struct detail::AppState;

@@ -8,7 +8,6 @@
 #include <quench/audio/AudioSystem.h>
 #include <quench/audio/Device.h>
 #include <quench/audio/Spatial.h>
-#include <quench/render/Daylight.h>
 
 #include <glm/geometric.hpp>
 #include <glm/trigonometric.hpp>
@@ -21,6 +20,8 @@
 #include <format>
 #include <numbers>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace demo {
 namespace {
@@ -109,22 +110,26 @@ public:
         s.addInstance(
             {.mesh = *lane, .material = paint, .transform = placed({0.0f, kHead.y, kFlybyZ}), .castsShadows = false});
         m_sun = s.addLight({.type = LightType::Directional});
-        const glm::vec3 towardSun = skyDirection(40.0f, 35.0f);
-        const Daylight day = daylightFor(towardSun);
-        s.setEnvironment(day.environment);
-        s.setLight(m_sun, {.type = LightType::Directional, .color = day.sunColor, .direction = -towardSun});
+        setDaylight(s, m_sun, 40.0f, 35.0f);
 
         audio::AudioSystem& a = c.app.audio();
         m_motor = a.load("sounds/motor.wav");
         m_siren = a.load("sounds/siren.wav");
         m_ping = a.load("sounds/ping.wav");
         m_toneSource = std::make_shared<Tone>(m_toneHz);
+        // The buses are the app's: shutdown puts back what the controls change.
+        for (std::uint32_t i = 0; i < a.busCount(); ++i) {
+            const audio::BusInfo& info = a.busInfo(audio::BusId{std::uint8_t(i)});
+            m_savedBuses.push_back({info.volume, info.muted});
+        }
         place(c);
         return {};
     }
 
     void enter(Context& c) override {
         m_active = true;
+        // The output meter of the panel (scripted runs keep the app's monitor: audio_measure reads it).
+        if (!c.app.scripted()) c.app.audio().setMonitor(0.25);
         restart(c);
         // Also when the track of the last visit is still fading out: it crossfades into the new start.
         if (m_track > 0) c.app.audio().playMusic(kTracks[m_track - 1], {.crossfade = 0.5f, .volume = kMusicVolume});
@@ -137,6 +142,7 @@ public:
             *h = {};
         }
         a.stopMusic(0.5f);
+        if (!c.app.scripted()) a.setMonitor(0.0);
         m_active = false;
     }
 
@@ -152,31 +158,14 @@ public:
         place(c);
     }
 
-    void ui(Context& c) override {
+    void controls(Context& c) override {
         audio::AudioSystem& a = c.app.audio();
-        const audio::AudioStats stats = a.stats();
-        const float w = ImGui::GetFontSize() * 8.0f;
-        ImGui::Text("Voices %u of %u, sounds %u", stats.voices, stats.maxVoices, stats.sounds);
-        ImGui::Text("Stolen %llu, rejected %llu", (unsigned long long)stats.stolen, (unsigned long long)stats.rejected);
-        ImGui::Text("Underruns %llu, clipped %llu", (unsigned long long)stats.underruns,
-                    (unsigned long long)stats.clipped);
-        if (c.app.deterministic())
-            ImGui::TextUnformatted("Mix time hidden (fixed clock)");
-        else
-            ImGui::TextWrapped("Mix %.3f ms per call, %.2f%% of real time", stats.mixMs, stats.load * 100.0);
-        if (const audio::Device* device = c.app.audioDevice())
-            ImGui::TextWrapped("Output: %s (%s), %u Hz", device->info().name.c_str(), device->info().backend.c_str(),
-                               device->info().deviceSampleRate);
-        else
-            ImGui::TextWrapped("Output: none, offline mix at %u Hz", a.sampleRate());
-
         ImGui::SeparatorText("Buses");
         for (std::uint32_t i = 0; i < a.busCount(); ++i) {
             const audio::BusId bus{std::uint8_t(i)};
             const audio::BusInfo& info = a.busInfo(bus);
             ImGui::PushID(int(i));
             float volume = info.volume;
-            ImGui::SetNextItemWidth(w);
             if (ImGui::SliderFloat(info.name.c_str(), &volume, 0.0f, 1.0f, "%.2f")) a.setBusVolume(bus, volume);
             bool muted = info.muted;
             if (ImGui::Checkbox("Mute", &muted)) a.setBusMuted(bus, muted);
@@ -201,42 +190,65 @@ public:
 
         ImGui::SeparatorText("Emitters");
         if (ImGui::Checkbox("Circling", &m_orbitOn)) restart(c);
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Speed##orbit", &m_orbitSpeed, 0.0f, 30.0f, "%.0f m/s");
         if (ImGui::Checkbox("Fly-by", &m_flybyOn)) restart(c);
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Speed##flyby", &m_flybySpeed, 5.0f, 80.0f, "%.0f m/s");
         ImGui::Text("Fly-by pitch %.3f", flybyPitch());
         if (ImGui::Checkbox("Tone", &m_toneOn)) restart(c);
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Frequency", &m_toneHz, 100.0f, 2000.0f, "%.0f Hz", ImGuiSliderFlags_Logarithmic);
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat2("Position", &m_tonePosition.x, -15.0f, 15.0f, "%.1f");
 
         ImGui::SeparatorText("Distance");
         int model = int(m_attenuation);
-        ImGui::SetNextItemWidth(w);
         if (ImGui::Combo("Model", &model,
                          "none\0"
                          "inverse\0"
                          "linear\0"
                          "exponential\0"))
             m_attenuation = audio::Attenuation(model);
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Min (m)", &m_minDistance, 0.5f, 10.0f, "%.1f");
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Max (m)", &m_maxDistance, 5.0f, 100.0f, "%.0f");
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Doppler", &m_doppler, 0.0f, 2.0f, "%.2f");
     }
 
+    void stats(Context& c) override {
+        audio::AudioSystem& a = c.app.audio();
+        const audio::AudioStats stats = a.stats();
+        ImGui::Text("Voices %u of %u, sounds %u", stats.voices, stats.maxVoices, stats.sounds);
+        ImGui::Text("Stolen %llu, rejected %llu", (unsigned long long)stats.stolen, (unsigned long long)stats.rejected);
+        ImGui::Text("Underruns %llu, clipped %llu", (unsigned long long)stats.underruns,
+                    (unsigned long long)stats.clipped);
+        if (const audio::Device* device = c.app.audioDevice())
+            ImGui::TextWrapped("Output: %s (%s), %u Hz", device->info().name.c_str(), device->info().backend.c_str(),
+                               device->info().deviceSampleRate);
+        else
+            ImGui::TextWrapped("Output: none, offline mix at %u Hz", a.sampleRate());
+        if (c.app.deterministic()) {
+            ImGui::TextUnformatted("Mix time and meter hidden (fixed clock)");
+            return;
+        }
+        ImGui::TextWrapped("Mix %.3f ms per call, %.2f%% of real time", stats.mixMs, stats.load * 100.0);
+        // The output's level per side over the last 0.1 s: the circling emitter moves it from ear to ear.
+        const std::vector<float> mix = a.monitored(0.1);
+        double sum[2] = {0.0, 0.0};
+        for (std::size_t i = 0; i + 1 < mix.size(); i += 2) {
+            sum[0] += double(mix[i]) * double(mix[i]);
+            sum[1] += double(mix[i + 1]) * double(mix[i + 1]);
+        }
+        const std::size_t frames = mix.size() / 2;
+        for (int side = 0; side < 2; ++side) {
+            const float rms = frames > 0 ? float(std::sqrt(sum[side] / double(frames))) : 0.0f;
+            const float db = 20.0f * std::log10(std::max(rms, 1e-5f));
+            const std::string label = std::format("{} {:.0f} dB", side == 0 ? "L" : "R", db);
+            ImGui::ProgressBar(std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f), ImVec2(-1.0f, 0.0f), label.c_str());
+        }
+    }
+
     void click(Context& c, glm::vec2 point) override {
-        glm::vec3 origin, direction;
-        camera.ray(point, glm::vec2(float(c.app.windowWidth()), float(c.app.windowHeight())), origin, direction);
-        if (direction.y > -1e-3f) return;
-        const glm::vec3 hit = origin + direction * (-origin.y / direction.y);
+        const std::optional<glm::vec3> hit = groundPoint(c, camera, point);
+        if (!hit) return;
         c.app.audio().play(
-            m_ping, {.bus = c.app.audio().bus("effects"), .spatial = true, .emitter = emitter(hit, glm::vec3(0.0f))});
+            m_ping, {.bus = c.app.audio().bus("effects"), .spatial = true, .emitter = emitter(*hit, glm::vec3(0.0f))});
         ++m_pings;
     }
 
@@ -312,7 +324,13 @@ public:
     }
 
     void shutdown(Context& c) override {
-        (void)c;
+        audio::AudioSystem& a = c.app.audio();
+        for (std::size_t i = 0; i < m_savedBuses.size(); ++i) {
+            const audio::BusId bus{std::uint8_t(i)};
+            a.setBusVolume(bus, m_savedBuses[i].first);
+            a.setBusMuted(bus, m_savedBuses[i].second);
+        }
+        if (m_pauseEffects) a.setBusPaused(a.bus("effects"), false);
         m_motor = {};
         m_siren = {};
         m_ping = {};
@@ -446,6 +464,7 @@ private:
     float m_minDistance = 1.0f, m_maxDistance = 40.0f, m_doppler = 1.0f;
     int m_track = 1;
     int m_pings = 0;
+    std::vector<std::pair<float, bool>> m_savedBuses; // volume, muted
 };
 
 } // namespace

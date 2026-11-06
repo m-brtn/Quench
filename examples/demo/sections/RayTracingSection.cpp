@@ -9,7 +9,6 @@
 
 #include <quench/animation/AnimationSystem.h>
 #include <quench/assets/AssetManager.h>
-#include <quench/render/Daylight.h>
 #include <quench/render/SceneAssets.h>
 
 #include <glm/ext/matrix_transform.hpp>
@@ -31,11 +30,6 @@ namespace {
 using namespace quench;
 using namespace quench::render;
 using animation::AnimationSystem;
-
-constexpr const char* kModel = "characters/mannequin.qmodel";
-constexpr const char* kSkeleton = "characters/mannequin.qskel";
-constexpr const char* kClips = "characters/mannequin.qanim";
-constexpr const char* kGraph = "characters/mannequin.graph.json";
 
 constexpr float kPi = std::numbers::pi_v<float>;
 const glm::vec2 kWalkCenter(-2.9f, -0.6f);
@@ -133,10 +127,10 @@ public:
         m_manager = std::make_unique<assets::AssetManager>(c.app.jobs(), c.app.assets().settings());
         m_assets.emplace(s, *m_manager);
         m_anim = std::make_unique<AnimationSystem>(*m_manager, c.app.jobs());
-        m_model = m_assets->loadModel(kModel);
-        m_skeleton = m_anim->loadSkeleton(kSkeleton);
-        m_clips = m_anim->loadClips(kClips);
-        m_graph = m_anim->loadGraph(kGraph);
+        m_model = m_assets->loadModel(mannequin::kModel);
+        m_skeleton = m_anim->loadSkeleton(mannequin::kSkeleton);
+        m_clips = m_anim->loadClips(mannequin::kClips);
+        m_graph = m_anim->loadGraph(mannequin::kGraph);
         animation::CharacterDesc desc;
         desc.skeleton = m_skeleton;
         desc.clips.push_back(m_clips);
@@ -173,16 +167,9 @@ public:
         m_anim->setTransform(m_character, walkerTransform());
     }
 
-    void ui(Context& c) override {
+    void controls(Context& c) override {
         const gpu::Caps& caps = c.app.device().caps();
         const ActiveEffects& e = c.renderer.effects();
-        const RenderStats& r = c.renderer.stats();
-        if (caps.rayTracing) {
-            ImGui::TextWrapped("Ray tracing: yes (%s backend)", gpu::backendName(caps.backend));
-        } else {
-            ImGui::TextWrapped("Ray tracing: no. %s Fallbacks: cascaded shadow maps, no ambient occlusion.",
-                               rayTracingWhyNot(caps));
-        }
         if (!caps.spatialUpscaling && !caps.temporalUpscaling)
             ImGui::TextWrapped("MetalFX: no (native Metal backend only, not in the iOS Simulator); bilinear.");
 
@@ -216,8 +203,12 @@ public:
         ImGui::SameLine();
         ImGui::Checkbox("Walk", &m_walk);
         if (ImGui::SliderFloat("Sun elevation", &m_elevation, 5.0f, 85.0f, "%.0f deg")) applySun();
+    }
 
-        ImGui::SeparatorText("Cost");
+    void stats(Context& c) override {
+        const gpu::Caps& caps = c.app.device().caps();
+        const ActiveEffects& e = c.renderer.effects();
+        const RenderStats& r = c.renderer.stats();
         const bool traced = e.sunShadows == SunShadows::RayTraced || e.ambientOcclusion == AmbientOcclusion::RayTraced;
         if (traced)
             ImGui::TextWrapped("Top level %u instances; built %u, refitted %u", r.rayInstances, r.rayBuilds,
@@ -225,7 +216,7 @@ public:
         else
             ImGui::TextWrapped("%u shadow draws in %d cascades", r.shadowDraws, e.shadowCascades);
         if (c.app.deterministic()) {
-            ImGui::TextUnformatted("Times hidden (deterministic run)");
+            ImGui::TextUnformatted("Times hidden (fixed clock)");
         } else if (!caps.gpuPassTiming) {
             ImGui::TextUnformatted("GPU pass times n/a on this backend");
         } else {
@@ -290,27 +281,13 @@ public:
     }
 
 private:
-    static const char* rayTracingWhyNot(const gpu::Caps& caps) {
-        if (caps.backend == gpu::Backend::SdlGpu)
-            return caps.driver == "vulkan" ? "SDL GPU (here Vulkan through MoltenVK) has no acceleration structures "
-                                             "or ray queries; --gpu-backend metal has them on Apple GPUs."
-                                           : "SDL GPU has no acceleration structures or ray queries; --gpu-backend "
-                                             "metal has them on Apple GPUs.";
-        return "This GPU (or the iOS Simulator) has no ray queries in render passes.";
-    }
-
     glm::mat4 walkerTransform() const {
         const glm::vec3 p(kWalkCenter.x + kWalkRadius * std::sin(m_angle), 0.0f,
                           kWalkCenter.y + kWalkRadius * std::cos(m_angle));
         return glm::rotate(glm::translate(glm::mat4(1.0f), p), m_angle + 0.5f * kPi, glm::vec3(0.0f, 1.0f, 0.0f));
     }
 
-    void applySun() {
-        const glm::vec3 towardSun = skyDirection(m_elevation, m_azimuth);
-        const Daylight day = daylightFor(towardSun);
-        m_scene->setEnvironment(day.environment);
-        m_scene->setLight(m_sun, {.type = LightType::Directional, .color = day.sunColor, .direction = -towardSun});
-    }
+    void applySun() { setDaylight(*m_scene, m_sun, m_elevation, m_azimuth); }
 
     void animate(double time) {
         const float t = float(time);

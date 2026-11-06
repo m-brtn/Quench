@@ -173,10 +173,15 @@ if [[ $IOS -eq 1 ]]; then
     cmake --preset host-tools >/dev/null
     cmake --build --preset host-tools
     cmake --preset ios-xcode -DQUENCH_IOS_TEAM="$TEAM" >/dev/null
+    # Once, an app build left out files merged into the staged assets/ in the same build: merge first, compare after.
+    xcodebuild -project "$XBUILD/Quench.xcodeproj" -target quench_demo_assets -configuration Release \
+        -sdk iphoneos -quiet build
     xcodebuild -project "$XBUILD/Quench.xcodeproj" -scheme quench_demo -configuration Release \
         -destination generic/platform=iOS -allowProvisioningUpdates -quiet build
     IOS_APP="$XBUILD/examples/demo/Release-iphoneos/quench-demo.app"
     [[ -d "$IOS_APP" ]] || fail "no $IOS_APP"
+    diff -r "$XBUILD/examples/demo/quench_game/quench_demo/assets" "$IOS_APP/assets" ||
+        fail "the iOS app's assets/ differs from the staged assets"
     codesign --verify --deep --strict "$IOS_APP"
     SIGNATURE="$(codesign -dvv "$IOS_APP" 2>&1)"
     grep -E "^(Identifier|Authority|TeamIdentifier)=" <<<"$SIGNATURE" | grep -v "Certification Authority"

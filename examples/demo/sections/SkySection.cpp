@@ -77,30 +77,26 @@ public:
         apply();
     }
 
-    void ui(Context& c) override {
+    void controls(Context& c) override {
         (void)c;
-        const float w = ImGui::GetFontSize() * 8.0f;
         bool changed = false;
-        ImGui::SetNextItemWidth(w);
         changed |= ImGui::SliderFloat("Sun elevation", &m_elevation, -12.0f, 90.0f, "%.0f deg");
-        ImGui::SetNextItemWidth(w);
         changed |= ImGui::SliderFloat("Sun azimuth", &m_azimuth, 0.0f, 360.0f, "%.0f deg");
         ImGui::Checkbox("Run the day", &m_animateDay);
         ImGui::Checkbox("Sky (off: clear color)", &settings.sky);
         changed |= ImGui::Checkbox("Atmosphere (off: gradient)", &m_atmosphere);
         changed |= ImGui::Checkbox("Sun disc", &m_sunDisc);
         ImGui::Separator();
-        ImGui::SetNextItemWidth(w);
         changed |= ImGui::SliderFloat("Fog density", &m_fogDensity, 0.0f, 0.08f, "%.3f /m");
-        ImGui::SetNextItemWidth(w);
         changed |= ImGui::SliderFloat("Height falloff", &m_fogFalloff, 0.0f, 0.5f, "%.2f /m");
-        ImGui::SetNextItemWidth(w);
         changed |= ImGui::SliderFloat("Fog base (m)", &m_fogBase, -10.0f, 20.0f, "%.1f");
-        ImGui::SetNextItemWidth(w);
         changed |= ImGui::SliderFloat("Fog maximum", &m_fogMax, 0.0f, 1.0f);
-        ImGui::SetNextItemWidth(w);
         changed |= ImGui::SliderFloat("Sun scatter", &m_fogScatter, 0.0f, 1.0f);
         if (changed) apply();
+    }
+
+    void stats(Context& c) override {
+        (void)c;
         ImGui::TextWrapped("Exposure %.2f (from the palette)", double(m_scene->environment().exposure));
     }
 

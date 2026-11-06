@@ -49,7 +49,12 @@ for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`, and GPU time per
 the ranges arrive a few frames later), the display output (`output()`, `hdrMode()`,
 `hdrSupported()`, `displayHeadroom()`, `displayPotentialHeadroom()`), and actions: `requestCapture`,
 `setPresentMode`, `setHdrMode`, text input,
-`quit(exitCode)`. `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
+`quit(exitCode)`. For tools inside a game: `beginPerf(label)` .. `endPerf()` measure a region as a scenario's
+`perf_begin` .. `perf_end` does (real time, the same `perf:` line and `perf_*` values) and return its numbers as a
+`PerfReport` (a game's benchmark mode); `arguments()` is the command line the app was started with, and
+`relaunch(args)` starts the program again with other arguments and quits (`canRelaunch()`: desktops only; not phones,
+tablets or the web), for example with another `--gpu-backend`; `memoryFootprint()` is the memory the system charges
+the process (Apple platforms; nullopt elsewhere). `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
 headroom); the renderer takes it as is ([HDR output](#hdr-output)).
 
 The app has no animation system: a game that animates creates its own `animation::AnimationSystem` on
@@ -71,7 +76,8 @@ const ActionId left = input.addAction("left", {*Binding::key("A"), Binding::game
 - `deadZone` (0.15): radial for sticks, linear for triggers; the rest is rescaled to 0..1.
 - While ImGui wants the keyboard or the mouse, key and mouse bindings read as up (the raw state stays readable).
 - Fingers are in window points with a per-frame delta. SDL also synthesizes mouse events from fingers;
-  `mouseFromTouch()` tells them apart.
+  `mouseFromTouch()` tells them apart. A Mac trackpad's touches are not fingers (SDL sends them with
+  `SDL_MOUSE_TOUCHID`, at positions on the pad, while they already move the mouse): `Input` ignores them.
 - Key names are SDL scancode names (`"W"`, `"Space"`, `"Left Ctrl"`); gamepad buttons follow SDL's order (South is A
   on Xbox, Cross on PlayStation).
 
@@ -103,12 +109,14 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--present-mode MODE` | `vsync`, `immediate` or `mailbox`; falls back to vsync where the window does not support it |
 | `--hdr MODE` | HDR output: `off` (SDR), `on` (wherever the GPU backend can composite the window in HDR) or `auto` (while the display reports HDR range); default `AppDesc::hdr`, normally off ([HDR output](#hdr-output)) |
 | `--hdr-headroom N` | peak of HDR output in multiples of paper white (1 to 1000) instead of the display's, for repeatable HDR runs |
+| `--orientation NAME` | `portrait`, `landscape` or `any`: the screen orientations of the window on phones and tablets (`SDL_HINT_ORIENTATIONS`, within those of the app's Info.plist, `quench_add_game(... ORIENTATIONS)`; default: all of those); desktops ignore it |
 | `--worker-threads N` | worker threads of the job system (0 to 64; default: hardware threads minus one); 0 runs jobs on the main thread, as in builds without threads |
 | `--asset-latency S` | every asset load waits S seconds (0 to 60) before it starts, to see the placeholders |
 | `--hot-reload` | load asset files again when they change on disk (the cooked files in the build tree; Mac only so far) |
 | `--no-audio` | no audio device: the mix runs offline on the frame clock and is discarded |
 | `--audio-device NAME` | `default`, `null` (miniaudio's null backend: a device thread without sound, for tests and benchmarks) or the first output whose name contains NAME; default `AppDesc::audioDevice` |
 | `--audio-capture FILE.wav` | mix offline on the frame clock and write the whole mix as a 16-bit stereo WAV at exit (paths as for `--capture`); nothing is played |
+| `--user-dir DIR` | the user directory (settings, saves, relative captures) instead of the system's, created if missing: tests start from an empty one |
 | `--version` | print the version and exit |
 
 When the audio device cannot be opened, the app logs a warning and mixes offline as with `--no-audio`. Offline mixing
@@ -125,7 +133,8 @@ runs. `App::scripted()` tells a game that a scenario runs, for example to start 
 user's files untouched.
 
 The user directory is `SDL_GetPrefPath(organization, name)`: `~/Library/Application Support/<organization>/<name>/` on
-macOS, `Library/Application Support/<organization>/<name>/` in the app's data container on iOS.
+macOS, `Library/Application Support/<organization>/<name>/` in the app's data container on iOS; `--user-dir`
+replaces it.
 
 ## Scenarios
 
@@ -172,8 +181,10 @@ there were no samples, for example GPU time without `gpu::Caps::gpuTiming`), wit
 `audio_rms_l`, `audio_rms_r`, `audio_peak` (linear, 1 is full scale), `audio_freq` (Hz), `audio_freq_level` (about 1
 for a full-scale sine) and `audio_measured` (seconds actually measured); at any time `audio_voices`, `audio_sounds`,
 `audio_pending`, `audio_streams`, `audio_played`, `audio_stolen`, `audio_rejected`, `audio_failed`,
-`audio_underruns`, `audio_clipped` (the `AudioStats` counters) and `audio_device` (1 with a device, 0 offline); then
-the game's (`Game::scenarioValue`). Unknown commands are offered
+`audio_underruns`, `audio_clipped` (the `AudioStats` counters) and `audio_device` (1 with a device, 0 offline);
+`memory_mb` (`App::memoryFootprint` in MiB; -1 where unknown) and `gpu_resources` (`gpu::Device::liveResources`:
+textures, buffers, samplers, pipelines, transfer buffers and fences alive; fences and transfer buffers come and go
+with the frames and uploads in flight), for leak checks with `mark`; then the game's (`Game::scenarioValue`). Unknown commands are offered
 to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N: ...`, and the run ends
 with `N passed, M failed`; tests match `FAIL line`.
 

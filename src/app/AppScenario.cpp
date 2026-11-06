@@ -238,7 +238,9 @@ double average(const std::vector<double>& values) {
     return sum / double(values.size());
 }
 
-void finishPerf(AppState& s) {
+} // namespace
+
+PerfReport finishPerf(AppState& s) {
     const PerfRegion& r = *s.perf;
     auto& v = s.perfValues;
     v.clear();
@@ -259,7 +261,7 @@ void finishPerf(AppState& s) {
     v["perf_gpu_p10"] = percentile(r.gpuMs, 0.10);
     v["perf_gpu_p50"] = percentile(r.gpuMs, 0.50);
     v["perf_gpu_p95"] = percentile(r.gpuMs, 0.95);
-    const std::string details = s.game->perfDetails(s.app);
+    std::string details = s.game->perfDetails(s.app);
     log::info("perf",
               "{}: {} frames; frame ms avg {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f} max {:.3f}; cpu ms avg "
               "{:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f}; gpu ms avg {:.3f} min {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} "
@@ -268,11 +270,26 @@ void finishPerf(AppState& s) {
               v["perf_frame_p95"], v["perf_frame_p99"], v["perf_frame_max"], v["perf_cpu_avg"], v["perf_cpu_p50"],
               v["perf_cpu_p95"], v["perf_cpu_p99"], v["perf_gpu_avg"], v["perf_gpu_min"], v["perf_gpu_p10"],
               v["perf_gpu_p50"], v["perf_gpu_p95"], r.gpuMs.size(), details.empty() ? "" : "; ", details);
+    PerfReport report{.label = r.label,
+                      .frames = r.frameMs.size(),
+                      .frameAvg = v["perf_frame_avg"],
+                      .frameP50 = v["perf_frame_p50"],
+                      .frameP99 = v["perf_frame_p99"],
+                      .frameMax = v["perf_frame_max"],
+                      .cpuAvg = v["perf_cpu_avg"],
+                      .cpuP50 = v["perf_cpu_p50"],
+                      .cpuP99 = v["perf_cpu_p99"],
+                      .gpuAvg = v["perf_gpu_avg"],
+                      .gpuP50 = v["perf_gpu_p50"],
+                      .gpuSamples = r.gpuMs.size(),
+                      .passP50 = {},
+                      .details = std::move(details)};
     if (!r.passMs.empty()) {
         std::string passes;
         for (const auto& [name, ms] : r.passMs) {
             const double p50 = percentile(ms, 0.50);
             v["perf_pass_" + name + "_p50"] = p50;
+            report.passP50.emplace_back(name, p50);
             passes += std::format("{}{} {:.3f}", passes.empty() ? "" : ", ", name, p50);
         }
         v["perf_pass_sum_p50"] = percentile(r.passSumMs, 0.50);
@@ -284,7 +301,10 @@ void finishPerf(AppState& s) {
                   r.label, passes, v["perf_pass_sum_p50"], v["perf_pass_span_p50"], v["perf_pass_share_p50"] * 100.0);
     }
     s.perf.reset();
+    return report;
 }
+
+namespace {
 
 // audio_measure SECONDS [MIN_HZ MAX_HZ]: levels and the strongest frequency of the newest SECONDS of the mix.
 Scenario::Exec audioMeasure(AppState& s, const ScenarioCommand& c) {
@@ -346,6 +366,11 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
     if (name == "display_headroom") return double(s.displayHeadroom);
     if (name == "display_headroom_potential") return double(s.displayPotentialHeadroom);
     if (name == "capture_peak") return s.capturePeak;
+    if (name == "memory_mb") {
+        const std::optional<std::uint64_t> bytes = s.app.memoryFootprint();
+        return bytes ? double(*bytes) / double(1u << 20) : -1.0;
+    }
+    if (name == "gpu_resources") return double(s.device->liveResources());
     if (const auto it = s.perfValues.find(name); it != s.perfValues.end()) return it->second;
     if (name.starts_with("audio_")) {
         if (const auto it = s.audioValues.find(name); it != s.audioValues.end()) return it->second;

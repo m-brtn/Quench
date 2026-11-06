@@ -192,6 +192,8 @@ struct RendererImpl {
     RenderSettings settings;
     ActiveEffects effects;
     bool effectsChosen = false;
+    std::vector<std::string> fallbacks; // Renderer::fallbacks
+    RenderSettings fallbacksSettings;   // the settings `fallbacks` was made for
     DeviceSupport support;
     RenderStats stats;
 
@@ -532,26 +534,31 @@ Result<void> RendererImpl::init() {
 
 void RendererImpl::applySettings() {
     const ActiveEffects next = selectEffects(settings, support);
-    if (next == effects && effectsChosen) return;
+    if (next == effects && effectsChosen && settings == fallbacksSettings) return;
+    fallbacksSettings = settings;
     const char* noRays = device->caps().rayTracing ? "this build has no ray query shaders (cmake/QuenchDxc.cmake)"
                                                    : "the device has no ray tracing (gpu::Caps::rayTracing)";
+    fallbacks.clear();
     if (settings.sunShadows == SunShadows::RayTraced && settings.shadowCascades > 0 &&
         next.sunShadows != SunShadows::RayTraced)
-        log::warning("render", "ray-traced shadows: {}; shadow maps", noRays);
+        fallbacks.push_back(std::format("ray-traced shadows: {}; shadow maps", noRays));
     if (settings.ambientOcclusion == AmbientOcclusion::RayTraced && next.ambientOcclusion != settings.ambientOcclusion)
-        log::warning("render", "ray-traced ambient occlusion: {}; none", noRays);
+        fallbacks.push_back(std::format("ray-traced ambient occlusion: {}; none", noRays));
     if (settings.upscaling == Upscaling::Spatial && next.upscaling != Upscaling::Spatial && settings.renderScale < 1.0f)
-        log::warning("render", "spatial upscaling: not on this device (gpu::Caps::spatialUpscaling); bilinear");
+        fallbacks.emplace_back("spatial upscaling: not on this device (gpu::Caps::spatialUpscaling); bilinear");
     if (settings.upscaling == Upscaling::Temporal && next.upscaling != Upscaling::Temporal)
-        log::warning("render", "temporal upscaling: not on this device (gpu::Caps::temporalUpscaling, TAA's inputs); "
+        fallbacks.emplace_back("temporal upscaling: not on this device (gpu::Caps::temporalUpscaling, TAA's inputs); "
                                "bilinear");
     if (settings.antiAliasing != next.antiAliasing && next.upscaling != Upscaling::Temporal)
-        log::warning("render", "anti-aliasing: TAA needs a sampled depth buffer and Rg16Float targets; using FXAA");
+        fallbacks.emplace_back("anti-aliasing: TAA needs a sampled depth buffer and Rg16Float targets; using FXAA");
     if (settings.shadowCascades > 0 && next.shadowCascades == 0 && next.sunShadows == SunShadows::ShadowMaps)
-        log::warning("render", "shadows off: no depth texture array the device can sample and render to");
+        fallbacks.emplace_back("shadows off: no depth texture array the device can sample and render to");
     if (next.shadowCascades > 0 && settings.translucentShadows != next.translucentShadows)
-        log::warning("render", "translucent shadows: no {} texture array to render to; dithered into the depth map",
-                     gpu::formatInfo(transmittanceFormat).name);
+        fallbacks.push_back(
+            std::format("translucent shadows: no {} texture array to render to; dithered into the depth map",
+                        gpu::formatInfo(transmittanceFormat).name));
+    if (next == effects && effectsChosen) return;
+    for (const std::string& line : fallbacks) log::warning("render", "{}", line);
     effects = next;
     effectsChosen = true;
 }
@@ -1847,6 +1854,7 @@ void Renderer::setSettings(const RenderSettings& settings) {
 
 const RenderSettings& Renderer::settings() const { return m_impl->settings; }
 const ActiveEffects& Renderer::effects() const { return m_impl->effects; }
+std::span<const std::string> Renderer::fallbacks() const { return m_impl->fallbacks; }
 
 Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
     const std::string name(desc.name.empty() ? std::string_view("surface") : desc.name);

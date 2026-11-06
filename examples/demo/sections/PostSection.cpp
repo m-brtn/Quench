@@ -93,8 +93,7 @@ public:
         animate(m_spinTime);
     }
 
-    void ui(Context& c) override {
-        const float w = ImGui::GetFontSize() * 8.0f;
+    void controls(Context& c) override {
         int aa = int(settings.antiAliasing);
         ImGui::TextUnformatted("Anti-aliasing");
         ImGui::RadioButton("none", &aa, 0);
@@ -105,26 +104,26 @@ public:
         settings.antiAliasing = AntiAliasing(aa);
         if (c.renderer.effects().antiAliasing != settings.antiAliasing)
             ImGui::TextDisabled("running %s (fallback)", antiAliasingName(c.renderer.effects().antiAliasing));
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Render scale", &settings.renderScale, 0.25f, 1.0f, "%.2f");
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Sharpen", &settings.sharpen, 0.0f, 1.0f);
         ImGui::Checkbox("Spin the blades", &m_spin);
         ImGui::Separator();
         ImGui::Checkbox("Bloom", &settings.bloom);
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Strength", &settings.bloomStrength, 0.0f, 0.3f, "%.3f");
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Threshold", &settings.bloomThreshold, 0.2f, 4.0f, "%.2f");
         int curve = int(settings.toneCurve);
-        ImGui::SetNextItemWidth(w);
         if (ImGui::Combo("Tone curve", &curve, "ACES\0AgX\0")) settings.toneCurve = ToneCurve(curve);
-        ImGui::SetNextItemWidth(w);
         if (ImGui::SliderFloat("Exposure", &m_exposure, 0.25f, 4.0f, "x %.2f", ImGuiSliderFlags_Logarithmic))
             applyEnvironment();
-        ImGui::SetNextItemWidth(w);
         ImGui::SliderFloat("Vignette", &settings.vignette, 0.0f, 1.0f);
         ImGui::Checkbox("Dither", &settings.dither);
+    }
+
+    void stats(Context& c) override {
+        const RenderStats& r = c.renderer.stats();
+        ImGui::Text("Running: %s, bloom %s", antiAliasingName(c.renderer.effects().antiAliasing),
+                    c.renderer.effects().bloom ? "on" : "off");
+        ImGui::TextWrapped("3D at %u x %u, %u moved instances", r.renderWidth, r.renderHeight, r.movedInstances);
     }
 
     Scene& scene() override { return *m_scene; }

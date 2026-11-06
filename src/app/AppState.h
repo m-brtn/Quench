@@ -79,6 +79,8 @@ struct AppState {
     App app;
     AppDesc desc;
     Options options;
+    std::string program;                // argv[0], for App::relaunch
+    std::vector<std::string> arguments; // the rest of the command line
 
     LogSinkGuard logSink;
     std::unique_ptr<JobSystem> jobs;
@@ -155,6 +157,8 @@ void quit(AppState& state, SDL_AppResult result);
 std::optional<double> scenarioValue(AppState& state, std::string_view name);
 Scenario::Exec scenarioCommand(AppState& state, const ScenarioCommand& command);
 void releaseScenarioInput(AppState& state);
+// Ends the running perf region: logs its perf line, sets the perf_* values and returns its numbers.
+PerfReport finishPerf(AppState& state);
 
 // Capture.cpp: writes RGBA8 or BGRA8 pixels, or the Rgba16Float pixels of an HDR extended-linear frame (tightly
 // packed), as an opaque 8-bit sRGB PNG. HDR values are divided by paperWhite and clipped at 1: the PNG shows the

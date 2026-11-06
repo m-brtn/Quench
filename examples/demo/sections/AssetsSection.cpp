@@ -138,6 +138,7 @@ public:
         if (m_showShowcase) placeShowcase();
         updateStreaming();
         m_assets->update();
+        m_seenReloads = manager.stats().reloads;
     }
 
     void leave(Context& c) override {
@@ -159,27 +160,8 @@ public:
         m_scene->setTransform(m_marker, placed(glm::vec3(f.x, 0.35f, f.y)));
     }
 
-    void ui(Context& c) override {
+    void controls(Context& c) override {
         AssetManager& manager = c.app.assets();
-        const AssetManager::Stats stats = manager.stats();
-        const std::uint32_t total = stats.loading + stats.ready + stats.failed;
-        const std::string progress =
-            std::format("{} ready, {} loading, {} failed", stats.ready, stats.loading, stats.failed);
-        ImGui::ProgressBar(total > 0 ? float(stats.ready + stats.failed) / float(total) : 1.0f, ImVec2(-1.0f, 0.0f),
-                           progress.c_str());
-        ImGui::Text("Queued %u, reading %u, uploads %u", stats.queued, stats.decoding, stats.waitingForUpload);
-        ImGui::Text("Reloads %llu, evictions %llu", static_cast<unsigned long long>(stats.reloads),
-                    static_cast<unsigned long long>(stats.evictions));
-        for (const AssetManager::TypeStats& type : stats.types) {
-            std::string line = std::format("{}s {}, {} unused, {}", type.name, type.count, type.unreferenced,
-                                           bytesText(type.memory.total()));
-            if (type.budget.gpu != kNoLimit) line += std::format("/{}", bytesText(type.budget.gpu));
-            ImGui::TextUnformatted(line.c_str());
-        }
-        const StreamingGrid::Stats& grid = m_grid->stats();
-        ImGui::Text("Cells %u, %llu loads, %llu unloads", grid.active, static_cast<unsigned long long>(grid.loads),
-                    static_cast<unsigned long long>(grid.unloads));
-
         float latency = m_latency;
         if (ImGui::SliderFloat("Latency", &latency, 0.0f, 2.0f, "%.2f s")) setLatency(manager, latency);
         if (ImGui::BeginCombo("Texture cache", kTextureBudgets[std::size_t(m_textureBudget)].name)) {
@@ -201,19 +183,43 @@ public:
         ImGui::SliderFloat("Focus", &m_focusAngle, 0.0f, 360.0f, "%.0f deg");
         ImGui::Checkbox("Move", &m_moveFocus);
         ImGui::SameLine();
+        ImGui::Checkbox("Rings", &m_rings);
+        ImGui::SameLine();
         bool showcase = m_showShowcase;
         if (ImGui::Checkbox("Models", &showcase)) setShowcase(showcase);
-        ImGui::SameLine();
         if (ImGui::Checkbox("Hot reload", &m_hotReload)) manager.setHotReload(m_hotReload);
-        if (ImGui::Button("Reload all")) reloadAll(manager);
         ImGui::SameLine();
+        if (ImGui::Button("Reload all")) reloadAll(manager);
         ImGui::TextDisabled("BC7 %s", m_assets->bcTextures() ? "sampled" : "decoded on load");
         if (m_hotReload)
             ImGui::TextWrapped("Edit examples/demo/assets_src, rebuild quench_demo_assets: changed files reload.");
+    }
 
-        // Labels under the models of the row.
-        const glm::vec2 window(float(c.app.windowWidth()), float(c.app.windowHeight()));
-        ImDrawList* draw = ImGui::GetForegroundDrawList();
+    void stats(Context& c) override {
+        const AssetManager::Stats stats = c.app.assets().stats();
+        const std::uint32_t total = stats.loading + stats.ready + stats.failed;
+        const std::string progress = std::format("{} ready, {} failed", stats.ready, stats.failed);
+        ImGui::ProgressBar(total > 0 ? float(stats.ready + stats.failed) / float(total) : 1.0f, ImVec2(-1.0f, 0.0f),
+                           progress.c_str());
+        ImGui::Text("Queued %u, reading %u, uploads %u", stats.queued, stats.decoding, stats.waitingForUpload);
+        ImGui::Text("Reloads %llu, evictions %llu", static_cast<unsigned long long>(stats.reloads),
+                    static_cast<unsigned long long>(stats.evictions));
+        for (const AssetManager::TypeStats& type : stats.types) {
+            if (type.count == 0) continue;
+            const std::string line = std::format("{}s {}, {} unused, {}", type.name, type.count, type.unreferenced,
+                                                 bytesText(type.memory.total()));
+            ImGui::TextWrapped("%s", line.c_str());
+        }
+        const StreamingGrid::Stats& grid = m_grid->stats();
+        ImGui::Text("Cells %u, %llu loads, %llu unloads", grid.active, static_cast<unsigned long long>(grid.loads),
+                    static_cast<unsigned long long>(grid.unloads));
+    }
+
+    // The load states under the models of the row, the streaming rings around the focus (cells that reach into the
+    // inner one load, cells entirely outside the outer one go to the cache), and a note when assets loaded again.
+    void overlay(Context& c) override {
+        const glm::vec2 window = windowSize(c);
+        ImDrawList* draw = ImGui::GetBackgroundDrawList();
         for (std::size_t i = 0; i < kShowcase.size() && m_showShowcase; ++i) {
             const std::optional<glm::vec2> p =
                 camera.project(showcasePosition(i) + glm::vec3(0.0f, 0.0f, 1.0f), window);
@@ -222,6 +228,43 @@ public:
             const std::string text = std::format("{}\n{}", kShowcase[i].label, assets::stateName(model.state()));
             const ImVec2 size = ImGui::CalcTextSize(text.c_str());
             draw->AddText(ImVec2(p->x - size.x * 0.5f, p->y), IM_COL32(240, 240, 240, 255), text.c_str());
+        }
+        if (m_rings) {
+            const glm::vec2 f = focus();
+            for (const auto& [radius, color] :
+                 {std::pair(m_grid->settings().loadRadius, IM_COL32(255, 150, 60, 220)),
+                  std::pair(m_grid->settings().keepRadius, IM_COL32(255, 220, 150, 140))}) {
+                std::array<ImVec2, 64> points{};
+                int n = 0;
+                for (int k = 0; k < int(points.size()); ++k) {
+                    const float a = 2.0f * 3.14159265f * float(k) / float(points.size());
+                    const std::optional<glm::vec2> p = camera.project(
+                        glm::vec3(f.x + radius * std::cos(a), 0.03f, f.y + radius * std::sin(a)), window);
+                    if (!p) {
+                        n = 0;
+                        break;
+                    }
+                    points[std::size_t(n++)] = ImVec2(p->x, p->y);
+                }
+                if (n > 2) draw->AddPolyline(points.data(), n, color, ImDrawFlags_Closed, 2.0f);
+            }
+        }
+        const std::uint64_t reloads = c.app.assets().stats().reloads;
+        const bool showing = m_reloadShownAt >= 0.0 && c.app.time() - m_reloadShownAt < 2.5;
+        if (reloads != m_seenReloads) {
+            m_reloadsShown = (showing ? m_reloadsShown : 0) + (reloads - m_seenReloads);
+            m_reloadShownAt = c.app.time();
+            m_seenReloads = reloads;
+        }
+        if (m_reloadShownAt >= 0.0 && c.app.time() - m_reloadShownAt < 2.5) {
+            const std::string text = std::format("Assets reloaded: {}", m_reloadsShown);
+            const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+            const float em = ImGui::GetFontSize();
+            const ImVec2 at((window.x - size.x) * 0.5f, window.y * 0.62f);
+            draw->AddRectFilled(ImVec2(at.x - em, at.y - 0.5f * em),
+                                ImVec2(at.x + size.x + em, at.y + size.y + 0.5f * em), IM_COL32(30, 90, 40, 220),
+                                0.4f * em);
+            draw->AddText(at, IM_COL32(230, 255, 230, 255), text.c_str());
         }
     }
 
@@ -421,6 +464,9 @@ private:
     bool m_hotReload = false;
     bool m_showShowcase = true;
     bool m_moveFocus = true;
+    bool m_rings = true;
+    std::uint64_t m_seenReloads = 0, m_reloadsShown = 0;
+    double m_reloadShownAt = -1.0;
     float m_focusAngle = 0.0f;
     double m_savedLatency = 0.0;
     bool m_savedHotReload = false;

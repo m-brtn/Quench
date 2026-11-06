@@ -484,9 +484,13 @@ shaders/quench/        the engine shader library (#include "quench/..."): BRDF, 
                        surface shaders; SceneUniforms.h, the uniform structs shared by C++ and HLSL
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
 examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input,
-                       assets, audio, animation, ray tracing), per section a scenario with a golden capture; smoke
-                       and benchmark scenarios (raytracing_benchmark.txt: ray tracing and MetalFX options);
-                       assets_src/ (procedural sources cooked at build time) and assets/ (files used as they are)
+                       assets, audio, animation, ray tracing), one file each in sections/ behind Demo.h's Section
+                       interface; the app around them (DemoGame.h: the layouts in Ui.cpp, the camera in Camera.cpp,
+                       the tour, check and benchmark modes in Modes.cpp and Checks.cpp, the settings); per section a
+                       scenario with a golden capture, scenarios for the menu, the modes, the settings and the
+                       switch cycle; smoke and benchmark scenarios (raytracing_benchmark.txt: ray tracing and
+                       MetalFX options); assets_src/ (procedural sources cooked at build time) and assets/ (files
+                       used as they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
 tools/cook/            quench_cook, the build-time asset cooker (glTF, GLB, PNG, JPEG, KTX2 -> KTX2, .qmodel;

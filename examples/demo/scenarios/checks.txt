@@ -1,0 +1,28 @@
+# The check mode (ctest: demo_checks, started with --checks and a fresh --user-dir): marks by command and by the
+# window's buttons, every mark written to checks.json; tests/DemoUserFiles.cmake reads the file afterwards.
+
+expect mode == 2
+expect check_items == 24
+expect check_index == 0
+expect section == 0
+check ok
+until check_writes == 1 1
+expect check_index == 1
+check problem The tint looks grey
+expect check_index == 2
+expect section == 1
+check skip
+expect checks_ok == 1
+expect checks_problem == 1
+expect checks_skipped == 1
+expect checks_pending == 21
+wait 0.1
+click @ui:check_ok
+until checks_ok == 2 1
+expect check_index == 4
+check prev
+expect check_index == 3
+mode off
+expect mode == 0
+until check_writes >= 5 1
+quit

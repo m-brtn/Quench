@@ -1,0 +1,8 @@
+# --no-settings: the saved file is neither read nor written.
+
+expect settings_loaded == 0
+expect section == 0
+section post
+settings_save
+expect settings_writes == 0
+quit

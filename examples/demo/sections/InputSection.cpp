@@ -80,14 +80,14 @@ public:
                     .direction = -glm::normalize(glm::vec3(-0.3f, 0.9f, 0.5f))});
 
         app::Input& input = c.app.input();
-        m_left = input.addAction("move_left", {*Binding::key("A"), Binding::gamepadAxis(GamepadAxis::LeftX, false)});
-        m_right = input.addAction("move_right", {*Binding::key("D"), Binding::gamepadAxis(GamepadAxis::LeftX, true)});
+        m_left = action(input, "move_left", {*Binding::key("A"), Binding::gamepadAxis(GamepadAxis::LeftX, false)});
+        m_right = action(input, "move_right", {*Binding::key("D"), Binding::gamepadAxis(GamepadAxis::LeftX, true)});
         m_forward =
-            input.addAction("move_forward", {*Binding::key("W"), Binding::gamepadAxis(GamepadAxis::LeftY, false)});
-        m_back = input.addAction("move_back", {*Binding::key("S"), Binding::gamepadAxis(GamepadAxis::LeftY, true)});
-        m_jump = input.addAction("jump", {*Binding::key("J"), Binding::gamepad(GamepadButton::South)});
-        m_fire = input.addAction("fire", {*Binding::key("F"), Binding::gamepad(GamepadButton::West)});
-        m_run = input.addAction("run", {*Binding::key("Left Shift"), Binding::gamepad(GamepadButton::LeftStick)});
+            action(input, "move_forward", {*Binding::key("W"), Binding::gamepadAxis(GamepadAxis::LeftY, false)});
+        m_back = action(input, "move_back", {*Binding::key("S"), Binding::gamepadAxis(GamepadAxis::LeftY, true)});
+        m_jump = action(input, "jump", {*Binding::key("J"), Binding::gamepad(GamepadButton::South)});
+        m_fire = action(input, "fire", {*Binding::key("F"), Binding::gamepad(GamepadButton::West)});
+        m_run = action(input, "run", {*Binding::key("Left Shift"), Binding::gamepad(GamepadButton::LeftStick)});
         m_actions = {m_left, m_right, m_forward, m_back, m_jump, m_fire, m_run};
         place(0.0f);
         return {};
@@ -133,27 +133,29 @@ public:
         for (std::size_t i = 0; i < m_actions.size(); ++i)
             if (input.pressed(m_actions[i])) ++m_presses[i];
         updateTouch(c);
-        m_move = glm::vec2(input.axis(m_left, m_right), input.axis(m_back, m_forward)) + m_stick;
-        m_running = input.down(m_run);
-        if (input.pressed(m_jump)) m_jumpQueued = true;
-        if (input.pressed(m_fire)) fire(std::nullopt);
+        m_move = m_stick;
+        m_running = false;
+        if (c.sceneInput) {
+            m_move += glm::vec2(input.axis(m_left, m_right), input.axis(m_back, m_forward));
+            m_running = input.down(m_run);
+            if (input.pressed(m_jump)) m_jumpQueued = true;
+            if (input.pressed(m_fire)) fire(std::nullopt);
+        }
         place(float(c.app.alpha()));
         camera.target = glm::mix(m_previous, m_position, float(c.app.alpha())) + glm::vec3(0.0f, 0.8f, 0.0f);
     }
 
-    void click(Context& c, glm::vec2 point) override {
-        glm::vec3 origin, direction;
-        camera.ray(point, glm::vec2(float(c.app.windowWidth()), float(c.app.windowHeight())), origin, direction);
-        if (direction.y >= -1e-3f) {
-            fire(std::nullopt);
-            return;
-        }
-        fire(origin + direction * (-origin.y / direction.y));
+    void click(Context& c, glm::vec2 point) override { fire(groundPoint(c, camera, point)); }
+
+    bool freeCamera() const override { return false; }
+
+    void controls(Context& c) override {
+        (void)c;
+        ImGui::TextWrapped("Move with W A S D, the left stick or a finger on the left half; the camera follows "
+                           "and zooms (wheel, triggers, pinch).");
     }
 
-    bool orbitWithFingers() const override { return false; }
-
-    void ui(Context& c) override {
+    void stats(Context& c) override {
         const app::Input& input = c.app.input();
         if (ImGui::BeginTable("actions", 4, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Action");
@@ -204,8 +206,11 @@ public:
         ImGui::Text("Fingers: %zu, stick %.2f, %.2f", input.fingers().size(), double(m_stick.x), double(m_stick.y));
         ImGui::TextWrapped("Position %.1f, %.1f; jumps %d, shots %d", double(m_position.x), double(m_position.z),
                            m_jumps, m_shotCount);
+    }
 
-        // Fingers and the virtual stick on top of everything.
+    // Fingers and the virtual stick on top of everything.
+    void overlay(Context& c) override {
+        const app::Input& input = c.app.input();
         ImDrawList* draw = ImGui::GetForegroundDrawList();
         const float em = ImGui::GetFontSize();
         for (const app::Finger& f : input.fingers())

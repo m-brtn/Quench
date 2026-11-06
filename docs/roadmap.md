@@ -278,6 +278,28 @@ and lights, shadows, sky and fog, post-processing, HDR output, physics, input, a
   machines, IK), ray tracing with its fallbacks, and the frame, CPU and GPU times.
 - Every section has a scripted check and a golden capture, so the demo is also a test of the engine.
 
+Finished on 2026-11-06 (not released; Mac and iOS Simulator only, the iPhone was away):
+
+- [x] A coverage audit in [Engine demo](demo.md#coverage), with the gaps that mattered filled: the job pool's
+  activity and a job test, hot reload and streaming made visible (a reload note, the streaming rings), memory and
+  GPU resources, section load and switch times, a frame-time graph, and the backend with every fallback and its
+  reason (`Renderer::fallbacks()`).
+- [x] One panel layout for every section (title, description, controls, stats, frame and fallbacks, reset buttons)
+  and the same camera on mouse and keyboard, gamepad and touch (one finger orbits, two pan and pinch); the menu by
+  keyboard and gamepad.
+- [x] Phones: sizes by display density, the safe area, a compact layout (a bar and one sheet at a time, docked at
+  the bottom in portrait and on the right in landscape), touch-sized controls. Looked at in the iOS Simulator
+  (iPhone 18 Pro Max, portrait and landscape); not on the iPhone.
+- [x] Modes: a check mode over the devlog's checks waiting for the user (OK, problem or skip with a note; results as
+  JSON in the user directory), a tour and a benchmark of every section into one JSON report; flags in
+  [Engine demo](demo.md#flags).
+- [x] An About panel (version, build, commit, backend, device, the licences, the controls), settings as versioned JSON
+  with a fallback to the defaults for a corrupt file (`--no-settings`; scripted runs ignore them), sections made when
+  first shown and switched without growth (checked by `demo_cycle`), a relaunch with the other GPU backend on the Mac.
+- [x] Each section in its own file behind one interface (`examples/demo/sections/`); the scenes render the same as
+  before (every capture with the windows hidden identical to the stage 9 demo's, Metal and Vulkan through MoltenVK).
+- [ ] The iPhone: the check mode, the layouts and the touch controls on the device (by the user).
+
 ## Other modules (when a game needs them)
 
 Navigation (Recast & Detour: navmesh building, paths, crowds), Tracy profiling, Flecs as an optional ECS module.

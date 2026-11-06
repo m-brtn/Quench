@@ -258,7 +258,8 @@ public:
     bool offline() const { return m_offline; }
 
     // Keeps the last `seconds` of the mix on the game thread (0 turns it off); filled by update() from the audio
-    // thread, a copy of the mix in every update(). Set before the device opens.
+    // thread, a copy of the mix in every update(). May be changed at any time on the game thread: the history
+    // starts empty again.
     void setMonitor(double seconds);
     // The newest `seconds` of the monitored mix (interleaved stereo), fewer if not that much was monitored yet.
     std::vector<float> monitored(double seconds) const;

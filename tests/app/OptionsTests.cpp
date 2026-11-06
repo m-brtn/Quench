@@ -75,6 +75,12 @@ QUENCH_TEST(options_errors) {
     CHECK(parse({"--gpu-backend", "metal"})->gpuBackend == gpu::Backend::Metal, "--gpu-backend metal");
     CHECK(parse({"--gpu-backend=sdl"})->gpuBackend == gpu::Backend::SdlGpu, "--gpu-backend=sdl");
     CHECK(!parse({"--gpu-backend", "vulkan"}).ok(), "unknown backend");
+    CHECK(parse({"--orientation", "portrait"})->orientation == "Portrait", "--orientation portrait");
+    CHECK(parse({"--orientation=landscape"})->orientation == "LandscapeLeft LandscapeRight", "--orientation landscape");
+    CHECK(parse({})->orientation.empty(), "the app's orientations by default");
+    CHECK(!parse({"--orientation", "sideways"}).ok(), "unknown orientation");
+    CHECK(parse({"--user-dir", "/tmp/user"})->userDir == "/tmp/user", "--user-dir");
+    CHECK(!parse({"--user-dir="}).ok(), "--user-dir needs a directory");
     CHECK(!parse({"--capture="}).ok(), "empty path");
     CHECK(parse({"--version"})->printVersion, "--version");
     CHECK(parse({"--help"})->printHelp, "--help");

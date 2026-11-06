@@ -7,7 +7,6 @@
 
 #include "Demo.h"
 
-#include <quench/render/Daylight.h>
 #include <quench/render/ToneMap.h>
 
 #include <glm/trigonometric.hpp>
@@ -78,9 +77,8 @@ public:
         (void)c;
     }
 
-    void ui(Context& c) override {
+    void controls(Context& c) override {
         app::App& app = c.app;
-        const float w = ImGui::GetFontSize() * 8.0f;
         int mode = int(app.hdrMode());
         ImGui::TextUnformatted("Mode");
         ImGui::SameLine();
@@ -90,29 +88,30 @@ public:
         ImGui::SameLine();
         ImGui::RadioButton("on", &mode, int(app::HdrMode::On));
         if (mode != int(app.hdrMode())) app.setHdrMode(app::HdrMode(mode));
+        ImGui::Checkbox("SDR curve (compare)", &m_sdrCurve);
+        ImGui::Checkbox("Peak from the display", &m_displayPeak);
+        if (!m_displayPeak) {
+            ImGui::SliderFloat("Peak", &m_peak, 1.0f, 16.0f, "x %.1f", ImGuiSliderFlags_Logarithmic);
+        }
+        ImGui::Separator();
+        bool changed = false;
+        changed |= ImGui::SliderFloat("Panels", &m_emissive, 0.1f, 4.0f, "x %.2f", ImGuiSliderFlags_Logarithmic);
+        changed |= ImGui::SliderFloat("Sun elevation", &m_elevation, -2.0f, 40.0f, "%.0f deg");
+        if (changed) apply();
+        ImGui::TextDisabled("Panels x0.5 .. x32");
+    }
+
+    void stats(Context& c) override {
+        const app::App& app = c.app;
         const gpu::DisplayOutput& out = app.output();
         ImGui::TextWrapped("Display headroom %.2f (potential %.2f); HDR %s by %s", double(app.displayHeadroom()),
                            double(app.displayPotentialHeadroom()), app.hdrSupported() ? "supported" : "not supported",
-                           app.device().caps().driver.c_str());
+                           c.app.device().caps().driver.c_str());
         ImGui::TextWrapped("Output: %s, headroom %.2f, paper white %.2f, %s",
                            gpu::swapchainCompositionName(out.composition), double(out.headroom), double(out.paperWhite),
                            gpu::formatInfo(app.swapchainFormat()).name);
         if (out.hdr() && app.displayHeadroom() <= 1.0f)
             ImGui::TextWrapped("This display reports no HDR range: values above paper white are clipped.");
-        ImGui::Checkbox("SDR curve (compare)", &m_sdrCurve);
-        ImGui::Checkbox("Peak from the display", &m_displayPeak);
-        if (!m_displayPeak) {
-            ImGui::SetNextItemWidth(w);
-            ImGui::SliderFloat("Peak", &m_peak, 1.0f, 16.0f, "x %.1f", ImGuiSliderFlags_Logarithmic);
-        }
-        ImGui::Separator();
-        bool changed = false;
-        ImGui::SetNextItemWidth(w);
-        changed |= ImGui::SliderFloat("Panels", &m_emissive, 0.1f, 4.0f, "x %.2f", ImGuiSliderFlags_Logarithmic);
-        ImGui::SetNextItemWidth(w);
-        changed |= ImGui::SliderFloat("Sun elevation", &m_elevation, -2.0f, 40.0f, "%.0f deg");
-        if (changed) apply();
-        ImGui::TextDisabled("Panels x0.5 .. x32");
     }
 
     gpu::DisplayOutput output(const gpu::DisplayOutput& display) const override {
@@ -161,13 +160,8 @@ public:
 
 private:
     void apply() {
-        const glm::vec3 towardSun = skyDirection(m_elevation, 0.0f);
-        const Daylight day = daylightFor(towardSun);
         // Darker than the palette, so the sky around the sun is not white in SDR and the disc stands out.
-        Environment e = day.environment;
-        e.exposure *= 0.55f;
-        m_scene->setEnvironment(e);
-        m_scene->setLight(m_sun, {.type = LightType::Directional, .color = day.sunColor, .direction = -towardSun});
+        const Environment e = setDaylight(*m_scene, m_sun, m_elevation, 0.0f, 0.55f);
         // Level 1 is the knee of the HDR shoulder (0.6 of paper white): where HDR output starts to differ from SDR.
         const float knee = hdrKnee(settings.toneCurve).scene / e.exposure;
         for (std::size_t i = 0; i < kPanelLevels.size(); ++i)

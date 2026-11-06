@@ -99,10 +99,10 @@ public:
         }
 
         app::Input& input = c.app.input();
-        m_dropBox = input.addAction("drop_box", {*Binding::key("B"), Binding::gamepad(GamepadButton::West)});
-        m_dropBall = input.addAction("drop_ball", {*Binding::key("N"), Binding::gamepad(GamepadButton::North)});
-        m_blast = input.addAction("blast", {*Binding::key("P"), Binding::gamepad(GamepadButton::East)});
-        m_reset = input.addAction("reset", {*Binding::key("R"), Binding::gamepad(GamepadButton::Back)});
+        m_dropBox = action(input, "drop_box", {*Binding::key("B"), Binding::gamepad(GamepadButton::West)});
+        m_dropBall = action(input, "drop_ball", {*Binding::key("N"), Binding::gamepad(GamepadButton::North)});
+        m_blast = action(input, "blast", {*Binding::key("P"), Binding::gamepad(GamepadButton::East)});
+        m_reset = action(input, "reset", {*Binding::key("R"), Binding::gamepad(GamepadButton::Back)});
         reset();
         return {};
     }
@@ -120,10 +120,12 @@ public:
     void update(Context& c, double frameDt) override {
         (void)frameDt;
         const app::Input& input = c.app.input();
-        if (input.pressed(m_dropBox)) drop(false);
-        if (input.pressed(m_dropBall)) drop(true);
-        if (input.pressed(m_blast)) blast(glm::vec3(0.0f));
-        if (input.pressed(m_reset)) reset();
+        if (c.sceneInput) {
+            if (input.pressed(m_dropBox)) drop(false);
+            if (input.pressed(m_dropBall)) drop(true);
+            if (input.pressed(m_blast)) blast(glm::vec3(0.0f));
+            if (input.pressed(m_reset)) reset();
+        }
         const float alpha = float(c.app.alpha());
         for (const Body& b : m_bodies) {
             const glm::vec3 p = glm::mix(b.previousPosition, b.position, alpha);
@@ -132,7 +134,7 @@ public:
         }
     }
 
-    void ui(Context& c) override {
+    void controls(Context& c) override {
         (void)c;
         if (ImGui::Button("Drop a box")) drop(false);
         ImGui::SameLine();
@@ -140,26 +142,26 @@ public:
         if (ImGui::Button("Blast")) blast(glm::vec3(0.0f));
         ImGui::SameLine();
         if (ImGui::Button("Reset")) reset();
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
         ImGui::SliderFloat("Blast strength", &m_blastStrength, 1.0f, 20.0f, "%.0f m/s");
-        ImGui::Text("%zu bodies, %u awake", m_bodies.size(),
-                    m_world->system().GetNumActiveBodies(JPH::EBodyType::RigidBody));
+    }
+
+    void stats(Context& c) override {
+        (void)c;
+        ImGui::Text("%zu bodies, %u awake, %d blasts", m_bodies.size(),
+                    m_world->system().GetNumActiveBodies(JPH::EBodyType::RigidBody), m_blasts);
         ImGui::TextWrapped("Highest %.2f m, fastest %.2f m/s", double(highest()), double(fastest()));
+        ImGui::TextWrapped("Ticks of 1/120 s on the job system, drawn interpolated");
     }
 
     void click(Context& c, glm::vec2 point) override {
-        glm::vec3 origin, direction;
-        camera.ray(point, glm::vec2(float(c.app.windowWidth()), float(c.app.windowHeight())), origin, direction);
-        if (direction.y >= -1e-3f) return;
-        const glm::vec3 hit = origin + direction * (-origin.y / direction.y);
-        if (std::abs(hit.x) < kFloorHalf && std::abs(hit.z) < kFloorHalf) blast(hit);
+        const std::optional<glm::vec3> hit = groundPoint(c, camera, point);
+        if (hit && std::abs(hit->x) < kFloorHalf && std::abs(hit->z) < kFloorHalf) blast(*hit);
     }
 
     // `floor`: the floor just in front of the stack, where a click blasts it (`click @floor` in a scenario).
     std::optional<glm::vec2> point(const Context& c, std::string_view name) const override {
         if (name != "floor") return std::nullopt;
-        return camera.project(glm::vec3(0.4f, 0.0f, 0.2f),
-                              glm::vec2(float(c.app.windowWidth()), float(c.app.windowHeight())));
+        return camera.project(glm::vec3(0.4f, 0.0f, 0.2f), windowSize(c));
     }
 
     Scene& scene() override { return *m_scene; }

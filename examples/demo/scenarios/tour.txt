@@ -1,0 +1,18 @@
+# The tour (ctest: demo_tour, started with --tour 0.1): every section in turn, a full round back to the first, then
+# any input stops it; the scenario command `mode tour` starts it again from the current section.
+
+expect mode == 1
+expect section == 0
+until tours >= 11 10
+expect section == 0
+expect sections_ready == 11
+tap Space
+until mode == 0 1
+section audio
+mode tour 0.1
+expect mode == 1
+until tours >= 13 3
+expect section == 10
+mode off
+expect mode == 0
+quit

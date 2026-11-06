@@ -21,8 +21,10 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace quench::render {
 
@@ -208,6 +210,10 @@ public:
     void setSettings(const RenderSettings& settings);
     const RenderSettings& settings() const;
     const ActiveEffects& effects() const;
+    // What fell back from the settings and why, one line each ("ray-traced shadows: the device has no ray tracing
+    // (gpu::Caps::rayTracing); shadow maps"), as the warnings logged when the effects were chosen; empty when every
+    // effect runs as set.
+    std::span<const std::string> fallbacks() const;
 
     // Creates the opaque pipeline at once, so a shader that does not fit the surface interface fails here.
     Result<SurfaceId> addSurface(const SurfaceDesc& desc);

@@ -1,0 +1,10 @@
+# Benchmark-all (ctest: demo_benchmark, with a fresh --user-dir): every section measured for 0.1 s after a warm-up
+# of 0.1 s, one report; tests/DemoUserFiles.cmake reads benchmark.json afterwards. The numbers of a test run mean
+# nothing (a busy machine, Debug); the run checks the mode and the report's form.
+
+mode benchmark 0.1
+expect mode == 3
+until benchmark_written == 1 60
+expect benchmark_sections == 11
+expect mode == 0
+quit

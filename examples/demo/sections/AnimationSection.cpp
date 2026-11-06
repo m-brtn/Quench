@@ -12,7 +12,6 @@
 #include <quench/assets/AssetManager.h>
 #include <quench/audio/AudioSystem.h>
 #include <quench/physics/PhysicsWorld.h>
-#include <quench/render/Daylight.h>
 #include <quench/render/SceneAssets.h>
 
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -49,10 +48,6 @@ using animation::CharacterId;
 using app::Binding;
 using app::GamepadButton;
 
-constexpr const char* kModel = "characters/mannequin.qmodel";
-constexpr const char* kSkeleton = "characters/mannequin.qskel";
-constexpr const char* kClips = "characters/mannequin.qanim";
-constexpr const char* kGraph = "characters/mannequin.graph.json";
 constexpr const char* kStep = "sounds/step.wav";
 
 constexpr float kPi = std::numbers::pi_v<float>;
@@ -144,10 +139,7 @@ public:
                                                             .emissive = glm::vec3(6.0f, 2.4f, 0.5f),
                                                             .name = "flame"}),
                                  .castsShadows = false});
-        const glm::vec3 towardSun = skyDirection(38.0f, 40.0f);
-        const Daylight day = daylightFor(towardSun);
-        s.setEnvironment(day.environment);
-        s.addLight({.type = LightType::Directional, .color = day.sunColor, .direction = -towardSun});
+        setDaylight(s, s.addLight({.type = LightType::Directional}), 38.0f, 40.0f);
 
         // The ground the feet are placed on: the floor, the slope and the step as static bodies; the characters'
         // rays query it from the job threads while it is not stepping (it never steps here).
@@ -173,15 +165,15 @@ public:
         m_anim = std::make_unique<AnimationSystem>(*m_manager, c.app.jobs());
         m_anim->setGroundQuery(
             [world = m_world.get()](const glm::vec3& from, float length) { return groundHit(*world, from, length); });
-        m_model = m_assets->loadModel(kModel);
-        m_skeleton = m_anim->loadSkeleton(kSkeleton);
-        m_clips = m_anim->loadClips(kClips);
-        m_graph = m_anim->loadGraph(kGraph);
+        m_model = m_assets->loadModel(mannequin::kModel);
+        m_skeleton = m_anim->loadSkeleton(mannequin::kSkeleton);
+        m_clips = m_anim->loadClips(mannequin::kClips);
+        m_graph = m_anim->loadGraph(mannequin::kGraph);
         m_step = c.app.audio().load(kStep);
 
         app::Input& input = c.app.input();
-        m_jumpAction = input.addAction("anim_jump", {*Binding::key("J"), Binding::gamepad(GamepadButton::South)});
-        m_waveAction = input.addAction("anim_wave", {*Binding::key("K"), Binding::gamepad(GamepadButton::West)});
+        m_jumpAction = action(input, "anim_jump", {*Binding::key("J"), Binding::gamepad(GamepadButton::South)});
+        m_waveAction = action(input, "anim_wave", {*Binding::key("K"), Binding::gamepad(GamepadButton::West)});
         restart();
         return {};
     }
@@ -191,8 +183,8 @@ public:
     void update(Context& c, double frameDt) override {
         const float dt = std::min(float(frameDt), 0.1f);
         const app::Input& input = c.app.input();
-        if (input.pressed(m_jumpAction)) m_anim->trigger(m_hero.id, "jump");
-        if (input.pressed(m_waveAction)) m_anim->trigger(m_hero.id, "wave");
+        if (c.sceneInput && input.pressed(m_jumpAction)) m_anim->trigger(m_hero.id, "jump");
+        if (c.sceneInput && input.pressed(m_waveAction)) m_anim->trigger(m_hero.id, "wave");
         m_anim->setFloat(m_hero.id, "speed", m_speed);
         m_anim->setFloat(m_hero.id, "lean", m_lean);
         m_anim->setLookAt(m_hero.id, m_lookAt ? std::optional<glm::vec3>(camera.eye()) : std::nullopt);
@@ -226,9 +218,8 @@ public:
         c.app.audio().setListener(listener());
     }
 
-    void ui(Context& c) override {
-        const animation::AnimationStats& stats = m_anim->stats();
-        const RenderStats& r = c.renderer.stats();
+    void controls(Context& c) override {
+        (void)c;
         const animation::CharacterState hero = m_anim->state(m_hero.id);
         if (!hero.bound)
             ImGui::TextUnformatted(failedAssets() > 0 ? "Character assets failed (see the log)" : "Loading...");
@@ -254,13 +245,16 @@ public:
         if (ImGui::SliderFloat("Slope", &slope, 0.0f, 30.0f, "%.0f deg")) setSlope(slope);
         int crowd = m_crowdSize;
         if (ImGui::SliderInt("Crowd", &crowd, 0, kMaxCrowd)) setCrowd(crowd);
+    }
 
-        ImGui::SeparatorText("Cost");
+    void stats(Context& c) override {
+        const animation::AnimationStats& stats = m_anim->stats();
+        const RenderStats& r = c.renderer.stats();
         ImGui::Text("Characters %u, joints %u", stats.characters, stats.joints);
         ImGui::Text("Samples %u, rays %u, events %u", stats.clipsSampled, stats.groundQueries, stats.events);
         ImGui::Text("Skinned %u (%u vertices)", r.skinnedInstances, r.skinnedVertices);
         if (c.app.deterministic()) {
-            ImGui::TextUnformatted("Times hidden (deterministic run)");
+            ImGui::TextUnformatted("Times hidden (fixed clock)");
         } else {
             ImGui::Text("Update %.3f ms, %d threads", stats.updateMs, stats.threads);
             if (r.skinningGpuMs >= 0.0f)
@@ -358,7 +352,7 @@ public:
 
     std::optional<glm::vec2> point(const Context& c, std::string_view name) const override {
         if (name != "hero") return std::nullopt;
-        const glm::vec2 window(float(c.app.windowWidth()), float(c.app.windowHeight()));
+        const glm::vec2 window = windowSize(c);
         return camera.project(m_hero.position + glm::vec3(0.0f, 1.0f, 0.0f), window);
     }
 

@@ -31,6 +31,8 @@ const char* shaderFormatName(ShaderFormat format);
 enum class Backend : std::uint8_t { Default, SdlGpu, Metal };
 
 const char* backendName(Backend backend); // "default", "sdl", "metal"
+// Whether this build can create a device on the backend (Metal: Apple platforms only), e.g. for a backend choice.
+bool backendAvailable(Backend backend);
 
 struct DeviceDesc {
     // "metal", "vulkan" or "direct3d12"; empty: the backend's choice (SDL: Metal, then Direct3D 12, then Vulkan; the

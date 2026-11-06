@@ -874,9 +874,16 @@ RenderSettings rayTraced(RenderSettings s) {
 
 // Without gpu::Caps::rayTracing the renderer keeps the shadow maps.
 bool rayTracingActive(gpu::Device& device, const Renderer& renderer) {
-    if (renderer.effects().sunShadows == SunShadows::RayTraced) return true;
+    const bool named = std::ranges::any_of(renderer.fallbacks(), [](const std::string& line) {
+        return line.starts_with("ray-traced shadows: ") && line.ends_with("; shadow maps");
+    });
+    if (renderer.effects().sunShadows == SunShadows::RayTraced) {
+        CHECK(!named, "no fallback named while the rays run");
+        return true;
+    }
     CHECK(!device.caps().rayTracing, "ray tracing on the device, shadow maps in the renderer");
     CHECK(renderer.effects().shadowCascades > 0, "the fallback has shadow maps");
+    CHECK(named, "Renderer::fallbacks names the shadow fallback and its reason");
     return false;
 }
 

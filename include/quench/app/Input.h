@@ -62,7 +62,8 @@ struct Binding {
 
 using ActionId = std::uint32_t;
 
-// A finger on the touch screen (SDL finger events), in window points.
+// A finger on the touch screen (SDL finger events), in window points. A trackpad's touches (macOS) are not fingers:
+// their positions are on the pad, not in the window, and they already move the mouse.
 struct Finger {
     std::uint64_t id = 0;
     glm::vec2 position{0.0f};

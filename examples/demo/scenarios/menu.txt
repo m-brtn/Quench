@@ -54,6 +54,33 @@ touch @menu:post
 until section == 3 1
 click @menu:raytracing
 until section == 10 1
+
+# Keyboard and gamepad on the windows: Tab or the D-pad give them the keys and buttons (the scene's actions stop),
+# Down and Enter (the D-pad and A) choose an entry, Escape (B) gives the keys back to the scene.
+section materials
+tap Tab
+until menu_focus == 1 1
+wait 0.05
+tap Down
+wait 0.05
+tap Return
+until section == 1 1
+tap Escape
+until menu_focus == 0 1
+gamepad attach
+until gamepad == 1 2
+gamepad button dpdown tap
+until menu_focus == 1 1
+wait 0.05
+gamepad button dpdown tap
+wait 0.05
+gamepad button a tap
+until section == 2 1
+gamepad button b tap
+until menu_focus == 0 1
+gamepad detach
+until gamepad == 0 2
+
 section physics
 expect section == 5
 quit

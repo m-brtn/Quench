@@ -187,15 +187,22 @@ quench_cook_assets(my_game_cooked SOURCE_DIR assets_src
     SKELETONS characters/hero.gltf         # .qskel
     ANIMATIONS characters/hero.gltf characters/hero_extra.glb  # .qanim, settings from <stem>.anim.json
     [SKELETON characters/hero.gltf]        # the skeleton the ANIMATIONS are for (default: their own)
+    [FILES credits.txt levels/one.json]    # copied as they are
     [OUTPUT_DIR dir] [TEXTURE_FORMAT bc7|rgba8] [TEXTURE_MAX_SIZE n] [MODEL_OPTIONS --lods 2 ...])
 quench_add_game(my_game ... ASSETS assets COOKED_ASSETS my_game_cooked)
 ```
 
 `quench_cook_assets` (`cmake/QuenchCook.cmake`) adds a target that cooks each file into the same relative path (with
-`.ktx2`, `.qmodel`, `.qskel` or `.qanim`; sounds keep their name and format). `quench_add_game(... COOKED_ASSETS ...)` merges the
-cooked directories with `ASSETS` into the game's `assets/`: next to the executable on macOS, into the bundle on iOS
-(Ninja), and through a staging directory in Xcode projects. On macOS the copy is `copy_directory_if_different`: rebuilding the game's `<game>_assets` target
-while the game runs with `--hot-reload` cooks what changed and the game reloads exactly those files.
+`.ktx2`, `.qmodel`, `.qskel` or `.qanim`; sounds keep their name and format). `FILES` are copied unchanged
+(texts, settings, licences; paths relative to `SOURCE_DIR`, no `..`), so a game can ship files from outside its
+`ASSETS` directory: the demo reads the engine's `LICENSE` and `THIRD_PARTY_LICENSES` that way. A call with `FILES`
+only needs no `quench_cook` (it works in cross builds without `host-tools`). `quench_add_game(... COOKED_ASSETS ...)`
+merges the cooked directories with `ASSETS` into the game's `assets/`: next to the executable on macOS, into the
+bundle on iOS (Ninja), and through a staging directory in Xcode projects. Once (2026-11-06, not reproduced since) an
+Xcode build left files merged into the staging directory in the same build out of the app; `tools/package_demo.sh`
+builds `quench_demo_assets` first and compares the two. On macOS the copy is `copy_directory_if_different`:
+rebuilding the game's `<game>_assets` target while the game runs with `--hot-reload` cooks what changed and the game
+reloads exactly those files.
 
 The cook is built from source in host builds. Cross builds (iOS) take it from the `host-tools` preset through
 `QUENCH_HOST_COOK` (the iOS presets set it; build `host-tools` first). The web build cooks nothing. The cook's own

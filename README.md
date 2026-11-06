@@ -15,8 +15,9 @@ HDR pass, sky and fog, cut-out and translucent shadows, bloom, tone mapping, TAA
 capability), audio (a mixer with buses, 3D sound, streamed music and output through miniaudio,
 [audio](docs/audio.md); not yet run on an iPhone or listened to), skeletal animation on ozz-animation (state
 machines, blending, events, root motion, IK and foot placement, GPU skinning, [animation](docs/animation.md); not
-yet run on an iPhone or looked at in motion), a sample (`examples/hello`), an engine demo with one section per feature
-([`examples/demo`](docs/demo.md)), a template for new games and tests. It has run on a Mac (Metal, and Vulkan through
+yet run on an iPhone or looked at in motion), a sample (`examples/hello`), an engine demo with one section per feature,
+a tour, a check mode and a benchmark of every section ([`examples/demo`](docs/demo.md)), a template for new games and
+tests. It has run on a Mac (Metal, and Vulkan through
 MoltenVK), in the iOS Simulator and on an iPhone (the asset system, audio, animation, the native Metal backend and
 ray tracing not yet on the iPhone). Next:
 see the [roadmap](docs/roadmap.md).

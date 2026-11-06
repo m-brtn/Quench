@@ -124,7 +124,7 @@ void RayTracing::releaseTargets() {
 }
 
 // The vertices and indices of the meshes of cut-out and translucent casters, copied once per set of meshes.
-bool RayTracing::updateTables(gpu::CommandBuffer& commands, std::span<const RayCaster> casters) {
+bool RayTracing::updateTables(gpu::CommandBuffer& commands, std::uint64_t scene, std::span<const RayCaster> casters) {
     std::vector<TableMesh> meshes;
     for (const RayCaster& c : casters) {
         const bool cutOut = c.material->desc.alphaCutoff > 0.0f;
@@ -144,10 +144,11 @@ bool RayTracing::updateTables(gpu::CommandBuffer& commands, std::span<const RayC
         vertices += m.mesh->vertexCount;
         indices += m.mesh->indexCount;
     }
-    const bool same = meshes.size() == m_tableMeshes.size() &&
+    const bool same = scene == m_tableScene && meshes.size() == m_tableMeshes.size() &&
                       std::equal(meshes.begin(), meshes.end(), m_tableMeshes.begin(),
                                  [](const TableMesh& a, const TableMesh& b) { return a.id == b.id; });
     if (same) return true;
+    m_tableScene = scene;
     const auto vertexBytes = std::uint32_t(vertices * sizeof(Vertex));
     const auto indexBytes = std::uint32_t(indices * sizeof(std::uint32_t));
     if (!ensureBuffer(m_vertices, m_vertexBytes, vertexBytes, "render ray vertices") ||
@@ -175,7 +176,7 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
     m_data.clear();
     m_alphaTextures.clear();
     if (!m_available || casters.empty()) return false;
-    if (!updateTables(commands, casters)) return false;
+    if (!updateTables(commands, scene.serial, casters)) return false;
 
     gpu::AccelerationStructurePass pass = commands.beginAccelerationStructurePass();
     if (!pass) return false;

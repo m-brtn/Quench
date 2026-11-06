@@ -61,7 +61,7 @@ private:
     };
 
     bool ensureBuffer(gpu::Buffer& buffer, std::uint32_t& capacity, std::uint32_t bytes, const char* name);
-    bool updateTables(gpu::CommandBuffer& commands, std::span<const RayCaster> casters);
+    bool updateTables(gpu::CommandBuffer& commands, std::uint64_t scene, std::span<const RayCaster> casters);
 
     gpu::Device* m_device = nullptr;
     bool m_available = false;
@@ -73,6 +73,7 @@ private:
     std::vector<gpu::RayInstance> m_instances;
     // Cut-out and translucent casters: their meshes' vertices and indices, and per instance id what a hit reads.
     std::vector<TableMesh> m_tableMeshes;
+    std::uint64_t m_tableScene = 0; // SceneImpl::serial of the scene the tables were copied from
     gpu::Buffer m_vertices, m_indices, m_instanceTable;
     std::uint32_t m_vertexBytes = 0, m_indexBytes = 0, m_instanceBytes = 0;
     gpu::TransferBuffer m_transfer;

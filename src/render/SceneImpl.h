@@ -64,6 +64,8 @@ struct LightEntry {
 
 struct SceneImpl {
     gpu::Device* device = nullptr;
+    // Unique per scene in the process: handles of two scenes can be equal, caches keyed by them need it too.
+    std::uint64_t serial = 0;
     SlotMap<MeshId, MeshEntry> meshes;
     SlotMap<TextureId, TextureEntry> textures;
     SlotMap<MaterialId, MaterialEntry> materials;

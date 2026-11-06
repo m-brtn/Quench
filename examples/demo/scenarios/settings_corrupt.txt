@@ -1,0 +1,12 @@
+# A settings file that is not JSON: a warning, the defaults, and the next save writes a good file again.
+
+expect settings_loaded == -1
+expect section == 0
+expect ui_scale == 1
+expect touch_ui == 0
+expect ui == 1
+expect log_warnings >= 1
+section sky
+settings_save
+expect settings_writes >= 1
+quit

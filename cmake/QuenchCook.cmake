@@ -13,7 +13,7 @@ endif()
 
 # quench_cook_assets(<name> SOURCE_DIR <dir> [OUTPUT_DIR <dir>]
 #                    [TEXTURES <file>...] [DATA_TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...]
-#                    [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>]
+#                    [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>] [FILES <file>...]
 #                    [TEXTURE_FORMAT bc7|rgba8] [TEXTURE_MAX_SIZE <n>] [MODEL_OPTIONS <quench_cook option>...])
 #
 # Files are named relative to SOURCE_DIR and keep that path under OUTPUT_DIR (default
@@ -22,17 +22,21 @@ endif()
 # (glTF, GLB) <path>.qmodel with their textures as <path>_<image>.ktx2. SKELETONS (glTF, GLB) become <path>.qskel
 # (the joints of their skins), ANIMATIONS (glTF, GLB) <path>.qanim (their animations as clips, with the settings of
 # <path without extension>.anim.json when it exists), for their own skeleton or for SKELETON's (a file under
-# SOURCE_DIR). SOUNDS (WAV, FLAC, MP3) are decoded to check them and copied with their extension. The run-time asset
+# SOURCE_DIR). SOUNDS (WAV, FLAC, MP3) are decoded to check them and copied with their extension; FILES (texts,
+# settings, licences) are copied as they are (a call with FILES only needs no quench_cook). The run-time asset
 # path of a file is its path under OUTPUT_DIR. Creates the custom target <name>; quench_add_game(... COOKED_ASSETS
 # <name>) copies its output into the game's assets. Every file and everything it reads (glTF buffers and images, clip
 # settings) is tracked: a change re-cooks it.
 function(quench_cook_assets name)
     cmake_parse_arguments(PARSE_ARGV 1 arg "" "SOURCE_DIR;OUTPUT_DIR;TEXTURE_FORMAT;TEXTURE_MAX_SIZE;SKELETON"
-                          "TEXTURES;DATA_TEXTURES;MODELS;SOUNDS;SKELETONS;ANIMATIONS;MODEL_OPTIONS")
+                          "TEXTURES;DATA_TEXTURES;MODELS;SOUNDS;SKELETONS;ANIMATIONS;FILES;MODEL_OPTIONS")
     if(NOT arg_SOURCE_DIR)
         message(FATAL_ERROR "quench_cook_assets: SOURCE_DIR is required")
     endif()
-    if(QUENCH_HOST_COOK)
+    set(cook "")
+    if(NOT (arg_TEXTURES OR arg_DATA_TEXTURES OR arg_MODELS OR arg_SOUNDS OR arg_SKELETONS OR arg_ANIMATIONS))
+        # FILES only: nothing to cook.
+    elseif(QUENCH_HOST_COOK)
         if(NOT EXISTS ${QUENCH_HOST_COOK})
             message(FATAL_ERROR "Quench: QUENCH_HOST_COOK=${QUENCH_HOST_COOK} does not exist. Build it first: "
                                 "cmake --preset host-tools && cmake --build --preset host-tools")
@@ -112,6 +116,20 @@ function(quench_cook_assets name)
                 VERBATIM)
             list(APPEND outputs ${output})
         endforeach()
+    endforeach()
+    foreach(file IN LISTS arg_FILES)
+        if(IS_ABSOLUTE ${file} OR file MATCHES "(^|/)\\.\\.(/|$)")
+            message(FATAL_ERROR "quench_cook_assets: '${file}' must be relative to SOURCE_DIR, without '..'")
+        endif()
+        get_filename_component(file_dir ${output_dir}/${file} DIRECTORY)
+        file(MAKE_DIRECTORY ${file_dir})
+        add_custom_command(
+            OUTPUT ${output_dir}/${file}
+            COMMAND ${CMAKE_COMMAND} -E copy ${source_dir}/${file} ${output_dir}/${file}
+            DEPENDS ${source_dir}/${file}
+            COMMENT "Copying ${file}"
+            VERBATIM)
+        list(APPEND outputs ${output_dir}/${file})
     endforeach()
     add_custom_target(${name} ALL DEPENDS ${outputs})
     set_target_properties(${name} PROPERTIES QUENCH_COOK_OUTPUT_DIR ${output_dir})

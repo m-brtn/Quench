@@ -32,12 +32,14 @@ struct Options {
     std::optional<gpu::PresentMode> presentMode;
     std::optional<HdrMode> hdr;
     float hdrHeadroom = 0.0f;  // > 0: the headroom of HDR output instead of the display's
+    std::string orientation;   // SDL_HINT_ORIENTATIONS value (phones and tablets); empty: the app's orientations
     int workerThreads = -1;    // job system workers; -1: JobSystemDesc's default
     double assetLatency = 0.0; // AssetManagerSettings::simulatedLatency
     bool hotReload = false;
     bool noAudio = false;                   // no audio device: the mix runs offline and is discarded
     std::optional<std::string> audioDevice; // DeviceDesc::name
     std::string audioCapture;               // WAV path: the mix runs offline and is written at the end
+    std::string userDir;                    // the user directory instead of SDL_GetPrefPath's (tests)
     bool printVersion = false;
     bool printHelp = false;
     std::vector<std::string> gameArgs;

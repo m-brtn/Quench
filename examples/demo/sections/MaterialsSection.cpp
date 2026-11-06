@@ -170,21 +170,29 @@ public:
         animate(m_animTime);
     }
 
-    void ui(Context& c) override {
-        Scene& s = *m_scene;
+    void controls(Context& c) override {
         if (ImGui::Checkbox("Sun", &m_sunOn)) applyLights();
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
         if (ImGui::SliderInt("Point lights", &m_pointCount, 0, kPointLights)) applyLights();
         if (ImGui::Checkbox("Spot light", &m_spotOn)) applyLights();
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
         if (ImGui::SliderFloat("Light intensity", &m_intensity, 0.0f, 4.0f)) applyLights();
         ImGui::Checkbox("Animate", &m_animate);
         ImGui::Checkbox("Light discs (game pass)", &m_markers);
         bool checker = m_useChecker;
         if (ImGui::Checkbox("Checker (game shader)", &checker)) setChecker(checker);
         if (!c.checker) ImGui::TextDisabled("checker shader unavailable: standard surface");
-        ImGui::TextWrapped("%u materials, %u instances, %u lights", s.materialCount(), s.instanceCount(),
-                           s.lightCount());
+        // The glass torus's shadow: tinted through a transmittance map, or dithered (the fallback).
+        int translucent = settings.translucentShadows == TranslucentShadows::Map ? 0 : 1;
+        if (ImGui::Combo("Glass shadow", &translucent,
+                         "tinted\0"
+                         "dithered\0"))
+            settings.translucentShadows = translucent == 0 ? TranslucentShadows::Map : TranslucentShadows::Dithered;
+        if (settings.translucentShadows != c.renderer.effects().translucentShadows)
+            ImGui::TextDisabled("  fallback: dithered");
+    }
+
+    void stats(Context& c) override {
+        ImGui::Text("Light discs: %d draws", m_markerDraws);
+        ImGui::Text("Transmittance: %u draws", c.renderer.stats().transmittanceDraws);
     }
 
     Scene& scene() override { return *m_scene; }

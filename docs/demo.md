@@ -3,11 +3,32 @@
 `examples/demo` (target `quench_demo`, executable `quench-demo`, app name "Quench Demo") is one app on `quench_main`
 and `quench_app` for the Mac and iOS: a menu of sections, each a small interactive scene of primitives and
 procedural content that shows one area of the engine, with ImGui controls and the frame, CPU and GPU times. It was
-started in stage 5 (user decision, 2026-11-05); every later stage adds its section, and stage 10 of the
-[Roadmap](roadmap.md) finishes and polishes it. `examples/hello` stays the minimal sample.
+started in stage 5 (user decision, 2026-11-05); every later stage added its section, and stage 10 of the
+[Roadmap](roadmap.md) finished it (2026-11-06): one panel layout and one camera for every section, a compact layout
+for phones, a tour, a check mode and a benchmark of every section, an About panel, saved settings. `examples/hello`
+stays the minimal sample.
 
 Every section has a scripted check and golden captures, so the demo is also a test of the engine, and every stage
 ends with a packaged build of it in `dist/` (`tools/package_demo.sh`, below).
+
+## Code
+
+| File | What |
+|---|---|
+| `Demo.h` | the `Section` interface (id, title, description, `init`, `enter` / `leave`, the steps, `controls()`, `stats()`, scenario values, commands and points), `OrbitCamera`, `Context` and the helpers sections share |
+| `sections/<Name>Section.cpp` | one file per section: its scene, controls, numbers and scenario hooks |
+| `DemoGame.h`, `Demo.cpp` | the app around the sections (`quench::app::Game`): sections made at the start and initialized when first shown, switching, the settings, the scenario hooks, the flags (`createGame`) |
+| `Ui.cpp` | the two layouts, the menu, the Performance and Log panels, the section's panel, About and Settings |
+| `Camera.cpp` | the camera controls every 3D section shares |
+| `Modes.cpp`, `Checks.h`, `Checks.cpp` | the tour, the check mode with its items and `checks.json`, the benchmark of every section |
+| `Settings.h`, `Settings.cpp` | `settings.json` |
+| `Common.cpp` | the "Frame and fallbacks" panel and the helpers of `Demo.h` (meshes, placement, ground picks, actions, parsing) |
+| `BuildInfo.cmake` | the build type and the commit for About (`demo_build_info.h`, written at build time) |
+
+A section is made when the app starts (only its camera and render settings) and initialized when it is first shown:
+0.3 to 3.3 ms per section in Release on the M4 Pro (measured 2026-11-06; assets then load on the job system). It
+stays loaded until the app ends or it is reset; "Reset section" replaces it with a new object of its kind, as on its
+first visit. Leaving a section removes its render passes; its scene stays.
 
 ## Sections
 
@@ -25,24 +46,186 @@ ends with a packaged build of it in `dist/` (`tools/package_demo.sh`, below).
 | 10 (key 0) | `animation` | Skeletal animation ([Animation](animation.md)) of a procedural mannequin: the hero walks a circle by root motion with a speed blend of idle, walk and run, jumps, waves (a layer masked to the right arm), leans (an additive layer), turns its head toward the camera (look-at), holds a torch on its left hand (an attachment) and plays a step sound at each footstep event (a louder one at the jump's landing); two characters stand with foot placement on a ramp and across a 0.2 m step (rays into a Jolt world); a crowd walks in rings | speed, lean, jump (J, gamepad A), wave (K, gamepad X), restart; foot IK, look-at and footstep sound on and off; ramp angle (0 to 30 degrees), crowd size (0 to 512); the hero's state and transition, characters, joints, clip samples, ground rays, events, skinned instances and vertices, the update time and threads, the skinning GPU time |
 | 11 | `raytracing` | Ray tracing where `gpu::Caps` allow it ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)), on the native Metal backend (`--gpu-backend metal`): soft ray-traced sun shadows through a fence's diamond holes (cut-out), tinted amber by a spinning glass torus (translucent) and cast by the animation section's mannequin walking a circle (skinned, refitted every frame), ambient occlusion under a crate, a sphere and a column arch, the sun turning; MetalFX spatial and temporal upscaling. On SDL GPU (Metal or Vulkan through MoltenVK) the same scene with the fallbacks and a line saying why | sun shadows (shadow maps or ray traced), shadow rays, softness, ambient occlusion with its rays and radius, upscaling (bilinear, MetalFX spatial, MetalFX temporal) and render scale, each with the fallback it got; turn the sun, walk, sun elevation; the top level's instances, builds and refits (or the shadow draws), and outside deterministic runs the GPU time of the rays, the shadow maps, MetalFX and the frame |
 
-Every section has a "Frame and fallbacks" panel: the 3D resolution, draws, culled instances, lights, shadow draws,
-what runs after the device fallbacks (sun shadows, cascades, depth clamp, ambient occlusion, anti-aliasing,
-upscaling), the HDR and depth formats and the device capabilities (ray tracing, MetalFX). The menu window shows the frame, CPU and GPU times and, outside deterministic runs, the GPU backend and,
-where it has timestamps per pass (the native Metal backend: `--gpu-backend metal`), the GPU time of every timed range
-with where in the frame it ran ([Performance](performance.md#gpu-time-per-pass)).
+Every section's panel has the same parts in this order: the controls, the section's numbers ("Stats"), the
+"Frame and fallbacks" header (the scene's counts, the 3D resolution, draws, culled instances, lights, shadow draws,
+what runs after the device fallbacks: sun shadows, cascades, depth clamp, ambient occlusion, anti-aliasing,
+upscaling, translucent shadows, bloom and sky; the HDR and depth formats; every fallback with its reason, from
+`Renderer::fallbacks()`; the GPU backend and its capabilities, and why there is no ray tracing where there is none),
+and "Reset section" and "Reset camera". The description of what to look at is a caption under the scene (in the
+compact layout, the top of the controls sheet).
 
-Common controls:
+## Coverage
 
-- Sections: `]` / `[`, Page Down / Page Up, the digits 1 to 9 and 0 (the tenth, labelled "0" in the menu; the
-  eleventh has no key), the gamepad shoulder buttons, a click or tap on the list. ImGui keyboard and gamepad navigation is on (the demo's keys
-  keep working while a window has focus).
-- Camera (all sections but input): drag with the left or right mouse button or one finger to orbit, the wheel or a
-  pinch to zoom, the right stick and the triggers on a gamepad.
-- H or the gamepad Start button hides the windows.
+What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks what stage 10 added):
 
-Flags: `--section ID` starts in a section (an unknown id fails with a message); the engine's flags (`--help`, App
-shell) work as everywhere, for the assets section also `--asset-latency SECONDS`, `--hot-reload` and
-`--worker-threads N`, for the audio section `--audio-device NAME`, `--no-audio` and `--audio-capture FILE.wav`.
+| Engine area | Where | How it shows |
+|---|---|---|
+| Retained scene, PBR materials, point, spot and sun lights | materials | spheres from smooth to rough, metals, glass, an emissive lamp, lights on and off; the scene's counts in "Frame and fallbacks" (added) |
+| Game surface shaders and render passes | materials | the checker ground, the light discs, each on and off |
+| Cut-out and translucent shadows | materials | the fence's holes, the glass's tinted shadow; the transmittance map or its dithered fallback |
+| Cascaded sun shadows | shadows | cascades 0 to 4, map size, distance, filter, the turning sun; depth clamp or its fallback |
+| Sky, atmosphere, fog | sky | the day cycle, the atmosphere and its gradient fallback, no sky, height fog and its sun scatter |
+| Bloom, tone curves, render scale | post | bloom, ACES and AgX, exposure, vignette, dither, render scale, sharpen |
+| Anti-aliasing | post | none, FXAA, TAA, with the fallback the device gave |
+| HDR display output | hdr | off, auto, on; the display's headroom; a custom peak; the SDR curve beside it |
+| Physics on Jolt | physics | bodies dropped and blasted at 120 Hz, drawn interpolated |
+| Input actions | input; every 3D section | actions on keys, mouse, gamepad and touch with their times; the shared camera controls (added: pan, the touch gestures, the keyboard) |
+| Asset loading, placeholders, failures | assets | gray boxes while loading, magenta for the corrupt and the missing model; ready and failed counts |
+| Cache budgets, upload budget | assets | budgets per type, evictions, uploads per frame |
+| Streaming by distance | assets | the tile grid around a moving focus; the load and keep rings on the ground and every model's load state (added) |
+| Hot reload (Mac) | assets | the hot reload switch, "Reload all", and a note "Assets reloaded: N" over the scene (added) |
+| Audio | audio | buses, 3D sound, Doppler, a generator, streamed music with a crossfade, voice stealing, meters |
+| Animation | animation | blending, state machine, layers, IK, foot placement, attachments, events, root motion, a crowd on the job system, GPU skinning |
+| Ray tracing, MetalFX | raytracing | ray-traced shadows and occlusion, MetalFX spatial and temporal, each with its fallback and the reason |
+| The job system | the Performance panel | threads and pending jobs, a job test (256 items on the pool, its time and the items per thread) (added); physics, animation and loads run on it |
+| Frame, CPU and GPU times | the Performance panel | fps, frame, CPU and GPU time, a frame-time graph (added), the GPU time per pass on the native Metal backend; hidden in deterministic runs (captures) |
+| Memory and GPU resources | the Performance panel | the process's memory and the live GPU resources, the section's load and switch times (added) |
+| GPU backend, device, fallbacks | every section's "Frame and fallbacks"; About | the backend, driver, device and capabilities, every fallback with its reason (added); a relaunch with the other backend on the Mac (added) |
+| Display scale, safe area, orientation | the layouts | sizes from the display's scale, windows inside the safe area, the compact layout in portrait and landscape (added) |
+| Logging | the Log panel | the demo's log lines with the warning and error counts (added) |
+| User files through `quench::fs` | Settings, the check mode, the benchmark | `settings.json`, `checks.json`, `benchmark.json`, screenshots (added) |
+| Scenarios, captures, perf regions | the checks | every section's check; the benchmark of every section on the same perf regions (added) |
+
+Not shown, because the engine does not have it yet: shader hot reload, normal maps, ASTC or Basis Universal
+textures, asset hot reload on a device, HRTF, reverb, retargeting, blend spaces, ray-traced reflections and indirect
+light ([Roadmap](roadmap.md)).
+
+## Layouts
+
+Sizes follow the display's scale (the engine's ImGui style), times the UI scale of the settings.
+
+- **Wide** (a desktop window, a tablet): the menu at the top left (the sections, the mode buttons Tour, Checks and
+  Benchmark, About, Settings, Hide, the Performance and Log panels); the section's window at the top right, or under
+  the menu where the window is too narrow for both; the description as a caption at the bottom; the windows of the
+  modes at the bottom in its place. Both windows collapse with their title's arrow.
+- **Compact** (a safe area under 40 x 26 em: phones in either orientation, small windows): a bar at the top (Menu,
+  previous, the section's title, next, Controls) and one sheet at a time: the menu on the left; the section's panel
+  docked at the bottom in portrait and on the right in landscape, so the scene stays visible; About and Settings over
+  the screen. A drag on a sheet's background scrolls it.
+- Both keep every window inside the safe area (the notch, the home indicator, rounded corners).
+- Touch-sized controls (taller items, wider scroll bars and grabs, a touch margin) where the device has a touch
+  screen (iOS), or always or never by the setting. Touches on a Mac trackpad are not a touch screen.
+
+## Controls
+
+| | Mouse and keyboard | Gamepad | Touch |
+|---|---|---|---|
+| Orbit | left drag; the arrows | right stick | one finger |
+| Pan | right or middle drag | left stick | two fingers |
+| Zoom | the wheel; + and - | the triggers | pinch |
+| Act on the scene (blast, ping, fire) | a click | the section's button | a tap |
+| Next, previous section | `]` `[`, Page Down, Page Up | the shoulder buttons | the arrows of the bar (compact) |
+| A section | 1 to 9, 0 for the tenth; a click on the menu | | a tap on the menu |
+| Menu by keys and buttons | Tab, then the arrows and Enter; Escape goes back | the D-pad, then A; B goes back | |
+| Hide the windows | H | Start | Hide in the menu |
+
+The camera's keys and sticks work while the scene has the keyboard and the gamepad: Tab or the D-pad hand them to
+the windows (ImGui navigation, focus on the current section), Escape, B or a click on the scene hand them back. The
+input section's character takes W A S D, the left stick and the fingers, so there only the mouse orbits and pans
+(every device still zooms); a section's own keys are in its description. The same list is in About, under Controls.
+
+## Modes
+
+The menu's buttons or a flag start them; one runs at a time, and its window at the bottom shows where it is.
+
+- **Tour** (`--tour [SECONDS]`, default 8; the Tour button takes the Tour time of the settings): every section in turn for
+  SECONDS each, round and round, from the current one. Any key, click, touch, button or stick stops it.
+- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 24
+  items, one at a time: it switches to the item's section, sets it up (a camera, a setting) and says what to look at
+  or listen to. OK, Problem or Skip, with a note, marks the item and goes to the next; the arrows go back and
+  forward, End stops. Every mark is written to `checks.json` in the user directory at once, with the backend and the
+  time; the next run starts at the first item not marked yet, with the earlier marks (a file that cannot be read
+  starts empty, with a warning). The items: the fence's holes and the glass's tinted shadow (materials), the
+  cascades (shadows), the day and fog (sky), anti-aliasing (post), HDR on an HDR display (hdr), the bodies
+  (physics), the devices (input), loading and streaming (assets), panning, Doppler, the tone without clicks, the
+  music's crossfade, the buses and the pings (audio, by ear), feet that do not slide, footsteps in sync, layers and
+  look-at, foot placement and the crowd (animation), noise, MetalFX ghosting and the fallback (raytracing), the frame
+  rate and the layout on the device.
+- **Benchmark** (`--benchmark-all [SECONDS]`, default 5; the Benchmark button: 5 s): every section measured in turn
+  as `scenarios/benchmark.txt` measures it: a warm-up of a second (or SECONDS, if shorter) and until the section's
+  assets are in (at most 6 s), then a perf region of SECONDS in real time (`App::beginPerf` .. `endPerf`). One report
+  for all of them, `benchmark.json` in the user directory; `--benchmark-all` quits when it is written (exit code 1
+  if it could not be). Use Release, vsync and a fixed window size for numbers that compare
+  ([Performance](performance.md)).
+
+### Flags
+
+| Flag | |
+|---|---|
+| `--section ID` | start in a section: `materials`, `shadows`, `sky`, `post`, `hdr`, `physics`, `input`, `assets`, `audio`, `animation`, `raytracing` (default: the last one, from the settings); an unknown id fails |
+| `--tour [SECONDS]` | the tour, SECONDS per section (0.1 to 600) |
+| `--checks` | the check mode |
+| `--benchmark-all [SECONDS]` | the benchmark of every section (0.1 to 120 s each), then quit |
+| `--no-settings` | neither read nor write `settings.json` |
+| `--settings-file NAME` | the settings file in the user directory (default `settings.json`); in a scripted run the only way to use one |
+| `--checks-file NAME` | the check results (default `checks.json`) |
+| `--benchmark-file NAME` | the benchmark report (default `benchmark.json`) |
+
+`--tour`, `--checks` and `--benchmark-all` exclude each other. The engine's flags (`--help`,
+[App shell](app.md#command-line)) work as everywhere: for the assets section also `--asset-latency SECONDS`,
+`--hot-reload` and `--worker-threads N`, for the audio section `--audio-device NAME`, `--no-audio` and
+`--audio-capture FILE.wav`; `--gpu-backend metal` for the native Metal backend, `--user-dir DIR` for another user
+directory, `--orientation portrait|landscape` on a phone.
+
+### Files
+
+All three are JSON with `"version": 1`, in the user directory (`~/Library/Application Support/Quench/Quench Demo/`
+on the Mac, `Library/Application Support/Quench/Quench Demo/` in the app's data container on iOS) through
+`quench::fs`.
+
+- `settings.json`: `section` (the last one), `show_ui`, `ui_scale` (0.5 to 3), `touch_controls` (`auto`, `on`,
+  `off`), `hdr` (`off`, `auto`, `on`), `present_mode` (`vsync`, `immediate`, `mailbox`), `tour_seconds` (1 to 120).
+  Written half a second after a change and at the end. A file that cannot be read or parsed, or of another version,
+  gives the defaults and a warning, and the next save writes a good one. `--hdr` and `--present-mode` on the command
+  line win over the file. Scripted runs (`--script`) ignore the file unless `--settings-file` names one, so checks
+  start from the defaults and leave the user's file alone.
+- `checks.json`: `app`, `app_version`, `build` (the build type and the commit), `backend`, `driver`, `device`,
+  `platform`, `written` (UTC); `items`, one per check: `id`, `section`, `title`, `status` (`pending`, `ok`,
+  `problem`, `skipped`), `note`, `backend` and `time` of the mark; `summary`: the count per status.
+- `benchmark.json`: the same run information, `seconds`, `window` (pixels); `sections`, one per section: `section`,
+  `frames`, `frame_avg_ms`, `frame_p50_ms`, `frame_p99_ms`, `frame_max_ms`, `cpu_avg_ms`, `cpu_p50_ms`,
+  `cpu_p99_ms`, `gpu_avg_ms`, `gpu_p50_ms`, `gpu_samples`, `pass_p50_ms` (the median per timed GPU range, native
+  Metal backend), `details` (the renderer's state, as on a `perf:` line).
+
+## About and settings
+
+About (the menu's button) shows the version, the build type and commit, the platform, the GPU backend, driver and
+device with ray tracing, MetalFX and GPU timing, the window and its pixel density, the display's headroom, the audio
+device and the job threads; the controls; the engine's licence and the third-party licences (shipped as assets,
+`quench_cook_assets(... FILES ...)`, read when About first opens). On the Mac it has a button that starts the demo
+again with the other GPU backend (`App::relaunch`: the same command line with another `--gpu-backend`; the settings
+are saved first). iOS cannot start an app again from inside: the backend is chosen at launch, with
+`--gpu-backend metal` or the environment variable `QUENCH_GPU_BACKEND=metal` (below).
+
+Settings: the UI scale (applied when the slider is let go), touch-sized controls (auto, on, off), HDR output, the
+present mode, the tour's time, Defaults, and Screenshot (`screenshot-N.png` in the user directory).
+
+## Check mode on the iPhone
+
+Build and install the demo as in [App shell](app.md#ios-runs) (bundle id `org.quench.demo` with the paid team's
+empty suffix; the phone unlocked), then either open the menu and tap Checks, or start it with the flag:
+
+```sh
+cmake --preset host-tools && cmake --build --preset host-tools
+cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id> -DQUENCH_IOS_BUNDLE_ID_SUFFIX=
+xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_demo -configuration Release \
+    -destination id=<device udid> -allowProvisioningUpdates build
+DEVICECTL=/Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Resources/bin/devicectl
+$DEVICECTL device install app --device <udid> build/ios-xcode/examples/demo/Release-iphoneos/quench-demo.app
+$DEVICECTL device process launch --device <udid> --console --terminate-existing org.quench.demo --checks
+# the native Metal backend (ray tracing, MetalFX, GPU times per pass) for the ray tracing items:
+$DEVICECTL device process launch --device <udid> --console --terminate-existing \
+    --environment-variables '{"QUENCH_GPU_BACKEND":"metal"}' org.quench.demo --checks
+# the results back to the Mac:
+$DEVICECTL device copy from --device <udid> --domain-type appDataContainer --domain-identifier org.quench.demo \
+    --source "Library/Application Support/Quench/Quench Demo/checks.json" --destination /tmp/checks.json
+```
+
+The marks survive between runs, so the SDL GPU items and the native Metal items can be done in two launches. On the
+Mac: `build/release/examples/demo/quench-demo --checks` (and `--gpu-backend metal`); the file is in
+`~/Library/Application Support/Quench/Quench Demo/`.
+
+## Content
 
 The assets section's content is procedural (`tools/assets/make_demo_assets.py`, CC0, `assets_src/CREDITS.md`):
 `examples/demo/assets_src` (glTF, GLB, PNG; the GLB embeds a JPEG) is cooked at build time by
@@ -68,19 +251,28 @@ its own asset manager on the app's job system (one `SceneAssets` per manager, [J
 cook](assets.md#textures-and-models-in-a-scene)) and its own `AnimationSystem`; it restarts on `set restart 1`,
 which makes its capture independent of when the loads finished.
 
+The licences About shows are the engine's `LICENSE` and `THIRD_PARTY_LICENSES`, copied into `assets/` by
+`quench_cook_assets(quench_demo_licences ... FILES ...)`; the commit it shows comes from `BuildInfo.cmake`, which
+writes `demo_build_info.h` at build time only when the commit changes ("unknown" without git; uncommitted changes
+are not marked).
+
 ## Checks
 
 | CTest test | What it runs |
 |---|---|
-| `demo_<section>_metal`, `demo_<section>_vulkan` | `--section <id> --script examples/demo/scenarios/<id>.txt` at 960 x 540 (`--window` and `--frame-size`), with GPU validation and `--present-mode immediate` (below); the scenario switches the section's options and checks the renderer's and the section's values, puts the start state back, and the frame at 2 s (input: 3 s, assets: 1.5 s, animation: 2.4 s) is compared with `tests/golden/<backend>/<device>/demo_<id>.png`. The scenarios point at the window in percent or at named points (`@menu:<section>`, `@floor`), so their checks also pass in a portrait phone window (the captures are compared on the Mac only) |
+| `demo_<section>_metal`, `demo_<section>_vulkan` | `--section <id> --script examples/demo/scenarios/<id>.txt` at 960 x 540 (`--window` and `--frame-size`), with GPU validation and `--present-mode immediate` (below); the scenario switches the section's options and checks the renderer's and the section's values, puts the start state back, and the frame at 2 s (input: 3 s, assets: 1.5 s, animation: 2.4 s) is compared with `tests/golden/<backend>/<device>/demo_<id>.png`. The scenarios point at the window in percent or at named points (`@menu:<section>`, `@floor`), so their checks also pass in a portrait phone window (the captures are compared on the Mac only). The captures show the windows: the menu, the section's panel and the caption |
 | `demo_hdr_on_metal`, `demo_hdr_on_vulkan` | the HDR section with `--hdr on --hdr-headroom 4` and `scenarios/hdr_on.txt`: the output is HDR extended linear with headroom 4 and the capture's peak is above 2 and at most 4 times paper white; the capture (clipped at paper white) is compared with `demo_hdr_on.png` |
 | `demo_audio_metal`, `demo_audio_vulkan` | the audio section with `--audio-capture` (offline mixing on the frame clock, the WAV next to the capture) and `scenarios/audio.txt`: every emitter, the tone, the crossfade to music B and a burst of 40 pings, no underruns or clipped samples; the frame at 1.65 s is compared with `demo_audio.png` |
 | `demo_audio_tone`, `demo_audio_flyby`, `demo_audio_music` | the checks on the mix itself (below), on the default backend only: `scenarios/audio_tone.txt`, `audio_flyby.txt` and `audio_music.txt` with `--audio-capture` and `--present-mode immediate`, no capture |
 | `demo_audio_wav_match` | (with Vulkan through MoltenVK) the WAV files of `demo_audio_metal` and `demo_audio_vulkan` are the same bytes: the offline mix does not depend on the GPU backend, which is why the mix checks run on one backend |
 | `demo_raytracing_metal_native` | the ray tracing section on `--gpu-backend metal` with `scenarios/raytracing.txt`: ray-traced shadows and occlusion run (no cascades, no shadow draws, at least 12 instances in the top level, the character skinned), shadow maps come back when asked, MetalFX temporal at scale 0.5 resolves in TAA's place, spatial runs, bilinear at scale 1 again; the frame at 2.5 s (rays and occlusion at full size, the sun and the character moving) is compared with `tests/golden/metal/<device>/demo_raytracing_native.png` |
-| `demo_raytracing_metal`, `demo_raytracing_vulkan` | the same section on SDL GPU with `scenarios/raytracing_fallback.txt`: the requests fall back (cascades, no occlusion, no top level, bilinear at scale 0.5); the frame at 2.5 s is compared with `demo_raytracing.png` |
-| `demo_menu` | `scenarios/menu.txt`: switching sections by keys, gamepad, a click and a tap on the list; hiding the windows |
-| `demo_version`, `demo_bad_section` | `--version` prints "Quench Demo <version>"; an unknown `--section` fails |
+| `demo_raytracing_metal`, `demo_raytracing_vulkan` | the same section on SDL GPU with `scenarios/raytracing_fallback.txt`: the requests fall back (cascades, no occlusion, no top level, bilinear at scale 0.5), and the renderer lists the fallbacks; the frame at 2.5 s is compared with `demo_raytracing.png` |
+| `demo_compact_portrait_metal`, `demo_compact_landscape_metal` | `scenarios/compact.txt` in a phone-sized window (400 x 720 and 720 x 320 points): the compact layout, the bar's arrows, the menu sheet, About and its licences, the controls sheet; the frame at 1.5 s (the controls sheet over the materials section) is compared with `demo_compact_portrait.png` and `demo_compact_landscape.png` (Metal only: the layout does not depend on the backend) |
+| `demo_menu` | `scenarios/menu.txt`: switching sections by keys, gamepad, a click and a tap on the list; the menu by Tab, the arrows and Enter and by the D-pad, A and B; hiding the windows |
+| `demo_tour` | `--tour 0.1` with `scenarios/tour.txt`: a full round back to the first section, every section initialized, a key stops it, `mode tour` starts it again from the current section |
+| `demo_cycle` | `scenarios/cycle.txt`: every section three times (switched, then reset), with the memory, the live GPU resources, the scene's instances and the error count marked after the first round: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 32 MB; no instance more; no new error) |
+| `demo_checks`, `demo_settings`, `demo_benchmark` | `tests/DemoUserFiles.cmake` runs the demo on a fresh `--user-dir` and reads the file it wrote: the check mode's marks by command and by the buttons, read back by a second run, a corrupt `checks.json` starts empty (`checks*.txt`); settings saved, read back, a corrupt file gives the defaults and is written again, `--no-settings` leaves it (`settings_*.txt`); `mode benchmark 0.1` writes a report with 11 sections (`benchmark_all.txt`) |
+| `demo_version`, `demo_bad_section`, `demo_bad_flag` | `--version` prints "Quench Demo <version>"; an unknown `--section` fails; `--tour` with `--checks` fails |
 
 The assets check (`scenarios/assets.txt`, about 3.6 s per backend) loads with a simulated latency of 0.2 s and checks
 the placeholders first (loads in flight, no model ready), then waits for the manager to be idle: three models ready,
@@ -107,6 +299,12 @@ fundamental approaching (477 to 486 Hz from 440 Hz at 30 m/s) and receding (401 
 crossfade to B (two streams, then one, 147 Hz), the music bus at 0 (silent). All other demo tests run with
 `--audio-device null`, so no test plays through the speakers.
 
+Named points: `menu:<section id>` (a menu entry while the menu is shown), `ui:<name>` (the windows' buttons:
+`ui:sections`, `ui:prev`, `ui:title`, `ui:next`, `ui:controls`, `ui:close`, `ui:tour`, `ui:checks`,
+`ui:benchmark`, `ui:about`, `ui:settings`, `ui:hide`, `ui:job_test`, `ui:reset_section`, `ui:reset_camera`,
+`ui:relaunch`, `ui:stop`, `ui:check_ok`, `ui:check_problem`, `ui:check_skip`, `ui:check_prev`, `ui:check_next`,
+`ui:check_end`, `ui:check_note`), and the section's (`floor`, ...).
+
 The capture checks and the audio mix checks run with `--present-mode immediate`. Every frame of a scripted run is one
 fixed step, and frames are held to 120 per second; with vsync they wait for the 60 Hz display as well, which doubles a
 check's time without changing a pixel or a sample (measured 2026-11-06: the same capture and WAV, the old single
@@ -114,13 +312,20 @@ audio check 18.5 s with vsync, 9.8 s with immediate). Where a window is paced to
 ([Platforms](platforms.md)), the checks are as slow as with vsync and otherwise the same. The hello checks and
 `demo_menu` keep the default vsync.
 
-The scenarios turn dithering off (`set dither 0`), which keeps the golden PNGs at 120 to 380 KB. Game values a
-scenario can read: `section`, `sections`, `ui`, `aa` (0 none, 1 FXAA, 2 TAA, after fallbacks), `cascades`, `bloom`,
+The scenarios turn dithering off (`set dither 0`), which keeps the golden PNGs at 120 to 380 KB. Deterministic runs
+(`--script`, `--capture`; not inside a perf region) hide the timings, the memory and the Log panel's counts, which change from run to run.
+Game values a scenario can read: `section`, `sections`, `ui`, `aa` (0 none, 1 FXAA, 2 TAA, after fallbacks), `cascades`, `bloom`,
 `draws`, `instances`, `culled`, `shadow_draws`, `shadow_instances`, `transmittance_draws`, `translucent_shadows` (0
 transmittance map, 1 dithered, after fallbacks), `moved`, `lights`, `render_w`, `render_h`,
 `camera_yaw`, `camera_pitch`, `camera_distance`, `clicks`, `skinned_instances`, `skinned_vertices`, `sun_shadows`
 (0 maps, 1 ray traced), `ambient_occlusion` (0 none, 1 ray traced), `upscaling` (0 bilinear, 1 spatial, 2 temporal),
-`render_scale`, `ray_instances`, `ray_builds`, `ray_refits` (all after fallbacks), then the
+`render_scale`, `ray_instances`, `ray_builds`, `ray_refits` (all after fallbacks), `fallbacks` (their count),
+`camera_x`, `camera_z` (the target); the demo's own: `section_ready`, `sections_ready`, `init_ms`, `switch_ms`,
+`scene_instances`, `compact`, `sheet` (0 none, 1 the menu, 2 the controls, 3 About, 4 Settings), `menu_focus`,
+`about`, `licence_bytes`, `ui_scale`, `touch_ui`, `settings_loaded` (1 read, 0 not, -1 unusable), `settings_writes`,
+`mode` (0 none, 1 tour, 2 checks, 3 benchmark), `tours`, `check_index`, `check_items`, `check_writes`,
+`checks_pending`, `checks_ok`, `checks_problem`, `checks_skipped`, `benchmark_sections`, `benchmark_written`,
+`log_errors`, `log_warnings`, `job_test_ms` (-1 until a job test finished); then the
 section's own (for example `bodies`, `blasts`,
 `player_x`, `jumps`, `marker_draws`, `exposure`; the assets section's `assets_loading`, `assets_ready`,
 `assets_failed`, `assets_idle`, `assets_loads`, `assets_reloads`, `assets_evictions`, `showcase_ready`,
@@ -129,8 +334,11 @@ section's own (for example `bodies`, `blasts`,
 `anim_ready`, `anim_failed`, `anim_characters`, `anim_bound`, `anim_ground_rays`, `hero_state` (0 the blend, 1 the
 jump), `hero_transition`, `hero_look_at`, `hero_angle`, `footsteps`, `landings`, `crowd`, `held_distance`,
 `slope_pelvis`, and per stand and leg `slope_leg0_offset` (also `_reached`, `_grounded`; `slope` or `step`, leg 0
-or 1); the ray tracing section's `rt_ready`, `sun_azimuth`). Game commands: `section ID`,
-`camera YAW PITCH DISTANCE` (degrees, meters), `set NAME VALUE` (render settings: `aa none|fxaa|taa`,
+or 1); the ray tracing section's `rt_ready`, `sun_azimuth`). Game commands: `section ID`, `reset_section`, `reset_camera`,
+`sheet none|sections|controls|about|settings`, `mode off|tour|checks|benchmark [SECONDS]`,
+`check ok|problem|skip [NOTE]`, `check next|prev`, `job_test`, `settings_save` (now, not half a second later),
+`settings_corrupt` (overwrites the settings file with text that is not JSON),
+`camera YAW PITCH DISTANCE` (degrees, meters), `set NAME VALUE` (`ui_scale`, `touch_controls auto|on|off`; render settings: `aa none|fxaa|taa`,
 `tone aces|agx`, `cascades`, `shadow_size`, `shadow_filter`, `shadow_distance`, `translucent_shadows map|dithered`,
 `sun_shadows maps|rt`, `shadow_rays`, `shadow_softness`, `ao none|rt`, `ao_rays`, `ao_radius`,
 `upscaling bilinear|spatial|temporal`, `scale`, `bloom`, `bloom_strength`,
@@ -159,6 +367,10 @@ on miniaudio's null device thread, without sound):
 build/release/examples/demo/quench-demo --frame-size 1920x1080 --script examples/demo/scenarios/benchmark.txt \
     --audio-device null
 ```
+
+The benchmark mode (`--benchmark-all`, above) measures every section the same way, with the windows as they are
+(shown by default, as in the scenario), and writes the numbers as JSON; the scenario stays the reference for comparisons in the devlog, with its own regions (HDR on,
+the crowd of 256).
 
 `scenarios/raytracing_benchmark.txt` measures the ray tracing section's options one by one, 5 s each: rays for
 shadows and occlusion, shadows alone, hard shadows (1 ray), shadow maps, then MetalFX temporal at scale 1, 0.67 and
@@ -190,8 +402,9 @@ that commit). The script builds `quench_demo` with the `release` preset (`--pres
   Privacy & Security (not tried on another Mac yet).
 - **iOS** (`--ios [--team ID]`): builds `quench_demo` with the `ios-xcode` preset (Automatic signing with the team:
   `--team`, else `QUENCH_IOS_TEAM` from the environment, else the one `build/ios-xcode` is configured with; an Apple
-  ID signed in to Xcode, which creates the development profile on its own) and packs the signed app as
-  `QuenchDemo.ipa`, with the licences, into the zip. The team must be a paid one: the script refuses a free Personal
+  ID signed in to Xcode, which creates the development profile on its own), after `quench_demo_assets` on its own
+  (see [Assets](assets.md)), checks that the app's `assets/` matches the staged folder (`diff -r`), and packs the
+  signed app as `QuenchDemo.ipa`, with the licences, into the zip. The team must be a paid one: the script refuses a free Personal
   Team (Xcode's account data marks it), whose profiles expire after 7 days, and checks that the app is signed by the
   team (`codesign`, `TeamIdentifier`), also after a plain `unzip` of the `.ipa`. It runs only on the devices in the
   profile, and the profile expires (the paid

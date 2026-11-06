@@ -8,6 +8,7 @@
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -34,7 +35,11 @@ auto* lookup(Map& map, Id id, [[maybe_unused]] const char* what) {
 
 } // namespace
 
-Scene::Scene(gpu::Device& device) : m_impl(std::make_unique<detail::SceneImpl>()) { m_impl->device = &device; }
+Scene::Scene(gpu::Device& device) : m_impl(std::make_unique<detail::SceneImpl>()) {
+    static std::atomic<std::uint64_t> serials{0};
+    m_impl->device = &device;
+    m_impl->serial = ++serials;
+}
 Scene::Scene(Scene&& other) noexcept = default;
 Scene& Scene::operator=(Scene&& other) noexcept = default;
 Scene::~Scene() = default;

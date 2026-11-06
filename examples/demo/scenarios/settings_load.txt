@@ -1,0 +1,10 @@
+# Settings read back: the run starts where the last one left (no --section).
+
+expect settings_loaded == 1
+expect section == 1
+expect ui_scale == 1.25
+expect touch_ui == 1
+expect ui == 0
+tap H
+until ui == 1 1
+quit

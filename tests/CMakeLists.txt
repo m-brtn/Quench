@@ -401,14 +401,41 @@ if(NOT QUENCH_HEADLESS)
                 quench_add_capture_test(demo_hdr_on_vulkan IMAGE demo_hdr_on BACKEND vulkan APP quench_demo
                     ARGS ${demo_hdr_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment})
             endif()
+            # The compact layout of phones, in a phone-sized window: the bar and the controls sheet at the bottom
+            # (portrait) or on the right (landscape).
+            foreach(entry portrait:400x720 landscape:720x320)
+                string(REPLACE ":" ";" entry "${entry}")
+                list(GET entry 0 orientation)
+                list(GET entry 1 size)
+                quench_add_capture_test(demo_compact_${orientation}_metal IMAGE demo_compact_${orientation}
+                    BACKEND metal APP quench_demo ARGS --window ${size} --frame-size ${size} --gpu-debug
+                    --present-mode immediate --script ${demo_scenarios}/compact.txt --capture-at 1.5
+                    --audio-device null ENVIRONMENT MTL_DEBUG_LAYER=1)
+            endforeach()
+            # The menu by keyboard, gamepad, mouse and touch; the tour; section switching without growth (demo_cycle);
+            # the check mode, the settings and benchmark-all with their files in a fresh user directory.
             add_test(NAME demo_menu COMMAND quench_demo --window 960x540 --audio-device null
                      --script ${demo_scenarios}/menu.txt)
-            set_tests_properties(demo_menu PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
+            add_test(NAME demo_tour COMMAND quench_demo --window 960x540 --audio-device null --present-mode immediate
+                     --tour 0.1 --script ${demo_scenarios}/tour.txt)
+            add_test(NAME demo_cycle COMMAND quench_demo --window 960x540 --audio-device null --present-mode immediate
+                     --script ${demo_scenarios}/cycle.txt)
+            set_tests_properties(demo_menu demo_tour demo_cycle PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
+            # AddressSanitizer's quarantine keeps freed memory, which demo_cycle would count as growth.
+            if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=[^ ]*address")
+                set_tests_properties(demo_cycle PROPERTIES ENVIRONMENT "ASAN_OPTIONS=quarantine_size_mb=0")
+            endif()
+            foreach(kind checks settings benchmark)
+                add_test(NAME demo_${kind} COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:quench_demo>
+                         -DSCENARIOS=${demo_scenarios} -DUSER_DIR=${CMAKE_CURRENT_BINARY_DIR}/demo_user/${kind}
+                         -DKIND=${kind} -P ${CMAKE_CURRENT_SOURCE_DIR}/DemoUserFiles.cmake)
+            endforeach()
             add_test(NAME demo_version COMMAND quench_demo --version)
             set_tests_properties(demo_version PROPERTIES PASS_REGULAR_EXPRESSION
                                  "^Quench Demo ${PROJECT_VERSION}\n$")
             add_test(NAME demo_bad_section COMMAND quench_demo --section nowhere)
-            set_tests_properties(demo_bad_section PROPERTIES WILL_FAIL TRUE)
+            add_test(NAME demo_bad_flag COMMAND quench_demo --tour 2 --checks)
+            set_tests_properties(demo_bad_section demo_bad_flag PROPERTIES WILL_FAIL TRUE)
         endif()
     endif()
 endif()

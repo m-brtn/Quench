@@ -1,0 +1,34 @@
+# The compact layout (ctest: demo_compact_portrait and demo_compact_landscape, a phone-sized window): the bar, the
+# sections sheet, the controls sheet, About and Settings over the screen; the capture shows the controls sheet.
+
+wait 0.1
+expect compact == 1
+expect sheet == 0
+click @ui:next
+until section == 1 1
+click @ui:prev
+until section == 0 1
+click @ui:sections
+until sheet == 1 1
+click @menu:post
+until section == 3 1
+expect sheet == 0
+click @ui:sections
+until sheet == 1 1
+click @ui:about
+until about == 1 1
+wait 0.05
+expect sheet == 3
+expect licence_bytes > 15000
+click @ui:close
+until about == 0 1
+expect sheet == 0
+click @ui:controls
+until sheet == 2 1
+wait 0.05
+click @ui:reset_camera
+expect sheet == 2
+section materials
+wait 0.5
+until time >= 1.5 2
+quit

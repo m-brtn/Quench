@@ -8,8 +8,13 @@
 #include <quench/core/FileSystem.h>
 #include <quench/core/Log.h>
 
+#include <SDL3/SDL_process.h>
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
+
+#if QUENCH_PLATFORM_APPLE
+#include <mach/mach.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -43,6 +48,15 @@ bool App::deterministic() const { return m_state.options.deterministic() && !m_s
 bool App::scripted() const { return !m_state.options.script.empty(); }
 const FrameStats& App::stats() const { return m_state.stats; }
 void App::requestPassTiming() { m_state.passTimingRequested = true; }
+
+void App::beginPerf(std::string label) { m_state.perf = detail::PerfRegion{.label = std::move(label)}; }
+
+bool App::perfRunning() const { return m_state.perf.has_value(); }
+
+std::optional<PerfReport> App::endPerf() {
+    if (!m_state.perf) return std::nullopt;
+    return detail::finishPerf(m_state);
+}
 
 WindowRect App::safeArea() const {
     SDL_Rect rect{};
@@ -88,6 +102,41 @@ void App::stopTextInput() {
 void App::quit(int exitCode) {
     m_state.quitRequested = true;
     m_state.exitCode = std::max(m_state.exitCode, exitCode);
+}
+
+std::span<const std::string> App::arguments() const { return m_state.arguments; }
+
+bool App::canRelaunch() const {
+    return (QUENCH_PLATFORM_MACOS || QUENCH_PLATFORM_WINDOWS || QUENCH_PLATFORM_LINUX) && !m_state.program.empty();
+}
+
+Result<void> App::relaunch(std::span<const std::string> args) {
+    if (!canRelaunch()) return Error{"relaunch: not possible on this platform"};
+    std::vector<const char*> argv{m_state.program.c_str()};
+    for (const std::string& arg : args) argv.push_back(arg.c_str());
+    argv.push_back(nullptr);
+    const SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, argv.data());
+    SDL_SetBooleanProperty(props, SDL_PROP_PROCESS_CREATE_BACKGROUND_BOOLEAN, true);
+    SDL_Process* process = SDL_CreateProcessWithProperties(props);
+    SDL_DestroyProperties(props);
+    if (!process) return Error{std::format("relaunch {}: {}", m_state.program, SDL_GetError())};
+    SDL_DestroyProcess(process); // only the handle: the new process runs on
+    log::info("app", "relaunched {} with {} arguments; quitting", m_state.program, args.size());
+    quit(0);
+    return {};
+}
+
+std::optional<std::uint64_t> App::memoryFootprint() const {
+#if QUENCH_PLATFORM_APPLE
+    task_vm_info_data_t info{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
+        return std::nullopt;
+    return std::uint64_t(info.phys_footprint);
+#else
+    return std::nullopt;
+#endif
 }
 
 namespace detail {
@@ -422,6 +471,8 @@ AppState::~AppState() {
 
 SDL_AppResult init(AppState& s, int argc, char** argv) {
     std::vector<std::string_view> args(argv + (argc > 0 ? 1 : 0), argv + std::max(argc, 1));
+    if (argc > 0 && argv[0]) s.program = argv[0];
+    s.arguments.assign(args.begin(), args.end());
     Result<Options> options = parseOptions(args);
     if (!options) {
         std::fprintf(stderr, "%s\n%s", options.error().c_str(), optionsHelp());
@@ -454,8 +505,8 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
               SDL_VERSIONNUM_MAJOR(SDL_GetVersion()), SDL_VERSIONNUM_MINOR(SDL_GetVersion()),
               SDL_VERSIONNUM_MICRO(SDL_GetVersion()));
 
-    Result<std::unique_ptr<fs::Backend>> files =
-        makeSdlFileSystem({.org = s.desc.organization, .app = s.desc.name, .assetDir = s.desc.assetDir, .userDir = {}});
+    Result<std::unique_ptr<fs::Backend>> files = makeSdlFileSystem(
+        {.org = s.desc.organization, .app = s.desc.name, .assetDir = s.desc.assetDir, .userDir = s.options.userDir});
     if (!files) return fail(std::format("file system: {}", files.error()));
     fs::setBackend(std::move(*files));
     s.jobs = std::make_unique<JobSystem>(JobSystemDesc{.workerThreads = s.options.workerThreads});
@@ -486,6 +537,8 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     }
     startAudio(s);
 
+    // Read when the window is created (phones and tablets; desktop windows ignore it).
+    if (!s.options.orientation.empty()) SDL_SetHint(SDL_HINT_ORIENTATIONS, s.options.orientation.c_str());
     const int width = s.options.windowWidth > 0 ? s.options.windowWidth : s.desc.width;
     const int height = s.options.windowHeight > 0 ? s.options.windowHeight : s.desc.height;
     s.window.reset(

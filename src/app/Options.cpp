@@ -53,6 +53,8 @@ const char* optionsHelp() {
            "                       the display has HDR range); default: the game's choice, normally off\n"
            "  --hdr-headroom N     peak brightness of HDR output in multiples of paper white (N >= 1) instead of\n"
            "                       the display's (repeatable HDR captures)\n"
+           "  --orientation NAME   portrait, landscape or any: the screen orientations of the window on phones and\n"
+           "                       tablets (default: the app's); ignored on desktops\n"
            "  --worker-threads N   worker threads of the job system (default: hardware threads - 1; 0: jobs run on\n"
            "                       the main thread, as in builds without threads)\n"
            "  --asset-latency S    every asset load waits S seconds before it starts (to see the placeholders)\n"
@@ -63,6 +65,8 @@ const char* optionsHelp() {
            "  --audio-capture FILE.wav  no audio output: the mix runs offline on the frame clock (with --script or\n"
            "                       --capture: exactly one fixed step per frame) and is written as a 16-bit WAV at\n"
            "                       the end; relative paths go to the user directory\n"
+           "  --user-dir DIR       the user directory (settings, saves, captures) instead of the system's, created if\n"
+           "                       missing (tests and scripted runs)\n"
            "  --version            print the version and exit\n"
            "  --help               print this help and exit\n"
            "With --script or --capture every frame advances the app time by one fixed step (deterministic runs),\n"
@@ -98,13 +102,15 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
             if (Result<void> r = seconds(options.quitAfter); !r) return Error{r.error()};
         } else if (flag == "--capture-at") {
             if (Result<void> r = seconds(options.captureAt); !r) return Error{r.error()};
-        } else if (flag == "--capture" || flag == "--script" || flag == "--gpu-driver" || flag == "--audio-capture") {
+        } else if (flag == "--capture" || flag == "--script" || flag == "--gpu-driver" || flag == "--audio-capture" ||
+                   flag == "--user-dir") {
             Result<std::string_view> v = value();
             if (!v) return Error{v.error()};
             if (v->empty()) return Error{std::format("{} needs a value", flag)};
             (flag == "--capture"         ? options.capture
              : flag == "--script"        ? options.script
              : flag == "--audio-capture" ? options.audioCapture
+             : flag == "--user-dir"      ? options.userDir
                                          : options.gpuDriver) = *v;
         } else if (flag == "--audio-device") {
             Result<std::string_view> v = value();
@@ -153,6 +159,17 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
             if (!headroom || *headroom < 1.0 || *headroom > 1000.0)
                 return Error{std::format("--hdr-headroom: '{}' is not a number from 1 to 1000", *v)};
             options.hdrHeadroom = float(*headroom);
+        } else if (flag == "--orientation") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            if (*v == "portrait")
+                options.orientation = "Portrait";
+            else if (*v == "landscape")
+                options.orientation = "LandscapeLeft LandscapeRight";
+            else if (*v == "any")
+                options.orientation = "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown";
+            else
+                return Error{std::format("--orientation: '{}' is not portrait, landscape or any", *v)};
         } else if (flag == "--worker-threads") {
             Result<std::string_view> v = value();
             if (!v) return Error{v.error()};

@@ -39,6 +39,18 @@ quench_cook_assets(quench_demo_character SOURCE_DIR ${demo_character_dir}
     SKELETONS characters/mannequin.gltf
     ANIMATIONS characters/mannequin.gltf)
 
+# The licences the About panel shows, copied into the demo's assets.
+quench_cook_assets(quench_demo_licences SOURCE_DIR ${Quench_SOURCE_DIR} FILES LICENSE THIRD_PARTY_LICENSES)
+
+# The commit the About panel shows: demo_build_info.h, written at build time and only when the commit changes.
+set(demo_build_info_dir ${CMAKE_CURRENT_BINARY_DIR}/build_info)
+add_custom_target(quench_demo_build_info
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${Quench_SOURCE_DIR} -DOUTPUT=${demo_build_info_dir}/demo_build_info.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/BuildInfo.cmake
+    BYPRODUCTS ${demo_build_info_dir}/demo_build_info.h
+    COMMENT "Checking the demo's build info"
+    VERBATIM)
+
 quench_add_game(quench_demo
     NAME "Quench Demo"
     OUTPUT_NAME quench-demo
@@ -46,22 +58,30 @@ quench_add_game(quench_demo
     ICON icon/icon.png
     ORIENTATIONS all
     ASSETS assets
-    COOKED_ASSETS quench_demo_cooked quench_demo_sounds quench_demo_character
+    COOKED_ASSETS quench_demo_cooked quench_demo_sounds quench_demo_character quench_demo_licences
     SOURCES
-        AnimationSection.cpp
-        AssetsSection.cpp
-        AudioSection.cpp
+        Camera.cpp
+        Checks.cpp
         Common.cpp
         Demo.cpp
-        HdrSection.cpp
-        InputSection.cpp
-        MaterialsSection.cpp
-        PhysicsSection.cpp
-        PostSection.cpp
-        RayTracingSection.cpp
-        ShadowsSection.cpp
-        SkySection.cpp)
+        Modes.cpp
+        Settings.cpp
+        Ui.cpp
+        sections/AnimationSection.cpp
+        sections/AssetsSection.cpp
+        sections/AudioSection.cpp
+        sections/HdrSection.cpp
+        sections/InputSection.cpp
+        sections/MaterialsSection.cpp
+        sections/PhysicsSection.cpp
+        sections/PostSection.cpp
+        sections/RayTracingSection.cpp
+        sections/ShadowsSection.cpp
+        sections/SkySection.cpp)
 quench_configure_target(quench_demo)
 target_link_libraries(quench_demo PRIVATE quench_render quench_physics quench_animation)
+target_include_directories(quench_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${demo_build_info_dir})
+target_compile_definitions(quench_demo PRIVATE QUENCH_DEMO_CONFIG="$<CONFIG>")
+add_dependencies(quench_demo quench_demo_build_info)
 quench_add_shaders(quench_demo NAME demo_checker SOURCE shaders/checker.hlsl ENTRIES surface_vs:vertex surface_fs:fragment)
 quench_add_shaders(quench_demo NAME demo_markers SOURCE shaders/markers.hlsl ENTRIES marker_vs:vertex marker_fs:fragment)
