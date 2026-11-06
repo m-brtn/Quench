@@ -40,4 +40,23 @@ execute_process(COMMAND "${COOK}" texture "${SOURCES}/CREDITS.md" "${OUT}/bad.kt
 if(result EQUAL 0 OR EXISTS "${OUT}/bad.ktx2")
     message(FATAL_ERROR "a text file cooked as a texture did not fail")
 endif()
-message(STATUS "cook_cli: outputs identical, depfile complete, bad input rejected: ${error}")
+
+# Sounds (-DSOUNDS=<tests/audio/data>): a copy in the same format, a 16-bit WAV, and a text file that fails.
+execute_process(COMMAND "${COOK}" sound "${SOUNDS}/tone.flac" "${OUT}/tone.flac" --depfile "${OUT}/tone.d"
+                RESULT_VARIABLE result)
+execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files "${SOUNDS}/tone.flac" "${OUT}/tone.flac"
+                RESULT_VARIABLE different)
+if(NOT result EQUAL 0 OR different)
+    message(FATAL_ERROR "a FLAC cooked to FLAC is not a copy (${result})")
+endif()
+execute_process(COMMAND "${COOK}" sound "${SOUNDS}/tone.mp3" "${OUT}/tone.wav" --channels 2 RESULT_VARIABLE result)
+file(SIZE "${OUT}/tone.wav" size)
+if(NOT result EQUAL 0 OR size LESS 44100)
+    message(FATAL_ERROR "the MP3 cooked to a stereo WAV failed (${result}, ${size} bytes)")
+endif()
+execute_process(COMMAND "${COOK}" sound "${SOURCES}/CREDITS.md" "${OUT}/bad.wav" RESULT_VARIABLE result
+                ERROR_VARIABLE sound_error)
+if(result EQUAL 0 OR EXISTS "${OUT}/bad.wav")
+    message(FATAL_ERROR "a text file cooked as a sound did not fail")
+endif()
+message(STATUS "cook_cli: outputs identical, depfile complete, bad input rejected: ${error}${sound_error}")

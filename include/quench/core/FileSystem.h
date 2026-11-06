@@ -21,11 +21,30 @@ enum class Root { Assets, User };
 
 using Bytes = std::vector<std::uint8_t>;
 
+// A file opened for reading in pieces (streamed audio). One thread at a time, which may change between calls (a job,
+// then the next job).
+class Reader {
+public:
+    virtual ~Reader() = default;
+    virtual std::uint64_t size() const = 0;
+    // Up to `out.size()` bytes from `offset`: the count read, 0 at or past the end.
+    virtual Result<std::size_t> read(std::uint64_t offset, std::span<std::uint8_t> out) = 0;
+};
+
+// A reader over bytes in memory.
+std::unique_ptr<Reader> makeMemoryReader(Bytes bytes);
+
 class Backend {
 public:
     virtual ~Backend() = default;
     // `path` is already validated. Implementations must be safe to call from several threads.
     virtual Result<Bytes> read(Root root, std::string_view path) = 0;
+    // Opens a file for reading in pieces. The default reads the whole file into memory.
+    virtual Result<std::unique_ptr<Reader>> open(Root root, std::string_view path) {
+        Result<Bytes> bytes = read(root, path);
+        if (!bytes) return Error{bytes.error()};
+        return makeMemoryReader(std::move(bytes).value());
+    }
     virtual bool exists(Root root, std::string_view path) = 0;
     // Replaces the file as a whole (written next to it, then renamed), creating parent directories.
     virtual Result<void> writeUser(std::string_view path, std::span<const std::uint8_t> data) = 0;
@@ -50,6 +69,7 @@ std::string checkPath(std::string_view path);
 
 Result<Bytes> readAsset(std::string_view path);
 Result<std::string> readAssetText(std::string_view path);
+Result<std::unique_ptr<Reader>> openAsset(std::string_view path);
 bool assetExists(std::string_view path);
 std::optional<std::int64_t> assetModifiedTime(std::string_view path);
 

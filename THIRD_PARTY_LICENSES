@@ -258,6 +258,32 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
+miniaudio 0.11.25 (https://github.com/mackron/miniaudio, commit 9634bedb5b5a2ca38c1ee7108a9358a4e233f14d)
+---------------------------------------------------------------------------------------------------------
+
+Linked into quench_audio (WAV, FLAC and MP3 decoding; its built-in dr_wav, dr_flac and dr_mp3) and
+quench_audio_device (the playback device). Offered as public domain (Unlicense) or under MIT No Attribution; used
+under MIT No Attribution, which needs no notice, reproduced here for completeness:
+
+ALTERNATIVE 2 - MIT No Attribution
+Copyright 2025 David Reid
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
 Build-time tools (not linked into programs, not shipped)
 ========================================================
 
@@ -278,3 +304,4 @@ simdjson and simdutf files it downloads), links:
 - stb_image (stb commit 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5): MIT or public domain
 - bc7enc.cpp of bc7enc_rdo (above): MIT or public domain
 - meshoptimizer (above): MIT
+- miniaudio (above, through quench_audio): public domain or MIT No Attribution

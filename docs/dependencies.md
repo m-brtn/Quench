@@ -10,8 +10,8 @@ All are fetched as GitHub archives of a fixed commit with a SHA256 hash. Pinned 
 TrailForge's commits and hashes: Jolt Physics, SDL3, GLM and Dear ImGui (`cmake/Dependencies.cmake`; SDL and ImGui
 only when `QUENCH_HEADLESS` is off), the shader toolchain (`cmake/ShaderToolchain.cmake`) and, since stage 6,
 meshoptimizer, bc7enc_rdo and stb; stage 6 also pins enkiTS, xxHash and fastgltf, which no game uses (see "Added in
-stage 6"). miniaudio and cgltf are not pinned in the engine (cgltf is
-replaced by fastgltf in the cooker); their SHA256 values are in TrailForge's `cmake/Dependencies.cmake`. The engine builds ImGui with its SDL3 platform backend only and draws it through
+stage 6"); stage 7 pins miniaudio at TrailForge's commit (see "Added in stage 7"). cgltf is not pinned in the engine
+(it is replaced by fastgltf in the cooker); its SHA256 is in TrailForge's `cmake/Dependencies.cmake`. The engine builds ImGui with its SDL3 platform backend only and draws it through
 `quench::gpu` (`src/app/ImGuiRenderer.cpp`), so ImGui's SDL GPU renderer backend and TrailForge's iOS patch for it are
 not needed. GLM is configured with `GLM_FORCE_DEPTH_ZERO_TO_ONE` and `GLM_FORCE_RADIANS`; it is offered under the
 Happy Bunny License or MIT, and the engine uses it under MIT.
@@ -22,7 +22,7 @@ Happy Bunny License or MIT, and the engine uses it under MIT.
 | Jolt Physics | 5.6.0 | `e77f175595e64cb44218cc9d9d56fc365ad0e36a` | MIT | both | physics |
 | Dear ImGui | 1.92.9b | `f1cc2ae15e53a861a874c3034aae6798fde194ab` | MIT | both | debug UI, menus |
 | GLM | 1.0.3 | `8d1fd52e5ab5590e2c81768ace50c72bae28f2ed` | MIT | both | math |
-| miniaudio | 0.11.25 | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` | public domain or MIT-0 | TrailForge | audio device, WAV reading and offline WAV capture (the mixer is TrailForge's own) |
+| miniaudio | 0.11.25 | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` | public domain or MIT-0 | TrailForge; the engine since stage 7 | TrailForge: audio device, WAV reading and offline WAV capture (its mixer is its own); the engine: see "Added in stage 7" |
 | cgltf | 1.15 | `360db1a95480fe102ae9c69b27c5d101167ff5ba` | MIT | TrailForge | glTF loading |
 | meshoptimizer | 1.3 | `9e1f07b159d3cb777f1c67ed31fc11fd117986f4` | MIT | TrailForge | mesh optimization and simplification |
 
@@ -72,6 +72,39 @@ builds given a `QUENCH_HOST_COOK`, not the web build), and they are built only w
 None of the pins of the games changes: TrailForge keeps its own meshoptimizer, stb and bc7enc_rdo pins (the same
 commits), Ashfall uses none of these libraries.
 
+## Added in stage 7
+
+Audio ([Audio](audio.md)). One library, in `cmake/Dependencies.cmake`, listed with its licence in
+`THIRD_PARTY_LICENSES`; every configure downloads it (headless and web builds included, which use its decoders).
+
+| Library | Version | Commit | Licence | Linked into | Purpose |
+|---|---|---|---|---|---|
+| miniaudio | 0.11.25 | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` (TrailForge's), SHA256 `1a3a79b80fc6f0b0cc155e28b954a598e0ddfa2db64e2afa8466be88c476fa55` | public domain (Unlicense) or MIT-0 | `quench_audio` (decoders), `quench_audio_device` (device API), `quench_cook` (through `quench_audio`) | WAV, FLAC and MP3 decoding; the playback device (Core Audio on Apple platforms, a null backend for tests) |
+
+How it is built (`quench_miniaudio`, a static library from `miniaudio.c`): the engine, node graph, resource manager,
+waveform generation and encoders are compiled out (`MA_NO_ENGINE`, `MA_NO_NODE_GRAPH`, `MA_NO_RESOURCE_MANAGER`,
+`MA_NO_GENERATION`, `MA_NO_ENCODING`; the engine writes WAV itself, `quench::audio::encodeWav`). Headless and web
+builds add `MA_NO_DEVICE_IO` (the web build also `MA_NO_THREADING`). On Apple platforms only the Core Audio and null
+backends are compiled, with the frameworks linked at build time (`MA_NO_RUNTIME_LINKING`, miniaudio's advice for
+App Store builds); on iOS `miniaudio.c` is compiled as Objective-C (its backend uses `AVAudioSession`).
+
+Checked in the 0.11.25 source and in the tests: the decoders read WAV (16-bit PCM and 32-bit float), FLAC and MP3
+from memory (`audio.decode_wav_flac_mp3`); streams read through a miniaudio VFS over `quench::fs` readers
+(`audio.stream_*`, tested with WAV files only). The MP3 decoder (dr_mp3) does not
+remove the encoder delay and padding of the test file (12672 frames decoded for 11025 encoded at 22050 Hz), so
+gapless loops should be WAV or FLAC. The null backend runs a device thread that discards the mix
+(`audio_device.null_device`).
+
+**Games.** TrailForge builds its own `miniaudio_lib` from the same commit with another configuration (encoder on,
+FLAC off, every backend). When it moves to an engine with `quench_audio` (0.5.0), both libraries end up in its link
+(`quench_app` links `quench_audio` and `quench_audio_device`). Checked with a link experiment on the Mac (two static
+archives of `miniaudio.c` with the two configurations, outside both repositories): the linker loads one of the two
+objects for every `ma_*` symbol, without an error or a warning, so engine code compiled against one configuration
+may call the other (no FLAC; different device and context structures). TrailForge therefore has to drop
+`miniaudio_lib` and use the engine's audio (or link `quench_miniaudio`) when it moves to 0.5.0; its WAV capture uses
+`ma_encoder_*`, which the engine's build does not have (`quench::audio::encodeWav` or `--audio-capture` replace it).
+Ashfall does not use miniaudio.
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.
@@ -85,8 +118,8 @@ Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest
 | Tracy | 0.14.1 (2026-08-22) | BSD-3-Clause | CPU and GPU profiler (development builds) |
 | Flecs | 4.2.0 (2026-11-04) | MIT | optional ECS module for games that want one |
 
-Already pinned and kept: miniaudio (audio device and capture, pinned in the engine with the audio stage), Dear ImGui
-(diagnostics).
+Already pinned and kept: Dear ImGui (diagnostics). miniaudio was pinned with stage 7 (above). Vorbis decoding
+(`stb_vorbis`) is not planned until a game needs `.ogg` files.
 
 ## Verified capabilities and caveats
 

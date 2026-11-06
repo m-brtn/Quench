@@ -3,7 +3,8 @@
 Stage 6 of the [Roadmap](roadmap.md): the engine's job system (`quench_core`), the asset system (`quench_assets`,
 with the render integration `SceneAssets` in `quench_render`) and the asset cooker `quench_cook` (a host tool). The
 engine demo's "Assets" section shows them ([Engine demo](demo.md)). Shader hot reload is not built yet (see
-[Limitations](#limitations)).
+[Limitations](#limitations)). Stage 7 adds sounds as an asset type and the cook's `sound` command
+([Audio](audio.md)).
 
 ## Job system
 
@@ -73,8 +74,9 @@ quench::render::ModelInstanceId placed = sceneAssets.addModel(crate, transform);
 - **Stats**: `stats()` gives counts (loading, ready, failed, queued, decoding, waiting for upload), totals (loads,
   reloads, evictions) and per type the cached count, memory and budget; `forEach` lists the assets.
 - **A new asset type** derives from `Asset` (`decode` on a job, `uploadBytes`, `finish` and `unload` on the main
-  thread, `residentMemory`) and is registered with `registerType<T>(name, factory, budget)`. Sounds (stage 7) and
-  animations are meant to be such types; none exists yet.
+  thread, `residentMemory`) and is registered with `registerType<T>(name, factory, budget)`. Sounds are one
+  (`audio::SoundAsset`, type `"sound"`, registered by `audio::AudioSystem`: decoded to float PCM on the load job, CPU
+  memory only, budget `AudioSettings::soundBudget`; [Audio](audio.md#sounds)); animations are meant to be another.
 
 ### Textures and models in a scene
 
@@ -116,7 +118,9 @@ The cook (`tools/cook/`) turns source files into cooked files. It is a host tool
 quench_cook texture tiles/stone.png assets/tiles/stone.ktx2 [--format bc7|rgba8] [--linear] [--no-mips] [--max-size N]
 quench_cook model models/crate.gltf assets/models/crate.qmodel --asset-root assets [--lods N] [--lod-ratio R]
             [--lod-error E] [--scale S]
-# both: [--depfile FILE] [--verbose]; --version, --help
+quench_cook sound sounds/hit.flac assets/sounds/hit.flac            # checked, copied as it is
+quench_cook sound sounds/engine.mp3 assets/sounds/engine.wav [--channels 1|2]
+# all: [--depfile FILE] [--verbose]; --version, --help
 ```
 
 - **Textures**: PNG and JPEG (stb_image) or KTX2 (block formats are passed through; RGBA8 is cooked again with the
@@ -130,6 +134,11 @@ quench_cook model models/crate.gltf assets/models/crate.qmodel --asset-root asse
   fetch, and `meshopt_simplify` makes the levels of detail (each about `--lod-ratio` of the one before, while the
   error stays below `--lod-error`). The model's images are cooked next to it as `<model>_<image>.ktx2` (sRGB) or
   `<model>_<image>_linear.ktx2` (data), and the materials name them by asset path (relative to `--asset-root`).
+- **Sounds**: WAV, FLAC or MP3 (miniaudio's decoders). The file is decoded completely to check it (a file that does
+  not decode, or decodes to no frames, fails the cook). An output with the input's extension gets the input's bytes;
+  a `.wav` output from another format, or with `--channels 1|2` (mix down to mono or up to stereo), is a 16-bit PCM
+  WAV at the source's sample rate. No resampling, normalization or Vorbis output: the mixer resamples per voice, and
+  files of other formats are refused ("a sound is cooked to its own format or to .wav").
 - **Deterministic**: the output depends only on the inputs and the options (no time stamps, no thread order; a test
   cooks with 0 and 3 worker threads and compares). Files are written to a temporary file and renamed, so a running
   game with hot reload never reads half a file; a model's textures are rewritten only when they change.
@@ -143,14 +152,15 @@ quench_cook_assets(my_game_cooked SOURCE_DIR assets_src
     TEXTURES tiles/stone.png tiles/grass.png
     DATA_TEXTURES masks/splat.png          # linear
     MODELS models/crate.gltf models/rock.glb
+    SOUNDS sounds/hit.wav music/theme.mp3  # checked, same name
     [OUTPUT_DIR dir] [TEXTURE_FORMAT bc7|rgba8] [TEXTURE_MAX_SIZE n] [MODEL_OPTIONS --lods 2 ...])
 quench_add_game(my_game ... ASSETS assets COOKED_ASSETS my_game_cooked)
 ```
 
 `quench_cook_assets` (`cmake/QuenchCook.cmake`) adds a target that cooks each file into the same relative path (with
-`.ktx2` or `.qmodel`). `quench_add_game(... COOKED_ASSETS ...)` merges the cooked directories with `ASSETS` into the
-game's `assets/`: next to the executable on macOS, into the bundle on iOS (Ninja), and through a staging directory
-in Xcode projects. On macOS the copy is `copy_directory_if_different`: rebuilding the game's `<game>_assets` target
+`.ktx2` or `.qmodel`; sounds keep their name and format). `quench_add_game(... COOKED_ASSETS ...)` merges the
+cooked directories with `ASSETS` into the game's `assets/`: next to the executable on macOS, into the bundle on iOS
+(Ninja), and through a staging directory in Xcode projects. On macOS the copy is `copy_directory_if_different`: rebuilding the game's `<game>_assets` target
 while the game runs with `--hot-reload` cooks what changed and the game reloads exactly those files.
 
 The cook is built from source in host builds. Cross builds (iOS) take it from the `host-tools` preset through
@@ -163,13 +173,16 @@ built only when the cook is (`EXCLUDE_FROM_ALL`).
 The demo's sources (`examples/demo/assets_src/`) are procedural, written by `tools/assets/make_demo_assets.py`
 (CC0, `CREDITS.md` there): eight 64 x 64 tile patterns, a crate (glTF, external buffer and PNG), a pillar (GLB with
 an embedded JPEG and PNG) and a ball (glTF, data URI, vertex colors, no normals). `examples/demo/assets/` adds a
-deliberately broken `.qmodel`.
+deliberately broken `.qmodel`. The demo's sounds are not in git: `tools/assets/make_demo_sounds.py` (Python standard
+library, procedural, CC0) writes five WAV files into the build tree at build time and `quench_cook_assets(...
+SOUNDS ...)` checks and copies them ([Audio](audio.md#demo-and-tests)).
 
 Tests: `core.jobs_*` (also without workers and under stress), `physics.*` (Jolt on the job system, single-threaded,
 two worlds on one pool, worker priority), `assets.*` (the manager with a test asset type, KTX2,
-BC7 decoding, `.qmodel`, the streaming grid), `cook.*` and `cook_cli`, `render.scene_assets_*` and
-`render_vulkan.scene_assets_*` (pixels of placeholders, loaded textures and models, failures; Vulkan through
-MoltenVK), and the demo's `demo_assets_metal` / `demo_assets_vulkan`.
+BC7 decoding, `.qmodel`, the streaming grid), `audio.sound_assets` (the sound type: loading, plays of a loading
+sound, missing and broken files, a late one-shot dropped), `cook.*` and `cook_cli` (sounds included),
+`render.scene_assets_*` and `render_vulkan.scene_assets_*` (pixels of placeholders, loaded textures and models,
+failures; Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_assets_vulkan`.
 
 ## Limitations
 

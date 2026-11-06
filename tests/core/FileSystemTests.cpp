@@ -41,6 +41,31 @@ QUENCH_TEST(fs_read_asset) {
     fs::setBackend(nullptr);
 }
 
+QUENCH_TEST(fs_open_asset) {
+    const std::filesystem::path dir = testDir("fs_open_asset");
+    std::ofstream(dir / "assets" / "models" / "rock.txt", std::ios::binary) << "granite\n";
+    fs::setBackend(fs::makeStdBackend(dir / "assets", {}));
+    Result<std::unique_ptr<fs::Reader>> reader = fs::openAsset("models/rock.txt");
+    REQUIRE(reader, "open: %s", reader.error().c_str());
+    CHECK((*reader)->size() == 8, "size %llu", (unsigned long long)(*reader)->size());
+    std::uint8_t piece[4] = {};
+    Result<std::size_t> got = (*reader)->read(4, piece);
+    CHECK(got && *got == 4 && std::string(piece, piece + 4) == "ite\n", "read at 4");
+    got = (*reader)->read(1, std::span(piece, 2));
+    CHECK(got && *got == 2 && std::string(piece, piece + 2) == "ra", "read at 1 after a later read");
+    got = (*reader)->read(7, piece);
+    CHECK(got && *got == 1, "short read at the end: %zu", got ? *got : 0);
+    got = (*reader)->read(100, piece);
+    CHECK(got && *got == 0, "read past the end");
+    CHECK(!fs::openAsset("models/none.txt"), "a missing file opened");
+    CHECK(!fs::openAsset("../x"), "'..' accepted");
+
+    std::unique_ptr<fs::Reader> memory = fs::makeMemoryReader({1, 2, 3});
+    got = memory->read(1, piece);
+    CHECK(memory->size() == 3 && got && *got == 2 && piece[0] == 2 && piece[1] == 3, "memory reader");
+    fs::setBackend(nullptr);
+}
+
 QUENCH_TEST(fs_write_user) {
     const std::filesystem::path dir = testDir("fs_write_user");
     fs::setBackend(fs::makeStdBackend(dir / "assets", dir / "user"));

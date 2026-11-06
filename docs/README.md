@@ -3,15 +3,18 @@
 Stages 1 to 3 and 5 of the [Roadmap](roadmap.md) are implemented, stage 4 (games on the engine) for one game, and
 stage 6 except shader hot reload (version 0.4.0): the core and physics modules, the job
 system, the asset system and the asset cooker, the GPU layer over SDL GPU, the app shell with HDR display output, the
-render module (a retained scene and the standard frame), the sample, the engine demo and the game template. Where a
+render module (a retained scene and the standard frame), the sample, the engine demo and the game template. Stage 7
+(audio: the mixer, 3D sound, device output, offline captures) is in the working tree, not released yet; it has not
+run on the iPhone or been listened to. Where a
 document describes something planned, it says so. [Migration](migration.md) describes the engine code in the two
 games, what has moved and what is not moved yet.
 
 | Document | Contents |
 |---|---|
-| [Architecture](architecture.md) | Modules and targets, the graphics layer, rendering, shaders, main loop, files, threads, assets, animation |
+| [Architecture](architecture.md) | Modules and targets, the graphics layer, rendering, shaders, main loop, files, threads, assets, audio, animation |
 | [App shell](app.md) | The game interface, input, ImGui, command line flags, scenarios, HDR output, captures and golden images, `quench_add_game()`, iOS runs |
 | [Jobs, assets and the cook](assets.md) | The job system, asset IDs and the manager, budgets and placeholders, textures and models in a scene, streaming by distance, hot reload, the cooked formats, `quench_cook` and `quench_cook_assets()`, limitations |
+| [Audio](audio.md) | The mixer, buses, sounds and streams, generators, 3D sound, voice limit, the audio thread, device output and the iOS audio session, offline mixing and captures, `audio_measure`, the demo section and tests, platforms, limitations |
 | [Render module](render.md) | The retained scene, the standard frame, sky and sun, tone mapping and HDR output, fallbacks, game passes, surface shaders, the shader library, limitations |
 | [Engine demo](demo.md) | The demo's sections and controls, its checks and golden images, its benchmark, packaged builds (`tools/package_demo.sh`) |
 | [Performance](performance.md) | The benchmark, how to run and compare it, budgets per device |

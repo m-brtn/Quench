@@ -3,11 +3,13 @@
 // The app shell: the engine owns main (SDL main callbacks, src/app/Main.cpp) and drives a Game. A game executable
 // defines quench::app::createGame() and is built with quench_add_game() (cmake/QuenchGame.cmake).
 //
-// Per frame: events -> input -> scenario -> fixed simulation ticks -> update -> ImGui -> render -> ImGui on top ->
-// present. Rendering is skipped while the app is in the background (iOS) or the window is minimized.
+// Per frame: events -> input -> scenario -> fixed simulation ticks -> update -> audio -> ImGui -> render -> ImGui on
+// top -> present. Rendering is skipped while the app is in the background (iOS) or the window is minimized.
 
 #include <quench/app/ImGuiRenderer.h> // imguiTexture()
 #include <quench/assets/AssetManager.h>
+#include <quench/audio/AudioSystem.h>
+#include <quench/audio/Device.h>
 #include <quench/core/Jobs.h>
 #include <quench/core/Result.h>
 #include <quench/gpu/Device.h>
@@ -47,7 +49,9 @@ struct AppDesc {
     int height = 720;
     double fixedStep = 1.0 / 120.0; // simulation tick
     gpu::PresentMode presentMode = gpu::PresentMode::Vsync;
-    HdrMode hdr = HdrMode::Off; // --hdr overrides it
+    HdrMode hdr = HdrMode::Off;    // --hdr overrides it
+    audio::AudioSettings audio;    // the mixer: sample rate, voices, buses
+    audio::DeviceDesc audioDevice; // the output and the iOS audio session category; --audio-device overrides the name
 };
 
 // The target of one frame. The game records its passes into `commands`; the engine draws ImGui on top and presents.
@@ -150,6 +154,12 @@ public:
     // Game::update; created and destroyed like jobs(). Asset types are registered by the modules that use them
     // (render::SceneAssets: textures and models).
     assets::AssetManager& assets();
+    // The engine's mixer (AppDesc::audio), updated every frame after Game::update; created after assets() and
+    // destroyed before it, after the game's destructor (AssetRef<SoundAsset> must be gone by then).
+    audio::AudioSystem& audio();
+    // The audio output; null when the mix runs offline on the frame clock instead: --no-audio, --audio-capture, or
+    // no device could be opened. It stops in the background and starts again in the foreground.
+    audio::Device* audioDevice();
     SDL_Window* window() const;
     Input& input();
     const Input& input() const;

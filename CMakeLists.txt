@@ -79,6 +79,21 @@ add_library(quench_assets STATIC
 quench_configure_target(quench_assets)
 target_link_libraries(quench_assets PUBLIC quench_core quench_glm PRIVATE quench_xxhash quench_meshoptimizer
                                                                           quench_bc7decomp)
+
+# ------------------------------------------------------------------ audio
+# Headless: the mixer (buses, voices, streams, 3D sound), sounds as assets, WAV writing and signal analysis. The device
+# (miniaudio's playback API and the iOS audio session) is quench_audio_device below.
+add_library(quench_audio STATIC
+    src/audio/Analysis.cpp
+    src/audio/AudioSystem.cpp
+    src/audio/Decoder.cpp
+    src/audio/Mixer.cpp
+    src/audio/Sound.cpp
+    src/audio/Spatial.cpp
+    src/audio/Wav.cpp)
+quench_configure_target(quench_audio)
+target_link_libraries(quench_audio PUBLIC quench_core quench_assets quench_glm PRIVATE quench_miniaudio)
+
 # The asset cooker (host tool, tools/cook) and quench_cook_assets().
 include(cmake/QuenchCook.cmake)
 
@@ -108,6 +123,16 @@ if(NOT QUENCH_HEADLESS)
         QUENCH_SHADERS_MSL=$<AND:$<BOOL:${APPLE}>,$<NOT:$<BOOL:${QUENCH_SHADER_METAL_OK}>>>
         QUENCH_SHADERS_DXIL=$<BOOL:${QUENCH_SHADER_DXC}>)
 
+    # ------------------------------------------------------------------ audio device
+    # miniaudio's playback device pulling the mix of quench_audio; on iOS also the audio session (AVAudioSession).
+    add_library(quench_audio_device STATIC src/audio/Device.cpp)
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        target_sources(quench_audio_device PRIVATE src/audio/AudioSessionApple.m)
+        target_link_libraries(quench_audio_device PRIVATE "-framework AVFoundation")
+    endif()
+    quench_configure_target(quench_audio_device)
+    target_link_libraries(quench_audio_device PUBLIC quench_audio PRIVATE quench_miniaudio)
+
     # ------------------------------------------------------------------ app
     # The app shell: the game interface, window, lifecycle, input, ImGui, scenarios, captures, and the SDL backends of
     # the core services (files, log). main() itself is in quench_main, linked by quench_add_game().
@@ -133,8 +158,8 @@ if(NOT QUENCH_HEADLESS)
         endif()
     endif()
     quench_configure_target(quench_app)
-    target_link_libraries(quench_app PUBLIC quench_core quench_assets quench_gpu quench_glm quench_imgui
-                                            SDL3::SDL3-static)
+    target_link_libraries(quench_app PUBLIC quench_core quench_assets quench_audio quench_audio_device quench_gpu
+                                            quench_glm quench_imgui SDL3::SDL3-static)
     target_compile_definitions(quench_app PRIVATE QUENCH_VERSION="${PROJECT_VERSION}")
     quench_add_shaders(quench_app NAME imgui SOURCE src/app/shaders/imgui.hlsl
         ENTRIES imgui_vs:vertex imgui_fs:fragment fullscreen_vs:vertex ui_composite_fs:fragment)

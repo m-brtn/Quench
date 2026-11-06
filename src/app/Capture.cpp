@@ -86,17 +86,18 @@ Result<double> writePng(std::string_view path, std::span<const std::byte> pixels
         SDL_GetPointerProperty(SDL_GetIOProperties(memory), SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, nullptr));
     std::vector<std::uint8_t> png(data, data + (data && size > 0 ? size : 0));
     SDL_CloseIO(memory);
+    if (Result<void> written = writeCaptureFile(path, png); !written) return Error{written.error()};
+    return peak;
+}
 
-    if (!std::filesystem::path(path).is_absolute()) {
-        if (Result<void> written = fs::writeUser(path, png); !written) return Error{written.error()};
-        return peak;
-    }
+Result<void> writeCaptureFile(std::string_view path, std::span<const std::uint8_t> bytes) {
+    if (!std::filesystem::path(path).is_absolute()) return fs::writeUser(path, bytes);
     SDL_IOStream* file = SDL_IOFromFile(std::string(path).c_str(), "wb");
     if (!file) return Error{std::format("cannot open: {}", SDL_GetError())};
-    const bool written = SDL_WriteIO(file, png.data(), png.size()) == png.size();
+    const bool written = SDL_WriteIO(file, bytes.data(), bytes.size()) == bytes.size();
     const bool closed = SDL_CloseIO(file);
     if (!written || !closed) return Error{std::format("write: {}", SDL_GetError())};
-    return peak;
+    return {};
 }
 
 } // namespace quench::app::detail

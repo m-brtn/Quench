@@ -5,9 +5,9 @@ Design of the engine. Stages 1 to 3 exist (CMake, `quench_core`, `quench_physics
 sample, the game template; the current layout is in [AGENTS.md](../AGENTS.md#layout)), stage 5: `quench_render`
 (see "Rendering" and [Render module](render.md)) and the engine demo ([Engine demo](demo.md)), and stage 6 apart from
 shader hot reload: the job system, `quench_assets` and `quench_cook` (see "Threads and jobs", "Assets" and
-[Jobs, assets and the cook](assets.md)); everything else here describes the intended structure and the reasons for
-it. The binding rules are in [AGENTS.md](../AGENTS.md). All documentation:
-[index](README.md).
+[Jobs, assets and the cook](assets.md)), and stage 7: `quench_audio` and `quench_audio_device` (see "Audio" and
+[Audio](audio.md)); everything else here describes the intended structure and the reasons for it. The binding rules
+are in [AGENTS.md](../AGENTS.md). All documentation: [index](README.md).
 
 ## Planned layout
 
@@ -23,7 +23,8 @@ src/<module>/              sources and internal headers, per module:
   assets/     asset IDs, asset manager and cache, cooked format readers, streaming
   anim/       ozz runtime, state machines, blending, events, IK, attachments
   nav/        Recast navmesh building, Detour queries and crowds
-  audio/      mixer (no device), device and offline capture (miniaudio)
+  audio/      mixer, sounds, streams, 3D sound, WAV writer, analysis (headless); the playback device and the
+              iOS audio session (miniaudio)
   gpu/        the GPU layer (resources, pipelines, command recording, captures, timing) and its backends:
               sdlgpu/, metal/ (planned)
   render/     retained scene, standard frame, render modules (shadows, post, screen-space effects, sky, particles,
@@ -54,13 +55,14 @@ docs/releases/        release notes per version
 | `quench_assets` | IDs, manager, cache, cooked formats (KTX2, `.qmodel`), BC7 decoding, streaming grid | core, GLM, xxHash, meshoptimizer, bc7decomp | yes |
 | `quench_anim` | animation runtime and state machines | core, ozz | yes |
 | `quench_nav` | navmesh and crowds | core, Recast & Detour | yes |
-| `quench_audio` | mixer; device in a separate target | core, miniaudio | mixer yes |
+| `quench_audio` | mixer, buses, sounds (the `"sound"` asset type), streams, generators, 3D sound, WAV writer, signal analysis | core, assets, GLM, miniaudio (decoders) | yes |
+| `quench_audio_device` | playback device, iOS audio session | audio, miniaudio (device API), Core Audio, AVFoundation on iOS | no |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
 | `quench_gpu` | GPU layer and backends | core, gpu_shaders, SDL3 | no |
 | `quench_render` | retained scene, standard frame, render modules, `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, GLM (later anim) | no |
-| `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log, the app's job system and asset manager | core, assets, gpu, GLM, ImGui, SDL3 (later render, audio) | no |
+| `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log, the app's job system and asset manager | core, assets, audio, audio_device, gpu, GLM, ImGui, SDL3 | no |
 | `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
-| `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files; `quench_cook_assets()` | assets, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
+| `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files, sounds checked or converted to WAV; `quench_cook_assets()` | assets, audio, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
 
 The `QUENCH_HEADLESS` option (the `headless` preset, forced on for Emscripten) builds only the headless targets and
 does not fetch SDL.
@@ -229,15 +231,23 @@ slice per frame, so loading still makes progress without blocking. The app owns 
 `PhysicsWorld(JobSystem*)` runs Jolt's jobs on it (with `nullptr`, on the thread that calls `step()`). Details:
 [Jobs, assets and the cook](assets.md).
 
+The one exception is the audio device's callback thread (stage 7). The operating system's audio API owns it (Core
+Audio through miniaudio) and calls it on its own schedule, every few milliseconds, with a real-time deadline, so it
+cannot be a job. It only mixes (`AudioSystem::render`): no allocation, freeing, locks, logging, file access or waits.
+The game thread talks to it through single-producer single-consumer queues of plain commands and events and reads
+its statistics from atomics; decoding and stream refills run on the job system. Its priority is set by the system,
+not by `raiseWorkerThreadPriority()`. Offline mixing (tests, `--audio-capture`, `--no-audio`) runs the same code on
+the main thread instead. Details: [Audio](audio.md#threads).
+
 ## Assets
 
 As built in stage 6 ([Jobs, assets and the cook](assets.md)):
 
 - **IDs**: `AssetId`, XXH64 of the asset path as `quench::fs` takes it, identical on every platform and in the cook.
-- **Manager**: `AssetManager` for every asset type (textures and models in `quench_render`; sounds and animations are
-  later types of the same manager): reference-counted `AssetRef`s, states loading, ready and failed, a placeholder
-  until ready and after a failure (one log line, never a crash), CPU and GPU bytes per type with budgets, and LRU
-  eviction of unreferenced assets over budget.
+- **Manager**: `AssetManager` for every asset type (textures and models in `quench_render`, sounds in
+  `quench_audio`; animations are a later type of the same manager): reference-counted `AssetRef`s, states loading,
+  ready and failed, a placeholder until ready and after a failure (one log line, never a crash), CPU and GPU bytes
+  per type with budgets, and LRU eviction of unreferenced assets over budget.
 - **Asynchronous loading**: files are read through `quench::fs` and decoded on jobs; the main-thread part (the GPU
   upload) runs in `AssetManager::update()` under a byte budget per frame, so a frame never waits for a load.
 - **Cooked formats**: games ship cooked files: KTX2 textures (BC7 or RGBA8 with mips; BC7 is decoded to RGBA8 on a
@@ -252,6 +262,16 @@ As built in stage 6 ([Jobs, assets and the cook](assets.md)):
 - **Streaming by distance**: `StreamingGrid`, cells on a grid around any number of focus points with a load and a
   larger keep radius, nearest first; generalized from TrailForge's `TerrainTiles` (physics terrain tiles). What a cell
   holds is the game's (typically `AssetRef`s loaded with the distance as priority).
+
+## Audio
+
+As built in stage 7 ([Audio](audio.md)): `quench_audio` is a headless mixer (32-bit float stereo, 48 kHz by
+default) that does not open a device. Something pulls the mix through `AudioSystem::render`: the device of
+`quench_audio_device` (miniaudio's playback API; Core Audio on Apple platforms) or an offline loop on the main thread
+(`mixOffline`: tests, `--audio-capture`, `--no-audio`, a missing device). Sounds are an asset type of the
+`AssetManager`, decoded on jobs; music is streamed through `quench::fs` readers and decoded on jobs ahead of the
+mix. The app owns one `AudioSystem` (`App::audio()`) and the device, and pauses the device in the background. The
+browser's audio output (Web Audio) is not built: the mixer is checked under Node.js only.
 
 ## Animation
 

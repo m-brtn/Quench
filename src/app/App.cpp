@@ -4,6 +4,7 @@
 
 #include <quench/app/SdlFileSystem.h>
 #include <quench/app/SdlLog.h>
+#include <quench/audio/Wav.h>
 #include <quench/core/FileSystem.h>
 #include <quench/core/Log.h>
 
@@ -23,6 +24,8 @@ const AppDesc& App::desc() const { return m_state.desc; }
 gpu::Device& App::device() { return *m_state.device; }
 JobSystem& App::jobs() { return *m_state.jobs; }
 assets::AssetManager& App::assets() { return *m_state.assets; }
+audio::AudioSystem& App::audio() { return *m_state.audio; }
+audio::Device* App::audioDevice() { return m_state.audioDevice.get(); }
 SDL_Window* App::window() const { return m_state.window.get(); }
 Input& App::input() { return m_state.input; }
 const Input& App::input() const { return m_state.input; }
@@ -261,6 +264,54 @@ void updateStats(AppState& s, double realDt, double cpuMs, int ticks) {
     }
 }
 
+// The mixer and its output: a device, or offline mixing on the frame clock (--no-audio, --audio-capture, or no
+// device could be opened).
+void startAudio(AppState& s) {
+    s.audio = std::make_unique<audio::AudioSystem>(*s.jobs, s.assets.get(), s.desc.audio);
+    // Only scenarios that measure the mix keep it: the copy costs the frame thread several microseconds.
+    if (s.scenario &&
+        std::ranges::any_of(s.scenario->commands(), [](const ScenarioCommand& c) { return c.op == "audio_measure"; }))
+        s.audio->setMonitor(kAudioMonitorSeconds);
+    std::string offline = s.options.noAudio ? "--no-audio" : !s.options.audioCapture.empty() ? "--audio-capture" : "";
+    if (offline.empty()) {
+        audio::DeviceDesc desc = s.desc.audioDevice;
+        if (s.options.audioDevice) desc.name = *s.options.audioDevice;
+        Result<std::unique_ptr<audio::Device>> device = audio::Device::open(*s.audio, desc);
+        if (device) {
+            s.audioDevice = std::move(*device);
+        } else {
+            log::warning("audio", "no audio output ({}): the mix runs offline", device.error());
+            offline = "no device";
+        }
+    }
+    if (!offline.empty()) {
+        s.audio->setOffline(true);
+        log::info("audio", "offline mixing on the frame clock ({}), {} Hz", offline, s.audio->sampleRate());
+    }
+}
+
+void updateAudio(AppState& s, double frameDt) {
+    s.audio->update();
+    if (s.audioDevice)
+        s.audioDevice->update();
+    else
+        s.audio->mixOffline(frameDt, s.options.audioCapture.empty() ? nullptr : &s.audioCapture);
+}
+
+void stopAudio(AppState& s) {
+    s.audioDevice.reset();
+    if (!s.options.audioCapture.empty() && s.audio) {
+        const fs::Bytes wav = audio::encodeWav(s.audioCapture, audio::kMixChannels, s.audio->sampleRate());
+        if (Result<void> written = writeCaptureFile(s.options.audioCapture, wav); written)
+            log::info("audio", "captured {} ({:.3f} s, {} Hz stereo)", s.options.audioCapture,
+                      double(s.audioCapture.size() / audio::kMixChannels) / s.audio->sampleRate(),
+                      s.audio->sampleRate());
+        else
+            log::error("audio", "--audio-capture {}: {}", s.options.audioCapture, written.error());
+    }
+    s.audioCapture = {};
+}
+
 } // namespace
 
 namespace {
@@ -407,6 +458,7 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
         s.scenario = std::move(*parsed);
         log::info("scenario", "{}: {} commands", s.options.script, s.scenario->commands().size());
     }
+    startAudio(s);
 
     const int width = s.options.windowWidth > 0 ? s.options.windowWidth : s.desc.width;
     const int height = s.options.windowHeight > 0 ? s.options.windowHeight : s.desc.height;
@@ -461,9 +513,11 @@ SDL_AppResult iterate(AppState& s) {
 
     const bool minimized = (SDL_GetWindowFlags(s.window.get()) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) != 0;
     if (s.background || minimized) {
-        // No GPU work in the background (iOS forbids it); the clock does not advance meanwhile.
+        // No GPU work in the background (iOS forbids it); the clock does not advance meanwhile. A device that still
+        // plays (a minimized window) keeps its streams fed.
         s.input.endEvents(false, false);
         s.input.beginEvents();
+        if (s.audioDevice && s.audioDevice->running()) updateAudio(s, 0.0);
         SDL_Delay(16);
         s.lastCounter = SDL_GetPerformanceCounter();
         return SDL_APP_CONTINUE;
@@ -491,6 +545,7 @@ SDL_AppResult iterate(AppState& s) {
     s.time += frameDt;
     s.assets->update();
     s.game->update(s.app, frameDt);
+    updateAudio(s, frameDt);
 
     ImGui_ImplSDL3_NewFrame();
     ImGuiIO& imguiIo = ImGui::GetIO();
@@ -530,6 +585,7 @@ SDL_AppResult event(AppState& s, SDL_Event& e) {
     case SDL_EVENT_LOW_MEMORY: log::warning("app", "low memory"); break;
     case SDL_EVENT_WILL_ENTER_BACKGROUND:
         s.background = true;
+        if (s.audioDevice) s.audioDevice->suspend();
         log::info("app", "entering background");
         break;
     case SDL_EVENT_DID_ENTER_FOREGROUND:
@@ -537,6 +593,7 @@ SDL_AppResult event(AppState& s, SDL_Event& e) {
         s.background = false;
         s.clock.reset();
         s.lastCounter = SDL_GetPerformanceCounter();
+        if (s.audioDevice) s.audioDevice->resume();
         log::info("app", "back in foreground");
         break;
     case SDL_EVENT_WINDOW_HDR_STATE_CHANGED:
@@ -551,9 +608,12 @@ SDL_AppResult event(AppState& s, SDL_Event& e) {
 
 void quit(AppState& s, SDL_AppResult result) {
     if (s.device) s.device->waitIdle();
+    // The device thread stops before the game goes: its generators may read game state.
+    stopAudio(s);
     if (s.gameStarted) s.game->shutdown(s.app);
     s.gameStarted = false;
     s.game.reset();
+    s.audio.reset();
     // Loads and jobs a game left behind may still read files: they finish before the file system backend goes.
     s.assets.reset();
     s.jobs.reset();

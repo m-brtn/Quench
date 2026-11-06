@@ -7,6 +7,21 @@ quench_cook_assets(quench_demo_cooked
     MODELS
         models/ball.gltf models/crate.gltf models/pillar.glb)
 
+# The Audio section's sounds: procedural WAV files written at build time (tools/assets/make_demo_sounds.py), checked
+# and copied by quench_cook into the demo's assets/sounds.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(demo_sounds motor.wav siren.wav ping.wav music_a.wav music_b.wav)
+set(demo_sounds_dir ${CMAKE_CURRENT_BINARY_DIR}/sounds_src)
+list(TRANSFORM demo_sounds PREPEND ${demo_sounds_dir}/sounds/ OUTPUT_VARIABLE demo_sound_files)
+add_custom_command(
+    OUTPUT ${demo_sound_files}
+    COMMAND ${Python3_EXECUTABLE} ${Quench_SOURCE_DIR}/tools/assets/make_demo_sounds.py ${demo_sounds_dir}/sounds
+    DEPENDS ${Quench_SOURCE_DIR}/tools/assets/make_demo_sounds.py
+    COMMENT "Writing the demo's sounds"
+    VERBATIM)
+list(TRANSFORM demo_sounds PREPEND sounds/)
+quench_cook_assets(quench_demo_sounds SOURCE_DIR ${demo_sounds_dir} SOUNDS ${demo_sounds})
+
 quench_add_game(quench_demo
     NAME "Quench Demo"
     OUTPUT_NAME quench-demo
@@ -14,9 +29,10 @@ quench_add_game(quench_demo
     ICON icon/icon.png
     ORIENTATIONS all
     ASSETS assets
-    COOKED_ASSETS quench_demo_cooked
+    COOKED_ASSETS quench_demo_cooked quench_demo_sounds
     SOURCES
         AssetsSection.cpp
+        AudioSection.cpp
         Common.cpp
         Demo.cpp
         HdrSection.cpp

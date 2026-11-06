@@ -11,18 +11,19 @@ if(NOT QUENCH_HOST_COOK AND NOT CMAKE_CROSSCOMPILING AND NOT EMSCRIPTEN)
 endif()
 
 # quench_cook_assets(<name> SOURCE_DIR <dir> [OUTPUT_DIR <dir>]
-#                    [TEXTURES <file>...] [DATA_TEXTURES <file>...] [MODELS <file>...]
+#                    [TEXTURES <file>...] [DATA_TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...]
 #                    [TEXTURE_FORMAT bc7|rgba8] [TEXTURE_MAX_SIZE <n>] [MODEL_OPTIONS <quench_cook option>...])
 #
 # Files are named relative to SOURCE_DIR and keep that path under OUTPUT_DIR (default
 # ${CMAKE_CURRENT_BINARY_DIR}/quench_cooked/<name>)
 # with a new extension: TEXTURES (sRGB color) and DATA_TEXTURES (linear: normals, masks) become <path>.ktx2, MODELS
-# (glTF, GLB) <path>.qmodel with their textures as <path>_<image>.ktx2. The run-time asset path of a file is its path
+# (glTF, GLB) <path>.qmodel with their textures as <path>_<image>.ktx2. SOUNDS (WAV, FLAC, MP3) are decoded to check
+# them and copied with their extension. The run-time asset path of a file is its path
 # under OUTPUT_DIR. Creates the custom target <name>; quench_add_game(... COOKED_ASSETS <name>) copies its output into
 # the game's assets. Every file and everything it reads (glTF buffers and images) is tracked: a change re-cooks it.
 function(quench_cook_assets name)
     cmake_parse_arguments(PARSE_ARGV 1 arg "" "SOURCE_DIR;OUTPUT_DIR;TEXTURE_FORMAT;TEXTURE_MAX_SIZE"
-                          "TEXTURES;DATA_TEXTURES;MODELS;MODEL_OPTIONS")
+                          "TEXTURES;DATA_TEXTURES;MODELS;SOUNDS;MODEL_OPTIONS")
     if(NOT arg_SOURCE_DIR)
         message(FATAL_ERROR "quench_cook_assets: SOURCE_DIR is required")
     endif()
@@ -58,15 +59,18 @@ function(quench_cook_assets name)
     file(MAKE_DIRECTORY ${output_dir} ${dep_dir})
 
     set(outputs "")
-    foreach(kind TEXTURES DATA_TEXTURES MODELS)
+    foreach(kind TEXTURES DATA_TEXTURES MODELS SOUNDS)
         foreach(file IN LISTS arg_${kind})
             if(IS_ABSOLUTE ${file} OR file MATCHES "(^|/)\\.\\.(/|$)")
                 message(FATAL_ERROR "quench_cook_assets: '${file}' must be relative to SOURCE_DIR, without '..'")
             endif()
             set(input ${source_dir}/${file})
             cmake_path(REMOVE_EXTENSION file LAST_ONLY OUTPUT_VARIABLE stem)
-            string(MAKE_C_IDENTIFIER ${stem} dep_name)
-            if(kind STREQUAL "MODELS")
+            string(MAKE_C_IDENTIFIER ${file} dep_name)
+            if(kind STREQUAL "SOUNDS")
+                set(output ${output_dir}/${file})
+                set(args sound ${input} ${output})
+            elseif(kind STREQUAL "MODELS")
                 set(output ${output_dir}/${stem}.qmodel)
                 set(args model ${input} ${output} --asset-root ${output_dir} ${common} ${arg_MODEL_OPTIONS})
             else()

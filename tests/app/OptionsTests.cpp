@@ -36,6 +36,21 @@ QUENCH_TEST(options_engine_flags) {
     CHECK(options->gameArgs.empty(), "%zu game args", options->gameArgs.size());
 }
 
+QUENCH_TEST(options_audio_flags) {
+    const auto none = parse({});
+    REQUIRE(none.ok(), "%s", none.error().c_str());
+    CHECK(!none->noAudio && !none->audioDevice && none->audioCapture.empty(), "a device by default");
+    const auto options = parse({"--no-audio", "--audio-device", "null", "--audio-capture=mix.wav"});
+    REQUIRE(options.ok(), "%s", options.error().c_str());
+    CHECK(options->noAudio, "--no-audio");
+    CHECK(options->audioDevice == "null", "--audio-device");
+    CHECK(options->audioCapture == "mix.wav", "%s", options->audioCapture.c_str());
+    CHECK(!options->deterministic(), "an audio capture alone does not step the app time");
+    CHECK(!parse({"--audio-device"}).ok() && !parse({"--audio-device="}).ok(), "--audio-device needs a name");
+    CHECK(!parse({"--audio-capture"}).ok(), "--audio-capture needs a path");
+    CHECK(parse({"--no-audio=1"})->gameArgs.size() == 1, "--no-audio takes no value");
+}
+
 QUENCH_TEST(options_defaults_and_game_args) {
     const auto options = parse({"--level", "two", "--no-intro"});
     REQUIRE(options.ok(), "%s", options.error().c_str());

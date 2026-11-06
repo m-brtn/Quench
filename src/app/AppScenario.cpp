@@ -4,6 +4,7 @@
 #include "AppState.h"
 #include "ScenarioPoint.h"
 
+#include <quench/audio/Analysis.h>
 #include <quench/core/Log.h>
 #include <quench/core/Parse.h>
 
@@ -270,6 +271,37 @@ void finishPerf(AppState& s) {
     s.perf.reset();
 }
 
+// audio_measure SECONDS [MIN_HZ MAX_HZ]: levels and the strongest frequency of the newest SECONDS of the mix.
+Scenario::Exec audioMeasure(AppState& s, const ScenarioCommand& c) {
+    const auto seconds = number(c.args, 0);
+    const auto minHz = c.args.size() > 1 ? number(c.args, 1) : std::optional<double>(20.0);
+    const auto maxHz = c.args.size() > 2 ? number(c.args, 2) : std::optional<double>(20000.0);
+    if (!seconds || *seconds <= 0.0 || *seconds > kAudioMonitorSeconds || !minHz || !maxHz || *minHz >= *maxHz ||
+        c.args.size() > 3) {
+        log::error("scenario", "line {}: audio_measure SECONDS [MIN_HZ MAX_HZ] (SECONDS up to {})", c.line,
+                   kAudioMonitorSeconds);
+        return Scenario::Exec::Failed;
+    }
+    const std::uint32_t rate = s.audio->sampleRate();
+    const std::vector<float> mix = s.audio->monitored(*seconds);
+    const audio::Levels levels = audio::measureLevels(mix, audio::kMixChannels);
+    const audio::Peak peak = audio::dominantFrequency(mix, audio::kMixChannels, rate, float(*minHz), float(*maxHz));
+    auto& v = s.audioValues;
+    v["audio_rms"] = levels.rmsMono();
+    v["audio_rms_l"] = levels.rms[0];
+    v["audio_rms_r"] = levels.rms[1];
+    v["audio_peak"] = std::max(levels.peak[0], levels.peak[1]);
+    v["audio_freq"] = peak.frequency;
+    v["audio_freq_level"] = peak.level;
+    v["audio_measured"] = double(levels.frames) / rate;
+    log::info("scenario",
+              "audio_measure {:.3f} s ({:.3f} s mixed): rms {:.4f} (L {:.4f} R {:.4f}), peak {:.4f}; strongest "
+              "{:.1f} Hz at {:.4f} ({:.0f} .. {:.0f} Hz)",
+              *seconds, v["audio_measured"], v["audio_rms"], levels.rms[0], levels.rms[1], v["audio_peak"],
+              peak.frequency, peak.level, *minHz, *maxHz);
+    return Scenario::Exec::Done;
+}
+
 } // namespace
 
 void releaseScenarioInput(AppState& s) {
@@ -300,6 +332,21 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
     if (name == "display_headroom_potential") return double(s.displayPotentialHeadroom);
     if (name == "capture_peak") return s.capturePeak;
     if (const auto it = s.perfValues.find(name); it != s.perfValues.end()) return it->second;
+    if (name.starts_with("audio_")) {
+        if (const auto it = s.audioValues.find(name); it != s.audioValues.end()) return it->second;
+        const audio::AudioStats stats = s.audio->stats();
+        if (name == "audio_voices") return double(stats.voices);
+        if (name == "audio_sounds") return double(stats.sounds);
+        if (name == "audio_pending") return double(stats.pending);
+        if (name == "audio_streams") return double(stats.streams);
+        if (name == "audio_played") return double(stats.played);
+        if (name == "audio_stolen") return double(stats.stolen);
+        if (name == "audio_rejected") return double(stats.rejected);
+        if (name == "audio_failed") return double(stats.failed);
+        if (name == "audio_underruns") return double(stats.underruns);
+        if (name == "audio_clipped") return double(stats.clipped);
+        if (name == "audio_device") return s.audioDevice ? 1.0 : 0.0;
+    }
     if (name.starts_with("action:")) {
         const auto action = s.input.findAction(name.substr(7));
         if (action) return double(s.input.value(*action));
@@ -443,6 +490,7 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
         finishPerf(s);
         return Exec::Done;
     }
+    if (op == "audio_measure") return audioMeasure(s, c);
 
     switch (s.game->scenarioCommand(s.app, c)) {
     case ScenarioExec::Done: return Exec::Done;

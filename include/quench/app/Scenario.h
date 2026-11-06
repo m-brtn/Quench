@@ -13,8 +13,9 @@
 //
 // App commands (src/app/AppScenario.cpp): down/up/tap KEY, text STRING, mouse X Y, click X Y [left|right|middle],
 // wheel DY, touch X Y [DX DY STEPS], gamepad attach|detach|button NAME down|up|tap|axis NAME VALUE, resize W H,
-// capture PATH, perf_begin LABEL, perf_end. Values: time, frame, ticks, fps, frame_ms, cpu_ms, gpu_ms, window_w,
-// window_h, pixel_w, pixel_h, gamepad, fingers, action:NAME, perf_* after perf_end, and the game's (docs/app.md).
+// capture PATH, perf_begin LABEL, perf_end, audio_measure SECONDS [MIN_HZ MAX_HZ]. Values: time, frame, ticks, fps,
+// frame_ms, cpu_ms, gpu_ms, window_w, window_h, pixel_w, pixel_h, gamepad, fingers, action:NAME, perf_* after
+// perf_end, audio_* (audio_rms, audio_freq, ... after audio_measure), and the game's (docs/app.md).
 
 #include <quench/core/Result.h>
 

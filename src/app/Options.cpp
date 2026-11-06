@@ -53,6 +53,12 @@ const char* optionsHelp() {
            "                       the main thread, as in builds without threads)\n"
            "  --asset-latency S    every asset load waits S seconds before it starts (to see the placeholders)\n"
            "  --hot-reload         load asset files again when they change (cooked files in the build tree)\n"
+           "  --no-audio           no audio output: the mix runs offline on the frame clock and is discarded\n"
+           "  --audio-device NAME  the output whose name contains NAME; default: the system's; null: a device\n"
+           "                       that discards the mix\n"
+           "  --audio-capture FILE.wav  no audio output: the mix runs offline on the frame clock (with --script or\n"
+           "                       --capture: exactly one fixed step per frame) and is written as a 16-bit WAV at\n"
+           "                       the end; relative paths go to the user directory\n"
            "  --version            print the version and exit\n"
            "  --help               print this help and exit\n"
            "With --script or --capture every frame advances the app time by one fixed step (deterministic runs),\n"
@@ -88,11 +94,21 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
             if (Result<void> r = seconds(options.quitAfter); !r) return Error{r.error()};
         } else if (flag == "--capture-at") {
             if (Result<void> r = seconds(options.captureAt); !r) return Error{r.error()};
-        } else if (flag == "--capture" || flag == "--script" || flag == "--gpu-driver") {
+        } else if (flag == "--capture" || flag == "--script" || flag == "--gpu-driver" || flag == "--audio-capture") {
             Result<std::string_view> v = value();
             if (!v) return Error{v.error()};
             if (v->empty()) return Error{std::format("{} needs a value", flag)};
-            (flag == "--capture" ? options.capture : flag == "--script" ? options.script : options.gpuDriver) = *v;
+            (flag == "--capture"         ? options.capture
+             : flag == "--script"        ? options.script
+             : flag == "--audio-capture" ? options.audioCapture
+                                         : options.gpuDriver) = *v;
+        } else if (flag == "--audio-device") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            if (v->empty()) return Error{std::format("{} needs a value", flag)};
+            options.audioDevice = std::string(*v);
+        } else if (flag == "--no-audio" && !inlineValue) {
+            options.noAudio = true;
         } else if (flag == "--window" || flag == "--frame-size") {
             Result<std::string_view> v = value();
             if (!v) return Error{v.error()};

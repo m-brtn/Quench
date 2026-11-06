@@ -136,16 +136,32 @@ the engine's tests and the demo's new "Assets" section. Described in [Jobs, asse
   the table below); the release went ahead without it (decided without the user, 2026-11-05, as recommended).
 - Done: version 0.4.0, release notes in [docs/releases/v0.4.0.md](releases/v0.4.0.md).
 
-## Stage 7: audio
+## Stage 7: audio (done 2026-11-06 except the checks on the iPhone and by ear; games not switched)
 
 Requested as P0 by the user (2026-11-05), after stage 6 so that sound files load through the asset system and decode
-on the job system. Generalized from the games' own mixers (both games keep theirs until the user asks to switch them).
+on the job system. Written for the engine; TrailForge's miniaudio device and offline capture were read, its mixer is
+game-specific and was not moved (both games keep their own audio until the user asks to switch them). Built while
+the user was away: the decisions are in the devlog of 2026-11-06 ("decided without the user"). Described in
+[Audio](audio.md).
 
-- `quench_audio`: a headless mixer (voices, buses with volume, sample rate conversion, streamed music, sources whose
-  samples the game generates), tested in CTest and under Node.js; 3D sound (listener, distance attenuation, panning,
-  Doppler).
-- Device output through miniaudio; the iOS audio session (category, interruptions, route changes).
-- Capture of the mix to a WAV file for scripted checks (`--audio-capture`), and a no-audio mode.
+- Done: `quench_audio`, a headless mixer: 32-bit float stereo at 48 kHz, voices resampled per voice, a bus tree
+  with volume, mute, pause and meters, sounds as an asset type (decoded on jobs), streamed music with crossfades,
+  generators and a PCM stream the game feeds, click-free parameter changes, 3D sound (one listener, four
+  attenuation models, constant-power panning, Doppler) and a voice limit with priorities and stealing. Tested in
+  CTest (also under the sanitizers), in the iOS Simulator and under Node.js.
+- Done: device output through miniaudio (`quench_audio_device`, pinned at TrailForge's commit), with the audio
+  callback thread as the one documented exception to the job-system rule; the iOS audio session (category,
+  activation, interruptions, route changes; of these only setting the category ran, in the iOS Simulator), suspend
+  and resume with the app lifecycle.
+- Done: `App::audio()`, `--no-audio`, `--audio-device NAME`, `--audio-capture FILE.wav` (offline mixing on the
+  frame clock, deterministic in scripted runs), the scenario command `audio_measure` (RMS per channel, peak, the
+  strongest frequency) and the `audio_*` values; `quench_cook sound` and `quench_cook_assets(... SOUNDS ...)`.
+- Done: the demo's "Audio" section with its scripted check (39 checks on the measured mix) and golden captures for
+  Metal and Vulkan through MoltenVK.
+- Not done, remaining: listening (the Mac's output, headphones, the iPhone), the iPhone run of the stage 7 code
+  (silent switch, interruptions, route changes, background and foreground), browser output (Web Audio), HRTF,
+  occlusion, reverb and filters, virtual voices, Vorbis or Opus, gapless MP3 (encoder delay and padding are not
+  trimmed).
 
 ## Stage 8: animation
 
@@ -188,7 +204,7 @@ TODO for stage 9:
 Requested by the user (2026-11-05). Started in stage 5 (user decision, 2026-11-05; it replaces the planned
 `examples/scene`): every stage adds its section, with a scripted check and golden captures, and ends with a packaged
 build of the demo in `dist/` (`tools/package_demo.sh`); stage 10 finishes and polishes it. Sections so far: materials
-and lights, shadows, sky and fog, post-processing, HDR output, physics, input, assets ([Engine demo](demo.md)).
+and lights, shadows, sky and fog, post-processing, HDR output, physics, input, assets, audio ([Engine demo](demo.md)).
 
 - One app built with the engine (`examples/demo`, "Quench Demo") for the Mac and iOS: a menu of sections, each a
   small interactive scene of primitives or procedural content (CC0 assets only where a feature needs real content,
@@ -220,7 +236,7 @@ Priorities from the user's request of 2026-11-05.
 | Mipmaps and compression | P1 | 2 (GPU mipmaps), 6 (cooked, BC7; done) |
 | Hot reload | P1 | 6 (assets done, shaders remaining) |
 | Streaming by distance | P1 | 6 (done) |
-| Audio: mixer, buses, music, 3D sound, device output (added 2026-11-05) | P0 | 7 |
+| Audio: mixer, buses, music, 3D sound, device output (added 2026-11-05) | P0 | 7 (done; not yet run on the iPhone or listened to) |
 | Skeletal animation and GPU skinning (ozz) | P0 | 8 |
 | Animation state machine | P0 | 8 |
 | Blending | P0 | 8 |

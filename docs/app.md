@@ -27,15 +27,19 @@ with 0, for game flags that only print (TrailForge's `--paths`). `quench_add_gam
 2. Input actions are updated; a running scenario executes its commands.
 3. Fixed simulation ticks (`AppDesc::fixedStep`, default 1/120 s): none, one or several `fixedStep` calls.
    `App::alpha()` is the fraction of a tick since the last one, for interpolation in `render`.
-4. `update` once, `ui` (ImGui windows), then `render` records the game's passes into `Frame::commands` and
-   `Frame::target`; the engine draws ImGui on top and presents.
+4. `update` once, then the audio system's `update` (the frame's sound changes go to the mixer; without a device the
+   frame's audio is mixed offline here), `ui` (ImGui windows), then `render` records the game's passes into
+   `Frame::commands` and `Frame::target`; the engine draws ImGui on top and presents.
 
 On iOS the app stops rendering between `SDL_EVENT_WILL_ENTER_BACKGROUND` and `SDL_EVENT_DID_ENTER_FOREGROUND`, and the
-clock is reset on return, so no ticks pile up. A minimized desktop window also skips rendering.
+clock is reset on return, so no ticks pile up; the audio device is stopped in between and started again on return. A
+minimized desktop window also skips rendering (its sound keeps playing).
 
 `App` gives the device, the engine's job system (`jobs()`, one pool for the engine and the game) and asset manager
 (`assets()`, updated every frame before `Game::update`; both created before `Game::init` and destroyed after the
-game, [Jobs, assets and the cook](assets.md)), the window, `Input`, sizes in points and pixels, the safe area
+game, [Jobs, assets and the cook](assets.md)), the audio system (`audio()`, created after the asset manager with
+`AppDesc::audio`, its output from `AppDesc::audioDevice`; `audioDevice()` is null while the mix runs offline;
+[Audio](audio.md)), the window, `Input`, sizes in points and pixels, the safe area
 (notches, rounded corners),
 time, frame and tick counters, frame statistics (`FrameStats`: frame time, CPU time until the submit without the wait
 for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`), the display output (`output()`, `hdrMode()`,
@@ -92,7 +96,14 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--worker-threads N` | worker threads of the job system (0 to 64; default: hardware threads minus one); 0 runs jobs on the main thread, as in builds without threads |
 | `--asset-latency S` | every asset load waits S seconds (0 to 60) before it starts, to see the placeholders |
 | `--hot-reload` | load asset files again when they change on disk (the cooked files in the build tree; Mac only so far) |
+| `--no-audio` | no audio device: the mix runs offline on the frame clock and is discarded |
+| `--audio-device NAME` | `default`, `null` (miniaudio's null backend: a device thread without sound, for tests and benchmarks) or the first output whose name contains NAME; default `AppDesc::audioDevice` |
+| `--audio-capture FILE.wav` | mix offline on the frame clock and write the whole mix as a 16-bit stereo WAV at exit (paths as for `--capture`); nothing is played |
 | `--version` | print the version and exit |
+
+When the audio device cannot be opened, the app logs a warning and mixes offline as with `--no-audio`. Offline mixing
+advances the mix by each frame's time step, so in a deterministic run (below) the mix follows app time exactly and
+the same script gives the same WAV file on every run.
 
 With `--script` or `--capture` the run is **deterministic**: every frame advances the app time by exactly one fixed
 step and runs one tick, whatever the display rate. Such a frame never takes less than the step in real time (the
@@ -129,6 +140,7 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `capture PATH` | capture the next frame |
 | `hdr off\|on\|auto` | `App::setHdrMode`; the output changes at the start of the next frame |
 | `perf_begin LABEL`, `perf_end` | measure the frames in between, in real time; `perf_end` logs a `perf:` line (with the game's `Game::perfDetails` at the end) and sets the `perf_*` values |
+| `audio_measure S [MIN_HZ MAX_HZ]` | measure the newest S seconds (at most 4) of the mix: RMS per channel and of both, peak, and the strongest frequency between MIN_HZ and MAX_HZ (default 20 to 20000; a Hann-windowed FFT with interpolation between bins); logs a line and sets the `audio_rms*`, `audio_peak`, `audio_freq*` and `audio_measured` values. A script with this command keeps the last 4 s of the mix for it |
 
 A point P is `X Y` in window points (`480 420`), in percent of the window's width and height (`50% 75%`; the two
 forms can be mixed), or `@NAME`, a point the game names through `Game::scenarioPoint` (a UI item, a world point
@@ -144,7 +156,12 @@ in multiples of paper white; -1 before one), after `perf_end` `perf_frames`,
 `perf_frame_avg`, `perf_frame_p10`, `perf_frame_p50`, `perf_frame_p95`, `perf_frame_p99`, `perf_frame_max`,
 `perf_cpu_avg`, `perf_cpu_p50`, `perf_cpu_p95`, `perf_cpu_p99`, `perf_gpu_avg`, `perf_gpu_min`, `perf_gpu_p10`,
 `perf_gpu_p50`, `perf_gpu_p95` (milliseconds; -1 when
-there were no samples, for example GPU time without `gpu::Caps::gpuTiming`); then the game's (`Game::scenarioValue`). Unknown commands are offered
+there were no samples, for example GPU time without `gpu::Caps::gpuTiming`); after `audio_measure` `audio_rms`,
+`audio_rms_l`, `audio_rms_r`, `audio_peak` (linear, 1 is full scale), `audio_freq` (Hz), `audio_freq_level` (about 1
+for a full-scale sine) and `audio_measured` (seconds actually measured); at any time `audio_voices`, `audio_sounds`,
+`audio_pending`, `audio_streams`, `audio_played`, `audio_stolen`, `audio_rejected`, `audio_failed`,
+`audio_underruns`, `audio_clipped` (the `AudioStats` counters) and `audio_device` (1 with a device, 0 offline); then
+the game's (`Game::scenarioValue`). Unknown commands are offered
 to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N: ...`, and the run ends
 with `N passed, M failed`; tests match `FAIL line`.
 
@@ -213,11 +230,12 @@ quench_add_game(<target> NAME <display name> SOURCES <file>...
                 [ASSETS <dir>] [COOKED_ASSETS <quench_cook_assets name>...]
                 [ICON <square png, 1024 px or larger>] [ORIENTATIONS landscape|portrait|all] [CUSTOM_MAIN])
 quench_add_shaders(<target> NAME <set> SOURCE <file.hlsl> ENTRIES <entry>:vertex <entry>:fragment ...)
-quench_cook_assets(<name> SOURCE_DIR <dir> [TEXTURES <file>...] [MODELS <file>...] ...)
+quench_cook_assets(<name> SOURCE_DIR <dir> [TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...] ...)
 ```
 
 `ASSETS` is copied as it is; `COOKED_ASSETS` names `quench_cook_assets()` targets, whose output (KTX2 textures and
-`.qmodel` models from glTF, GLB, PNG, JPEG and KTX2 sources) is merged into the same `assets/`. The cook runs at build
+`.qmodel` models from glTF, GLB, PNG, JPEG and KTX2 sources; WAV, FLAC and MP3 sounds, checked and copied) is merged
+into the same `assets/`. The cook runs at build
 time, per file and only when a source changed ([Jobs, assets and the cook](assets.md#quench_cook)).
 
 - **macOS**: a plain executable; `ASSETS` and the cooked assets are copied to `assets/` next to it. Run it from the
@@ -284,8 +302,10 @@ holds the user's data. Scripts go the other way with `device copy to` into the s
 `--script <relative path>`.
 
 **Device tests**: in the `ios-xcode` preset the tests build as one app, `quench_device_tests` (`QuenchTests.app`):
-every case that does not need the build tree (core, physics, app, GPU device), run in one process as `SDL_main`, so
-windows work. Launch it with `--console` and the environment `{"MTL_DEBUG_LAYER":"1","QUENCH_TEST_GPU_DRIVER":"metal"}`;
+every case that does not need the build tree (core, physics, audio and the audio device, app, GPU device), run in one
+process as `SDL_main`, so windows work. The audio device cases there are the null backend and the audio session
+category; the one that plays through the speaker runs only with `QUENCH_TEST_AUDIO_DEVICE=1` in the environment
+(not run on the iPhone yet). Launch it with `--console` and the environment `{"MTL_DEBUG_LAYER":"1","QUENCH_TEST_GPU_DRIVER":"metal"}`;
 the last line is `N cases: P passed, F failed, S skipped` and the exit code is 0 only without failures. Agents cannot
 see the device screen: what is visible on it (rendering, touch, rotation) is checked by the user and recorded as a
 user report in the devlog.

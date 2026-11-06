@@ -32,6 +32,9 @@ struct Options {
     int workerThreads = -1;    // job system workers; -1: JobSystemDesc's default
     double assetLatency = 0.0; // AssetManagerSettings::simulatedLatency
     bool hotReload = false;
+    bool noAudio = false;                   // no audio device: the mix runs offline and is discarded
+    std::optional<std::string> audioDevice; // DeviceDesc::name
+    std::string audioCapture;               // WAV path: the mix runs offline and is written at the end
     bool printVersion = false;
     bool printHelp = false;
     std::vector<std::string> gameArgs;

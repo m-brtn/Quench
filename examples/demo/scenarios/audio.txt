@@ -1,0 +1,28 @@
+# Audio (ctest: demo_audio_metal, demo_audio_vulkan): the section's picture with every source playing, captured at
+# 1.65 s, and the mix written as WAV (--audio-capture). The mix is computed offline on the frame clock, so both
+# backends write the same bytes (ctest: demo_audio_wav_match). The checks on the mix itself are audio_tone.txt,
+# audio_flyby.txt and audio_music.txt (ctest: demo_audio_tone, demo_audio_flyby, demo_audio_music).
+
+set orbit 0
+set flyby 0
+set music 0
+set dither 0
+until sounds_ready == 1 3
+# The loads finish in a frame that varies between runs; from here on every step is on the fixed frame clock.
+expect time < 0.25
+until time >= 0.3 1
+
+# Everything on: the orbit and the fly-by from their start (at the capture the fly-by is near the middle of its lane),
+# the tone, music track B, and a burst of pings beyond the voice limit.
+set orbit 1
+set flyby 1
+set tone_hz 660
+set tone_x 4
+set tone_z -1
+set tone 1
+set music 2
+set burst 40
+until time >= 1.75 3
+expect audio_underruns == 0
+expect audio_clipped == 0
+quit

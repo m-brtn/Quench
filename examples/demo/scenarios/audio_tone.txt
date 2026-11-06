@@ -1,0 +1,73 @@
+# Audio mix check (ctest: demo_audio_tone, default backend only): a tone the demo computes (a Generator), placed around
+# the head: its frequency, the stereo pan, the distance models, a frequency glide; then a burst of pings beyond the
+# voice limit. The test runs with --audio-capture, so the mix is computed offline on the frame clock (400 frames per
+# frame at 48 kHz) and audio_measure analyses exactly what the capture WAV holds.
+
+set orbit 0
+set flyby 0
+set music 0
+set dither 0
+until sounds_ready == 1 3
+# The loads finish in a frame that varies between runs; from here on every step is on the fixed frame clock.
+expect time < 0.25
+until time >= 0.3 1
+
+# The tone, 2 m in front: 1 kHz, centered; inverse distance: gain 0.5 (0.25 amplitude, 0.707 per channel).
+set tone_hz 1000
+set tone_x 0
+set tone_z -2
+set tone 1
+wait 0.3
+audio_measure 0.25 500 2000
+expect audio_freq > 998
+expect audio_freq < 1002
+expect audio_rms > 0.058
+expect audio_rms < 0.067
+expect audio_rms_l > 0.058
+expect audio_rms_r > 0.058
+
+# To the right, 4 m: only the right channel, gain 0.25.
+set tone_x 4
+set tone_z 0
+wait 0.2
+audio_measure 0.15 500 2000
+expect audio_rms_l < 0.002
+expect audio_rms_r > 0.041
+expect audio_rms_r < 0.047
+
+# 8 m in front: inverse 1/8, linear (1..40 m) 0.82, none 1.
+set tone_x 0
+set tone_z -8
+wait 0.2
+audio_measure 0.15
+expect audio_rms > 0.0145
+expect audio_rms < 0.0168
+set attenuation linear
+wait 0.2
+audio_measure 0.15
+expect audio_rms > 0.096
+expect audio_rms < 0.110
+set attenuation none
+wait 0.2
+audio_measure 0.15
+expect audio_rms > 0.118
+expect audio_rms < 0.132
+set attenuation inverse
+
+# The frequency glides to a new value (the generator reads it on the audio thread).
+set tone_hz 1500
+wait 0.2
+audio_measure 0.15 500 2000
+expect audio_freq > 1497
+expect audio_freq < 1503
+set tone 0
+
+expect audio_underruns == 0
+expect audio_clipped == 0
+
+# 40 pings at once: more than the 32 voices, the newest steal the oldest.
+mark audio_stolen
+set burst 40
+wait 0.05
+expect d_audio_stolen > 0
+quit

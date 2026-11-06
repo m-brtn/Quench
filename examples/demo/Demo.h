@@ -112,6 +112,7 @@ std::unique_ptr<Section> makeHdrSection();
 std::unique_ptr<Section> makePhysicsSection();
 std::unique_ptr<Section> makeInputSection();
 std::unique_ptr<Section> makeAssetsSection();
+std::unique_ptr<Section> makeAudioSection();
 
 // ---- helpers shared by the sections (Common.cpp)
 

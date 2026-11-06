@@ -1,0 +1,38 @@
+# Audio mix check (ctest: demo_audio_music, default backend only): the streamed music, its drone, the crossfade to the
+# other track, the music bus. The test runs with --audio-capture, so the mix is computed offline on the frame clock and
+# audio_measure analyses exactly what the capture WAV holds.
+
+set orbit 0
+set flyby 0
+set music 0
+set dither 0
+until sounds_ready == 1 3
+# The loads finish in a frame that varies between runs; from here on every step is on the fixed frame clock.
+expect time < 0.25
+until time >= 0.3 1
+
+# Music: track A's drone (110 Hz) streams; after the crossfade track B's (146.83 Hz).
+set music 1
+wait 1.0
+audio_measure 0.5 80 180
+expect audio_freq > 109
+expect audio_freq < 111
+expect audio_streams == 1
+set music 2
+wait 0.5
+expect audio_streams == 2
+wait 2.0
+audio_measure 0.5 80 180
+expect audio_freq > 145.8
+expect audio_freq < 147.8
+expect audio_streams == 1
+# The music bus at 0: silence.
+set bus_music 0
+wait 0.1
+audio_measure 0.05
+expect audio_rms < 0.0005
+set bus_music 1
+
+expect audio_underruns == 0
+expect audio_clipped == 0
+quit

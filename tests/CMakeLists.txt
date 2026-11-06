@@ -1,3 +1,20 @@
+# The audio tests' decoder files (audio/data), embedded so that the device test app has them too.
+set(audio_test_data ${CMAKE_CURRENT_BINARY_DIR}/AudioTestData.cpp)
+set(audio_test_data_content "#include <cstdint>\n#include <span>\n\nnamespace quench::test {\n")
+foreach(entry tone.flac:toneFlac tone.mp3:toneMp3)
+    string(REPLACE ":" ";" entry "${entry}")
+    list(GET entry 0 file)
+    list(GET entry 1 function)
+    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/audio/data/${file} hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," bytes "${hex}")
+    string(APPEND audio_test_data_content "std::span<const std::uint8_t> ${function}();\n"
+           "std::span<const std::uint8_t> ${function}() {\n    static const std::uint8_t bytes[] = {${bytes}};\n"
+           "    return bytes;\n}\n")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/audio/data/${file})
+endforeach()
+string(APPEND audio_test_data_content "} // namespace quench::test\n")
+file(CONFIGURE OUTPUT ${audio_test_data} CONTENT "${audio_test_data_content}" @ONLY)
+
 # A device build (iOS on an iPhone or iPad) cannot run executables from CTest: the cases that do not need the build
 # tree go into one app, quench_device_tests, installed and launched with devicectl (docs/platforms.md).
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
@@ -18,6 +35,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             assets/ModelTests.cpp
             assets/StreamingGridTests.cpp
             assets/TextureTests.cpp
+            audio/AudioTests.cpp
+            audio/DeviceTests.cpp
+            ${audio_test_data}
             app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
             app/OptionsTests.cpp
@@ -34,7 +54,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             render/SceneAssetsTests.cpp)
     quench_configure_target(quench_device_tests)
     target_include_directories(quench_device_tests PRIVATE harness gpu)
-    target_link_libraries(quench_device_tests PRIVATE quench_physics quench_assets quench_render)
+    target_link_libraries(quench_device_tests PRIVATE quench_physics quench_assets quench_audio_device quench_render)
     target_compile_definitions(quench_device_tests PRIVATE
         QUENCH_TEST_SDL_MAIN=1
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
@@ -112,6 +132,10 @@ quench_add_test_executable(quench_assets_tests PREFIX assets
         assets/TextureTests.cpp
     LIBS quench_assets)
 
+quench_add_test_executable(quench_audio_tests PREFIX audio
+    SOURCES audio/AudioTests.cpp ${audio_test_data}
+    LIBS quench_audio)
+
 # quench_cook (host builds that build the cook themselves): the library's cases, and the command line run twice on the
 # demo's sources with byte-identical outputs.
 if(TARGET quench_cook_lib)
@@ -120,8 +144,8 @@ if(TARGET quench_cook_lib)
         LIBS quench_cook_lib quench_glm)
     target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_SOURCE_DIR="${Quench_SOURCE_DIR}")
     add_test(NAME cook_cli COMMAND ${CMAKE_COMMAND} -DCOOK=$<TARGET_FILE:quench_cook>
-             -DSOURCES=${Quench_SOURCE_DIR}/examples/demo/assets_src -DOUT=${CMAKE_CURRENT_BINARY_DIR}/tmp/cook_cli
-             -P ${CMAKE_CURRENT_SOURCE_DIR}/CookCli.cmake)
+             -DSOURCES=${Quench_SOURCE_DIR}/examples/demo/assets_src -DSOUNDS=${CMAKE_CURRENT_SOURCE_DIR}/audio/data
+             -DOUT=${CMAKE_CURRENT_BINARY_DIR}/tmp/cook_cli -P ${CMAKE_CURRENT_SOURCE_DIR}/CookCli.cmake)
     add_dependencies(quench_cook_tests quench_cook)
 endif()
 
@@ -147,6 +171,11 @@ if(NOT QUENCH_HEADLESS)
             app/SdlFileSystemTests.cpp
             app/SdlLogTests.cpp
         LIBS quench_app)
+
+    # The audio device on miniaudio's null backend (no sound), the opt-in default output, the iOS audio session.
+    quench_add_test_executable(quench_audio_device_tests PREFIX audio_device
+        SOURCES audio/DeviceTests.cpp
+        LIBS quench_audio_device)
 
     # Device tests on the driver SDL picks: Metal on Apple platforms, with the Metal API validation layer.
     set(gpu_environment "")
@@ -225,16 +254,18 @@ if(NOT QUENCH_HEADLESS)
         set(QUENCH_GOLDEN_DEVICE "${golden_device}" CACHE STRING
             "Device folder of the golden images (tests/golden/<backend>/<device>)")
 
-        set(hello_args --window 640x360 --frame-size 1280x720 --capture-at 1 --quit-after 1 --gpu-debug)
+        set(hello_args --window 640x360 --frame-size 1280x720 --capture-at 1 --quit-after 1 --gpu-debug
+            --audio-device null)
         set(capture_dir ${CMAKE_CURRENT_BINARY_DIR}/captures)
         # quench_add_capture_test(<test> IMAGE <golden name> BACKEND <backend> APP <target> ARGS <arg>...
-        #                         [ENVIRONMENT <NAME=value>...])
+        #                         [ENVIRONMENT <NAME=value>...] [OUTPUTS <file>...])
         function(quench_add_capture_test name)
-            cmake_parse_arguments(PARSE_ARGV 1 arg "" "IMAGE;BACKEND;APP" "ARGS;ENVIRONMENT")
+            cmake_parse_arguments(PARSE_ARGV 1 arg "" "IMAGE;BACKEND;APP" "ARGS;ENVIRONMENT;OUTPUTS")
             list(JOIN arg_ARGS "|" args)
             list(JOIN arg_ENVIRONMENT "|" environment)
+            list(JOIN arg_OUTPUTS "|" outputs)
             add_test(NAME ${name} COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:${arg_APP}> "-DARGS=${args}"
-                     "-DENVIRONMENT=${environment}" -DCAPTURE=${capture_dir}/${name}.png
+                     "-DENVIRONMENT=${environment}" "-DOUTPUTS=${outputs}" -DCAPTURE=${capture_dir}/${name}.png
                      -DGOLDEN=${Quench_SOURCE_DIR}/tests/golden/${arg_BACKEND}/${QUENCH_GOLDEN_DEVICE}/${arg_IMAGE}.png
                      -DCOMPARE=$<TARGET_FILE:quench_image_compare> -P ${CMAKE_CURRENT_SOURCE_DIR}/RunCapture.cmake)
             set_tests_properties(${name} PROPERTIES SKIP_REGULAR_EXPRESSION "QUENCH_SKIP"
@@ -248,7 +279,7 @@ if(NOT QUENCH_HEADLESS)
                 ENVIRONMENT ${vulkan_environment})
         endif()
 
-        add_test(NAME hello_input COMMAND quench_hello --window 640x360 --script
+        add_test(NAME hello_input COMMAND quench_hello --window 640x360 --audio-device null --script
                  ${Quench_SOURCE_DIR}/examples/hello/scenarios/input.txt)
         set_tests_properties(hello_input PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
         add_test(NAME hello_version COMMAND quench_hello --version)
@@ -260,29 +291,62 @@ if(NOT QUENCH_HEADLESS)
         if(TARGET quench_demo)
             # The engine demo: per section a scripted check that ends in a golden capture (section:capture time).
             set(demo_scenarios ${Quench_SOURCE_DIR}/examples/demo/scenarios)
-            foreach(entry materials:2 shadows:2 sky:2 post:2 hdr:2 physics:2 input:3 assets:1.5)
+            # No test plays sound: the null audio device (a thread that discards the mix), or for the audio section
+            # the offline mix written as WAV next to the capture. Immediate present: the deterministic frames are held
+            # to their own cap (120 per second) instead of the display's rate where the window is not paced to the
+            # display (docs/platforms.md), with the same pixels and the same mix; the hello checks and demo_menu keep
+            # the default vsync.
+            foreach(entry materials:2 shadows:2 sky:2 post:2 hdr:2 physics:2 input:3 assets:1.5 audio:1.65)
                 string(REPLACE ":" ";" entry "${entry}")
                 list(GET entry 0 section)
                 list(GET entry 1 capture_at)
-                set(demo_args --window 960x540 --frame-size 960x540 --gpu-debug --section ${section}
-                    --script ${demo_scenarios}/${section}.txt --capture-at ${capture_at})
+                set(demo_args --window 960x540 --frame-size 960x540 --gpu-debug --present-mode immediate
+                    --section ${section} --script ${demo_scenarios}/${section}.txt --capture-at ${capture_at})
+                foreach(backend metal vulkan)
+                    if(section STREQUAL "audio")
+                        set(demo_audio_${backend} --audio-capture ${capture_dir}/demo_audio_${backend}.wav)
+                        set(demo_outputs_${backend} ${capture_dir}/demo_audio_${backend}.wav)
+                    else()
+                        set(demo_audio_${backend} --audio-device null)
+                        set(demo_outputs_${backend} "")
+                    endif()
+                endforeach()
                 quench_add_capture_test(demo_${section}_metal IMAGE demo_${section} BACKEND metal APP quench_demo
-                    ARGS ${demo_args} ENVIRONMENT MTL_DEBUG_LAYER=1)
+                    ARGS ${demo_args} ${demo_audio_metal} ENVIRONMENT MTL_DEBUG_LAYER=1
+                    OUTPUTS ${demo_outputs_metal})
                 if(QUENCH_TEST_VULKAN_LOADER)
                     quench_add_capture_test(demo_${section}_vulkan IMAGE demo_${section} BACKEND vulkan
-                        APP quench_demo ARGS ${demo_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment})
+                        APP quench_demo ARGS ${demo_args} ${demo_audio_vulkan} --gpu-driver vulkan
+                        ENVIRONMENT ${vulkan_environment} OUTPUTS ${demo_outputs_vulkan})
                 endif()
             endforeach()
+            # The audio section's checks on the mix itself, split so that they run in parallel, on the default
+            # backend only: the offline mix does not depend on the GPU backend, which demo_audio_wav_match checks
+            # on the two backends' WAV of the section's capture run.
+            file(MAKE_DIRECTORY ${capture_dir})
+            foreach(part tone flyby music)
+                add_test(NAME demo_audio_${part} COMMAND quench_demo --window 960x540 --frame-size 960x540
+                         --section audio --present-mode immediate --script ${demo_scenarios}/audio_${part}.txt
+                         --audio-capture ${capture_dir}/demo_audio_${part}.wav)
+                set_tests_properties(demo_audio_${part} PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
+            endforeach()
+            if(QUENCH_TEST_VULKAN_LOADER)
+                add_test(NAME demo_audio_wav_match COMMAND ${CMAKE_COMMAND} -E compare_files
+                         ${capture_dir}/demo_audio_metal.wav ${capture_dir}/demo_audio_vulkan.wav)
+                set_tests_properties(demo_audio_metal demo_audio_vulkan PROPERTIES FIXTURES_SETUP demo_audio_wav)
+                set_tests_properties(demo_audio_wav_match PROPERTIES FIXTURES_REQUIRED demo_audio_wav)
+            endif()
             # An HDR extended-linear frame with a fixed headroom; the capture is the frame clipped at paper white.
-            set(demo_hdr_args --window 960x540 --frame-size 960x540 --gpu-debug --section hdr --hdr on --hdr-headroom 4
-                --script ${demo_scenarios}/hdr_on.txt --capture-at 2)
+            set(demo_hdr_args --window 960x540 --frame-size 960x540 --gpu-debug --present-mode immediate --section hdr
+                --hdr on --hdr-headroom 4 --script ${demo_scenarios}/hdr_on.txt --capture-at 2 --audio-device null)
             quench_add_capture_test(demo_hdr_on_metal IMAGE demo_hdr_on BACKEND metal APP quench_demo
                 ARGS ${demo_hdr_args} ENVIRONMENT MTL_DEBUG_LAYER=1)
             if(QUENCH_TEST_VULKAN_LOADER)
                 quench_add_capture_test(demo_hdr_on_vulkan IMAGE demo_hdr_on BACKEND vulkan APP quench_demo
                     ARGS ${demo_hdr_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment})
             endif()
-            add_test(NAME demo_menu COMMAND quench_demo --window 960x540 --script ${demo_scenarios}/menu.txt)
+            add_test(NAME demo_menu COMMAND quench_demo --window 960x540 --audio-device null
+                     --script ${demo_scenarios}/menu.txt)
             set_tests_properties(demo_menu PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
             add_test(NAME demo_version COMMAND quench_demo --version)
             set_tests_properties(demo_version PROPERTIES PASS_REGULAR_EXPRESSION
@@ -308,7 +372,8 @@ foreach(header IN LISTS public_headers)
 endforeach()
 add_library(quench_header_check OBJECT ${header_sources})
 quench_configure_target(quench_header_check)
-target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_assets quench_gpu_shaders)
+target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_assets quench_audio
+                                                  quench_gpu_shaders)
 if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_header_check PRIVATE quench_app quench_render)
 endif()

@@ -138,15 +138,18 @@ unzip -q "$ZIP" -d "$UNZIP"
 UNZIPPED="$UNZIP/$NAME-macos"
 for f in QuenchDemo.app LICENSE THIRD_PARTY_LICENSES QuenchDemo.app/Contents/Resources/QuenchDemo.icns \
          QuenchDemo.app/Contents/Resources/LICENSE QuenchDemo.app/Contents/Resources/THIRD_PARTY_LICENSES \
-         QuenchDemo.app/Contents/Resources/assets/models/crate.qmodel; do
+         QuenchDemo.app/Contents/Resources/assets/models/crate.qmodel \
+         QuenchDemo.app/Contents/Resources/assets/sounds/music_a.wav; do
     [[ -e "$UNZIPPED/$f" ]] || fail "$f missing in the archive"
 done
 codesign --verify --deep --strict "$UNZIPPED/QuenchDemo.app"
 CAPTURE="$DIST/$NAME-macos-smoke.png"
 LOG="$DIST/$NAME-macos-smoke.log"
 rm -f "$CAPTURE"
+# The null audio device: the smoke run makes no sound.
 (cd / && "$UNZIPPED/QuenchDemo.app/Contents/MacOS/quench-demo" --window 960x540 --frame-size 960x540 \
-    --script "$ROOT/examples/demo/scenarios/smoke.txt" --capture "$CAPTURE" --capture-at 1.5) >"$LOG" 2>&1 ||
+    --audio-device null --script "$ROOT/examples/demo/scenarios/smoke.txt" --capture "$CAPTURE" --capture-at 1.5) \
+    >"$LOG" 2>&1 ||
     { cat "$LOG"; fail "smoke run failed (log: $LOG)"; }
 grep -E "scenario: .*: [0-9]+ passed, 0 failed" "$LOG" || { cat "$LOG"; fail "smoke scenario did not pass"; }
 [[ -s "$CAPTURE" ]] || fail "smoke run wrote no capture"

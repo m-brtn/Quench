@@ -39,6 +39,7 @@ quench_add_shaders(template_game NAME game SOURCE shaders/game.hlsl ENTRIES game
 
 if(NOT CMAKE_CROSSCOMPILING)
     enable_testing()
-    add_test(NAME smoke COMMAND template_game --window 640x360 --script ${CMAKE_CURRENT_SOURCE_DIR}/scenarios/smoke.txt)
+    add_test(NAME smoke COMMAND template_game --window 640x360 --audio-device null
+             --script ${CMAKE_CURRENT_SOURCE_DIR}/scenarios/smoke.txt)
     set_tests_properties(smoke PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
 endif()

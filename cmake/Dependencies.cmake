@@ -106,6 +106,46 @@ add_library(quench_bc7decomp STATIC ${bc7enc_SOURCE_DIR}/bc7decomp.cpp)
 target_include_directories(quench_bc7decomp SYSTEM PUBLIC ${bc7enc_SOURCE_DIR})
 target_compile_features(quench_bc7decomp PUBLIC cxx_std_20)
 
+# ---------------------------------------------------------------- miniaudio
+# 0.11.25 (TrailForge's pin; public domain or MIT-0). quench_audio decodes WAV, FLAC and MP3 with it, and
+# quench_audio_device plays through its device API. Built here from miniaudio.c with the high-level parts compiled out
+# (engine, node graph, resource manager, waveform generation, encoders); the defines are PUBLIC so that the header sees
+# the same configuration. Headless and web builds have no device I/O (and the single-threaded web build no threads).
+FetchContent_Declare(miniaudio
+    URL https://github.com/mackron/miniaudio/archive/9634bedb5b5a2ca38c1ee7108a9358a4e233f14d.tar.gz
+    URL_HASH SHA256=1a3a79b80fc6f0b0cc155e28b954a598e0ddfa2db64e2afa8466be88c476fa55
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(miniaudio)
+add_library(quench_miniaudio STATIC ${miniaudio_SOURCE_DIR}/miniaudio.c)
+target_include_directories(quench_miniaudio SYSTEM PUBLIC ${miniaudio_SOURCE_DIR})
+target_compile_definitions(quench_miniaudio PUBLIC
+    MA_NO_ENGINE MA_NO_NODE_GRAPH MA_NO_RESOURCE_MANAGER MA_NO_GENERATION MA_NO_ENCODING)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(quench_miniaudio PRIVATE -w)
+endif()
+if(QUENCH_HEADLESS OR EMSCRIPTEN)
+    target_compile_definitions(quench_miniaudio PUBLIC MA_NO_DEVICE_IO)
+    if(EMSCRIPTEN)
+        target_compile_definitions(quench_miniaudio PUBLIC MA_NO_THREADING)
+    endif()
+elseif(APPLE)
+    # Core Audio linked at build time instead of loaded at run time (miniaudio's advice for notarization); the null
+    # backend is a callback thread without sound (--audio-device null, the tests).
+    target_compile_definitions(quench_miniaudio PUBLIC
+        MA_NO_RUNTIME_LINKING MA_ENABLE_ONLY_SPECIFIC_BACKENDS MA_ENABLE_COREAUDIO MA_ENABLE_NULL)
+    target_link_libraries(quench_miniaudio PUBLIC "-framework CoreFoundation" "-framework CoreAudio"
+                                                  "-framework AudioToolbox")
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        # The iOS backend uses AVAudioSession (Objective-C).
+        set_source_files_properties(${miniaudio_SOURCE_DIR}/miniaudio.c PROPERTIES LANGUAGE OBJC)
+        target_link_libraries(quench_miniaudio PUBLIC "-framework AVFoundation" "-framework Foundation")
+    endif()
+elseif(UNIX)
+    find_package(Threads REQUIRED)
+    target_link_libraries(quench_miniaudio PUBLIC ${CMAKE_DL_LIBS} Threads::Threads m)
+endif()
+
 if(QUENCH_HEADLESS)
     return()
 endif()

@@ -1,0 +1,816 @@
+#include "Test.h"
+
+#include <quench/assets/AssetManager.h>
+#include <quench/audio/Analysis.h>
+#include <quench/audio/AudioSystem.h>
+#include <quench/audio/Wav.h>
+#include <quench/core/FileSystem.h>
+#include <quench/core/Jobs.h>
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <numbers>
+#include <span>
+#include <string>
+#include <thread>
+#include <vector>
+
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+#define QUENCH_TEST_THREADS 1
+#else
+#define QUENCH_TEST_THREADS 0
+#endif
+
+using namespace quench;
+using namespace quench::audio;
+
+namespace quench::test {
+// tests/audio/data, embedded by tests/CMakeLists.txt.
+std::span<const std::uint8_t> toneFlac();
+std::span<const std::uint8_t> toneMp3();
+} // namespace quench::test
+
+namespace {
+
+constexpr std::uint32_t kRate = 48000;
+
+class Sine final : public Generator {
+public:
+    Sine(float frequency, float amplitude = 0.5f, std::uint32_t rate = kRate, std::uint32_t channels = 1)
+        : Generator({channels, rate}), m_step(2.0 * std::numbers::pi * frequency / rate), m_amplitude(amplitude) {}
+
+    std::uint32_t generate(float* out, std::uint32_t frames) override {
+        const std::uint32_t channels = format().channels;
+        for (std::uint32_t f = 0; f < frames; ++f) {
+            const auto value = float(m_amplitude * std::sin(m_phase));
+            m_phase = std::fmod(m_phase + m_step, 2.0 * std::numbers::pi);
+            for (std::uint32_t c = 0; c < channels; ++c) out[f * channels + c] = value;
+        }
+        return frames;
+    }
+
+private:
+    double m_phase = 0.0, m_step;
+    double m_amplitude;
+};
+
+// A constant per channel (stereo, so the balance leaves it unchanged at pan 0).
+class Constant final : public Generator {
+public:
+    explicit Constant(float value, std::uint32_t channels = 2) : Generator({channels, kRate}), m_value(value) {}
+    std::uint32_t generate(float* out, std::uint32_t frames) override {
+        std::fill(out, out + std::size_t(frames) * format().channels, m_value);
+        return frames;
+    }
+
+private:
+    float m_value;
+};
+
+// An AudioSystem mixing offline on the test thread.
+struct Rig {
+    explicit Rig(const AudioSettings& settings = {}, int workers = 0)
+        : jobs(JobSystemDesc{.workerThreads = workers}), audio(jobs, nullptr, settings) {
+        audio.setOffline(true);
+    }
+    // `seconds` of mix in steps of `step` with an update() before each.
+    std::vector<float> run(double seconds, double step = 0.01) {
+        std::vector<float> out;
+        for (double t = 0.0; t < seconds - 1e-9; t += step) {
+            audio.update();
+            audio.mixOffline(step, &out);
+        }
+        return out;
+    }
+
+    JobSystem jobs;
+    AudioSystem audio;
+};
+
+// The last `seconds` of interleaved stereo samples.
+std::span<const float> last(const std::vector<float>& samples, double seconds) {
+    const auto count = std::min(samples.size(), std::size_t(seconds * kRate) * 2);
+    return std::span(samples).subspan(samples.size() - count);
+}
+
+// Largest change between neighbouring frames of either channel.
+float maxStep(std::span<const float> samples) {
+    float step = 0.0f;
+    for (std::size_t i = 2; i < samples.size(); ++i) step = std::max(step, std::abs(samples[i] - samples[i - 2]));
+    return step;
+}
+
+bool near(float a, float b, float tolerance) { return std::abs(a - b) <= tolerance; }
+
+// Asset files for one case, read through quench::fs; restores the default backend at the end.
+struct AssetDir {
+    explicit AssetDir(const char* name) : dir(std::filesystem::path(quench::test::tmpDir()) / name) {
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        fs::setBackend(fs::makeStdBackend(dir, {}));
+    }
+    ~AssetDir() { fs::setBackend(nullptr); }
+    void write(const std::string& path, std::span<const std::uint8_t> bytes) const {
+        std::filesystem::create_directories((dir / path).parent_path());
+        std::ofstream(dir / path, std::ios::binary)
+            .write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+    }
+
+    std::filesystem::path dir;
+};
+
+// A stereo PCM16 WAV whose samples are distinct integers (exact after decoding: k / 32768).
+std::vector<float> patternSamples(std::uint32_t frames) {
+    std::vector<float> samples(std::size_t(frames) * 2);
+    for (std::uint32_t i = 0; i < frames; ++i) {
+        samples[2 * i] = float(int(i * 37 % 20000) - 10000) / 32767.0f;
+        samples[2 * i + 1] = float(int(i * 101 % 16000) - 8000) / 32767.0f;
+    }
+    return samples;
+}
+
+std::vector<float> sineSamples(float frequency, float amplitude, double seconds, std::uint32_t channels = 2) {
+    const auto frames = std::size_t(seconds * kRate);
+    std::vector<float> samples(frames * channels);
+    for (std::size_t i = 0; i < frames; ++i)
+        for (std::uint32_t c = 0; c < channels; ++c)
+            samples[i * channels + c] =
+                amplitude * float(std::sin(2.0 * std::numbers::pi * frequency * double(i) / kRate));
+    return samples;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------------------------------- spatial
+
+QUENCH_TEST(spatial_attenuation_models) {
+    Emitter e{.minDistance = 2.0f, .maxDistance = 20.0f, .rolloff = 1.0f};
+    e.attenuation = Attenuation::None;
+    CHECK(distanceGain(e, 50.0f) == 1.0f, "none");
+    e.attenuation = Attenuation::Inverse;
+    CHECK(distanceGain(e, 1.0f) == 1.0f && near(distanceGain(e, 4.0f), 0.5f, 1e-6f) &&
+              near(distanceGain(e, 8.0f), 0.25f, 1e-6f) && near(distanceGain(e, 100.0f), 0.1f, 1e-6f),
+          "inverse: %f %f %f", distanceGain(e, 4.0f), distanceGain(e, 8.0f), distanceGain(e, 100.0f));
+    e.attenuation = Attenuation::Linear;
+    CHECK(near(distanceGain(e, 11.0f), 0.5f, 1e-6f) && distanceGain(e, 20.0f) == 0.0f && distanceGain(e, 2.0f) == 1.0f,
+          "linear: %f", distanceGain(e, 11.0f));
+    e.attenuation = Attenuation::Exponential;
+    e.rolloff = 2.0f;
+    CHECK(near(distanceGain(e, 4.0f), 0.25f, 1e-6f) && near(distanceGain(e, 40.0f), 0.01f, 1e-6f), "exponential: %f %f",
+          distanceGain(e, 4.0f), distanceGain(e, 40.0f));
+    e.attenuation = Attenuation::Inverse;
+    e.rolloff = 0.5f;
+    CHECK(near(distanceGain(e, 6.0f), 2.0f / (2.0f + 0.5f * 4.0f), 1e-6f), "inverse rolloff");
+    CHECK(parseAttenuation("linear") == Attenuation::Linear && !parseAttenuation("loud"), "names");
+}
+
+QUENCH_TEST(spatial_pan_law) {
+    for (float pan = -1.0f; pan <= 1.0f; pan += 0.125f) {
+        const glm::vec2 g = panGains(pan);
+        CHECK(near(g.x * g.x + g.y * g.y, 1.0f, 1e-5f), "constant power at %f", pan);
+    }
+    CHECK(near(panGains(-1.0f).x, 1.0f, 1e-6f) && near(panGains(-1.0f).y, 0.0f, 1e-6f), "left");
+    CHECK(near(panGains(0.0f).x, 0.70710678f, 1e-6f) && near(panGains(0.0f).y, 0.70710678f, 1e-6f), "center");
+    CHECK(balanceGains(0.0f) == glm::vec2(1.0f) && balanceGains(0.5f) == glm::vec2(0.5f, 1.0f), "balance");
+
+    Listener listener; // at the origin, looking down -Z
+    Emitter right{.position = {3.0f, 0.0f, 0.0f}};
+    CHECK(near(spatialize(listener, right).pan, 1.0f, 1e-6f), "right: %f", spatialize(listener, right).pan);
+    Emitter front{.position = {0.0f, 0.0f, -3.0f}};
+    CHECK(near(spatialize(listener, front).pan, 0.0f, 1e-6f), "front");
+    Emitter leftFront{.position = {-2.0f, 0.0f, -2.0f}};
+    CHECK(near(spatialize(listener, leftFront).pan, -0.70710678f, 1e-5f), "left front");
+    Emitter close{.position = {0.5f, 0.0f, 0.0f}, .minDistance = 1.0f};
+    CHECK(near(spatialize(listener, close).pan, 0.5f, 1e-6f), "inside minDistance: %f",
+          spatialize(listener, close).pan);
+    // Turned to face +X, the emitter on +X is in front.
+    listener.forward = {1.0f, 0.0f, 0.0f};
+    CHECK(near(spatialize(listener, right).pan, 0.0f, 1e-6f), "turned listener");
+}
+
+QUENCH_TEST(spatial_doppler) {
+    Listener listener;
+    Emitter approaching{.position = {0.0f, 0.0f, -100.0f}, .velocity = {0.0f, 0.0f, 34.3f}};
+    CHECK(near(spatialize(listener, approaching).pitch, 343.0f / (343.0f - 34.3f), 1e-5f), "approaching: %f",
+          spatialize(listener, approaching).pitch);
+    Emitter receding{.position = {0.0f, 0.0f, -100.0f}, .velocity = {0.0f, 0.0f, -34.3f}};
+    CHECK(near(spatialize(listener, receding).pitch, 343.0f / (343.0f + 34.3f), 1e-5f), "receding");
+    Emitter passing{.position = {0.0f, 0.0f, -100.0f}, .velocity = {34.3f, 0.0f, 0.0f}};
+    CHECK(near(spatialize(listener, passing).pitch, 1.0f, 1e-6f), "sideways: no shift");
+    Listener moving{.velocity = {0.0f, 0.0f, -34.3f}};
+    Emitter still{.position = {0.0f, 0.0f, -100.0f}};
+    CHECK(near(spatialize(moving, still).pitch, (343.0f + 34.3f) / 343.0f, 1e-5f), "listener toward the emitter");
+    CHECK(spatialize(listener, approaching, 343.0f, 0.0f).pitch == 1.0f, "scale 0");
+    // 5000 m/s is limited to 0.9 c: factor 10, clamped to 4.
+    Emitter fast{.position = {0.0f, 0.0f, -100.0f}, .velocity = {0.0f, 0.0f, 5000.0f}};
+    CHECK(near(spatialize(listener, fast).pitch, 4.0f, 1e-5f), "clamped: %f", spatialize(listener, fast).pitch);
+}
+
+// ---------------------------------------------------------------------------------------------------- mixer
+
+QUENCH_TEST(mixer_bus_gain) {
+    AudioSettings settings;
+    settings.buses = {{"music"}, {"effects"}, {.name = "steps", .parent = "effects", .volume = 0.5f}};
+    Rig rig(settings);
+    AudioSystem& a = rig.audio;
+    REQUIRE(a.busCount() == 4 && a.busInfo(a.bus("steps")).parent == a.bus("effects"), "bus tree");
+    a.playGenerator(std::make_shared<Constant>(0.25f), {.bus = a.bus("steps")});
+    a.setBusVolume(a.bus("effects"), 0.5f);
+    a.setBusVolume(BusId{}, 0.8f);
+    std::vector<float> out = rig.run(0.3);
+    Levels levels = measureLevels(last(out, 0.01), 2);
+    CHECK(near(levels.rms[0], 0.25f * 0.5f * 0.5f * 0.8f, 1e-5f) && near(levels.rms[1], 0.05f, 1e-5f), "level %f %f",
+          levels.rms[0], levels.rms[1]);
+    CHECK(near(a.busInfo(a.bus("steps")).peak[0], 0.125f, 0.01f) && near(a.busInfo(BusId{}).peak[1], 0.05f, 0.01f),
+          "meters %f %f", a.busInfo(a.bus("steps")).peak[0], a.busInfo(BusId{}).peak[1]);
+    CHECK(a.busInfo(a.bus("music")).peak[0] == 0.0f, "music bus meter %f", a.busInfo(a.bus("music")).peak[0]);
+
+    a.setBusMuted(a.bus("effects"), true);
+    out = rig.run(0.2);
+    CHECK(measureLevels(last(out, 0.01), 2).peak[0] < 1e-5f, "muted parent: %f",
+          measureLevels(last(out, 0.01), 2).peak[0]);
+    a.setBusMuted(a.bus("effects"), false);
+    a.setBusVolume(a.bus("music"), 0.0f); // another branch: no effect
+    out = rig.run(0.2);
+    CHECK(near(measureLevels(last(out, 0.01), 2).rms[0], 0.05f, 1e-5f), "unmuted");
+    CHECK(a.bus("none") == BusId{} && !a.findBus("none"), "unknown bus");
+}
+
+QUENCH_TEST(mixer_click_free_ramps) {
+    Rig rig;
+    AudioSystem& a = rig.audio;
+    const SoundHandle h = a.playGenerator(std::make_shared<Constant>(0.5f));
+    std::vector<float> out = rig.run(0.1);
+    CHECK(near(out[0], 0.5f, 1e-6f), "starts at once: %f", out[0]);
+    constexpr float kClick = 0.01f; // a jump of 2% of full scale between two samples
+    struct Change {
+        const char* name;
+        std::function<void()> apply;
+        float left, right;
+    };
+    const Change changes[] = {
+        {"volume", [&] { a.setVolume(h, 0.1f); }, 0.05f, 0.05f},
+        {"pan", [&] { a.setPan(h, 1.0f); }, 0.0f, 0.05f},
+        {"pan back", [&] { a.setPan(h, 0.0f); }, 0.05f, 0.05f},
+        {"volume up", [&] { a.setVolume(h, 1.0f); }, 0.5f, 0.5f},
+        {"bus volume", [&] { a.setBusVolume(BusId{}, 0.0f); }, 0.0f, 0.0f},
+        {"bus volume back", [&] { a.setBusVolume(BusId{}, 1.0f); }, 0.5f, 0.5f},
+        {"pause", [&] { a.setPaused(h, true); }, 0.0f, 0.0f},
+        {"resume", [&] { a.setPaused(h, false); }, 0.5f, 0.5f},
+    };
+    for (const Change& change : changes) {
+        change.apply();
+        out = rig.run(0.15);
+        const Levels end = measureLevels(last(out, 0.005), 2);
+        CHECK(maxStep(out) < kClick, "%s: step %f", change.name, maxStep(out));
+        CHECK(near(end.rms[0], change.left, 1e-4f) && near(end.rms[1], change.right, 1e-4f), "%s: ends at %f %f",
+              change.name, end.rms[0], end.rms[1]);
+    }
+    a.stop(h); // no fade asked: the shortest one (3 ms)
+    out = rig.run(0.02, 0.001);
+    CHECK(maxStep(out) < kClick, "stop: step %f", maxStep(out));
+    CHECK(measureLevels(std::span(out).subspan(std::size_t(0.004 * kRate) * 2), 2).peak[0] == 0.0f,
+          "silent 4 ms after the stop");
+    CHECK(a.state(h) == SoundState::Ended, "ended");
+}
+
+QUENCH_TEST(mixer_resample_and_pitch) {
+    Rig rig;
+    AudioSystem& a = rig.audio;
+    const SoundHandle h = a.playGenerator(std::make_shared<Sine>(1000.0f, 0.5f, 32000));
+    std::vector<float> out = rig.run(0.5);
+    Peak peak = dominantFrequency(last(out, 0.4), 2, kRate);
+    CHECK(near(peak.frequency, 1000.0f, 1.0f), "32 kHz source at 48 kHz: %f Hz", peak.frequency);
+    a.setPitch(h, 1.5f);
+    out = rig.run(0.5);
+    peak = dominantFrequency(last(out, 0.4), 2, kRate);
+    CHECK(near(peak.frequency, 1500.0f, 1.5f), "pitch 1.5: %f Hz", peak.frequency);
+    const Levels levels = measureLevels(last(out, 0.4), 2);
+    CHECK(near(levels.rms[0], 0.5f * 0.70710678f / std::numbers::sqrt2_v<float>, 0.01f), "level %f", levels.rms[0]);
+}
+
+QUENCH_TEST(mixer_doppler_pitch) {
+    struct Case {
+        const char* name;
+        glm::vec3 emitterVelocity, listenerVelocity;
+        float expected;
+    };
+    const Case cases[] = {
+        {"approaching", {0.0f, 0.0f, 34.3f}, {0.0f, 0.0f, 0.0f}, 1000.0f * 343.0f / (343.0f - 34.3f)},
+        {"receding", {0.0f, 0.0f, -34.3f}, {0.0f, 0.0f, 0.0f}, 1000.0f * 343.0f / (343.0f + 34.3f)},
+        {"listener approaching", {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -34.3f}, 1000.0f * (343.0f + 34.3f) / 343.0f},
+    };
+    for (const Case& c : cases) {
+        Rig rig;
+        AudioSystem& a = rig.audio;
+        a.setListener({.velocity = c.listenerVelocity});
+        a.playGenerator(std::make_shared<Sine>(1000.0f), {.spatial = true,
+                                                          .emitter = {.position = {0.0f, 0.0f, -50.0f},
+                                                                      .velocity = c.emitterVelocity,
+                                                                      .attenuation = Attenuation::None}});
+        const std::vector<float> out = rig.run(0.6);
+        const Peak peak = dominantFrequency(last(out, 0.5), 2, kRate);
+        CHECK(near(peak.frequency, c.expected, 1.5f), "%s: %f Hz, expected %f", c.name, peak.frequency, c.expected);
+    }
+}
+
+QUENCH_TEST(mixer_spatial_pan_and_attenuation) {
+    Rig rig;
+    AudioSystem& a = rig.audio;
+    const Emitter base{.attenuation = Attenuation::Inverse, .minDistance = 1.0f, .rolloff = 1.0f};
+    Emitter emitter = base;
+    emitter.position = {2.0f, 0.0f, 0.0f};
+    const SoundHandle h = a.playGenerator(std::make_shared<Sine>(500.0f, 0.5f), {.spatial = true, .emitter = emitter});
+    std::vector<float> out = rig.run(0.3);
+    Levels levels = measureLevels(last(out, 0.2), 2);
+    const float sineRms = 0.5f / std::numbers::sqrt2_v<float>;
+    CHECK(levels.rms[0] < 1e-4f && near(levels.rms[1], sineRms * 0.5f, 2e-3f), "2 m to the right: %f %f", levels.rms[0],
+          levels.rms[1]);
+
+    a.setPosition(h, {-2.0f, 0.0f, -2.0f}); // left front, 2.83 m
+    out = rig.run(0.3);
+    levels = measureLevels(last(out, 0.2), 2);
+    const glm::vec2 pan = panGains(-0.70710678f);
+    const float gain = 1.0f / (1.0f + std::sqrt(8.0f) - 1.0f);
+    CHECK(near(levels.rms[0], sineRms * gain * pan.x, 2e-3f) && near(levels.rms[1], sineRms * gain * pan.y, 2e-3f),
+          "left front: %f %f, expected %f %f", levels.rms[0], levels.rms[1], sineRms * gain * pan.x,
+          sineRms * gain * pan.y);
+
+    a.setListener({.forward = {-1.0f, 0.0f, 0.0f}}); // now the emitter is to the right front
+    out = rig.run(0.3);
+    levels = measureLevels(last(out, 0.2), 2);
+    CHECK(levels.rms[1] > levels.rms[0] * 2.0f, "turned listener: %f %f", levels.rms[0], levels.rms[1]);
+}
+
+QUENCH_TEST(mixer_voice_stealing) {
+    AudioSettings settings;
+    settings.maxVoices = 4;
+    Rig rig(settings);
+    AudioSystem& a = rig.audio;
+    std::vector<std::pair<SoundHandle, EndReason>> ended;
+    a.setEndCallback([&](SoundHandle h, EndReason r) { ended.emplace_back(h, r); });
+    // Volumes 0.4, 0.3, 0.2, 0.1: the newest is the quietest.
+    std::vector<SoundHandle> low;
+    for (int i = 0; i < 4; ++i)
+        low.push_back(
+            a.playGenerator(std::make_shared<Constant>(0.1f), {.volume = 0.1f * float(4 - i), .priority = 1.0f}));
+    rig.run(0.05);
+    CHECK(a.stats().voices == 4 && ended.empty(), "four voices: %u", a.stats().voices);
+
+    const SoundHandle high = a.playGenerator(std::make_shared<Constant>(0.01f), {.priority = 2.0f});
+    rig.run(0.05);
+    REQUIRE(ended.size() == 1, "one sound ended: %zu", ended.size());
+    CHECK(ended[0].first == low[3] && ended[0].second == EndReason::Stolen, "the quietest lowest-priority voice: %s",
+          endReasonName(ended[0].second));
+    CHECK(a.alive(high) && a.stats().voices == 4 && a.stats().stolen == 1, "the new one plays: %u voices",
+          a.stats().voices);
+
+    const SoundHandle lowest = a.playGenerator(std::make_shared<Constant>(1.0f), {.priority = 0.0f});
+    rig.run(0.05);
+    REQUIRE(ended.size() == 2, "two sounds ended: %zu", ended.size());
+    CHECK(ended[1].first == lowest && ended[1].second == EndReason::Rejected, "lower priority rejected: %s",
+          endReasonName(ended[1].second));
+    CHECK(a.stats().rejected == 1, "rejected count");
+
+    // Equal priority: the new sound wins over the quietest (volume 0.2).
+    const SoundHandle equal = a.playGenerator(std::make_shared<Constant>(0.5f), {.priority = 1.0f});
+    rig.run(0.05);
+    REQUIRE(ended.size() == 3, "three sounds ended: %zu", ended.size());
+    CHECK(ended[2].first == low[2] && a.alive(equal), "equal priority steals the quietest");
+}
+
+QUENCH_TEST(mixer_one_shot_and_loop) {
+    auto data = std::make_shared<SoundData>();
+    data->format = {2, kRate};
+    for (int i = 0; i < 1000; ++i) {
+        data->samples.push_back(float(i) / 1000.0f);
+        data->samples.push_back(-float(i) / 2000.0f);
+    }
+    {
+        Rig rig;
+        std::vector<std::pair<SoundHandle, EndReason>> ended;
+        rig.audio.setEndCallback([&](SoundHandle h, EndReason r) { ended.emplace_back(h, r); });
+        const SoundHandle h = rig.audio.play(std::shared_ptr<const SoundData>(data));
+        CHECK(rig.audio.state(h) == SoundState::Pending, "pending until update()");
+        const std::vector<float> out = rig.run(0.05);
+        bool exact = true;
+        for (std::size_t i = 0; i < data->samples.size(); ++i) exact &= out[i] == data->samples[i];
+        CHECK(exact, "one-shot plays the data unchanged");
+        CHECK(measureLevels(std::span(out).subspan(data->samples.size()), 2).peak[0] == 0.0f, "then silence");
+        rig.audio.update();
+        CHECK(ended.size() == 1 && ended[0].second == EndReason::Finished && rig.audio.state(h) == SoundState::Ended,
+              "finished");
+    }
+    {
+        Rig rig;
+        rig.audio.play(std::shared_ptr<const SoundData>(data), {.loop = true});
+        const std::vector<float> out = rig.run(0.1);
+        bool exact = true;
+        for (std::size_t i = 0; i < out.size(); ++i) exact &= out[i] == data->samples[i % data->samples.size()];
+        CHECK(exact, "the loop repeats the data without a gap");
+        CHECK(rig.audio.stats().voices == 1, "still playing");
+    }
+}
+
+QUENCH_TEST(mixer_pause_freezes_position) {
+    // A one-second ramp: the value says how far the sound got.
+    auto ramp = std::make_shared<SoundData>();
+    ramp->format = {2, kRate};
+    for (std::uint32_t i = 0; i < kRate; ++i) {
+        ramp->samples.push_back(float(i) / kRate);
+        ramp->samples.push_back(float(i) / kRate);
+    }
+    for (bool bus : {false, true}) {
+        Rig rig;
+        AudioSystem& a = rig.audio;
+        const SoundHandle h = a.play(std::shared_ptr<const SoundData>(ramp), {.bus = a.bus("effects")});
+        rig.run(0.1);
+        if (bus)
+            a.setBusPaused(a.bus("effects"), true);
+        else
+            a.setPaused(h, true);
+        std::vector<float> out = rig.run(0.3);
+        CHECK(measureLevels(last(out, 0.25), 2).peak[0] == 0.0f, "silent while paused (bus %d)", int(bus));
+        if (bus)
+            a.setBusPaused(a.bus("effects"), false);
+        else
+            a.setPaused(h, false);
+        out = rig.run(0.02);
+        // Paused at about 0.1 s plus the 5 ms fade; 20 ms after the resume it is near 0.125 (0.425 if it ran on).
+        const float value = last(out, 0.001)[0];
+        CHECK(value > 0.1f && value < 0.15f, "resumed where it paused (bus %d): %f", int(bus), value);
+    }
+}
+
+QUENCH_TEST(mixer_handles_and_states) {
+    Rig rig;
+    AudioSystem& a = rig.audio;
+    CHECK(!SoundHandle{}.valid() && a.state(SoundHandle{}) == SoundState::Ended, "default handle");
+    const SoundHandle h = a.playGenerator(std::make_shared<Constant>(0.1f));
+    CHECK(h.valid() && a.state(h) == SoundState::Pending, "pending");
+    rig.run(0.01);
+    CHECK(a.state(h) == SoundState::Playing && a.stats().sounds == 1, "playing");
+    a.stop(h, 0.01f);
+    rig.run(0.03);
+    CHECK(a.state(h) == SoundState::Ended && a.stats().sounds == 0, "ended");
+    // A stale handle after the slot is reused: calls are ignored.
+    const SoundHandle next = a.playGenerator(std::make_shared<Constant>(0.2f));
+    a.setVolume(h, 0.0f);
+    a.stop(h);
+    std::vector<float> out = rig.run(0.05);
+    CHECK(a.alive(next) && near(last(out, 0.01)[0], 0.2f, 1e-6f), "stale handle had no effect");
+    const SoundHandle pending = a.playGenerator(std::make_shared<Constant>(0.3f));
+    a.stop(pending);
+    CHECK(a.state(pending) == SoundState::Ended, "a pending sound stops at once");
+    CHECK(std::string(endReasonName(EndReason::Dropped)) == "dropped", "names");
+
+    AudioSettings few;
+    few.maxVoices = 1;
+    few.maxSounds = 2;
+    Rig small(few);
+    CHECK(small.audio.playGenerator(std::make_shared<Constant>(0.1f)).valid() &&
+              small.audio.playGenerator(std::make_shared<Constant>(0.1f)).valid() &&
+              !small.audio.playGenerator(std::make_shared<Constant>(0.1f)).valid() && small.audio.stats().refused == 1,
+          "refused beyond maxSounds");
+}
+
+QUENCH_TEST(mixer_offline_carry_and_monitor) {
+    Rig rig;
+    AudioSystem& a = rig.audio;
+    a.setMonitor(0.5);
+    a.playGenerator(std::make_shared<Sine>(300.0f));
+    std::vector<float> out;
+    std::uint32_t frames = 0;
+    for (int i = 0; i < 90; ++i) {
+        a.update();
+        frames += a.mixOffline(1.0 / 90.0, &out);
+    }
+    CHECK(frames >= kRate - 1 && frames <= kRate && out.size() == std::size_t(frames) * 2, "one second: %u frames",
+          frames);
+    a.update();
+    const std::vector<float> monitored = a.monitored(2.0);
+    CHECK(monitored.size() == std::size_t(kRate / 2) * 2, "half a second monitored: %zu", monitored.size());
+    const std::span<const float> tail = last(out, 0.5);
+    CHECK(monitored.size() == tail.size() && std::equal(monitored.begin(), monitored.end(), tail.begin()),
+          "the monitor holds the newest output");
+    CHECK(a.stats().framesMixed == frames, "frames mixed");
+}
+
+QUENCH_TEST(mixer_pcm_stream) {
+    Rig rig;
+    AudioSystem& a = rig.audio;
+    auto pcm = std::make_shared<PcmStream>(Format{2, kRate}, 0.25);
+    const std::vector<float> input = sineSamples(440.0f, 0.3f, 0.1);
+    CHECK(pcm->push(input) == input.size() / 2 && pcm->queued() == input.size() / 2, "pushed");
+    std::vector<std::pair<SoundHandle, EndReason>> ended;
+    a.setEndCallback([&](SoundHandle h, EndReason r) { ended.emplace_back(h, r); });
+    const SoundHandle h = a.playGenerator(pcm);
+    std::vector<float> out = rig.run(0.1);
+    CHECK(std::equal(input.begin(), input.end(), out.begin()), "plays what was pushed");
+    out = rig.run(0.05);
+    CHECK(pcm->underruns() > 0 && a.alive(h) && measureLevels(out, 2).peak[0] == 0.0f, "empty: silence, an underrun");
+    pcm->push(input);
+    pcm->finish();
+    rig.run(0.15);
+    CHECK(ended.size() == 1 && ended[0].second == EndReason::Finished, "finish() ends it after the queued frames");
+}
+
+QUENCH_TEST(mixer_thread_stress) {
+#if !QUENCH_TEST_THREADS
+    QUENCH_SKIP("no threads in this build");
+#else
+    AssetDir assets("audio_mixer_thread_stress");
+    const std::vector<float> music = sineSamples(220.0f, 0.2f, 0.5);
+    assets.write("loop.wav", encodeWav(music, 2, kRate));
+    JobSystem jobs(JobSystemDesc{.workerThreads = 2});
+    AudioSettings settings;
+    settings.maxVoices = 8;
+    settings.streamBufferSeconds = 0.1;
+    AudioSystem audio(jobs, nullptr, settings);
+    auto data = std::make_shared<const SoundData>(SoundData{{1, 22050}, sineSamples(880.0f, 0.1f, 0.05, 1)});
+    std::atomic<bool> stop{false};
+    // The "device": renders as fast as it can, like a callback that never sleeps.
+    std::thread device([&] {
+        std::vector<float> buffer(256 * 2);
+        while (!stop.load()) audio.render(buffer.data(), 256);
+    });
+    const auto start = std::chrono::steady_clock::now();
+    std::vector<SoundHandle> handles;
+    int i = 0;
+    while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(300)) {
+        if (i % 5 == 0) handles.push_back(audio.play(data, {.spatial = true}));
+        if (i % 17 == 0) handles.push_back(audio.playGenerator(std::make_shared<Sine>(500.0f + float(i))));
+        if (i % 41 == 0) handles.push_back(audio.playStream("loop.wav", {.loop = true}));
+        for (SoundHandle h : handles) audio.setPosition(h, {float(i % 7), 0.0f, -2.0f}, {1.0f, 0.0f, 0.0f});
+        if (handles.size() > 12) {
+            audio.stop(handles.front(), 0.01f);
+            handles.erase(handles.begin());
+        }
+        audio.setBusVolume(audio.bus("effects"), float(i % 10) / 10.0f);
+        audio.update();
+        ++i;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    audio.stopAll();
+    for (int wait = 0; wait < 500 && audio.stats().sounds > 0; ++wait) {
+        audio.update();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    stop.store(true);
+    device.join();
+    CHECK(audio.stats().sounds == 0, "every sound ended: %u left", audio.stats().sounds);
+    CHECK(audio.stats().played > 10, "played %llu", (unsigned long long)audio.stats().played);
+#endif
+}
+
+// ---------------------------------------------------------------------------------------------------- streams
+
+QUENCH_TEST(stream_chunk_boundaries) {
+    AssetDir assets("audio_stream_chunk_boundaries");
+    const std::vector<float> pattern = patternSamples(kRate * 2 + 777);
+    const fs::Bytes wav = encodeWav(pattern, 2, kRate);
+    assets.write("music/pattern.wav", wav);
+    const Result<SoundData> expected = decodeSound(wav);
+    REQUIRE(expected, "decode: %s", expected.error().c_str());
+
+    AudioSettings settings;
+    settings.streamBufferSeconds = 0.05; // the smallest ring (4096 frames): many refills
+    Rig rig(settings);
+    std::vector<std::pair<SoundHandle, EndReason>> ended;
+    rig.audio.setEndCallback([&](SoundHandle h, EndReason r) { ended.emplace_back(h, r); });
+    rig.audio.playStream("music/pattern.wav");
+    const std::vector<float> out = rig.run(2.2, 0.0123);
+    REQUIRE(out.size() >= expected->samples.size(), "mixed %zu", out.size());
+    std::size_t mismatch = expected->samples.size();
+    for (std::size_t i = 0; i < expected->samples.size() && mismatch == expected->samples.size(); ++i)
+        if (out[i] != expected->samples[i]) mismatch = i;
+    CHECK(mismatch == expected->samples.size(), "streamed output differs at sample %zu", mismatch);
+    CHECK(rig.audio.stats().underruns == 0, "underruns %llu", (unsigned long long)rig.audio.stats().underruns);
+    rig.audio.update();
+    CHECK(ended.size() == 1 && ended[0].second == EndReason::Finished, "the stream finished");
+}
+
+QUENCH_TEST(stream_refills_on_jobs) {
+    AssetDir assets("audio_stream_refills_on_jobs");
+    const std::vector<float> pattern = patternSamples(kRate + 1234);
+    const fs::Bytes wav = encodeWav(pattern, 2, kRate);
+    assets.write("pattern.wav", wav);
+    const Result<SoundData> expected = decodeSound(wav);
+    REQUIRE(expected, "decode");
+
+    JobSystem jobs(JobSystemDesc{.workerThreads = QUENCH_TEST_THREADS ? 2 : 0});
+    AudioSettings settings;
+    settings.streamBufferSeconds = 0.05;
+    AudioSystem audio(jobs, nullptr, settings);
+    const SoundHandle h = audio.playStream("pattern.wav");
+    std::vector<float> out, buffer(480 * 2);
+    for (int step = 0; step < 300 && out.size() < expected->samples.size(); ++step) {
+        audio.update(); // opens the stream and refills it on jobs
+        jobs.waitAll(); // the "device" renders only after they are done
+        if (audio.state(h) != SoundState::Playing) continue;
+        audio.update(); // sends the play
+        audio.render(buffer.data(), 480);
+        out.insert(out.end(), buffer.begin(), buffer.end());
+    }
+    REQUIRE(out.size() >= expected->samples.size(), "mixed %zu of %zu", out.size(), expected->samples.size());
+    CHECK(std::equal(expected->samples.begin(), expected->samples.end(), out.begin()), "streamed output matches");
+    CHECK(audio.stats().underruns == 0, "underruns");
+}
+
+QUENCH_TEST(stream_loop_is_gapless) {
+    AssetDir assets("audio_stream_loop_is_gapless");
+    const std::vector<float> pattern = patternSamples(12000);
+    const fs::Bytes wav = encodeWav(pattern, 2, kRate);
+    assets.write("loop.wav", wav);
+    const Result<SoundData> expected = decodeSound(wav);
+    REQUIRE(expected, "decode");
+    AudioSettings settings;
+    settings.streamBufferSeconds = 0.05;
+    Rig rig(settings);
+    rig.audio.playStream("loop.wav", {.loop = true});
+    const std::vector<float> out = rig.run(1.0);
+    std::size_t mismatch = out.size();
+    for (std::size_t i = 0; i < out.size() && mismatch == out.size(); ++i)
+        if (out[i] != expected->samples[i % expected->samples.size()]) mismatch = i;
+    CHECK(mismatch == out.size(), "the looped stream differs at sample %zu", mismatch);
+}
+
+QUENCH_TEST(stream_music_crossfade) {
+    AssetDir assets("audio_stream_music_crossfade");
+    assets.write("a.wav", encodeWav(sineSamples(440.0f, 0.4f, 1.0), 2, kRate));
+    assets.write("b.wav", encodeWav(sineSamples(660.0f, 0.4f, 1.0), 2, kRate));
+    Rig rig;
+    AudioSystem& a = rig.audio;
+    std::vector<std::pair<SoundHandle, EndReason>> ended;
+    a.setEndCallback([&](SoundHandle h, EndReason r) { ended.emplace_back(h, r); });
+    const SoundHandle first = a.playMusic("a.wav", {.crossfade = 0.0f});
+    std::vector<float> out = rig.run(0.5);
+    CHECK(near(dominantFrequency(last(out, 0.3), 2, kRate).frequency, 440.0f, 1.0f), "first track");
+    const float before = measureLevels(last(out, 0.3), 2).rms[0];
+
+    const SoundHandle second = a.playMusic("b.wav", {.crossfade = 0.5f});
+    out = rig.run(0.5);
+    // Equal-power crossfade of two unrelated tones: the level stays about the same throughout.
+    float lowest = 10.0f, highest = 0.0f;
+    for (double t = 0.0; t + 0.05 <= 0.5; t += 0.05) {
+        const float rms =
+            measureLevels(std::span(out).subspan(std::size_t(t * kRate) * 2, std::size_t(0.05 * kRate) * 2), 2).rms[0];
+        lowest = std::min(lowest, rms);
+        highest = std::max(highest, rms);
+    }
+    CHECK(lowest > before * 0.85f && highest < before * 1.15f, "level during the crossfade %f..%f (before %f)", lowest,
+          highest, before);
+    out = rig.run(0.3);
+    const Peak peak = dominantFrequency(last(out, 0.25), 2, kRate, 300.0f, 1000.0f);
+    CHECK(near(peak.frequency, 660.0f, 1.0f), "second track: %f Hz", peak.frequency);
+    CHECK(near(dominantFrequency(last(out, 0.25), 2, kRate, 400.0f, 500.0f).level, 0.0f, 0.01f), "first track gone");
+    CHECK(ended.size() == 1 && ended[0].first == first && ended[0].second == EndReason::Stopped, "first stopped");
+    CHECK(a.music() == second && a.alive(second), "the second is the music");
+    a.stopMusic(0.1f);
+    rig.run(0.2);
+    CHECK(!a.alive(second) && !a.music().valid(), "music stopped");
+}
+
+QUENCH_TEST(stream_missing_file) {
+    AssetDir assets("audio_stream_missing_file");
+    assets.write("broken.mp3", std::vector<std::uint8_t>(5000, 0x42));
+    for (bool offline : {true, false}) {
+        JobSystem jobs(JobSystemDesc{.workerThreads = 0});
+        AudioSystem audio(jobs, nullptr);
+        audio.setOffline(offline);
+        std::vector<EndReason> reasons;
+        audio.setEndCallback([&](SoundHandle, EndReason r) { reasons.push_back(r); });
+        audio.playStream("missing.ogg");
+        audio.playStream("broken.mp3");
+        for (int i = 0; i < 10 && reasons.size() < 2; ++i) {
+            audio.update();
+            jobs.waitAll();
+        }
+        CHECK(reasons.size() == 2 && reasons[0] == EndReason::Failed && reasons[1] == EndReason::Failed,
+              "both fail (offline %d): %zu", int(offline), reasons.size());
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------- files
+
+QUENCH_TEST(decode_wav_flac_mp3) {
+    const std::vector<float> samples = sineSamples(440.0f, 0.5f, 0.5);
+    for (WavSampleFormat format : {WavSampleFormat::Pcm16, WavSampleFormat::Float32}) {
+        const Result<SoundData> wav = decodeSound(encodeWav(samples, 2, kRate, format));
+        REQUIRE(wav, "wav: %s", wav.error().c_str());
+        CHECK(wav->format.channels == 2 && wav->format.sampleRate == kRate && wav->frames() == samples.size() / 2,
+              "wav format");
+        float worst = 0.0f;
+        for (std::size_t i = 0; i < samples.size(); ++i)
+            worst = std::max(worst, std::abs(wav->samples[i] - samples[i]));
+        CHECK(worst <= (format == WavSampleFormat::Pcm16 ? 1.0f / 16384.0f : 0.0f), "wav round trip error %g", worst);
+    }
+    struct File {
+        const char* name;
+        std::span<const std::uint8_t> bytes;
+    };
+    for (const File& file : {File{"flac", quench::test::toneFlac()}, File{"mp3", quench::test::toneMp3()}}) {
+        const Result<SoundData> sound = decodeSound(file.bytes);
+        REQUIRE(sound, "%s: %s", file.name, sound.error().c_str());
+        CHECK(sound->format.channels == 1 && sound->format.sampleRate == 22050, "%s format %u ch %u Hz", file.name,
+              sound->format.channels, sound->format.sampleRate);
+        // 11025 frames encoded; the MP3 decodes with its encoder delay and padding (22 frames of 576 = 12672).
+        CHECK(sound->frames() >= 11025 && sound->frames() <= 11025 + 3 * 576, "%s: %llu frames", file.name,
+              (unsigned long long)sound->frames());
+        const Peak peak = dominantFrequency(sound->samples, 1, 22050);
+        CHECK(near(peak.frequency, 440.0f, 1.0f), "%s: %f Hz", file.name, peak.frequency);
+        CHECK(near(measureLevels(sound->samples, 1).peak[0], 0.5f, 0.05f), "%s peak", file.name);
+    }
+}
+
+QUENCH_TEST(decode_errors) {
+    std::vector<std::uint8_t> text;
+    for (int i = 0; i < 200; ++i)
+        for (char c : std::string("not a sound file ")) text.push_back(std::uint8_t(c));
+    CHECK(!decodeSound(text), "text decoded");
+    CHECK(!decodeSound({}), "nothing decoded");
+    const fs::Bytes empty = encodeWav({}, 2, kRate);
+    const Result<SoundData> noFrames = decodeSound(empty);
+    CHECK(!noFrames, "a WAV without frames decoded");
+    const std::span<const std::uint8_t> flac = quench::test::toneFlac();
+    CHECK(!decodeSound(flac.first(60)), "a truncated FLAC header decoded");
+}
+
+QUENCH_TEST(sound_assets) {
+    AssetDir dir("audio_sound_assets");
+    dir.write("tone.wav", encodeWav(sineSamples(440.0f, 0.5f, 0.2, 1), 1, kRate));
+    dir.write("broken.wav", std::vector<std::uint8_t>(3000, 0x7f));
+    JobSystem jobs(JobSystemDesc{.workerThreads = QUENCH_TEST_THREADS ? 2 : 0});
+    assets::AssetManager manager(jobs);
+    {
+        AudioSettings settings;
+        settings.maxStartDelay = 0.05;
+        AudioSystem audio(jobs, &manager, settings);
+        audio.setOffline(true);
+        std::vector<std::pair<SoundHandle, EndReason>> ended;
+        audio.setEndCallback([&](SoundHandle h, EndReason r) { ended.emplace_back(h, r); });
+
+        assets::AssetRef<SoundAsset> tone = audio.load("tone.wav");
+        const SoundHandle loop = audio.play(tone, {.loop = true});
+        const SoundHandle missing = audio.play("missing.wav");
+        const SoundHandle broken = audio.play("broken.wav", {.loop = true});
+        CHECK(audio.state(loop) == SoundState::Pending, "pending while loading");
+        std::vector<float> out;
+        for (int i = 0; i < 400 && (audio.state(loop) != SoundState::Playing || audio.alive(broken)); ++i) {
+            manager.update();
+            audio.update();
+            audio.mixOffline(0.001, &out);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        CHECK(tone.ready() && tone->data() && tone->data()->frames() == std::size_t(0.2 * kRate), "loaded");
+        CHECK(audio.state(loop) == SoundState::Playing, "the loop started once loaded");
+        CHECK(!audio.alive(missing) && !audio.alive(broken), "missing and broken sounds end");
+        int failed = 0;
+        for (const auto& [handle, reason] : ended) failed += reason == EndReason::Failed;
+        CHECK(failed == 2, "two failed: %d of %zu", failed, ended.size());
+        const assets::AssetManager::Stats stats = manager.stats();
+        bool counted = false;
+        for (const auto& type : stats.types)
+            if (type.name == "sound") counted = type.memory.cpu == std::uint64_t(0.2 * kRate) * sizeof(float);
+        CHECK(counted, "the decoded sound's memory is counted");
+
+        // A one-shot of a sound that takes longer than maxStartDelay to load is dropped.
+        manager.setSimulatedLatency(0.5);
+        const SoundHandle late = audio.play("tone_late.wav");
+        dir.write("tone_late.wav", encodeWav(sineSamples(440.0f, 0.5f, 0.2, 1), 1, kRate));
+        for (int i = 0; i < 20; ++i) {
+            manager.update();
+            audio.update();
+            audio.mixOffline(0.01, &out);
+        }
+        REQUIRE(!ended.empty(), "nothing ended");
+        CHECK(!audio.alive(late) && ended.back().first == late && ended.back().second == EndReason::Dropped,
+              "late one-shot dropped: %s", endReasonName(ended.back().second));
+        manager.setSimulatedLatency(0.0);
+        audio.stopAll();
+        audio.update();
+    }
+    // The AudioSystem unregistered its type: loading again needs a new one.
+    CHECK(manager.stats().types.empty() || manager.stats().types[0].name != "sound", "type unregistered");
+}
+
+// ---------------------------------------------------------------------------------------------------- analysis
+
+QUENCH_TEST(analysis_levels_and_frequency) {
+    const std::vector<float> sine = sineSamples(1234.5f, 0.8f, 1.0);
+    const Levels levels = measureLevels(sine, 2);
+    CHECK(near(levels.rms[0], 0.8f / std::numbers::sqrt2_v<float>, 1e-3f) && near(levels.peak[1], 0.8f, 1e-3f),
+          "rms %f peak %f", levels.rms[0], levels.peak[1]);
+    const Peak peak = dominantFrequency(sine, 2, kRate);
+    CHECK(near(peak.frequency, 1234.5f, 0.5f) && near(peak.level, 0.8f, 0.08f), "peak %f Hz level %f", peak.frequency,
+          peak.level);
+    const Peak limited = dominantFrequency(sine, 2, kRate, 20.0f, 1000.0f);
+    CHECK(limited.frequency < 1000.0f && limited.level < 0.05f, "outside the band: %f Hz %f", limited.frequency,
+          limited.level);
+    CHECK(dominantFrequency(std::vector<float>(4096, 0.0f), 2, kRate).frequency == 0.0f, "silence");
+    CHECK(measureLevels({}, 2).frames == 0, "empty");
+}

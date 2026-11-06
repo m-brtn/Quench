@@ -65,7 +65,12 @@ TrailForge (the larger code base):
   `render/TimeOfDay`, `render/RenderSettings` (quality presets), `render/MathConvert.h` (Jolt and GLM conversion).
 - Input: `input/Input`, `input/ControlLayout`, `input/TouchControls` (game-specific bindings stay in the game).
 - Audio: `audio/AudioMixer`, `audio/AudioSystem`, `audio/AudioTypes`, `audio/AudioManifest` (the vehicle mappings stay
-  in the game).
+  in the game). Not moved: the engine's `quench_audio` (stage 7, [Audio](audio.md)) was written for the engine, with
+  TrailForge's miniaudio device and offline capture read as a reference (`b97883e`). Moving TrailForge to it is game
+  work for when the user asks; at its move to 0.5.0 it must drop its own `miniaudio_lib`
+  ([Dependencies](dependencies.md#added-in-stage-7)), and its `--no-audio` and `--audio-capture` become engine flags
+  that no longer reach the game. The path: `AudioMixer::render` (interleaved stereo float) as a
+  `quench::audio::Generator` on `App::audio()`, so the engine's device, `--no-audio` and `--audio-capture` serve it.
 - Streaming: `track/TerrainTiles` (asynchronous physics terrain tiles).
 - Tools: `tools/texc` (texture and model compiler), `tools/render/compare_captures.py`, `tools/ios/`.
 - CMake: `IosBundle.cmake`, `AppIcon.cmake`, the iOS presets and `cmake/patches/`.
@@ -75,7 +80,8 @@ Ashfall:
 - GPU mipmap generation for uploaded textures (`SDL_GenerateMipmapsForGPUTexture` in `Renderer.cpp`).
 - Screen-space effects at half resolution: ambient occlusion, indirect bounce, reflections and sun shafts; the
   occlusion and volume textures alternate as their own temporal history.
-- Procedural audio synthesis (`app/Audio.cpp`, sounds generated at startup).
+- Procedural audio synthesis (`app/Audio.cpp`, sounds generated at startup). Not moved; on the engine such sounds
+  would be `SoundData` played with `AudioSystem::play` or a `Generator`.
 - `animatePose` in `scene.hlsl` is a procedural vertex deformation (walk cycle, recoil), not skeletal animation; it
   stays in the game.
 

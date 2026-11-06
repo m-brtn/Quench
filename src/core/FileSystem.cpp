@@ -8,6 +8,46 @@
 namespace quench::fs {
 namespace {
 
+class MemoryReader final : public Reader {
+public:
+    explicit MemoryReader(Bytes bytes) : m_bytes(std::move(bytes)) {}
+
+    std::uint64_t size() const override { return m_bytes.size(); }
+
+    Result<std::size_t> read(std::uint64_t offset, std::span<std::uint8_t> out) override {
+        if (offset >= m_bytes.size()) return std::size_t(0);
+        const std::size_t count = std::min<std::size_t>(out.size(), m_bytes.size() - std::size_t(offset));
+        std::copy_n(m_bytes.begin() + std::ptrdiff_t(offset), count, out.begin());
+        return count;
+    }
+
+private:
+    Bytes m_bytes;
+};
+
+class StdReader final : public Reader {
+public:
+    StdReader(std::ifstream in, std::uint64_t size, std::string name)
+        : m_in(std::move(in)), m_size(size), m_name(std::move(name)) {}
+
+    std::uint64_t size() const override { return m_size; }
+
+    Result<std::size_t> read(std::uint64_t offset, std::span<std::uint8_t> out) override {
+        if (offset >= m_size) return std::size_t(0);
+        const std::size_t count = std::min<std::size_t>(out.size(), std::size_t(m_size - offset));
+        m_in.clear();
+        m_in.seekg(std::streamoff(offset));
+        if (count > 0 && !m_in.read(reinterpret_cast<char*>(out.data()), std::streamsize(count)))
+            return Error{"cannot read " + m_name};
+        return count;
+    }
+
+private:
+    std::ifstream m_in;
+    std::uint64_t m_size = 0;
+    std::string m_name;
+};
+
 class StdBackend final : public Backend {
 public:
     StdBackend(std::filesystem::path assetRoot, std::filesystem::path userRoot)
@@ -26,6 +66,17 @@ public:
         if (size > 0 && !in.read(reinterpret_cast<char*>(bytes.data()), size))
             return Error{"cannot read " + full.string()};
         return bytes;
+    }
+
+    Result<std::unique_ptr<Reader>> open(Root root, std::string_view path) override {
+        if (root == Root::User && m_userRoot.empty()) return Error{"no user directory"};
+        const std::filesystem::path full = resolve(root, path);
+        std::ifstream in(full, std::ios::binary);
+        if (!in) return Error{"cannot open " + full.string()};
+        in.seekg(0, std::ios::end);
+        const std::streamoff size = in.tellg();
+        if (size < 0) return Error{"cannot read " + full.string()};
+        return std::unique_ptr<Reader>(std::make_unique<StdReader>(std::move(in), std::uint64_t(size), full.string()));
     }
 
     bool exists(Root root, std::string_view path) override {
@@ -83,6 +134,8 @@ std::string text(Bytes bytes) { return std::string(bytes.begin(), bytes.end()); 
 
 } // namespace
 
+std::unique_ptr<Reader> makeMemoryReader(Bytes bytes) { return std::make_unique<MemoryReader>(std::move(bytes)); }
+
 std::unique_ptr<Backend> makeStdBackend(std::filesystem::path assetRoot, std::filesystem::path userRoot) {
     return std::make_unique<StdBackend>(std::move(assetRoot), std::move(userRoot));
 }
@@ -113,6 +166,11 @@ Result<std::string> readAssetText(std::string_view path) {
     Result<Bytes> bytes = readAsset(path);
     if (!bytes) return Error{bytes.error()};
     return text(std::move(bytes).value());
+}
+
+Result<std::unique_ptr<Reader>> openAsset(std::string_view path) {
+    if (std::string reason = checkPath(path); !reason.empty()) return Error{reason + ": " + std::string(path)};
+    return backend()->open(Root::Assets, path);
 }
 
 bool assetExists(std::string_view path) { return checkPath(path).empty() && backend()->exists(Root::Assets, path); }

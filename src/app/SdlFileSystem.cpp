@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <utility>
@@ -15,6 +16,36 @@ std::string withSeparator(std::string dir) {
 }
 
 Error sdlError(const std::string& what) { return Error{what + ": " + SDL_GetError()}; }
+
+class SdlReader final : public fs::Reader {
+public:
+    SdlReader(SDL_IOStream* io, std::uint64_t size, std::string name)
+        : m_io(io), m_size(size), m_name(std::move(name)) {}
+    ~SdlReader() override { SDL_CloseIO(m_io); }
+    SdlReader(const SdlReader&) = delete;
+    SdlReader& operator=(const SdlReader&) = delete;
+
+    std::uint64_t size() const override { return m_size; }
+
+    Result<std::size_t> read(std::uint64_t offset, std::span<std::uint8_t> out) override {
+        if (offset >= m_size) return std::size_t(0);
+        const std::size_t count = std::min<std::size_t>(out.size(), std::size_t(m_size - offset));
+        if (SDL_SeekIO(m_io, Sint64(offset), SDL_IO_SEEK_SET) < 0) return sdlError("cannot seek " + m_name);
+        std::size_t got = 0;
+        while (got < count) {
+            const std::size_t n = SDL_ReadIO(m_io, out.data() + got, count - got);
+            if (n == 0) break;
+            got += n;
+        }
+        if (got < count && SDL_GetIOStatus(m_io) == SDL_IO_STATUS_ERROR) return sdlError("cannot read " + m_name);
+        return got;
+    }
+
+private:
+    SDL_IOStream* m_io;
+    std::uint64_t m_size;
+    std::string m_name;
+};
 
 class SdlBackend final : public fs::Backend {
 public:
@@ -41,6 +72,19 @@ public:
         const bool closed = SDL_CloseIO(io);
         if (got != bytes.size() || !closed) return sdlError("cannot read " + full);
         return bytes;
+    }
+
+    Result<std::unique_ptr<fs::Reader>> open(fs::Root root, std::string_view path) override {
+        const std::string full = resolve(root, path);
+        SDL_IOStream* io = SDL_IOFromFile(full.c_str(), "rb");
+        if (!io) return sdlError("cannot open " + full);
+        const Sint64 size = SDL_GetIOSize(io);
+        if (size < 0) {
+            // A stream of unknown size cannot be read in pieces: read it whole.
+            SDL_CloseIO(io);
+            return fs::Backend::open(root, path);
+        }
+        return std::unique_ptr<fs::Reader>(std::make_unique<SdlReader>(io, std::uint64_t(size), full));
     }
 
     bool exists(fs::Root root, std::string_view path) override {

@@ -1,0 +1,383 @@
+#include "Mixer.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstring>
+#include <numbers>
+
+namespace quench::audio::detail {
+namespace {
+
+constexpr double kFracOne = 4294967296.0; // 2^32
+constexpr float kFracScale = float(1.0 / kFracOne);
+
+float fadeCurve(float fade) { return std::sin(fade * float(std::numbers::pi / 2.0)); }
+
+} // namespace
+
+Mixer::Mixer(const MixerConfig& config)
+    : m_config(config), m_commands(std::size_t(config.maxSounds) * 2 + 256),
+      m_events(std::size_t(config.maxSounds) + 64) {
+    m_voices.resize(std::size_t(config.maxVoices) * 2);
+    m_free.reserve(m_voices.size());
+    for (std::uint32_t i = std::uint32_t(m_voices.size()); i-- > 0;) m_free.push_back(i);
+    m_active.reserve(m_voices.size());
+    m_slotVoice.assign(config.maxSounds, -1);
+    m_buses.resize(config.busParents.size());
+    for (std::size_t b = 0; b < m_buses.size(); ++b) {
+        m_buses[b].parent = b == 0 ? 0 : config.busParents[b];
+        m_buses[b].volume = b < config.busVolumes.size() ? config.busVolumes[b] : 1.0f;
+        m_buses[b].gain = m_buses[b].volume;
+    }
+    m_busBuffers.resize(m_buses.size() * kBlockFrames * kMixChannels);
+    const auto maxSourceFrames = std::size_t(std::ceil(kBlockFrames * kMaxStep)) + 2;
+    m_scratch.resize(maxSourceFrames * 2);
+    if (config.monitorFrames > 0) m_monitor = std::make_unique<SampleRing>(kMixChannels, config.monitorFrames);
+}
+
+void Mixer::render(float* out, std::uint32_t frames) {
+    const auto start = std::chrono::steady_clock::now();
+    Command command;
+    while (m_commands.pop(command)) std::visit([this](const auto& c) { apply(c); }, command);
+
+    for (std::uint32_t done = 0; done < frames;) {
+        const std::uint32_t n = std::min(kBlockFrames, frames - done);
+        mixBlock(out + std::size_t(done) * kMixChannels, n);
+        done += n;
+    }
+    if (m_monitor && m_monitorEnabled.load(std::memory_order_relaxed)) m_monitor->write(out, frames);
+
+    for (std::size_t b = 0; b < m_buses.size(); ++b)
+        for (int c = 0; c < 2; ++c) m_stats.meters[b][c].store(m_buses[b].meter[c], std::memory_order_relaxed);
+    m_stats.voices.store(std::uint32_t(m_active.size()), std::memory_order_relaxed);
+    m_stats.frames.fetch_add(frames, std::memory_order_relaxed);
+    m_stats.calls.fetch_add(1, std::memory_order_relaxed);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    m_stats.busyNs.fetch_add(std::uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count()),
+                             std::memory_order_relaxed);
+}
+
+Mixer::Voice* Mixer::voiceOf(std::uint32_t slot, std::uint32_t generation) {
+    if (slot >= m_slotVoice.size() || m_slotVoice[slot] < 0) return nullptr;
+    Voice& voice = m_voices[std::size_t(m_slotVoice[slot])];
+    return voice.generation == generation ? &voice : nullptr;
+}
+
+void Mixer::apply(const PlayCommand& c) {
+    if (c.slot >= m_slotVoice.size()) return;
+    if (m_slotVoice[c.slot] >= 0) release(std::uint32_t(m_slotVoice[c.slot]), EndReason::Stopped);
+
+    // The voice limit counts sounds that are not fading out.
+    std::uint32_t playing = 0;
+    Voice* victim = nullptr;
+    for (std::uint32_t index : m_active) {
+        Voice& v = m_voices[index];
+        if (v.stopping) continue;
+        ++playing;
+        if (v.params.priority > c.params.priority) continue;
+        if (!victim || v.params.priority < victim->params.priority ||
+            (v.params.priority == victim->params.priority &&
+             (v.audibility < victim->audibility || (v.audibility == victim->audibility && v.order < victim->order))))
+            victim = &v;
+    }
+    if (playing >= m_config.maxVoices) {
+        if (!victim) {
+            m_events.push({c.slot, c.generation, EndReason::Rejected});
+            m_stats.rejected.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        beginStop(*victim, kMinStopFade, EndReason::Stolen);
+        m_stats.stolen.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (m_free.empty()) {
+        // Every voice is in use, half of them fading out: cut the oldest fade short.
+        std::uint32_t oldest = ~0u;
+        for (std::uint32_t index : m_active)
+            if (m_voices[index].stopping && (oldest == ~0u || m_voices[index].order < m_voices[oldest].order))
+                oldest = index;
+        if (oldest != ~0u) release(oldest, m_voices[oldest].stopReason);
+    }
+    if (m_free.empty()) {
+        m_events.push({c.slot, c.generation, EndReason::Rejected});
+        m_stats.rejected.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    const std::uint32_t index = m_free.back();
+    m_free.pop_back();
+    Voice& v = m_voices[index];
+    v = Voice{};
+    v.slot = c.slot;
+    v.generation = c.generation;
+    v.kind = c.kind;
+    v.sound = c.sound;
+    v.stream = c.stream;
+    v.generator = c.generator;
+    v.channels = std::clamp<std::uint32_t>(c.format.channels, 1, 2);
+    v.sourceRate = double(std::max<std::uint32_t>(c.format.sampleRate, 1));
+    v.params = c.params;
+    v.order = m_order++;
+    if (c.fadeIn > 0.0f) {
+        v.fade = 0.0f;
+        v.fadeRate = 1.0f / (c.fadeIn * float(m_config.sampleRate));
+    }
+    v.pauseGain = c.params.paused ? 0.0f : 1.0f;
+    m_active.push_back(index);
+    m_slotVoice[c.slot] = std::int32_t(index);
+}
+
+void Mixer::apply(const StopCommand& c) {
+    if (Voice* v = voiceOf(c.slot, c.generation)) beginStop(*v, c.fade, EndReason::Stopped);
+}
+
+void Mixer::apply(const ParamsCommand& c) {
+    if (Voice* v = voiceOf(c.slot, c.generation)) v->params = c.params;
+}
+
+void Mixer::apply(const BusCommand& c) {
+    if (c.index >= m_buses.size()) return;
+    Bus& bus = m_buses[c.index];
+    bus.volume = c.volume;
+    bus.muted = c.muted;
+    bus.paused = c.paused;
+}
+
+void Mixer::apply(const ListenerCommand& c) {
+    m_listener = c.listener;
+    m_speedOfSound = c.speedOfSound;
+    m_dopplerScale = c.dopplerScale;
+}
+
+void Mixer::beginStop(Voice& voice, float fade, EndReason reason) {
+    const float rate = -1.0f / (std::max(fade, kMinStopFade) * float(m_config.sampleRate));
+    if (voice.stopping && voice.fadeRate <= rate) return; // already fading out at least as fast
+    if (!voice.stopping) voice.stopReason = reason;
+    voice.stopping = true;
+    voice.fadeRate = rate;
+}
+
+void Mixer::release(std::uint32_t voiceIndex, EndReason reason) {
+    Voice& v = m_voices[voiceIndex];
+    m_events.push({v.slot, v.generation, reason});
+    m_slotVoice[v.slot] = -1;
+    const auto it = std::find(m_active.begin(), m_active.end(), voiceIndex);
+    if (it != m_active.end()) {
+        *it = m_active.back();
+        m_active.pop_back();
+    }
+    v = Voice{};
+    m_free.push_back(voiceIndex);
+}
+
+void Mixer::mixBlock(float* out, std::uint32_t frames) {
+    const auto rate = float(m_config.sampleRate);
+    const float smoothing = std::exp(-float(frames) / (kSmoothingSeconds * rate));
+    const float meterDecay = std::exp(-float(frames) / (0.3f * rate));
+
+    std::uint8_t busPaused[kMaxBuses] = {};
+    for (std::size_t b = 0; b < m_buses.size(); ++b)
+        busPaused[b] = m_buses[b].paused || (b > 0 && busPaused[m_buses[b].parent]);
+    std::fill(m_busBuffers.begin(), m_busBuffers.end(), 0.0f);
+
+    for (std::size_t i = 0; i < m_active.size();) {
+        const std::uint32_t index = m_active[i];
+        Voice& v = m_voices[index];
+        if (mixVoice(v, frames, busPaused)) {
+            ++i;
+            continue;
+        }
+        release(index, v.stopReason); // moves the last active voice to i
+    }
+
+    // Children into parents (a parent has a lower index), then the master bus into the output.
+    for (std::size_t b = m_buses.size(); b-- > 0;) {
+        Bus& bus = m_buses[b];
+        const float target = bus.muted ? 0.0f : bus.volume;
+        const float g0 = bus.gain;
+        float g1 = target + (g0 - target) * smoothing;
+        if (std::abs(g1 - target) < 1e-5f) g1 = target;
+        const float* src = m_busBuffers.data() + b * kBlockFrames * kMixChannels;
+        float* dst = b == 0 ? out : m_busBuffers.data() + std::size_t(bus.parent) * kBlockFrames * kMixChannels;
+        const float dg = (g1 - g0) / float(frames);
+        float peak[2] = {0.0f, 0.0f};
+        float g = g0;
+        for (std::uint32_t f = 0; f < frames; ++f) {
+            g += dg;
+            const float l = src[2 * f] * g, r = src[2 * f + 1] * g;
+            peak[0] = std::max(peak[0], std::abs(l));
+            peak[1] = std::max(peak[1], std::abs(r));
+            if (b == 0) {
+                dst[2 * f] = l;
+                dst[2 * f + 1] = r;
+            } else {
+                dst[2 * f] += l;
+                dst[2 * f + 1] += r;
+            }
+        }
+        bus.gain = g1;
+        for (int c = 0; c < 2; ++c) bus.meter[c] = std::max(peak[c], bus.meter[c] * meterDecay);
+    }
+
+    std::uint64_t clipped = 0;
+    for (std::uint32_t s = 0; s < frames * kMixChannels; ++s) {
+        if (std::abs(out[s]) > 1.0f) {
+            out[s] = std::clamp(out[s], -1.0f, 1.0f);
+            ++clipped;
+        } else if (std::isnan(out[s])) {
+            out[s] = 0.0f;
+            ++clipped;
+        }
+    }
+    if (clipped) m_stats.clipped.fetch_add(clipped, std::memory_order_relaxed);
+}
+
+bool Mixer::mixVoice(Voice& v, std::uint32_t frames, const std::uint8_t* busPaused) {
+    const auto rate = float(m_config.sampleRate);
+    const bool paused = v.params.paused || busPaused[v.params.bus];
+    const float pauseStep = float(frames) / (kPauseRampSeconds * rate);
+    const float p0 = v.pauseGain;
+    const float p1 = paused ? std::max(0.0f, p0 - pauseStep) : std::min(1.0f, p0 + pauseStep);
+    if (paused && p0 <= 0.0f) {
+        // Frozen in place; a stop while frozen ends it at once (it is silent).
+        v.audibility = 0.0f;
+        return !v.stopping;
+    }
+
+    float volume = v.params.volume;
+    double pitch = v.params.pitch;
+    glm::vec2 pan;
+    if (v.params.spatial) {
+        const SpatialResult s = spatialize(m_listener, v.params.emitter, m_speedOfSound, m_dopplerScale);
+        volume *= s.gain;
+        pitch *= s.pitch;
+        pan = panGains(s.pan);
+    } else {
+        pan = v.channels == 1 ? panGains(v.params.pan) : balanceGains(v.params.pan);
+    }
+    const float smoothing = std::exp(-float(frames) / (kSmoothingSeconds * rate));
+    const float target[2] = {volume * pan.x, volume * pan.y};
+    if (!v.gainSet) {
+        v.gain[0] = target[0];
+        v.gain[1] = target[1];
+        v.gainSet = true;
+    }
+    float gain1[2];
+    for (int c = 0; c < 2; ++c) {
+        gain1[c] = target[c] + (v.gain[c] - target[c]) * smoothing;
+        if (std::abs(gain1[c] - target[c]) < 1e-6f) gain1[c] = target[c];
+    }
+    const double targetStep = std::clamp(v.sourceRate / double(m_config.sampleRate) * pitch, kMinStep, kMaxStep);
+    v.step = v.stepSet ? targetStep + (v.step - targetStep) * double(smoothing) : targetStep;
+    v.stepSet = true;
+    const auto step = std::uint64_t(v.step * kFracOne + 0.5);
+
+    const float f0 = v.fade;
+    const float f1 = std::clamp(f0 + v.fadeRate * float(frames), 0.0f, 1.0f);
+    if (f1 >= 1.0f && v.fadeRate > 0.0f) v.fadeRate = 0.0f;
+    const float fade0 = fadeCurve(f0) * p0, fade1 = fadeCurve(f1) * p1;
+    const float start[2] = {v.gain[0] * fade0, v.gain[1] * fade0};
+    const float end[2] = {gain1[0] * fade1, gain1[1] * fade1};
+
+    const std::uint32_t channels = v.channels;
+    if (!v.primed) {
+        float first[4] = {};
+        pull(v, first, 2);
+        for (std::uint32_t c = 0; c < channels; ++c) {
+            v.x0[c] = first[c];
+            v.x1[c] = first[channels + c];
+        }
+        v.primed = true;
+    }
+    const auto need = std::uint32_t((std::uint64_t(v.frac) + std::uint64_t(frames) * step) >> 32);
+    if (need > 0) pull(v, m_scratch.data(), need);
+
+    float* bus = m_busBuffers.data() + std::size_t(v.params.bus) * kBlockFrames * kMixChannels;
+    const float* src = m_scratch.data();
+    const bool downmix = v.params.spatial && channels == 2;
+    const float inv = 1.0f / float(frames);
+    std::uint32_t frac = v.frac;
+    float x0[2] = {v.x0[0], v.x0[1]}, x1[2] = {v.x1[0], v.x1[1]};
+    for (std::uint32_t f = 0; f < frames; ++f) {
+        const float t = float(frac) * kFracScale;
+        float l = x0[0] + (x1[0] - x0[0]) * t;
+        float r = l;
+        if (channels == 2) {
+            r = x0[1] + (x1[1] - x0[1]) * t;
+            if (downmix) l = r = 0.5f * (l + r);
+        }
+        const float w = float(f + 1) * inv;
+        bus[2 * f] += l * (start[0] + (end[0] - start[0]) * w);
+        bus[2 * f + 1] += r * (start[1] + (end[1] - start[1]) * w);
+        const std::uint64_t acc = std::uint64_t(frac) + step;
+        frac = std::uint32_t(acc);
+        for (auto advance = std::uint32_t(acc >> 32); advance > 0; --advance) {
+            x0[0] = x1[0];
+            x0[1] = x1[1];
+            x1[0] = src[0];
+            x1[1] = channels == 2 ? src[1] : 0.0f;
+            src += channels;
+        }
+    }
+    v.frac = frac;
+    for (int c = 0; c < 2; ++c) {
+        v.x0[c] = x0[c];
+        v.x1[c] = x1[c];
+        v.gain[c] = gain1[c];
+    }
+    v.fade = f1;
+    v.pauseGain = p1;
+    v.audibility = std::max(end[0], end[1]);
+
+    if (v.stopping && (f1 <= 0.0f || (paused && p1 <= 0.0f))) return false;
+    if (v.sourceDone) {
+        if (!v.stopping) v.stopReason = EndReason::Finished;
+        return false;
+    }
+    return true;
+}
+
+std::uint32_t Mixer::pull(Voice& v, float* out, std::uint32_t frames) {
+    const std::uint32_t channels = v.channels;
+    std::uint32_t done = 0;
+    switch (v.kind) {
+    case SourceKind::Sound: {
+        const std::uint64_t total = v.sound ? v.sound->frames() : 0;
+        while (done < frames) {
+            if (v.position >= total) {
+                if (!v.params.loop || total == 0) break;
+                v.position = 0;
+            }
+            const auto n = std::uint32_t(std::min<std::uint64_t>(frames - done, total - v.position));
+            std::memcpy(out + std::size_t(done) * channels, v.sound->samples.data() + v.position * channels,
+                        std::size_t(n) * channels * sizeof(float));
+            v.position += n;
+            done += n;
+        }
+        if (done < frames) v.sourceDone = true;
+        break;
+    }
+    case SourceKind::Stream: {
+        SampleRing& ring = v.stream->ring;
+        done = ring.read(out, frames);
+        if (done < frames) {
+            if (v.stream->ended.load(std::memory_order_acquire)) {
+                done += ring.read(out + std::size_t(done) * channels, frames - done);
+                if (done < frames) v.sourceDone = true;
+            } else {
+                m_stats.underruns.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        break;
+    }
+    case SourceKind::Generator:
+        done = std::min(v.generator ? v.generator->generate(out, frames) : 0, frames);
+        if (done < frames) v.sourceDone = true;
+        break;
+    }
+    if (done < frames)
+        std::memset(out + std::size_t(done) * channels, 0, std::size_t(frames - done) * channels * sizeof(float));
+    return done;
+}
+
+} // namespace quench::audio::detail

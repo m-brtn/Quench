@@ -52,5 +52,5 @@ target_link_libraries(quench_cook_lib PUBLIC quench_assets quench_core PRIVATE f
 
 add_executable(quench_cook EXCLUDE_FROM_ALL ${Quench_SOURCE_DIR}/tools/cook/Cook.cpp)
 quench_configure_target(quench_cook)
-target_link_libraries(quench_cook PRIVATE quench_cook_lib)
+target_link_libraries(quench_cook PRIVATE quench_cook_lib quench_audio)
 target_compile_definitions(quench_cook PRIVATE QUENCH_COOK_VERSION="${PROJECT_VERSION}")

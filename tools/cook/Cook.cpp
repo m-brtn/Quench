@@ -2,10 +2,13 @@
 
 #include "Cook.h"
 
+#include <quench/audio/Sound.h>
+#include <quench/audio/Wav.h>
 #include <quench/core/Log.h>
 #include <quench/core/Parse.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <format>
@@ -27,7 +30,10 @@ constexpr const char* kUsage =
     "usage:\n"
     "  quench_cook texture <input.png|.jpg|.ktx2> <output.ktx2> [options]\n"
     "  quench_cook model <input.gltf|.glb> <output.qmodel> [options]\n"
+    "  quench_cook sound <input.wav|.flac|.mp3> <output> [options]\n"
     "  quench_cook --version | --help\n"
+    "sounds are decoded to check them; the output keeps the input's bytes, or is a 16-bit WAV when it ends in\n"
+    ".wav and the input is not one (or --channels is given)\n"
     "options:\n"
     "  --format bc7|rgba8   texture format (default bc7)\n"
     "  --linear             texture: linear data, not sRGB color (normals, masks)\n"
@@ -38,6 +44,7 @@ constexpr const char* kUsage =
     "  --lod-ratio R        model: index count of each level relative to the one before (default 0.5)\n"
     "  --lod-error E        model: largest simplification error relative to the mesh extent (default 0.05)\n"
     "  --scale S            model: scales the positions (default 1)\n"
+    "  --channels 1|2       sound: mixes down to mono or up to stereo (a .wav output)\n"
     "  --depfile FILE       writes the files read, for the build system\n"
     "  --verbose            one line per file written\n";
 
@@ -49,6 +56,7 @@ struct Options {
     fs::path depfile;
     cook::TextureOptions texture;
     cook::ModelOptions model;
+    std::uint32_t soundChannels = 0; // 0: the input's
     bool verbose = false;
 };
 
@@ -133,6 +141,10 @@ std::optional<Options> parseArgs(int argc, char** argv, std::string& error) {
             o.texture.mips = false;
         } else if (arg == "--verbose") {
             o.verbose = true;
+        } else if (arg == "--channels") {
+            const std::optional<double> v = number();
+            if (v != 1.0 && v != 2.0) return bad("--channels: 1 or 2");
+            o.soundChannels = std::uint32_t(*v);
         } else if (arg == "--max-size" || arg == "--lods") {
             const std::optional<double> v = number();
             if (!v || *v < 1 || *v > 65536 || *v != double(std::uint32_t(*v)))
@@ -157,8 +169,8 @@ std::optional<Options> parseArgs(int argc, char** argv, std::string& error) {
             positional.push_back(arg);
         }
     }
-    if (positional.size() != 3 || (positional[0] != "texture" && positional[0] != "model"))
-        return bad("expected: texture|model <input> <output> (--help)");
+    if (positional.size() != 3 || (positional[0] != "texture" && positional[0] != "model" && positional[0] != "sound"))
+        return bad("expected: texture|model|sound <input> <output> (--help)");
     o.command = positional[0];
     o.input = positional[1];
     o.output = positional[2];
@@ -224,6 +236,43 @@ int cookModel(const Options& o, JobSystem& jobs) {
     return 0;
 }
 
+std::string lowerExtension(const fs::path& path) {
+    std::string extension = path.extension().string();
+    for (char& c : extension) c = char(std::tolower(static_cast<unsigned char>(c)));
+    return extension;
+}
+
+int cookSound(const Options& o) {
+    Result<std::vector<std::uint8_t>> source = readFile(o.input);
+    if (!source) return fail(source.error());
+    Result<audio::SoundData> sound = audio::decodeSound(*source);
+    if (!sound) return fail(std::format("{}: {}", o.input.string(), sound.error()));
+    const std::string in = lowerExtension(o.input), out = lowerExtension(o.output);
+    std::vector<std::uint8_t> file;
+    if (out == ".wav" && (in != ".wav" || o.soundChannels)) {
+        const std::uint32_t from = sound->format.channels, to = o.soundChannels ? o.soundChannels : from;
+        std::vector<float> samples(sound->frames() * to);
+        for (std::uint64_t f = 0; f < sound->frames(); ++f) {
+            const float* frame = sound->samples.data() + f * from;
+            for (std::uint32_t c = 0; c < to; ++c)
+                samples[f * to + c] = from == to ? frame[c] : to == 1 ? 0.5f * (frame[0] + frame[1]) : frame[0];
+        }
+        file = audio::encodeWav(samples, to, sound->format.sampleRate);
+    } else if (out == in && !o.soundChannels) {
+        file = std::move(*source);
+    } else {
+        return fail(std::format("{}: a sound is cooked to its own format or to .wav", o.output.string()));
+    }
+    if (Result<void> r = writeFile(o.output, file, false); !r) return fail(r.error());
+    if (!o.depfile.empty())
+        if (Result<void> r = writeDepfile(o, {o.input}); !r) return fail(r.error());
+    if (o.verbose)
+        std::fprintf(stderr, "quench_cook: %s: %u channels, %u Hz, %.3f s, %zu bytes\n", o.output.string().c_str(),
+                     o.soundChannels ? o.soundChannels : sound->format.channels, sound->format.sampleRate,
+                     sound->duration(), file.size());
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -242,6 +291,7 @@ int main(int argc, char** argv) {
     const std::optional<Options> options = parseArgs(argc, argv, error);
     if (!options) return fail(error);
     log::setLevel(options->verbose ? log::Level::Info : log::Level::Warning);
+    if (options->command == "sound") return cookSound(*options);
     JobSystem jobs;
     return options->command == "texture" ? cookTexture(*options, jobs) : cookModel(*options, jobs);
 }

@@ -27,8 +27,12 @@ Run it in Release, with vsync (the default), at a fixed render size on the Mac:
 
 ```sh
 cmake --build --preset release
-build/release/examples/hello/hello --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt
+build/release/examples/hello/hello --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt \
+    --audio-device null
 ```
+
+`--audio-device null` (since stage 7): miniaudio's null backend pulls the mix on its own thread like a real output,
+without sound; the stage 7 runs below used it.
 
 On the iPhone: `ios-xcode` build, copy the scenario into the app's user directory with `devicectl device copy to`,
 launch with `--script benchmark.txt` and `--console` ([App shell](app.md#ios-runs)); the device renders at its
@@ -36,7 +40,9 @@ native size.
 
 Why vsync: a window is paced to its display even with `--present-mode immediate` (60 Hz on the Mac's LG UltraFine 5K),
 and then the measured GPU time grows to about 15.5 ms, probably because the drawable wait is counted inside the
-command buffer (not verified). With vsync the GPU time matches the work (0.55 ms).
+command buffer (not verified). With vsync the GPU time matches the work (0.55 ms). On 2026-11-06 the same Mac ran
+`immediate` unpaced (4286 frames in 10 s, GPU time 0.62 ms on average; cause not known): vsync stays the benchmark's
+mode, its frame rate is the display's either way.
 
 ## Comparing runs
 
@@ -75,6 +81,33 @@ In the Mac runs of 20:32-20:34 the frame p95 was above 1.1 intervals (18.33 ms) 
 with frame p50 16.67 ms: presentation jitter outside the budget, not a missed interval in the p95; cause not checked.
 
 ## Measurements
+
+Stage 7 A/B, 2026-11-06 01:12-01:41, Release, vsync, Mac, Apple M4 Pro, LG UltraFine 5K at 60 Hz,
+`--frame-size 1920x1080`: HEAD `162ae77` (built from `git archive` in `/tmp/qs7head`) against the stage 7 working
+tree with `--audio-device null` (miniaudio's null backend: its device thread pulls the mix, no sound), interleaved.
+Medians of the runs, HEAD and stage 7, in milliseconds:
+
+| Run | Runs | CPU p50 | CPU p99 | GPU p50 |
+|---|---|---|---|---|
+| hello, before the fix below (01:12) | 5 + 5 | 0.398, 0.415 (+4.3 %) | 0.536, 0.582 (+8.6 %) | 0.550, 0.550 |
+| hello, before the fix, focused (01:22) | 6 + 6 | 0.4145, 0.4295 (+3.6 %) | 0.5455, 0.573 (+5.0 %) | 0.551, 0.551 |
+| hello, after the fix (01:33) | 6 + 6 | 0.420, 0.4255 (+1.3 %) | 0.557, 0.548 (-1.6 %) | 0.5495, 0.549 |
+| demo post, focused, after the fix (01:39) | 5 + 5 | 1.012, 1.041 (+2.9 %) | 1.417, 1.435 (+1.3 %) | 6.073, 6.075 |
+
+The fix: the monitor of the mix that `audio_measure` reads was on in every scripted run, the benchmarks included.
+A temporary timer around the frame's audio update read 9.2 to 9.9 µs at the median and 30 to 37 µs at p99 with it,
+4.2 to 4.3 µs and 5.8 to 12 µs without; now only scripts with `audio_measure` turn it on. Without a device
+(`--no-audio`, offline mixing on the frame thread) the same timer read 22.9 µs at the median, and hello's CPU p50
+0.4485 ms (four runs at 01:22, before the fix).
+
+The complete demo benchmark, three runs per build at 01:12-01:21 (before the fix), gave CPU p50 between -7.1 %
+(shadows) and +16.0 % (post) per section and CPU p99 between -4.0 % (physics) and +3.9 % (hdr_on); post on its own
+read -3.0 % and +2.0 % (5 + 5 at 01:22) and, after the fix, the row above. Three runs of the fixed build at
+01:36-01:39 against the same HEAD runs: CPU p50 -4.9 % (sky) to +18.2 % (post, whose HEAD runs read 0.813 to
+1.041), CPU p99 -6.6 % (assets) to +2.9 % (hdr). GPU p50 the same within 0.01 ms in every section. The new `audio`
+region (three 3D emitters, the generated tone and streamed music on the null device), fixed build: 300 to 301
+frames, frame p95 at most 17.270, CPU p50 1.050, CPU p99 1.486, GPU p50 6.574 ms (three runs), within the demo's
+budget.
 
 Stage 6 A/B, 2026-11-05 23:23-23:37, Release, vsync, Mac, Apple M4 Pro, LG UltraFine 5K at 60 Hz,
 `--frame-size 1920x1080`: HEAD `8898598` (built from `git archive` in `/tmp/qs6head`) against the stage 6 working

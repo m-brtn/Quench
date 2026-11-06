@@ -1,8 +1,8 @@
 #pragma once
 
 // The state behind quench::app::App, owned by the SDL main callbacks (Main.cpp). Members are destroyed in reverse
-// order: the game first, then ImGui, the GPU device, the window, the asset manager, the job system, the file system
-// backend and the log sink.
+// order: the game first, then ImGui, the GPU device, the window, the audio device, the mixer, the asset manager, the
+// job system, the file system backend and the log sink.
 
 #include "DisplayHeadroom.h"
 #include "Options.h"
@@ -29,6 +29,9 @@
 struct ImGuiContext;
 
 namespace quench::app::detail {
+
+// Scenario runs keep this much of the mix for audio_measure.
+inline constexpr double kAudioMonitorSeconds = 4.0;
 
 struct LogSinkGuard {
     int id = -1;
@@ -74,6 +77,9 @@ struct AppState {
     LogSinkGuard logSink;
     std::unique_ptr<JobSystem> jobs;
     std::unique_ptr<assets::AssetManager> assets;
+    std::unique_ptr<audio::AudioSystem> audio;
+    std::unique_ptr<audio::Device> audioDevice; // null: offline mixing on the frame clock
+    std::vector<float> audioCapture;            // --audio-capture: the whole mix
     std::unique_ptr<SDL_Window, WindowDeleter> window;
     std::optional<gpu::Device> device;
     ImGuiContextGuard imgui;
@@ -127,7 +133,8 @@ struct AppState {
     glm::vec2 touchMouse{0.0f};                      // the mouse position SDL would synthesize from the scripted finger
     std::vector<std::unique_ptr<char[]>> textInputs; // TEXT_INPUT payloads stay alive until dispatched
     std::optional<PerfRegion> perf;
-    std::map<std::string, double, std::less<>> perfValues; // of the last finished region: perf_frame_avg, ...
+    std::map<std::string, double, std::less<>> perfValues;  // of the last finished region: perf_frame_avg, ...
+    std::map<std::string, double, std::less<>> audioValues; // of the last audio_measure: audio_rms, ...
 
     ~AppState();
 };
@@ -149,6 +156,8 @@ void releaseScenarioInput(AppState& state);
 // are opened directly (hosts and the iOS Simulator).
 Result<double> writePng(std::string_view path, std::span<const std::byte> pixels, std::uint32_t width,
                         std::uint32_t height, gpu::TextureFormat format, float paperWhite = 1.0f);
+// A capture file: relative paths into the user directory through quench::fs, absolute paths as given.
+Result<void> writeCaptureFile(std::string_view path, std::span<const std::uint8_t> bytes);
 
 // App.cpp: applies the HDR mode and the window's display state to the swapchain and to `output`.
 void updateOutput(AppState& state);

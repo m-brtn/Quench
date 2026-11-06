@@ -23,6 +23,8 @@ backends), in the iOS Simulator and on the iPhone at 120 Hz, where every section
 user looked at every section, HDR output on and off included (report of 2026-11-05; the seven sections of version
 0.3.0, the Assets section of 0.4.0 not yet). The headless modules also pass as single-threaded WebAssembly under
 Node.js (Emscripten 6.0.13; the cases that need threads are skipped there). Nothing of the engine has run in a browser.
+Audio (stage 7, see "Audio" below) has run only on the null backend and offline, on the Mac, in the iOS Simulator
+and under Node.js; nothing was listened to, and the stage 7 code has not run on the iPhone.
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
@@ -45,7 +47,10 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
 - Present modes on Metal: `vsync` and `immediate`; `mailbox` is not supported and falls back to vsync. A window is
   paced to its display (60 Hz on the LG UltraFine 5K used here) even with `immediate`, and then the measured GPU time
   grows to about 15.5 ms (0.6 ms with vsync), probably a drawable wait counted inside the command buffer (not
-  verified). Benchmarks therefore use vsync ([Performance](performance.md)).
+  verified). Benchmarks therefore use vsync ([Performance](performance.md)). On 2026-11-06 the same Mac and display
+  ran `immediate` unpaced: the hello benchmark 4286 frames in 10 s, GPU time 0.62 ms on average; the cause of the
+  difference is not known. The demo's checks use `immediate` ([Engine demo](demo.md#checks)): unpaced it halves their
+  time, paced it changes nothing.
 
 ## iOS
 
@@ -98,6 +103,21 @@ iOS and HDR10 (PQ) on macOS only; the Vulkan backend needs `VK_EXT_swapchain_col
 - HDR10 swapchains can be created on the Mac, but the renderer does not write PQ: such output gets SDR values with a
   warning ([Render module](render.md#tone-mapping-and-hdr-output)).
 
+## Audio
+
+The playback device is miniaudio's ([Audio](audio.md)). Its 0.11.25 source has backends for WASAPI, DirectSound and
+WinMM (Windows), Core Audio (macOS, iOS), PulseAudio, ALSA, JACK, sndio and OSS (Linux, BSD), AAudio and OpenSL ES
+(Android), Web Audio (Emscripten, with AudioWorklets behind `MA_ENABLE_AUDIO_WORKLETS`) and a null backend. The
+engine compiles only Core Audio and null on Apple platforms, and no device I/O in headless and web builds.
+
+| Where | Output | Run so far |
+|---|---|---|
+| Mac | Core Audio (miniaudio, frameworks linked at build time) | tests on the null backend and offline (`audio.*`, `audio_device.null_device`, the demo's audio check with `--audio-capture`); the default output not opened by any test (`audio_device.default_output` is opt-in), not listened to |
+| iOS Simulator | Core Audio; the engine sets the `AVAudioSession` category and activates the session when a real output opens (the null backend leaves the session alone) | `ios-sim-tests`: the audio cases, `audio_device.null_device` and `audio_device.audio_session_category` (sets the playback and ambient categories, reads them back and reads the route); no test opened a real output, so activation, interruptions and route changes did not run; not listened to |
+| iPhone | as in the Simulator | built (`ios-device-release`); not run with the stage 7 code. Needs the user: what plays with the Ring/Silent switch on silent (the default `Ambient` category is silenced), interruptions (a call, Siri, an alarm), route changes (headphones, Bluetooth), background and foreground |
+| Web | none (built with `MA_NO_DEVICE_IO`) | the mixer, decoders and analysis under Node.js (`wasm-node`, single-threaded; the thread stress case is skipped). Browser output needs a device backend (miniaudio's Web Audio one or SDL's audio) and starts only after a user gesture: not built |
+| Windows, Linux, Android | miniaudio's defaults for the platform (not configured or built yet) | nothing |
+
 ## Windows and Linux
 
 - Shader formats: SPIR-V (Vulkan) on both, DXIL (D3D12) on Windows. Today DXIL is compiled only on Windows hosts,
@@ -127,7 +147,8 @@ iOS and HDR10 (PQ) on macOS only; the Vulkan backend needs `VK_EXT_swapchain_col
 - WebGPU feature support quoted in that pull request: BC texture compression on about 86% of adapters, ASTC on about
   44%, `float32-filterable` about 91%. Textures for the web therefore need Basis Universal transcoding.
 - Threads need cross-origin isolation (COOP / COEP headers on the host); otherwise the job system runs single
-  threaded. Audio starts only after a user gesture. Memory and download size are limited (TrailForge has 272 MB of
+  threaded. Audio starts only after a user gesture (the engine's audio has no browser output yet: see "Audio").
+  Memory and download size are limited (TrailForge has 272 MB of
   assets in Git LFS).
 - Until the WebGPU backend is usable, web compatibility is checked for headless modules only: built with Emscripten
   and run as CTest under Node.js.

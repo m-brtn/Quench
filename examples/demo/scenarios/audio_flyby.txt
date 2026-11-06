@@ -1,0 +1,30 @@
+# Audio mix check (ctest: demo_audio_flyby, default backend only): the fly-by at 30 m/s, Doppler up while it
+# approaches, down while it leaves. The test runs with --audio-capture, so the mix is computed offline on the frame
+# clock and audio_measure analyses exactly what the capture WAV holds.
+
+set orbit 0
+set flyby 0
+set music 0
+set dither 0
+until sounds_ready == 1 3
+# The loads finish in a frame that varies between runs; from here on every step is on the fixed frame clock.
+expect time < 0.25
+until time >= 0.3 1
+
+# The fly-by (440 Hz) from x = -40 at 30 m/s, 3 m in front: x = -19 .. -13 at 0.7 .. 0.9 s, pitch about
+# 343 / (343 - 29.5) = 1.094 (481 Hz); x = +11 .. +17 at 1.7 .. 1.9 s, about 343 / (343 + 29.4) = 0.921 (405 Hz).
+set flyby 1
+wait 0.9
+audio_measure 0.2 380 520
+expect audio_freq > 477
+expect audio_freq < 486
+expect flyby_pitch > 1.085
+wait 1.0
+audio_measure 0.2 380 520
+expect audio_freq > 401
+expect audio_freq < 410
+expect flyby_pitch < 0.93
+
+expect audio_underruns == 0
+expect audio_clipped == 0
+quit

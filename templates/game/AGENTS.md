@@ -8,9 +8,11 @@ Instructions for coding agents working on Template Game, a game on the Quench en
 ```sh
 cmake --preset debug && cmake --build --preset debug && ctest --preset debug
 build/debug/template_game                                         # play
-build/debug/template_game --capture /tmp/template_game.png --capture-at 1 --quit-after 1
+build/debug/template_game --capture /tmp/template_game.png --capture-at 1 --quit-after 1 --audio-device null
 build/debug/template_game --help                                  # engine flags
 ```
+
+Automated runs (ctest, captures, scripts) use `--audio-device null` or `--no-audio`: no sound from the speakers.
 
 iOS: build the shader compiler for the Mac first (`cmake --preset host-tools && cmake --build --preset host-tools`),
 then `ios-sim-release` (Simulator, ad-hoc signed) or `ios-xcode` (device, Xcode Automatic signing with

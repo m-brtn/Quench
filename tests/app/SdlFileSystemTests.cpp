@@ -53,6 +53,16 @@ QUENCH_TEST(sdl_fs_assets) {
           missing ? "read" : missing.error().c_str());
     CHECK(!fs::readAsset("../sdl_fs_assets/dir/a.txt"), "'..' accepted");
     CHECK(!fs::userExists("dir/a.txt"), "assets visible as user files");
+
+    Result<std::unique_ptr<fs::Reader>> reader = fs::openAsset("dir/a.txt");
+    REQUIRE(reader, "open: %s", reader.error().c_str());
+    CHECK((*reader)->size() == 5, "size %llu", (unsigned long long)(*reader)->size());
+    std::uint8_t piece[3] = {};
+    Result<std::size_t> got = (*reader)->read(2, piece);
+    CHECK(got && *got == 3 && std::string(piece, piece + 3) == "set", "read at 2");
+    got = (*reader)->read(5, piece);
+    CHECK(got && *got == 0, "read at the end");
+    CHECK(!fs::openAsset("dir/missing.txt"), "a missing file opened");
 }
 
 QUENCH_TEST(sdl_fs_user_files) {

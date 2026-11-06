@@ -58,8 +58,8 @@ and plan beyond stage 6. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) with one HLSL shader source compiled at build
 time, Jolt Physics, Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer and bc7enc_rdo's
-BC7 decoder (assets), miniaudio (planned with audio); the cooker adds fastgltf and stb_image at build time. Pins,
-planned additions and their licences: `docs/dependencies.md`.
+BC7 decoder (assets), miniaudio (sound decoding and device output); the cooker adds fastgltf and stb_image at build
+time. Pins, planned additions and their licences: `docs/dependencies.md`.
 
 ## Platforms
 
@@ -102,8 +102,10 @@ cmake --preset ios-sim-tests && cmake --build --preset ios-sim-tests && ctest --
 # Web check: headless tests as WebAssembly under Node.js, single-threaded (needs host-tools and Homebrew's
 # emscripten; the preset points EMSDK_PYTHON at Homebrew's python3, Xcode's is too old)
 emcmake cmake --preset wasm-node && cmake --build --preset wasm-node && ctest --preset wasm-node -j8
-# The sample: flags with --help; the benchmark (docs/performance.md) in Release with vsync
-build/release/examples/hello/hello --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt
+# The sample: flags with --help; the benchmark (docs/performance.md) in Release with vsync; automated runs make no
+# sound (--audio-device null or --no-audio)
+build/release/examples/hello/hello --frame-size 1920x1080 --script examples/hello/scenarios/benchmark.txt \
+ --audio-device null
 # iPhone: an Xcode project with Automatic signing; install and launch with devicectl (docs/app.md, "iOS runs").
 # The user's paid team (Xcode's accounts) with plain bundle ids; a free Personal Team: 3 apps, 7-day profiles
 cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id> -DQUENCH_IOS_BUNDLE_ID_SUFFIX=
@@ -211,9 +213,14 @@ Details and rationale: `docs/architecture.md`.
   `std::ofstream` or `fopen` for assets or saves elsewhere. Host-only tools and tests may use the standard library.
 - **Threads.** Only through the engine job system (`quench::JobSystem` on enkiTS, `App::jobs()` in a game), which
   also runs Jolt's jobs through a `JPH::JobSystemWithBarrier` implementation, so there is one thread pool
-  (`PhysicsWorld(&jobs)`; a `PhysicsWorld` without one runs single-threaded). It must also work with a single thread (the web without cross-origin isolation). Every worker thread calls
-  `quench::raiseWorkerThreadPriority()` (user-interactive QoS on Apple platforms): the frame thread waits for the
-  workers, and a lower QoS would be a priority inversion.
+  (`PhysicsWorld(&jobs)`; a `PhysicsWorld` without one runs single-threaded). It must also work with a single thread
+  (the web without cross-origin isolation). Every worker thread calls `quench::raiseWorkerThreadPriority()`
+  (user-interactive QoS on Apple platforms): the frame thread waits for the workers, and a lower QoS would be a
+  priority inversion. The one exception is the audio device's callback thread, owned by the operating system's audio
+  API (Core Audio through miniaudio) and scheduled by it with a real-time deadline: it only mixes
+  (`AudioSystem::render`), with no allocation, freeing, locks, logging, file access or waits, and talks to the game
+  thread through lock-free queues and atomics; decoding and stream refills run on the job system
+  (`docs/architecture.md`, "Threads and jobs"; `docs/audio.md`, "Threads").
 - **No ECS in the core, no plugin system.** Engine APIs take plain handles; a game may put an ECS on top (Flecs is the
   candidate, as an optional module). Modules are linked statically.
 - **No abstraction without a concrete need.** The GPU layer above is the decided exception, for the reasons given.
@@ -424,33 +431,37 @@ cmake/                 Dependencies (runtime pins), ShaderToolchain (shader comp
                        cooker pins), QuenchShaders (quench_add_shaders), QuenchCook (quench_cook_assets),
                        EmbedShaders, QuenchTargets (warnings, include directories), QuenchGame (quench_add_game)
                        and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator)
-include/quench/        public headers per module: core/, physics/, assets/, gpu/, app/, render/
+include/quench/        public headers per module: core/, physics/, assets/, audio/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
                        src/core/Jobs.cpp: the job system; src/physics/JoltJobSystem: Jolt's jobs on it;
-                       src/assets/: the asset manager, KTX2, cooked models, streaming; src/gpu/sdlgpu/: the SDL
-                       GPU backend; src/app/Main.cpp: quench_main; src/render/: the scene, SceneAssets, the frame
-                       modules and their shaders)
+                       src/assets/: the asset manager, KTX2, cooked models, streaming; src/audio/: the mixer,
+                       decoders, streams, the device and the iOS audio session (AudioSessionApple.m);
+                       src/gpu/sdlgpu/: the SDL GPU backend; src/app/Main.cpp: quench_main; src/render/: the scene,
+                       SceneAssets, the frame modules and their shaders)
 shaders/quench/        the engine shader library (#include "quench/..."): BRDF, shadows, sky, fog, tone curves,
                        surface shaders; SceneUniforms.h, the uniform structs shared by C++ and HLSL
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
 examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input,
-                       assets), per section a scenario with a golden capture; smoke and benchmark scenarios;
+                       assets, audio), per section a scenario with a golden capture; smoke and benchmark scenarios;
                        assets_src/ (procedural sources cooked at build time) and assets/ (files used as they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
-tools/cook/            quench_cook, the build-time asset cooker (glTF, GLB, PNG, JPEG, KTX2 -> KTX2, .qmodel)
-tools/assets/          make_demo_assets.py: writes the demo's procedural source assets
+tools/cook/            quench_cook, the build-time asset cooker (glTF, GLB, PNG, JPEG, KTX2 -> KTX2, .qmodel;
+                       WAV, FLAC, MP3 checked or converted to WAV)
+tools/assets/          make_demo_assets.py: writes the demo's procedural source assets; make_demo_sounds.py: the
+                       demo's procedural sounds (run at build time)
 tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the icons of the sample and the demo
 tools/new_game.py      creates a game from templates/game
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
 tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a development-signed .ipa)
 tools/format.sh        clang-format over the C and C++ sources (--check)
-tests/                 harness/, core/ (job system included), physics/, assets/, cook/ (and CookCli.cmake), gpu/
-                       (shader tests; GPU device tests and their shaders), app/, render/ (scene, scene assets and
-                       frame tests), header check, RunCapture.cmake (capture checks); golden/ (reference captures)
+tests/                 harness/, core/ (job system included), physics/, assets/, audio/ (mixer, streams, decoders,
+                       device; data/: CC0 test sounds), cook/ (and CookCli.cmake), gpu/ (shader tests; GPU device
+                       tests and their shaders), app/, render/ (scene, scene assets and frame tests), header check,
+                       RunCapture.cmake (capture checks); golden/ (reference captures)
 docs/                  documentation (index docs/README.md): architecture, app shell, jobs, assets and the cook,
-                       render module, engine demo, performance, platforms, dependencies, migration, roadmap,
+                       audio, render module, engine demo, performance, platforms, dependencies, migration, roadmap,
                        releases/
 dist/                  demo packages from tools/package_demo.sh (not committed)
 devlog/                daily development log (template in devlog/README.md)
