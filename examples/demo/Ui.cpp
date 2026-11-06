@@ -45,7 +45,7 @@ void controlsHelp() {
     ImGui::BulletText("Keyboard: the arrows orbit, + and - zoom.");
     ImGui::SeparatorText("Sections and windows");
     ImGui::BulletText("Next, previous: ] [ or PgDn PgUp, the shoulder buttons, the arrows of the top bar.");
-    ImGui::BulletText("Keys 1 to 9 and 0: the first ten sections.");
+    ImGui::BulletText("Keys 1 to 9: sections 1 to 9; key 0: section 10; section 11 by next or previous.");
     ImGui::BulletText("Menu by keyboard or gamepad: Tab or the D-pad; Enter or A press, Escape or B go back.");
     ImGui::BulletText("Hide the windows: H, Start, or Hide in the menu.");
     ImGui::TextWrapped("The input section's character takes W A S D and the left stick; a section's own keys are in "
@@ -120,7 +120,7 @@ void DemoGame::ui(App& app) {
 void DemoGame::sectionList(bool compactList) {
     for (std::size_t i = 0; i < m_slots.size(); ++i) {
         const std::string_view title = m_slots[i].section->title();
-        const std::string label = i < 10 ? std::format("{}  {}", (i + 1) % 10, title) : std::format("   {}", title);
+        const std::string label = std::format("{:>2}  {}", i + 1, title);
         // Tab or the D-pad start on the current section.
         if (i == m_current && m_focusMenuNow) ImGui::SetKeyboardFocusHere();
         if (ImGui::Selectable(label.c_str(), i == m_current)) {
@@ -303,7 +303,8 @@ void DemoGame::wideLayout(App& app) {
         modeButtons(app);
         performancePanel(app);
         logPanel();
-        ImGui::TextDisabled("Switch: [ ] PgUp PgDn LB RB");
+        ImGui::TextDisabled("Sections: keys 1-9, 0 = 10");
+        ImGui::TextDisabled("Previous, next: PgUp PgDn LB RB");
         ImGui::TextDisabled("Menu: Tab, D-pad; back: Esc, B");
         ImGui::TextDisabled("Hide: H, Start");
     }
