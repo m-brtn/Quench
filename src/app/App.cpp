@@ -27,7 +27,22 @@ extern "C" void quench_app_prohibit_activation(void); // ActivationApple.m
 #include <filesystem>
 #include <format>
 
+// The asset overlay (docs/assets.md, "Hot reload on a device"): in development builds (without NDEBUG) unless the
+// QUENCH_ASSET_OVERLAY CMake option sets it.
+#ifndef QUENCH_ASSET_OVERLAY
+#ifdef NDEBUG
+#define QUENCH_ASSET_OVERLAY 0
+#else
+#define QUENCH_ASSET_OVERLAY 1
+#endif
+#endif
+
 namespace quench::app {
+#if QUENCH_ASSET_OVERLAY
+namespace {
+constexpr const char* kAssetOverlayDir = "asset_overlay";
+}
+#endif
 
 // ------------------------------------------------------------------ App
 
@@ -655,7 +670,12 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     Result<std::unique_ptr<fs::Backend>> files = makeSdlFileSystem(
         {.org = s.desc.organization, .app = s.desc.name, .assetDir = s.desc.assetDir, .userDir = s.options.userDir});
     if (!files) return fail(std::format("file system: {}", files.error()));
+#if QUENCH_ASSET_OVERLAY
+    fs::setBackend(fs::makeOverlayBackend(std::move(*files), kAssetOverlayDir));
+    log::info("app", "asset overlay: files in {}/ of the user directory replace bundled assets", kAssetOverlayDir);
+#else
     fs::setBackend(std::move(*files));
+#endif
     s.jobs = std::make_unique<JobSystem>(JobSystemDesc{.workerThreads = s.options.workerThreads});
     s.assets = std::make_unique<assets::AssetManager>(
         *s.jobs,

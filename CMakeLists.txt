@@ -26,6 +26,9 @@ option(QUENCH_BUILD_EXAMPLES "Build the examples (examples/)" ${PROJECT_IS_TOP_L
 option(QUENCH_WERROR "Treat warnings in engine targets as errors" ${PROJECT_IS_TOP_LEVEL})
 set(QUENCH_ASSERTS AUTO CACHE STRING "QUENCH_ASSERT: AUTO (on unless NDEBUG), ON or OFF")
 set_property(CACHE QUENCH_ASSERTS PROPERTY STRINGS AUTO ON OFF)
+set(QUENCH_ASSET_OVERLAY AUTO CACHE STRING
+    "Assets in the user directory's asset_overlay/ replace bundled ones: AUTO (on unless NDEBUG), ON or OFF")
+set_property(CACHE QUENCH_ASSET_OVERLAY PROPERTY STRINGS AUTO ON OFF)
 # Headless: only the modules without windowing, GPU or SDL (core, physics); SDL is not fetched.
 option(QUENCH_HEADLESS "Build only the headless modules" OFF)
 if(EMSCRIPTEN)
@@ -196,6 +199,11 @@ if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_app PUBLIC quench_core quench_assets quench_audio quench_audio_device quench_gpu
                                             quench_glm quench_imgui SDL3::SDL3-static)
     target_compile_definitions(quench_app PRIVATE QUENCH_VERSION="${PROJECT_VERSION}")
+    if(QUENCH_ASSET_OVERLAY STREQUAL "ON")
+        target_compile_definitions(quench_app PRIVATE QUENCH_ASSET_OVERLAY=1)
+    elseif(QUENCH_ASSET_OVERLAY STREQUAL "OFF")
+        target_compile_definitions(quench_app PRIVATE QUENCH_ASSET_OVERLAY=0)
+    endif()
     quench_add_shaders(quench_app NAME imgui SOURCE src/app/shaders/imgui.hlsl
         ENTRIES imgui_vs:vertex imgui_fs:fragment fullscreen_vs:vertex ui_composite_fs:fragment)
 

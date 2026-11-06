@@ -117,7 +117,7 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--orientation NAME` | `portrait`, `landscape` or `any`: the screen orientations of the window on phones and tablets (`SDL_HINT_ORIENTATIONS`, within those of the app's Info.plist, `quench_add_game(... ORIENTATIONS)`; default: all of those); desktops ignore it |
 | `--worker-threads N` | worker threads of the job system (0 to 64; default: hardware threads minus one); 0 runs jobs on the main thread, as in builds without threads |
 | `--asset-latency S` | every asset load waits S seconds (0 to 60) before it starts, to see the placeholders |
-| `--hot-reload` | load asset files again when they change on disk (the cooked files in the build tree; Mac only so far) |
+| `--hot-reload` | load asset files again when they change on disk (the cooked files in the build tree on the Mac; on a device, files pushed into the asset overlay of a development build: [Hot reload on a device](assets.md#hot-reload-on-a-device)) |
 | `--no-audio` | no audio device: the mix runs offline on the frame clock and is discarded |
 | `--audio-device NAME` | `default`, `null` (miniaudio's null backend: a device thread without sound, for tests and benchmarks) or the first output whose name contains NAME; default `AppDesc::audioDevice` |
 | `--audio-capture FILE.wav` | mix offline on the frame clock and write the whole mix as a 16-bit stereo WAV at exit (paths as for `--capture`); nothing is played |

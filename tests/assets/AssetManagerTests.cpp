@@ -327,6 +327,38 @@ QUENCH_TEST(assets_hot_reload) {
     fs::setBackend(nullptr);
 }
 
+// Files copied into the asset overlay (a device's user directory) reload a loaded asset, and so does their removal.
+QUENCH_TEST(assets_hot_reload_from_overlay) {
+    useDir("assets_hot_reload_from_overlay");
+    const std::filesystem::path overlay = g_assets.parent_path() / "user" / "asset_overlay";
+    fs::setBackend(
+        fs::makeOverlayBackend(fs::makeStdBackend(g_assets, g_assets.parent_path() / "user"), "asset_overlay"));
+    writeFile("numbers/a.txt", "1");
+    JobSystem jobs(JobSystemDesc{.workerThreads = 1});
+    AssetManager manager(jobs, AssetManagerSettings{.hotReload = true, .hotReloadInterval = 0.0});
+    registerNumbers(manager);
+    AssetRef<NumberAsset> a = manager.load<NumberAsset>("numbers/a.txt");
+    REQUIRE(settle(manager) && a.ready() && a->value == 1, "first load");
+    const auto waitFor = [&](int value) {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (a->value != value && std::chrono::steady_clock::now() < end) {
+            manager.update();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return a->value == value;
+    };
+    std::filesystem::create_directories(overlay / "numbers");
+    std::ofstream(overlay / "numbers" / "a.txt", std::ios::binary) << "2";
+    std::filesystem::last_write_time(overlay / "numbers" / "a.txt",
+                                     std::filesystem::last_write_time(g_assets / "numbers" / "a.txt") +
+                                         std::chrono::seconds(2));
+    CHECK(waitFor(2) && a->version() == 2, "the overlay's file not loaded: %d", a->value);
+    std::filesystem::remove(overlay / "numbers" / "a.txt");
+    CHECK(waitFor(1) && a->version() == 3, "the bundled file not loaded again: %d", a->value);
+    CHECK(manager.stats().reloads == 2, "reloads %llu", (unsigned long long)manager.stats().reloads);
+    fs::setBackend(nullptr);
+}
+
 QUENCH_TEST(assets_latency_and_cancel) {
     useDir("assets_latency_and_cancel");
     writeFile("a.txt", "1");

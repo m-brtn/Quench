@@ -40,6 +40,11 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   elsewhere, and `SceneAssets` samples them where `gpu::Caps::astcTextures` is set
   ([Assets](../assets.md#cooked-formats)). PSNR 54 to 57 dB on the cook's test images (BC7: 44 to 51 dB); the
   demo's Assets section ran with them in the iOS Simulator and on the iPhone 17.
+- Asset hot reload on a device (stage 6 remaining work): development builds read assets from `asset_overlay/` in
+  the user directory first (`fs::makeOverlayBackend`; CMake option `QUENCH_ASSET_OVERLAY`, on without `NDEBUG`),
+  and `tools/push_assets.sh` copies files whose content changed into it with `devicectl`
+  ([Assets](../assets.md#hot-reload-on-a-device)). On the iPhone 17 a pushed texture was reloaded about a second
+  later. The demo's Assets section turns hot reload on with `--hot-reload` (before, only its switch did).
 
 ## Fixes
 
@@ -118,6 +123,9 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   without ASTC sampling gets the placeholder and an error (BC7 is still decoded on the CPU there).
 - **`cook::TextureFormat`** (the cook library, `tools/cook/Cook.h`) has `Astc4x4` after `Rgba8`; the cook's
   `--format` takes `astc`.
+- **Debug builds read `asset_overlay/` in the user directory first:** a file at `asset_overlay/<path>` replaces the
+  asset `<path>` in builds without `NDEBUG` (on the Mac too). A game that writes files of its own there, or wants
+  Debug builds to read only the bundle, sets `-DQUENCH_ASSET_OVERLAY=OFF`. **`fs::makeOverlayBackend`** is new.
 - **Xcode projects** (`quench_add_game` with the Xcode generator): the merged assets are no longer a folder
   reference in the target's resources but are copied by a `CMake PostBuild Rules` script phase; a game's own script
   that expects the folder in `Copy Bundle Resources` needs to change. The `<target>_assets` target stays.

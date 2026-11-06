@@ -1,0 +1,18 @@
+# Hot reload on a device (docs/assets.md, "Hot reload on a device"; not a part of the batches): a development build
+# of the demo waits up to 120 s for a reload while tools/push_assets.sh copies a changed file into its asset
+# overlay, then checks that nothing failed but the broken and the missing model. The two captures show the scene
+# before and after the reload.
+section assets
+
+set hot_reload 1
+set move_focus 0
+set focus_angle 0
+windows off
+until assets_idle == 1 5
+expect assets_reloads == 0
+capture hot_reload_before.png
+until assets_reloads >= 1 120
+until assets_idle == 1 5
+expect assets_failed == 2
+expect showcase_ready == 3
+capture hot_reload_after.png

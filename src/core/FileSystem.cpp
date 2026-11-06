@@ -1,5 +1,7 @@
 #include <quench/core/FileSystem.h>
 
+#include <quench/core/Assert.h>
+
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -125,6 +127,44 @@ private:
     std::filesystem::path m_userRoot;
 };
 
+class OverlayBackend final : public Backend {
+public:
+    OverlayBackend(std::unique_ptr<Backend> inner, std::string overlayDir)
+        : m_inner(std::move(inner)), m_prefix(std::move(overlayDir) + "/") {}
+
+    Result<Bytes> read(Root root, std::string_view path) override {
+        if (root == Root::Assets && overlaid(path)) return m_inner->read(Root::User, m_prefix + std::string(path));
+        return m_inner->read(root, path);
+    }
+
+    Result<std::unique_ptr<Reader>> open(Root root, std::string_view path) override {
+        if (root == Root::Assets && overlaid(path)) return m_inner->open(Root::User, m_prefix + std::string(path));
+        return m_inner->open(root, path);
+    }
+
+    bool exists(Root root, std::string_view path) override {
+        return (root == Root::Assets && overlaid(path)) || m_inner->exists(root, path);
+    }
+
+    Result<void> writeUser(std::string_view path, std::span<const std::uint8_t> data) override {
+        return m_inner->writeUser(path, data);
+    }
+
+    std::optional<std::int64_t> modifiedTime(Root root, std::string_view path) override {
+        if (root == Root::Assets) {
+            if (std::optional<std::int64_t> time = m_inner->modifiedTime(Root::User, m_prefix + std::string(path)))
+                return time;
+        }
+        return m_inner->modifiedTime(root, path);
+    }
+
+private:
+    bool overlaid(std::string_view path) { return m_inner->exists(Root::User, m_prefix + std::string(path)); }
+
+    std::unique_ptr<Backend> m_inner;
+    std::string m_prefix;
+};
+
 std::unique_ptr<Backend>& backend() {
     static std::unique_ptr<Backend> b = makeStdBackend({}, {});
     return b;
@@ -138,6 +178,11 @@ std::unique_ptr<Reader> makeMemoryReader(Bytes bytes) { return std::make_unique<
 
 std::unique_ptr<Backend> makeStdBackend(std::filesystem::path assetRoot, std::filesystem::path userRoot) {
     return std::make_unique<StdBackend>(std::move(assetRoot), std::move(userRoot));
+}
+
+std::unique_ptr<Backend> makeOverlayBackend(std::unique_ptr<Backend> inner, std::string overlayDir) {
+    QUENCH_ASSERT(inner && checkPath(overlayDir).empty(), "makeOverlayBackend: a backend and a relative directory");
+    return std::make_unique<OverlayBackend>(std::move(inner), std::move(overlayDir));
 }
 
 void setBackend(std::unique_ptr<Backend> b) { backend() = b ? std::move(b) : makeStdBackend({}, {}); }

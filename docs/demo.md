@@ -75,7 +75,7 @@ What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks
 | Asset loading, placeholders, failures | assets | gray boxes while loading, magenta for the corrupt and the missing model; ready and failed counts |
 | Cache budgets, upload budget | assets | budgets per type, evictions, uploads per frame |
 | Streaming by distance | assets | the tile grid around a moving focus; the load and keep rings on the ground and every model's load state (added) |
-| Hot reload (Mac) | assets | the hot reload switch, "Reload all", and a note "Assets reloaded: N" over the scene (added) |
+| Hot reload (Mac; a device through the asset overlay of a development build) | assets | the hot reload switch (on with `--hot-reload`), "Reload all", and a note "Assets reloaded: N" over the scene (added) |
 | Audio | audio | buses, 3D sound, Doppler, a generator, streamed music with a crossfade, voice stealing, meters |
 | Animation | animation | blending, state machine, layers, IK, foot placement, attachments, events, root motion, a crowd on the job system, GPU skinning |
 | Ray tracing, MetalFX | raytracing | ray-traced sun and lamp shadows, occlusion, reflections, the probe grid and per-pixel indirect light, the spatial and temporal denoisers, MetalFX spatial, temporal and denoising, the path tracer, each with its fallback and the reason |
@@ -90,7 +90,7 @@ What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks
 | Scenarios, captures, perf regions | the checks | every section's check; the benchmark of every section on the same perf regions (added) |
 
 Not shown, because the engine does not have it yet: shader hot reload, normal maps, Basis Universal textures,
-asset hot reload on a device, HRTF, reverb, retargeting, blend spaces, ray-traced reflections and indirect
+HRTF, reverb, retargeting, blend spaces, ray-traced reflections and indirect
 light ([Roadmap](roadmap.md)).
 
 ## Layouts
@@ -293,7 +293,9 @@ The assets section's content is procedural (`tools/assets/make_demo_assets.py`, 
 `quench_cook_assets(quench_demo_cooked ...)` and merged into the build's `assets/` next to the executable
 (`quench_add_game(... COOKED_ASSETS quench_demo_cooked)`, target `quench_demo_assets`), and
 `examples/demo/assets/models/broken.qmodel` is a deliberately corrupt file. With hot reload on, editing a file in
-`assets_src` and building `quench_demo_assets` while the demo runs re-cooks that file, and the demo loads it again.
+`assets_src` and building `quench_demo_assets` while the demo runs re-cooks that file, and the demo loads it again;
+on an iPhone, a development build of the demo loads it once `tools/push_assets.sh` has copied it
+([Hot reload on a device](assets.md#hot-reload-on-a-device); `scenarios/hot_reload_device.txt` waits for that).
 
 The audio section's sounds are not in git: `tools/assets/make_demo_sounds.py` (Python standard library, procedural,
 CC0, `assets/CREDITS.md`) writes `sounds/motor.wav`, `siren.wav`, `ping.wav` (short loops and a one-shot, 24 and

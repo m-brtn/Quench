@@ -130,6 +130,12 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   Assets section with its 21 ASTC textures passed in the Simulator (17 checks, the capture looked at) and on the
   iPhone 17 on both backends (17 checks each, the two captures identical, one looked at: textured tiles and models,
   the broken and the missing model magenta). Not on the iPhone 18 Pro Max.
+- Asset hot reload (2026-11-07): development builds read assets from `asset_overlay/` in the user directory
+  first, and `tools/push_assets.sh` copies changed files there with `devicectl`
+  ([Hot reload on a device](assets.md#hot-reload-on-a-device)). On the iPhone 17 a pushed texture was reloaded
+  about a second later. Not tried in the Simulator. `devicectl device copy to --remove-existing-content true`
+  deletes files outside its destination folder (it deleted the demo's user directory on the iPhone 17): the
+  engine's scripts do not use it.
 
 ## HDR output
 

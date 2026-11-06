@@ -69,7 +69,7 @@ quench::render::ModelInstanceId placed = sceneAssets.addModel(crate, transform);
 - **Reload**: `reload(id)` reads the file again and swaps the new data in under the same ID and handles; the old data
   stays until then, and also if the reload fails. With hot reload on (`--hot-reload`,
   `AssetManagerSettings::hotReload`) the manager polls the modification time of every loaded file twice a second and
-  reloads what changed.
+  reloads what changed. On a device, see [Hot reload on a device](#hot-reload-on-a-device).
 - **Simulated latency** (`--asset-latency S`, `setSimulatedLatency`): every load waits S seconds before it starts, to
   see and test the placeholders.
 - **Stats**: `stats()` gives counts (loading, ready, failed, queued, decoding, waiting for upload), totals (loads,
@@ -81,6 +81,38 @@ quench::render::ModelInstanceId placed = sceneAssets.addModel(crate, transform);
   animation graphs (`animation::SkeletonAsset`, `ClipSetAsset`, `GraphAsset`, types `"skeleton"`, `"animation"`,
   `"animgraph"`, registered by `animation::AnimationSystem`; CPU memory only, budgets in `AnimationSettings`;
   [Animation](animation.md)).
+
+### Hot reload on a device
+
+A device's app bundle is read-only and out of reach of the Mac's build. Development builds therefore read an asset
+from the **asset overlay**, `asset_overlay/<path>` in the user directory, when that file exists, and from the bundle
+otherwise (`fs::makeOverlayBackend`, installed by the app; reads, streamed opens, `exists` and modification times
+all go to the overlay first). Development builds are the ones without `NDEBUG` (Debug); the CMake option
+`QUENCH_ASSET_OVERLAY` (`AUTO`, `ON`, `OFF`) turns it on in another build (`-DQUENCH_ASSET_OVERLAY=ON` for a Release
+build on the phone) or off. The app logs "asset overlay: files in asset_overlay/ of the user directory replace
+bundled assets" at startup when it is on. Release builds never read the overlay.
+
+`tools/push_assets.sh` copies changed files from the Mac into the overlay through `devicectl` (Xcode's device tool;
+the device unlocked and paired):
+
+```sh
+xcodebuild -project build/ios-xcode/Quench.xcodeproj -target quench_demo_assets -configuration Release -sdk iphoneos build
+tools/push_assets.sh --device <udid> --bundle-id org.quench.demo --app "Quench Demo" \
+    build/ios-xcode/examples/demo/quench_game/quench_demo/assets   # --watch: again every second
+```
+
+The first run on a device and app records the SHA-256 of every file and copies nothing (`--all` copies everything);
+later runs copy each file whose content changed, one `devicectl device copy to` per file (about a second each;
+devicectl keeps the file's modification time). Content, not time, decides: a build that cooks a file again with the
+same result gives it a new time (the first version of the script copied 32 files for one change). With hot reload
+on (`--hot-reload`, or the switch in the demo's Assets section) the running game sees the overlay file's time and
+loads it. Checked on the iPhone 17 (2026-11-07, the demo built with `-DQUENCH_ASSET_OVERLAY=ON`,
+`examples/demo/scenarios/hot_reload_device.txt`): a tile texture turned by 90 degrees, cooked and pushed (1 file,
+under a second) was reloaded about a second later; the reload counter went from 0 to 1 and the captures before and
+after show the tile's stripes turned. The script removes nothing on the device: `devicectl device copy to
+--remove-existing-content true` deleted files outside its destination folder (on 2026-11-07 the demo's whole user
+directory on the iPhone 17; reproduced in devicectl's `temporary` domain). To read the bundled files again, push the
+original files or delete the app.
 
 ### Textures and models in a scene
 
@@ -250,7 +282,9 @@ failures; Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_a
 ## Limitations
 
 - **Shader hot reload** is not built (stage 6 remaining work); only asset files reload. Hot reload works where the
-  asset directory is a directory of the file system (the Mac); on the iPhone it needs an asset server (later).
+  asset directory is a directory of the file system (the Mac) and, in development builds, through the asset overlay
+  on a device: files are pushed from the Mac by `devicectl` (iOS only; not over the network, no asset server).
+  A file removed from the overlay goes back to the bundled one, but the script does not remove files.
 - **Texture formats**: the cook writes BC7, ASTC 4x4 (iOS builds) and RGBA8. Basis Universal transcoding is needed
   for Android and the web; until then a device without BC sampling gets BC7 decoded to RGBA8 on the CPU (four times
   the memory), and a device without ASTC sampling gets placeholders for ASTC files (no device the engine has run on

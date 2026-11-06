@@ -116,6 +116,7 @@ public:
         s.addLight({.type = LightType::Directional, .color = glm::vec3(5.0f, 4.8f, 4.4f), .direction = -towardSun});
 
         m_manager = &c.app.assets();
+        m_hotReload = m_manager->settings().hotReload; // --hot-reload
         m_assets.emplace(s, *m_manager);
         m_grid.emplace(StreamingGrid::Settings{.origin = kGridOrigin,
                                                .cellSize = kCellSize,
@@ -192,7 +193,8 @@ public:
         if (ImGui::Button("Reload all")) reloadAll(manager);
         ImGui::TextDisabled("BC7 %s", m_assets->bcTextures() ? "sampled" : "decoded on load");
         if (m_hotReload)
-            ImGui::TextWrapped("Edit examples/demo/assets_src, rebuild quench_demo_assets: changed files reload.");
+            ImGui::TextWrapped("Edit examples/demo/assets_src, rebuild quench_demo_assets: changed files reload "
+                               "(on an iPhone, a development build: push them with tools/push_assets.sh).");
     }
 
     void stats(Context& c) override {

@@ -60,6 +60,11 @@ public:
 // Standard library backend; an empty root is the current directory for assets and refuses user writes.
 std::unique_ptr<Backend> makeStdBackend(std::filesystem::path assetRoot, std::filesystem::path userRoot);
 
+// Development builds: an asset whose path exists below `overlayDir` in the user directory is read from there instead
+// of `inner`'s assets (files copied onto a device replace bundled ones, and hot reload sees their times). User files
+// are `inner`'s. `overlayDir` is a relative path (fs::checkPath).
+std::unique_ptr<Backend> makeOverlayBackend(std::unique_ptr<Backend> inner, std::string overlayDir);
+
 // Installs a backend (nullptr restores the default standard library backend over the current directory, without a
 // user directory). Not thread-safe: call before any file access, at startup.
 void setBackend(std::unique_ptr<Backend> backend);

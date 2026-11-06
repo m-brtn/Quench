@@ -494,10 +494,11 @@ As built in stage 6 ([Jobs, assets and the cook](assets.md)):
   streams, LOD ranges, materials naming their textures). The importers and encoders (fastgltf, stb_image, bc7enc,
   astc-encoder) live only in `quench_cook`, a host tool; games call
   `quench_cook_assets()` and `quench_add_game(... COOKED_ASSETS ...)`.
-- **Hot reload** (on the Mac): the manager polls the modification time of loaded files and swaps a changed file in
-  under the same ID and handles; rebuilding the game's assets target cooks the changed sources and copies the changed
-  files. Shaders are not reloaded yet (stage 6 remaining work: SDL GPU on Metal accepts MSL source compiled at run
-  time). On the iPhone hot reload needs an asset server over the network (later).
+- **Hot reload**: the manager polls the modification time of loaded files and swaps a changed file in under the same
+  ID and handles; rebuilding the game's assets target cooks the changed sources and copies the changed files. On a
+  device, development builds read assets from an overlay in the user directory first (`fs::makeOverlayBackend`), and
+  `tools/push_assets.sh` copies changed files into it with `devicectl` (no network, no asset server). Shaders are not
+  reloaded yet (stage 6 remaining work: SDL GPU on Metal accepts MSL source compiled at run time).
 - **Streaming by distance**: `StreamingGrid`, cells on a grid around any number of focus points with a load and a
   larger keep radius, nearest first; generalized from TrailForge's `TerrainTiles` (physics terrain tiles). What a cell
   holds is the game's (typically `AssetRef`s loaded with the distance as priority).

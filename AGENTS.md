@@ -31,8 +31,9 @@ skeleton and presets,
 `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
 library backend, worker thread priority, the job system `quench::JobSystem` on enkiTS), `quench_physics`
 (`PhysicsWorld` on Jolt, its jobs on the engine's job system), `quench_assets` (asset IDs, the `AssetManager` cache
-with reference counts, placeholders, budgets, loads on jobs, a per-frame upload budget, hot reload on the Mac,
-streaming by distance; KTX2 textures and cooked `.qmodel` models, version 3 with skins and MikkTSpace tangents in a
+with reference counts, placeholders, budgets, loads on jobs, a per-frame upload budget, hot reload on the Mac and,
+in development builds, on a device through an asset overlay in the user directory filled by `tools/push_assets.sh`
+(checked on the iPhone 17), streaming by distance; KTX2 textures and cooked `.qmodel` models, version 3 with skins and MikkTSpace tangents in a
 64-byte vertex), `quench_cook` (the host
 tool: glTF, GLB, PNG, JPEG, KTX2 to BC7, ASTC 4x4 (iOS builds, through astc-encoder) or RGBA8 KTX2 with mips and meshoptimizer models with tangents; sounds; skeletons and clips
 from glTF; `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
@@ -102,8 +103,8 @@ and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scen
 `d708783`, not yet moved to a release) with its own input layer fed through `Game::event` and its own physics clock;
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
-the asset system, the engine's audio or animation yet. No shader hot reload, Basis Universal textures,
-asset hot reload on a device (stage 6 remaining work), browser audio, HRTF, reverb or Vorbis (stage 7 remaining
+the asset system, the engine's audio or animation yet. No shader hot reload or Basis Universal textures
+(stage 6 remaining work), browser audio, HRTF, reverb or Vorbis (stage 7 remaining
 work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
 work), the native backend as the default, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without

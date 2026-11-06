@@ -140,10 +140,14 @@ the engine's tests and the demo's new "Assets" section. Described in [Jobs, asse
   runtime samples them where `gpu::Caps::astcTextures` is set (otherwise an error and the placeholder). Checked by
   PSNR in the cook's tests, `render.scene_assets_texture_states` on the Mac's three backends and the Simulator's
   two, and the demo's Assets section in the Simulator and on the iPhone 17 on both backends.
-- Not done, remaining: shader hot reload; Basis Universal for Android and the web; normal and emissive
-  textures in the standard surface; an asset server for hot reload on the iPhone; the demo's "Assets" section on the
-  iPhone (not run there: running on the device needs the user's approval). Shader hot reload stays open as P1 (see
-  the table below); the release went ahead without it (decided without the user, 2026-11-05, as recommended).
+- Done (2026-11-07, after 0.9.0): asset hot reload on a device, without an asset server. Development builds read
+  assets from an overlay in the user directory first (`fs::makeOverlayBackend`, CMake option
+  `QUENCH_ASSET_OVERLAY`), and `tools/push_assets.sh` copies files whose content changed into it with `devicectl`.
+  Checked on the iPhone 17 with the demo's Assets section (`scenarios/hot_reload_device.txt`: one texture pushed,
+  reloaded about a second later). Normal and emissive textures in the standard surface came with stage 11.
+- Not done, remaining: shader hot reload; Basis Universal for Android and the web. Shader hot reload stays open as
+  P1 (see the table below); the release went ahead without it (decided without the user, 2026-11-05, as
+  recommended).
 - Done: version 0.4.0, release notes in [docs/releases/v0.4.0.md](releases/v0.4.0.md).
 
 ## Stage 7: audio (done 2026-11-06 except the checks on the iPhone and by ear, version 0.5.0; games not switched)
@@ -449,8 +453,7 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** shader hot reload, Basis Universal textures and asset hot reload on a device
-   (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
+3. **Remaining work of the stages:** shader hot reload and Basis Universal textures (stage 6); browser audio, HRTF, reverb and Vorbis (stage 7); retargeting, 2D blend spaces, animation LOD,
    dual quaternion skinning and blend shapes (stage 8); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray

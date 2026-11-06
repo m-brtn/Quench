@@ -2,8 +2,10 @@
 
 #include <quench/core/FileSystem.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 
 using namespace quench;
@@ -75,6 +77,41 @@ QUENCH_TEST(fs_write_user) {
     CHECK(text.ok() && *text == "{\"v\": 2}", "read back: %s", text.ok() ? text->c_str() : text.error().c_str());
     CHECK(!std::filesystem::exists(dir / "user" / "saves" / "slot1.json.tmp"), "temporary file left");
     CHECK(fs::userExists("saves/slot1.json") && !fs::assetExists("saves/slot1.json"), "roots mixed up");
+    fs::setBackend(nullptr);
+}
+
+QUENCH_TEST(fs_asset_overlay) {
+    const std::filesystem::path dir = testDir("fs_asset_overlay");
+    const std::filesystem::path overlay = dir / "user" / "overlay";
+    std::ofstream(dir / "assets" / "models" / "rock.txt", std::ios::binary) << "granite\n";
+    fs::setBackend(fs::makeOverlayBackend(fs::makeStdBackend(dir / "assets", dir / "user"), "overlay"));
+    Result<std::string> text = fs::readAssetText("models/rock.txt");
+    CHECK(text.ok() && *text == "granite\n", "bundled file: %s", text.ok() ? text->c_str() : text.error().c_str());
+    const std::optional<std::int64_t> bundled = fs::assetModifiedTime("models/rock.txt");
+    CHECK(!fs::assetExists("models/new.txt"), "a missing file exists");
+
+    std::filesystem::create_directories(overlay / "models");
+    std::ofstream(overlay / "models" / "rock.txt", std::ios::binary) << "basalt\n";
+    std::ofstream(overlay / "models" / "new.txt", std::ios::binary) << "pumice\n";
+    std::filesystem::last_write_time(overlay / "models" / "rock.txt",
+                                     std::filesystem::last_write_time(dir / "assets" / "models" / "rock.txt") +
+                                         std::chrono::seconds(2));
+    text = fs::readAssetText("models/rock.txt");
+    CHECK(text.ok() && *text == "basalt\n", "overlaid file: %s", text.ok() ? text->c_str() : text.error().c_str());
+    CHECK(fs::assetModifiedTime("models/rock.txt") != bundled, "the overlay's time not reported");
+    const Result<std::string> added = fs::readAssetText("models/new.txt");
+    CHECK(fs::assetExists("models/new.txt") && added.ok() && *added == "pumice\n", "a file only in the overlay");
+    Result<std::unique_ptr<fs::Reader>> reader = fs::openAsset("models/rock.txt");
+    CHECK(reader && (*reader)->size() == 7, "open reads the overlay");
+    CHECK(!fs::readAsset("../overlay/models/rock.txt"), "'..' accepted");
+    CHECK(fs::writeUserText("saves/a.txt", "1").ok(), "user write");
+    const Result<std::string> saved = fs::readUserText("saves/a.txt");
+    CHECK(saved.ok() && *saved == "1" && !fs::assetExists("saves/a.txt"), "user files");
+
+    std::filesystem::remove(overlay / "models" / "rock.txt");
+    text = fs::readAssetText("models/rock.txt");
+    CHECK(text.ok() && *text == "granite\n", "back to the bundled file: %s", text.ok() ? text->c_str() : "error");
+    CHECK(fs::assetModifiedTime("models/rock.txt") == bundled, "the bundled file's time");
     fs::setBackend(nullptr);
 }
 
