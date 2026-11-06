@@ -241,22 +241,10 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
         localShadows = quenchRayLocalShadows.SampleLevel(quenchRayLocalShadowsSampler, i.pixel * quenchFrame.screen.zw,
                                                          0.0);
     }
-    QuenchLtc ltc = quenchNoLtc();
-    [branch] if (quenchLights.count.y > 0.0) {
-        ltc = quenchLtcAt(quenchAreaTable, N, lobeNormal, V, lobeRoughness, s.albedo, s.metallic);
-    }
     for (int k = 0; k < lights; ++k) {
         const LocalLight light = quenchLights.lights[k];
         const int type = int(light.color.w);
-        [branch] if (type >= QUENCH_LIGHT_RECT) {
-            float a = quenchAreaWindow(light, i.world);
-            if (localRays && light.cone.y > 0.0) {
-                const int c = int(light.cone.y) - 1;
-                a *= dot(localShadows, float4(c == 0, c == 1, c == 2, c == 3));
-            }
-            if (a > 0.0) color += quenchAreaLight(light, i.world, ltc) * a;
-            continue;
-        }
+        if (type >= QUENCH_LIGHT_RECT) continue;
         float3 L = -light.direction.xyz;
         float attenuation = 1.0;
         if (type != 0) {
@@ -278,6 +266,20 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
             }
         }
         if (attenuation > 0.0) color += quenchDirectLight(s, V, L, light.color.rgb * attenuation);
+    }
+    // The area lights in a loop of their own, so that the LTC state does not add to the registers of the punctual loop.
+    [branch] if (quenchLights.count.y > 0.0) {
+        const QuenchLtc ltc = quenchLtcAt(quenchAreaTable, N, lobeNormal, V, lobeRoughness, s.albedo, s.metallic);
+        for (int k = 0; k < lights; ++k) {
+            const LocalLight light = quenchLights.lights[k];
+            if (int(light.color.w) < QUENCH_LIGHT_RECT) continue;
+            float a = quenchAreaWindow(light, i.world);
+            if (localRays && light.cone.y > 0.0) {
+                const int c = int(light.cone.y) - 1;
+                a *= dot(localShadows, float4(c == 0, c == 1, c == 2, c == 3));
+            }
+            if (a > 0.0) color += quenchAreaLight(light, i.world, ltc) * a;
+        }
     }
     const float3 F0 = lerp(((float3)(0.04)), s.albedo, s.metallic);
     const float2 screenUv = i.pixel * quenchFrame.screen.zw;
