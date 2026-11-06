@@ -1,12 +1,11 @@
 # Quench documentation
 
-Stages 1 to 3 and 5 of the [Roadmap](roadmap.md) are implemented, stage 4 (games on the engine) for one game, and
-stage 6 except shader hot reload (version 0.4.0): the core and physics modules, the job
-system, the asset system and the asset cooker, the GPU layer over SDL GPU, the app shell with HDR display output, the
-render module (a retained scene and the standard frame), the sample, the engine demo and the game template. Stage 7
-(audio: the mixer, 3D sound, device output, offline captures) is in the working tree, not released yet; it has not
-run on the iPhone or been listened to. Where a
-document describes something planned, it says so. [Migration](migration.md) describes the engine code in the two
+Stages 1 to 3, 5 and 7 of the [Roadmap](roadmap.md) are implemented, stage 4 (games on the engine) for one game, and
+stage 6 except shader hot reload (version 0.5.0): the core and physics modules, the job system, the asset system and
+the asset cooker, the GPU layer over SDL GPU, the app shell with HDR display output, the render module (a retained
+scene and the standard frame), audio (the mixer, 3D sound, device output, offline captures; not yet run on the
+iPhone or listened to), the sample, the engine demo and the game template. Where a document describes something
+planned, it says so. [Migration](migration.md) describes the engine code in the two
 games, what has moved and what is not moved yet.
 
 | Document | Contents |

@@ -136,7 +136,7 @@ the engine's tests and the demo's new "Assets" section. Described in [Jobs, asse
   the table below); the release went ahead without it (decided without the user, 2026-11-05, as recommended).
 - Done: version 0.4.0, release notes in [docs/releases/v0.4.0.md](releases/v0.4.0.md).
 
-## Stage 7: audio (done 2026-11-06 except the checks on the iPhone and by ear; games not switched)
+## Stage 7: audio (done 2026-11-06 except the checks on the iPhone and by ear, version 0.5.0; games not switched)
 
 Requested as P0 by the user (2026-11-05), after stage 6 so that sound files load through the asset system and decode
 on the job system. Written for the engine; TrailForge's miniaudio device and offline capture were read, its mixer is
@@ -161,7 +161,9 @@ the user was away: the decisions are in the devlog of 2026-11-06 ("decided witho
 - Not done, remaining: listening (the Mac's output, headphones, the iPhone), the iPhone run of the stage 7 code
   (silent switch, interruptions, route changes, background and foreground), browser output (Web Audio), HRTF,
   occlusion, reverb and filters, virtual voices, Vorbis or Opus, gapless MP3 (encoder delay and padding are not
-  trimmed).
+  trimmed). The release went ahead before the checks by ear and on the iPhone (decided without the user,
+  2026-11-06, as recommended); they are listed as not verified in the release notes.
+- Done: version 0.5.0, release notes in [docs/releases/v0.5.0.md](releases/v0.5.0.md).
 
 ## Stage 8: animation
 

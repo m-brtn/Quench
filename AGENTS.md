@@ -20,7 +20,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-05, version 0.4.0): stages 1 to 3 and 5 of `docs/roadmap.md` are in place, stage 4 for
+**Current state (2026-11-06, version 0.5.0): stages 1 to 3, 5 and 7 of `docs/roadmap.md` are in place, stage 4 for
 TrailForge only, stage 6 except shader hot reload: the CMake skeleton and presets,
 `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
 library backend, worker thread priority, the job system `quench::JobSystem` on enkiTS), `quench_physics`
@@ -36,25 +36,31 @@ display output (`--hdr auto|on|off`, an HDR tone curve up to the display's headr
 platforms; the UI at paper white; SDR captures), captures), `quench_render` (the retained scene: meshes, textures,
 materials, instances and lights by handle; the standard frame of cascaded sun shadows, the HDR pass with reversed
 depth, sky and atmosphere, height fog, bloom, ACES or AgX tone mapping and TAA or FXAA, with fallbacks by device
-capability; game passes and surface shaders; `SceneAssets` puts asset textures and models into the scene) and
-`quench_add_game()` (macOS executables, iOS bundles, cooked assets).
+capability; game passes and surface shaders; `SceneAssets` puts asset textures and models into the scene),
+`quench_audio` (headless: a float stereo 48 kHz mixer, buses with volume, mute, pause and meters, sounds as an asset
+type, streamed music with crossfades, game-generated sources, 3D sound with Doppler and voice stealing, WAV writing
+and signal analysis), `quench_audio_device` (output through miniaudio, the iOS audio session; `App::audio()`,
+`--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`) and `quench_add_game()`
+(macOS executables, iOS bundles, cooked assets and sounds).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (a section per feature, each with a scripted
 check and golden captures; `tools/package_demo.sh` packages it into `dist/`); `templates/game` and
 `tools/new_game.py` start a new game. Tests run on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator,
-on the user's iPhone (one signed test app; signed by the user's paid team; not yet with the stage 6 code) and, for
-the headless modules, as WebAssembly under Node.js. HDR output was looked at on the iPhone (the user, 2026-11-05:
-"everything is fine"), never on a Mac display (this Mac's has no HDR range). TrailForge builds on the engine's
-`quench_core` (`FixedStepClock`,
-JSON), `quench_physics` and shader build, renders its own passes through `quench_gpu` (not through `quench_render`),
+on the user's iPhone (one signed test app; signed by the user's paid team; not yet with the stage 6 and 7 code) and,
+for the headless modules, as WebAssembly under Node.js. HDR output was looked at on the iPhone (the user, 2026-11-05:
+"everything is fine"), never on a Mac display (this Mac's has no HDR range). Audio has run only on miniaudio's null
+backend and offline (mix checks by measurement); nobody has listened to it yet. TrailForge builds on the engine's
+`quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders its own passes through
+`quench_gpu` (not through `quench_render`),
 and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scenario runner and captures; pinned
 `d708783`, not yet moved to a release) with its own input layer fed through `Game::event` and its own physics clock;
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
-`tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system or
-the asset system yet. No shader hot reload, ASTC or Basis Universal textures, normal maps in the standard surface,
-asset hot reload on a device, audio or animation yet (stage 6 remaining work, stages 7 and 8).**
+`tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
+the asset system or the engine's audio yet. No shader hot reload, ASTC or Basis Universal textures, normal maps in
+the standard surface, asset hot reload on a device (stage 6 remaining work), browser audio, HRTF, reverb or Vorbis
+(stage 7 remaining work) or animation (stage 8) yet.**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
-`docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is built; the rest of `docs/` is design
-and plan beyond stage 6. Update this paragraph whenever that changes.
+`docs/audio.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is built; the rest of
+`docs/` is design and plan beyond stage 7. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) with one HLSL shader source compiled at build
 time, Jolt Physics, Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer and bc7enc_rdo's
