@@ -226,13 +226,15 @@ SDL_AppResult fail(std::string_view what) {
 
 int scenarioExitCode(const AppState& s) { return s.scenario && s.scenario->failed() > 0 ? 1 : 0; }
 
+void readGpuTime(AppState& s, gpu::Fence& fence) {
+    if (const auto ms = s.device->gpuMilliseconds(fence)) s.stats.gpuMs = *ms;
+    if (s.device->caps().gpuPassTiming) s.stats.gpuPasses = s.device->gpuTimings(fence);
+    fence.reset();
+}
+
 void updateGpuTime(AppState& s) {
-    for (gpu::Fence& fence : s.fences) {
-        if (!fence || !s.device->isSignaled(fence)) continue;
-        if (const auto ms = s.device->gpuMilliseconds(fence)) s.stats.gpuMs = *ms;
-        if (s.device->caps().gpuPassTiming) s.stats.gpuPasses = s.device->gpuTimings(fence);
-        fence.reset();
-    }
+    for (gpu::Fence& fence : s.fences)
+        if (fence && s.device->isSignaled(fence)) readGpuTime(s, fence);
 }
 
 void runScenario(AppState& s) {
@@ -261,7 +263,11 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
     const Uint64 waitStart = SDL_GetPerformanceCounter();
     gpu::TextureRef swapchain;
     if (s.offscreen) {
-        if (const gpu::Fence& oldest = s.fences[s.nextFence]; oldest) s.device->wait(oldest);
+        // Read here: this frame's fence takes its place, and a GPU-bound run would never time a frame otherwise.
+        if (gpu::Fence& oldest = s.fences[s.nextFence]; oldest) {
+            s.device->wait(oldest);
+            readGpuTime(s, oldest);
+        }
     } else {
         swapchain = commands.acquireSwapchainTexture(s.window.get());
     }
