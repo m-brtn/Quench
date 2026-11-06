@@ -20,6 +20,11 @@
 // Optional: QUENCH_SURFACE_VERTEX names a function `void f(inout QuenchVertexIn v, InstanceData instance)` that moves
 // the vertex in object space before the transform (wind, procedural animation); then also build the entry
 // surface_shadow_vs:vertex and pass it as SurfaceDesc::shadowVertexShader, so the shadows move with it.
+//
+// Shadows of cut-out and translucent materials run the surface function too, in the cascades' passes: build
+// surface_shadow_fs:fragment and surface_transmittance_fs:fragment and pass them as SurfaceDesc::shadowFragmentShader
+// and transmittanceShader, so that their holes and opacity are the surface's own (without them the standard surface's
+// opacity is used). There, QuenchSurfaceInput::view points toward the sun and pixel is the shadow map texel.
 
 #include "quench/Brdf.hlsli"
 #include "quench/Common.hlsli"
@@ -60,7 +65,7 @@ struct QuenchSurfaceInput {
 // What a surface function returns; lit by quenchShade.
 struct QuenchSurface {
     float3 albedo;   // linear
-    float opacity;   // 0..1: alpha blended materials; alpha tested with MaterialDesc::alphaCutoff
+    float opacity;   // 0..1: alpha blended materials and their shadows; alpha tested with MaterialDesc::alphaCutoff
     float roughness; // perceptual, 0..1
     float metallic;
     float3 normal;   // unit shading normal (world)
@@ -85,6 +90,8 @@ Texture2D<float4> quenchTexture2 : QUENCH_TEXTURE(3);
 SamplerState quenchSampler2 : QUENCH_SAMPLER(3);
 Texture2D<float4> quenchTexture3 : QUENCH_TEXTURE(4);
 SamplerState quenchSampler3 : QUENCH_SAMPLER(4);
+Texture2DArray<float4> quenchTransmittanceMap : QUENCH_TEXTURE(5);
+SamplerState quenchTransmittanceSampler : QUENCH_SAMPLER(5);
 
 // True when the material has texture n (MaterialDesc::textures); unset textures sample white.
 bool quenchHasTexture(int n) { return (uint(quenchMaterial.surface.w) & (1u << uint(n))) != 0u; }
@@ -103,6 +110,15 @@ QuenchSurface quenchStandardSurface(QuenchSurfaceInput i) {
     s.emissive = quenchMaterial.emissive.rgb;
     s.occlusion = 1.0;
     return s;
+}
+
+// The sun's light a translucent caster lets through: 1 - opacity, tinted toward the surface's hue (its albedo over
+// its brightest channel) as far as it is opaque. A grey surface of opacity a passes 1 - a in every channel.
+float3 quenchTransmittance(QuenchSurface s) {
+    const float a = saturate(s.opacity);
+    const float peak = max(s.albedo.r, max(s.albedo.g, s.albedo.b));
+    const float3 hue = peak > 1e-4 ? saturate(s.albedo / peak) : float3(1.0, 1.0, 1.0);
+    return (1.0 - a) * lerp(float3(1.0, 1.0, 1.0), hue, a);
 }
 
 // Diffuse irradiance from the sky hemisphere, blended with the ground bounce by the normal.
@@ -134,7 +150,15 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     float3 color = float3(0.0, 0.0, 0.0);
     if (quenchFrame.sunDir.w > 0.0) {
         shadow = shadowFactor(quenchShadowMap, quenchShadowSampler, i.world, i.normal);
-        color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, quenchFrame.sunColor.rgb * shadow);
+        // Two calls, not one with a tinted radiance: merged, the compiler orders the products differently and frames
+        // without translucent casters change by a few levels.
+        [branch] if (shadow > 0.0 && quenchFrame.shadowTransmittance.x > 0.0) {
+            const float3 t = shadowTransmittance(quenchTransmittanceMap, quenchTransmittanceSampler, i.world, i.normal);
+            color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, quenchFrame.sunColor.rgb * shadow * t);
+            shadow *= luminance(t);
+        } else {
+            color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, quenchFrame.sunColor.rgb * shadow);
+        }
     }
     const int lights = int(quenchLights.count.x);
     for (int k = 0; k < lights; ++k) {

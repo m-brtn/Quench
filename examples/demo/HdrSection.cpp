@@ -60,7 +60,8 @@ public:
         const MaterialId dark = s.addMaterial({.baseColor = glm::vec4(0.05f, 0.05f, 0.05f, 1.0f), .roughness = 0.6f});
         for (std::size_t i = 0; i < kPanelLevels.size(); ++i) {
             const float x = (float(i) - 3.0f) * 1.3f;
-            m_panels[i] = s.addMaterial({.baseColor = glm::vec4(0.02f, 0.02f, 0.02f, 1.0f), .castsShadows = false});
+            m_panels[i] =
+                s.addMaterial({.baseColor = glm::vec4(0.02f, 0.02f, 0.02f, 1.0f), .shadows = ShadowMode::None});
             s.addInstance({.mesh = *panel, .material = m_panels[i], .transform = placed({x, 2.0f, -8.0f})});
             s.addInstance({.mesh = *post, .material = dark, .transform = placed({x, 0.55f, -8.0f})});
         }
@@ -173,7 +174,7 @@ private:
             m_scene->setMaterial(m_panels[i],
                                  {.baseColor = glm::vec4(0.02f, 0.02f, 0.02f, 1.0f),
                                   .emissive = glm::vec3(1.0f, 0.9f, 0.75f) * (knee * kPanelLevels[i] * m_emissive),
-                                  .castsShadows = false});
+                                  .shadows = ShadowMode::None});
     }
 
     std::optional<Scene> m_scene;

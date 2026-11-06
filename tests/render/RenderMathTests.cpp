@@ -42,10 +42,24 @@ QUENCH_TEST(effects_fall_back_by_device_support) {
     RenderSettings s;
     s.shadowCascades = 3;
     s.antiAliasing = AntiAliasing::Taa;
-    quench::render::detail::DeviceSupport full{
-        .shadowArray = true, .depthClamp = true, .sampledDepth = true, .velocityTarget = true};
+    quench::render::detail::DeviceSupport full{.shadowArray = true,
+                                               .depthClamp = true,
+                                               .sampledDepth = true,
+                                               .velocityTarget = true,
+                                               .transmittanceArray = true};
     ActiveEffects e = quench::render::detail::selectEffects(s, full);
-    CHECK(e.shadowCascades == 3 && e.shadowDepthClamp && e.antiAliasing == AntiAliasing::Taa && e.bloom, "full");
+    CHECK(e.shadowCascades == 3 && e.shadowDepthClamp && e.antiAliasing == AntiAliasing::Taa && e.bloom &&
+              e.translucentShadows == TranslucentShadows::Map,
+          "full");
+
+    quench::render::detail::DeviceSupport noTransmittance = full;
+    noTransmittance.transmittanceArray = false;
+    CHECK(quench::render::detail::selectEffects(s, noTransmittance).translucentShadows == TranslucentShadows::Dithered,
+          "translucent shadows are dithered without an Rgba16Float texture array target");
+    s.translucentShadows = TranslucentShadows::Dithered;
+    CHECK(quench::render::detail::selectEffects(s, full).translucentShadows == TranslucentShadows::Dithered,
+          "dithered when asked");
+    s.translucentShadows = TranslucentShadows::Map;
 
     quench::render::detail::DeviceSupport noDepthSampling = full;
     noDepthSampling.sampledDepth = false;

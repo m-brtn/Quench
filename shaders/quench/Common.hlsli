@@ -33,6 +33,14 @@ float valueNoise(float2 p) {
 // Interleaved gradient noise (Jimenez) of a pixel position.
 float ign(float2 pixel) { return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715)))); }
 
+// Ordered dither threshold of a pixel position: the 4 x 4 Bayer matrix, (n + 0.5) / 16 for n = 0..15.
+float bayer4(float2 pixel) {
+    const uint2 p = uint2(pixel) & 3u;
+    const uint d = p.x ^ p.y;
+    const uint n = ((d & 1u) << 3) | ((p.y & 1u) << 2) | (d & 2u) | ((p.y & 2u) >> 1);
+    return (float(n) + 0.5) / 16.0;
+}
+
 // Henyey-Greenstein phase function times 4 pi (1 = isotropic).
 float phaseHG(float mu, float g) {
     const float g2 = g * g;

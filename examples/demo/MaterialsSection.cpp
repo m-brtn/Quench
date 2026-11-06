@@ -127,7 +127,6 @@ public:
                                  .material = s.addMaterial({.baseColor = glm::vec4(0.55f, 0.8f, 1.0f, 0.3f),
                                                             .roughness = 0.08f,
                                                             .blend = BlendMode::AlphaBlend,
-                                                            .castsShadows = false,
                                                             .name = "glass"})});
         MaterialDesc fenceMaterial{.roughness = 0.5f, .alphaCutoff = 0.5f, .doubleSided = true, .name = "fence"};
         fenceMaterial.textures[0] = *fenceTexture;
@@ -138,7 +137,7 @@ public:
         s.addInstance({.mesh = *box,
                        .material = s.addMaterial({.baseColor = glm::vec4(0.05f, 0.05f, 0.05f, 1.0f),
                                                   .emissive = glm::vec3(9.0f, 5.0f, 2.0f),
-                                                  .castsShadows = false,
+                                                  .shadows = ShadowMode::None,
                                                   .name = "lamp"}),
                        .transform = placed({-1.6f, 0.12f, 2.6f}, glm::vec3(0.2f))});
 

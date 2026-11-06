@@ -32,12 +32,23 @@ struct RendererImpl;
 
 enum class AntiAliasing : std::uint8_t { None, Fxaa, Taa };
 
+// How translucent casters (ShadowMode::Translucent) shadow the sun's light.
+enum class TranslucentShadows : std::uint8_t {
+    // A transmittance map per cascade (Rgba16Float, half the shadow map size, made when a frame first has translucent
+    // casters): smooth and tinted by the casters' hue; receivers in front of a caster stay lit.
+    Map,
+    // The opacity dithered into the depth map and smoothed by the shadow filter: grey and grainy, overlapping
+    // translucent casters shadow like the most opaque of them. The fallback where the map cannot be drawn.
+    Dithered,
+};
+
 struct RenderSettings {
     float renderScale = 1.0f; // 3D resolution relative to the target, 0.25..1 (tone mapping scales up)
     int shadowCascades = 3;   // 0..kMaxCascades; 0: no sun shadows
     std::uint32_t shadowMapSize = 2048;
     float shadowDistance = 80.0f; // m: the far end of the last cascade
     int shadowFilter = 2;         // 0: one tap, 1: four taps, 2: twelve Poisson taps
+    TranslucentShadows translucentShadows = TranslucentShadows::Map;
     AntiAliasing antiAliasing = AntiAliasing::Taa;
     float sharpen = 0.25f; // after TAA, 0..1
     bool bloom = true;
@@ -57,6 +68,8 @@ struct RenderSettings {
 struct ActiveEffects {
     int shadowCascades = 0;        // 0: no shadow maps (disabled, or no depth texture array the device can sample)
     bool shadowDepthClamp = false; // casters in front of the cascade are clamped, not clipped (gpu::Caps::depthClamp)
+    // Map needs an Rgba16Float texture array the device can render to and sample; otherwise Dithered.
+    TranslucentShadows translucentShadows = TranslucentShadows::Dithered;
     AntiAliasing antiAliasing = AntiAliasing::None;
     bool bloom = false;
 
@@ -68,6 +81,11 @@ struct SurfaceDesc {
     const ShaderBlob* vertexShader = nullptr;       // surface_vs
     const ShaderBlob* fragmentShader = nullptr;     // surface_fs
     const ShaderBlob* shadowVertexShader = nullptr; // surface_shadow_vs, for surfaces with QUENCH_SURFACE_VERTEX
+    // The shadows of cut-out and translucent materials of this surface: surface_shadow_fs and
+    // surface_transmittance_fs. Without them those shadows take the standard surface's opacity (base color alpha
+    // times texture 0 alpha times the vertex color alpha).
+    const ShaderBlob* shadowFragmentShader = nullptr;
+    const ShaderBlob* transmittanceShader = nullptr;
     std::string_view name{};
 };
 
@@ -116,8 +134,10 @@ struct RenderStats {
     std::uint32_t instances = 0;       // instances drawn in the HDR pass
     std::uint32_t culled = 0;          // visible instances outside the view
     std::uint32_t draws = 0;           // draw calls of scene surfaces in the HDR pass
-    std::uint32_t shadowInstances = 0; // instances drawn into the cascades (summed over cascades)
+    std::uint32_t shadowInstances = 0; // instances drawn into the cascades' depth (summed over cascades)
     std::uint32_t shadowDraws = 0;
+    std::uint32_t transmittanceInstances = 0; // translucent casters drawn into the transmittance maps (summed)
+    std::uint32_t transmittanceDraws = 0;
     std::uint32_t movedInstances = 0; // instances drawn into the motion vectors
     std::uint32_t lights = 0;         // local lights used this frame
     std::uint32_t renderWidth = 0;    // the 3D resolution

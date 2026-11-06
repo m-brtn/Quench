@@ -8,10 +8,11 @@
 namespace quench::render::detail {
 
 struct DeviceSupport {
-    bool shadowArray = false;    // a depth Texture2DArray that can be sampled and rendered to
-    bool depthClamp = false;     // gpu::Caps::depthClamp
-    bool sampledDepth = false;   // the scene depth format can be sampled (motion vectors, TAA)
-    bool velocityTarget = false; // Rg16Float can be rendered to and sampled
+    bool shadowArray = false;        // a depth Texture2DArray that can be sampled and rendered to
+    bool depthClamp = false;         // gpu::Caps::depthClamp
+    bool sampledDepth = false;       // the scene depth format can be sampled (motion vectors, TAA)
+    bool velocityTarget = false;     // Rg16Float can be rendered to and sampled
+    bool transmittanceArray = false; // an Rgba16Float Texture2DArray that can be rendered to and sampled
 };
 
 ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport& support);

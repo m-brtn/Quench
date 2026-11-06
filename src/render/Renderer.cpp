@@ -38,6 +38,10 @@ constexpr int kBloomLevels = 5;
 constexpr float kTaaCurrentWeight = 0.1f;
 constexpr float kShadowNormalOffset = 1.6f; // in shadow texels of the cascade
 constexpr std::uint32_t kVariants = 6;      // 3 blend modes x single / double sided
+// The transmittance maps of translucent casters have 1 / kTransmittanceScale of the shadow map size per side: their
+// shadows are soft, and a full-size Rgba16Float array would take twice the depth array's memory.
+constexpr std::uint32_t kTransmittanceScale = 2;
+constexpr float kTransmittanceBias = 2.0f; // in transmittance texels: receivers nearer behind a caster stay lit
 
 constexpr gpu::VertexBufferLayout kVertexLayout{.slot = 0, .stride = sizeof(Vertex)};
 constexpr gpu::VertexAttribute kVertexAttributes[] = {
@@ -64,15 +68,41 @@ constexpr std::size_t kSkinTimingFences = 4; // skinning passes whose GPU time i
 
 std::uint32_t variantOf(BlendMode blend, bool doubleSided) { return std::uint32_t(blend) * 2 + (doubleSided ? 1 : 0); }
 
+ShadowMode shadowModeOf(const MaterialDesc& m) {
+    if (m.shadows != ShadowMode::Auto) return m.shadows;
+    switch (m.blend) {
+    case BlendMode::Opaque: return ShadowMode::Solid;
+    case BlendMode::AlphaBlend: return ShadowMode::Translucent;
+    case BlendMode::Additive: return ShadowMode::None;
+    }
+    return ShadowMode::Solid;
+}
+
+// Casters in the cascades' depth: standard depth with a slope bias; with depth clamp, casters in front of the
+// cascade are flattened onto its near plane instead of clipped.
+gpu::RasterizerState shadowRasterizer(const gpu::Caps& caps) {
+    return {.depthBias = true,
+            .depthBiasConstant = 1.0f,
+            .depthBiasSlope = 1.75f,
+            .depthBiasClamp = caps.depthBiasClamp ? 0.01f : 0.0f,
+            .depthClip = !caps.depthClamp};
+}
+
 struct SurfaceEntry {
     const ShaderBlob* vertex = nullptr;
     const ShaderBlob* fragment = nullptr;
     const ShaderBlob* shadowVertex = nullptr;
+    const ShaderBlob* shadowFragment = nullptr;        // null: the standard surface's
+    const ShaderBlob* transmittanceFragment = nullptr; // null: the standard surface's
     std::string name;
     std::array<gpu::GraphicsPipeline, kVariants> pipelines;
     std::array<bool, kVariants> failed{};
     std::array<gpu::GraphicsPipeline, 2> shadowPipelines; // with shadowVertex: single / double sided
     std::array<bool, 2> shadowFailed{};
+    gpu::GraphicsPipeline maskPipeline; // cut-out and dithered casters in the depth
+    bool maskFailed = false;
+    std::array<gpu::GraphicsPipeline, 2> transmittancePipelines; // single / double sided
+    std::array<bool, 2> transmittanceFailed{};
 };
 
 struct PassEntry {
@@ -86,7 +116,7 @@ struct PassEntry {
 struct Batch {
     const gpu::GraphicsPipeline* pipeline = nullptr;
     const MeshEntry* mesh = nullptr;
-    const MaterialEntry* material = nullptr;
+    const MaterialEntry* material = nullptr; // null: the pipeline reads no material (plain shadow casters)
     std::uint32_t first = 0;
     std::uint32_t count = 0;
     gpu::BufferBinding vertices{}; // skinned: this frame's vertices; empty: the mesh's
@@ -104,6 +134,7 @@ struct Item {
     float distance = 0.0f;
     std::uint32_t slot = 0; // instance slot
     const gpu::GraphicsPipeline* pipeline = nullptr;
+    bool material = true; // the pipeline reads the material
 };
 
 struct Plane {
@@ -151,6 +182,7 @@ struct RendererImpl {
     TextureFormat depthFormat = TextureFormat::Invalid;
     TextureFormat shadowFormat = TextureFormat::Invalid;
     TextureFormat velocityFormat = TextureFormat::Rg16Float;
+    TextureFormat transmittanceFormat = TextureFormat::Rgba16Float;
     TextureFormat ldrFormat = TextureFormat::Rgba8Unorm; // FXAA input; Rgba16Float for HDR output
     bool hdrOutputLogged = false;
 
@@ -166,7 +198,7 @@ struct RendererImpl {
     std::map<TextureFormat, gpu::GraphicsPipeline> tonemapPipelines, fxaaPipelines;
 
     gpu::Sampler shadowSampler, linearClamp, pointClamp, materialSampler;
-    gpu::Texture white, dummyShadow;
+    gpu::Texture white, dummyShadow, dummyTransmittance;
 
     // Targets
     std::uint32_t renderWidth = 0, renderHeight = 0, outputWidth = 0, outputHeight = 0;
@@ -174,10 +206,12 @@ struct RendererImpl {
     std::uint32_t targetShadowSize = 0;
     TextureFormat targetLdrFormat = TextureFormat::Invalid;
     gpu::Texture hdr, depth, velocity, ldr, shadowMap;
+    gpu::Texture transmittanceMap; // made when a frame first has translucent casters
     std::array<gpu::Texture, 2> history;
     std::array<gpu::Texture, kBloomLevels> bloom;
     int bloomLevels = 0;
     bool targetsFailed = false;
+    bool transmittanceFailed = false;
 
     // Per-frame buffers
     gpu::Buffer instanceBuffer, velocityBuffer;
@@ -188,9 +222,9 @@ struct RendererImpl {
     std::vector<glm::mat4> normalMatrices;
     std::vector<std::uint8_t> drawable;
     std::vector<Item> opaque, transparent, moved;
-    std::array<std::vector<Item>, kMaxCascades> shadowItems;
+    std::array<std::vector<Item>, kMaxCascades> shadowItems, transmittanceItems;
     std::vector<Batch> opaqueBatches, transparentBatches, velocityBatches;
-    std::array<std::vector<Batch>, kMaxCascades> shadowBatches;
+    std::array<std::vector<Batch>, kMaxCascades> shadowBatches, transmittanceBatches;
 
     // Skinning: every frame writes the skinned vertices of the instances it draws into skinned[frameIndex & 1], so the
     // other buffer still holds the previous frame's for the motion vectors.
@@ -220,16 +254,19 @@ struct RendererImpl {
     Result<gpu::GraphicsPipeline> createPipeline(const gpu::GraphicsPipelineDesc& desc);
     const gpu::GraphicsPipeline* surfacePipeline(SurfaceEntry& surface, std::uint32_t variant);
     const gpu::GraphicsPipeline* surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided);
+    const gpu::GraphicsPipeline* surfaceMaskPipeline(SurfaceEntry& surface);
+    const gpu::GraphicsPipeline* surfaceTransmittancePipeline(SurfaceEntry& surface, bool doubleSided);
     const gpu::GraphicsPipeline* outputPipeline(std::map<TextureFormat, gpu::GraphicsPipeline>& cache,
                                                 const char* entry, TextureFormat format);
     bool ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32_t ow, std::uint32_t oh, TextureFormat ldrTarget);
+    bool ensureTransmittance();
     bool ensureBuffers(gpu::CommandBuffer& commands);
     std::uint32_t skinnedOffset(const InstanceEntry& inst, std::uint32_t slot, const MeshEntry& mesh);
     bool skin(gpu::CommandBuffer& commands);
     gpu::BufferBinding skinnedVerticesOf(std::uint32_t slot) const;
     void runPasses(PassStage stage, PassContext& context, const shader::FrameUniforms& frame);
-    void buildBatches(const SceneImpl& scene, std::vector<Item>& items, std::vector<Batch>& batches, bool shadow);
-    void bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, const MaterialEntry& material);
+    void buildBatches(const SceneImpl& scene, std::vector<Item>& items, std::vector<Batch>& batches);
+    void bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, const MaterialEntry& material, bool shadowPass);
     void render(SceneImpl& scene, const View& view, gpu::CommandBuffer& commands, const gpu::TextureRef& target,
                 const gpu::DisplayOutput& output);
 };
@@ -275,6 +312,7 @@ Result<void> RendererImpl::init() {
         }
     support.depthClamp = caps.depthClamp;
     support.velocityTarget = supports(velocityFormat, gpu::TextureType::Texture2D, targetSampled);
+    support.transmittanceArray = supports(transmittanceFormat, gpu::TextureType::Texture2DArray, targetSampled);
     if (!supports(ldrFormat, gpu::TextureType::Texture2D, targetSampled))
         return Error{"render: Rgba8Unorm cannot be rendered to and sampled"};
 
@@ -340,6 +378,16 @@ Result<void> RendererImpl::init() {
         commands.beginRenderPass(std::span<const gpu::ColorTarget>{}, &clear).end();
         if (Result<void> r = commands.submit(); !r) return Error{std::format("render: {}", r.error())};
     }
+    // Bound in place of the transmittance maps when no cascade has translucent casters (not read then).
+    Result<gpu::Texture> noTransmittance = device->createTexture(
+        {.type = gpu::TextureType::Texture2DArray, .format = ldrFormat, .name = "render no transmittance"});
+    if (!noTransmittance) return Error{std::format("render: placeholder texture: {}", noTransmittance.error())};
+    dummyTransmittance = std::move(*noTransmittance);
+    const std::uint8_t clearPixel[4] = {255, 255, 255, 0};
+    if (Result<void> r =
+            device->upload(gpu::TextureRegion{.texture = dummyTransmittance}, std::as_bytes(std::span(clearPixel)));
+        !r)
+        return Error{std::format("render: placeholder texture: {}", r.error())};
 
     // The engine's pipelines.
     const auto& frame = shaders::render_frame;
@@ -358,11 +406,7 @@ Result<void> RendererImpl::init() {
                                       .fragmentShader = frame.find("shadow_fs"),
                                       .vertexBuffers = {&kVertexLayout, 1},
                                       .vertexAttributes = kPositionAttribute,
-                                      .rasterizer = {.depthBias = true,
-                                                     .depthBiasConstant = 1.0f,
-                                                     .depthBiasSlope = 1.75f,
-                                                     .depthBiasClamp = caps.depthBiasClamp ? 0.01f : 0.0f,
-                                                     .depthClip = !caps.depthClamp},
+                                      .rasterizer = shadowRasterizer(caps),
                                       .depth = {.test = true, .write = true, .compare = gpu::CompareOp::LessOrEqual},
                                       .depthFormat = shadowFormat,
                                       .name = "render shadow"});
@@ -434,6 +478,8 @@ Result<void> RendererImpl::init() {
 
     standard.vertex = shaders::render_standard.find("surface_vs");
     standard.fragment = shaders::render_standard.find("surface_fs");
+    standard.shadowFragment = shaders::render_standard.find("surface_shadow_fs");
+    standard.transmittanceFragment = shaders::render_standard.find("surface_transmittance_fs");
     standard.name = "standard";
     if (!surfacePipeline(standard, variantOf(BlendMode::Opaque, false)))
         return Error{"render: the standard surface pipeline failed (logged)"};
@@ -454,6 +500,9 @@ void RendererImpl::applySettings() {
         log::warning("render", "anti-aliasing: TAA needs a sampled depth buffer and Rg16Float targets; using FXAA");
     if (settings.shadowCascades > 0 && next.shadowCascades == 0)
         log::warning("render", "shadows off: no depth texture array the device can sample and render to");
+    if (next.shadowCascades > 0 && settings.translucentShadows != next.translucentShadows)
+        log::warning("render", "translucent shadows: no {} texture array to render to; dithered into the depth map",
+                     gpu::formatInfo(transmittanceFormat).name);
     effects = next;
     effectsChosen = true;
 }
@@ -499,11 +548,7 @@ const gpu::GraphicsPipeline* RendererImpl::surfaceShadowPipeline(SurfaceEntry& s
         .fragmentShader = shaders::render_frame.find("shadow_fs"),
         .vertexBuffers = {&kVertexLayout, 1},
         .vertexAttributes = kVertexAttributes,
-        .rasterizer = {.depthBias = true,
-                       .depthBiasConstant = 1.0f,
-                       .depthBiasSlope = 1.75f,
-                       .depthBiasClamp = caps.depthBiasClamp ? 0.01f : 0.0f,
-                       .depthClip = !caps.depthClamp},
+        .rasterizer = shadowRasterizer(caps),
         .depth = {.test = true, .write = true, .compare = gpu::CompareOp::LessOrEqual},
         .depthFormat = shadowFormat,
         .name = name,
@@ -515,6 +560,64 @@ const gpu::GraphicsPipeline* RendererImpl::surfaceShadowPipeline(SurfaceEntry& s
     }
     surface.shadowPipelines[std::size_t(i)] = std::move(*p);
     return &surface.shadowPipelines[std::size_t(i)];
+}
+
+// Cut-out and dithered casters: the surface function runs to discard, so they take the full vertex and the material.
+const gpu::GraphicsPipeline* RendererImpl::surfaceMaskPipeline(SurfaceEntry& surface) {
+    if (surface.maskPipeline) return &surface.maskPipeline;
+    if (surface.maskFailed) return nullptr;
+    const std::string name = std::format("surface {} shadow mask", surface.name);
+    Result<gpu::GraphicsPipeline> p = createPipeline({
+        .vertexShader = surface.vertex,
+        .fragmentShader = surface.shadowFragment ? surface.shadowFragment : standard.shadowFragment,
+        .vertexBuffers = {&kVertexLayout, 1},
+        .vertexAttributes = kVertexAttributes,
+        .rasterizer = shadowRasterizer(device->caps()),
+        .depth = {.test = true, .write = true, .compare = gpu::CompareOp::LessOrEqual},
+        .depthFormat = shadowFormat,
+        .name = name,
+    });
+    if (!p) {
+        log::error("render", "pipeline '{}': {}", name, p.error());
+        surface.maskFailed = true;
+        return nullptr;
+    }
+    surface.maskPipeline = std::move(*p);
+    return &surface.maskPipeline;
+}
+
+// Translucent casters in the transmittance map, without depth: rgb is multiplied (the light left after every caster
+// it passes), alpha keeps the largest 1 - depth (the caster nearest to the sun).
+const gpu::GraphicsPipeline* RendererImpl::surfaceTransmittancePipeline(SurfaceEntry& surface, bool doubleSided) {
+    const std::size_t i = doubleSided ? 1 : 0;
+    if (surface.transmittancePipelines[i]) return &surface.transmittancePipelines[i];
+    if (surface.transmittanceFailed[i]) return nullptr;
+    const gpu::ColorTargetDesc color{transmittanceFormat,
+                                     {.enabled = true,
+                                      .srcColor = gpu::BlendFactor::DstColor,
+                                      .dstColor = gpu::BlendFactor::Zero,
+                                      .srcAlpha = gpu::BlendFactor::One,
+                                      .dstAlpha = gpu::BlendFactor::One,
+                                      .alphaOp = gpu::BlendOp::Max}};
+    const std::string name = std::format("surface {} transmittance ({})", surface.name, i);
+    Result<gpu::GraphicsPipeline> p = createPipeline({
+        .vertexShader = surface.vertex,
+        .fragmentShader =
+            surface.transmittanceFragment ? surface.transmittanceFragment : standard.transmittanceFragment,
+        .vertexBuffers = {&kVertexLayout, 1},
+        .vertexAttributes = kVertexAttributes,
+        .rasterizer = {.cull = doubleSided ? gpu::CullMode::None : gpu::CullMode::Back,
+                       .depthClip = !device->caps().depthClamp},
+        .colorTargets = {&color, 1},
+        .name = name,
+    });
+    if (!p) {
+        log::error("render", "pipeline '{}': {}", name, p.error());
+        surface.transmittanceFailed[i] = true;
+        return nullptr;
+    }
+    surface.transmittancePipelines[i] = std::move(*p);
+    return &surface.transmittancePipelines[i];
 }
 
 const gpu::GraphicsPipeline* RendererImpl::outputPipeline(std::map<TextureFormat, gpu::GraphicsPipeline>& cache,
@@ -547,6 +650,8 @@ bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32
     velocity = {};
     ldr = {};
     shadowMap = {};
+    transmittanceMap = {};
+    transmittanceFailed = false;
     history = {};
     bloom = {};
     bloomLevels = 0;
@@ -612,6 +717,28 @@ bool RendererImpl::ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32
                             .name = "render shadow cascades"}))
         return false;
     targetsFailed = false;
+    return true;
+}
+
+// The cascades' transmittance maps, made with the first translucent caster after the targets; false: none (logged).
+bool RendererImpl::ensureTransmittance() {
+    if (transmittanceMap) return true;
+    if (transmittanceFailed) return false;
+    const std::uint32_t size = std::max(1u, settings.shadowMapSize / kTransmittanceScale);
+    Result<gpu::Texture> t = device->createTexture({.type = gpu::TextureType::Texture2DArray,
+                                                    .format = transmittanceFormat,
+                                                    .usage = TextureUsage::ColorTarget | TextureUsage::Sampled,
+                                                    .width = size,
+                                                    .height = size,
+                                                    .layers = std::uint32_t(effects.shadowCascades),
+                                                    .name = "render shadow transmittance"});
+    if (!t) {
+        log::error("render", "target 'render shadow transmittance' {} x {}: {}; translucent casters cast no shadows",
+                   size, size, t.error());
+        transmittanceFailed = true;
+        return false;
+    }
+    transmittanceMap = std::move(*t);
     return true;
 }
 
@@ -812,16 +939,15 @@ void RendererImpl::runPasses(PassStage stage, PassContext& context, const shader
 }
 
 // Sorted items -> instance data and batches of equal pipeline, material and mesh.
-void RendererImpl::buildBatches(const SceneImpl& scene, std::vector<Item>& items, std::vector<Batch>& batches,
-                                bool shadow) {
+void RendererImpl::buildBatches(const SceneImpl& scene, std::vector<Item>& items, std::vector<Batch>& batches) {
     batches.clear();
     for (const Item& item : items) {
         const InstanceEntry& inst = *scene.instances.slot(item.slot);
         const MeshEntry* mesh = scene.meshes.get(inst.desc.mesh);
-        const MaterialEntry* material = scene.materials.get(inst.desc.material);
+        const MaterialEntry* material = item.material ? scene.materials.get(inst.desc.material) : nullptr;
         const gpu::BufferBinding skinnedVb = skinnedVerticesOf(item.slot);
         Batch* last = batches.empty() ? nullptr : &batches.back();
-        if (!last || last->pipeline != item.pipeline || last->mesh != mesh || (!shadow && last->material != material) ||
+        if (!last || last->pipeline != item.pipeline || last->mesh != mesh || last->material != material ||
             skinnedVb.buffer || last->vertices.buffer)
             last = &batches.emplace_back(
                 Batch{item.pipeline, mesh, material, std::uint32_t(instanceData.size()), 0, skinnedVb});
@@ -830,11 +956,14 @@ void RendererImpl::buildBatches(const SceneImpl& scene, std::vector<Item>& items
     }
 }
 
-void RendererImpl::bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, const MaterialEntry& material) {
+void RendererImpl::bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, const MaterialEntry& material,
+                                bool shadowPass) {
     const MaterialDesc& m = material.desc;
     shader::MaterialUniforms u{};
     u.baseColor = m.baseColor;
-    u.emissive = glm::vec4(m.emissive, 0.0f);
+    const bool dithered = shadowPass && shadowModeOf(m) == ShadowMode::Translucent &&
+                          effects.translucentShadows == TranslucentShadows::Dithered;
+    u.emissive = glm::vec4(m.emissive, dithered ? 1.0f : 0.0f);
     std::array<gpu::TextureSamplerBinding, 4> bindings{};
     std::uint32_t mask = 0;
     for (std::size_t i = 0; i < 4; ++i) {
@@ -987,6 +1116,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     transparent.clear();
     moved.clear();
     for (auto& s : shadowItems) s.clear();
+    for (auto& s : transmittanceItems) s.clear();
+    if (effects.translucentShadows != TranslucentShadows::Map) transmittanceMap = {};
     const std::uint32_t slots = scene.instances.capacity();
     normalMatrices.resize(slots);
     skinJobs.clear();
@@ -1036,21 +1167,39 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         } else {
             ++stats.culled;
         }
-        if (cascades > 0 && inst->desc.castsShadows && m.castsShadows && m.blend == BlendMode::Opaque) {
-            const gpu::GraphicsPipeline* pipeline = surfaceShadowPipeline(*surface, m.doubleSided);
-            if (!pipeline) continue;
-            const std::uint64_t key = (std::uint64_t(surface->shadowVertex ? surfaceIndex : 0) << 49) |
-                                      (std::uint64_t(m.doubleSided ? 1 : 0) << 48) |
-                                      std::uint64_t(inst->desc.mesh.index & 0xffffff);
-            for (int c = 0; c < shadow.count; ++c) {
-                const glm::vec4 p = shadow.viewProj[std::size_t(c)] * glm::vec4(center, 1.0f);
-                const glm::vec2 s = lightScale[std::size_t(c)];
-                if (std::abs(p.x) > 1.0f + radius * s.x || std::abs(p.y) > 1.0f + radius * s.y ||
-                    p.z > 1.0f + radius * lightScaleZ[std::size_t(c)])
-                    continue;
-                skinnedOffset(*inst, i, *mesh);
-                shadowItems[std::size_t(c)].push_back({key, 0.0f, i, pipeline});
-            }
+        const ShadowMode shadowMode = shadowModeOf(m);
+        if (cascades == 0 || !inst->desc.castsShadows || shadowMode == ShadowMode::None) continue;
+        // Plain casters write depth with the position only; cut-out ones (and translucent ones dithered into the
+        // depth) run the surface to discard; translucent ones go into the transmittance maps.
+        const std::uint64_t materialKey = std::uint64_t(inst->desc.material.index & 0xffffff) << 24;
+        const std::uint64_t meshKey = std::uint64_t(inst->desc.mesh.index & 0xffffff);
+        const bool translucent = shadowMode == ShadowMode::Translucent;
+        const bool mapped = translucent && effects.translucentShadows == TranslucentShadows::Map;
+        if (mapped && !ensureTransmittance()) continue;
+        Item item{0, 0.0f, i, nullptr, true};
+        if (mapped) {
+            item.pipeline = surfaceTransmittancePipeline(*surface, m.doubleSided);
+            item.key = (std::uint64_t(surfaceIndex & 0xfff) << 49) | (std::uint64_t(m.doubleSided ? 1 : 0) << 48) |
+                       materialKey | meshKey;
+        } else if (translucent || m.alphaCutoff > 0.0f) {
+            item.pipeline = surfaceMaskPipeline(*surface);
+            item.key = (std::uint64_t(1) << 62) | (std::uint64_t(surfaceIndex & 0xfff) << 48) | materialKey | meshKey;
+        } else {
+            item.pipeline = surfaceShadowPipeline(*surface, m.doubleSided);
+            item.key = (std::uint64_t(surface->shadowVertex ? surfaceIndex : 0) << 49) |
+                       (std::uint64_t(m.doubleSided ? 1 : 0) << 48) | meshKey;
+            item.material = false;
+        }
+        if (!item.pipeline) continue;
+        auto& lists = mapped ? transmittanceItems : shadowItems;
+        for (int c = 0; c < shadow.count; ++c) {
+            const glm::vec4 p = shadow.viewProj[std::size_t(c)] * glm::vec4(center, 1.0f);
+            const glm::vec2 s = lightScale[std::size_t(c)];
+            if (std::abs(p.x) > 1.0f + radius * s.x || std::abs(p.y) > 1.0f + radius * s.y ||
+                p.z > 1.0f + radius * lightScaleZ[std::size_t(c)])
+                continue;
+            skinnedOffset(*inst, i, *mesh); // every caster path draws the skinned vertices
+            lists[std::size_t(c)].push_back(item);
         }
     }
     if (!skin(commands)) std::fill(skinnedOffsets.begin(), skinnedOffsets.end(), kNotSkinned); // the bind pose
@@ -1061,14 +1210,26 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     std::sort(transparent.begin(), transparent.end(),
               [](const Item& a, const Item& b) { return a.distance > b.distance; });
     instanceData.clear();
-    buildBatches(scene, opaque, opaqueBatches, false);
-    buildBatches(scene, transparent, transparentBatches, false);
+    buildBatches(scene, opaque, opaqueBatches);
+    buildBatches(scene, transparent, transparentBatches);
+    const auto byKey = [](const Item& a, const Item& b) { return a.key < b.key; };
+    std::uint32_t transmittanceMask = 0;
     for (int c = 0; c < shadow.count; ++c) {
-        auto& items = shadowItems[std::size_t(c)];
-        std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.key < b.key; });
-        buildBatches(scene, items, shadowBatches[std::size_t(c)], true);
-        stats.shadowInstances += std::uint32_t(items.size());
+        const auto cascade = std::size_t(c);
+        std::sort(shadowItems[cascade].begin(), shadowItems[cascade].end(), byKey);
+        buildBatches(scene, shadowItems[cascade], shadowBatches[cascade]);
+        stats.shadowInstances += std::uint32_t(shadowItems[cascade].size());
+        std::sort(transmittanceItems[cascade].begin(), transmittanceItems[cascade].end(), byKey);
+        buildBatches(scene, transmittanceItems[cascade], transmittanceBatches[cascade]);
+        stats.transmittanceInstances += std::uint32_t(transmittanceItems[cascade].size());
+        if (transmittanceItems[cascade].empty()) continue;
+        transmittanceMask |= 1u << c;
+        fu.transmittanceBias[c] =
+            kTransmittanceBias * float(kTransmittanceScale) * shadow.texel[cascade] * lightScaleZ[cascade];
     }
+    if (transmittanceMask != 0)
+        fu.shadowTransmittance =
+            glm::vec4(float(transmittanceMask), 1.0f / float(transmittanceMap.desc().width), 0.0f, 0.0f);
     velocityData.clear();
     velocityBatches.clear();
     std::sort(moved.begin(), moved.end(), [&scene](const Item& a, const Item& b) {
@@ -1102,9 +1263,12 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     }
     commands.pushUniforms(kVertex, 0, fu);
     commands.pushUniforms(kFragment, 0, fu);
+    commands.pushUniforms(kFragment, 1, lu);
 
-    const auto drawBatches = [&](gpu::RenderPass& pass, const std::vector<Batch>& batches, float cascade,
-                                 bool materials, std::uint32_t& counter) {
+    // cascade: the shadow map layer the batches are drawn into; -1: the camera's passes.
+    const auto drawBatches = [&](gpu::RenderPass& pass, const std::vector<Batch>& batches, int cascade,
+                                 std::uint32_t& counter) {
+        const bool shadowPass = cascade >= 0;
         const gpu::GraphicsPipeline* pipeline = nullptr;
         const MaterialEntry* material = nullptr;
         const MeshEntry* mesh = nullptr;
@@ -1113,8 +1277,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.bindPipeline(*b.pipeline);
                 pipeline = b.pipeline;
             }
-            if (materials && b.material != material) {
-                bindMaterial(pass, scene, *b.material);
+            if (b.material && b.material != material) {
+                bindMaterial(pass, scene, *b.material, shadowPass);
                 material = b.material;
             }
             if (b.vertices.buffer) {
@@ -1127,15 +1291,18 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.bindIndexBuffer({b.mesh->indices}, gpu::IndexFormat::Uint32);
                 mesh = b.mesh;
             }
-            const shader::DrawUniforms du{glm::vec4(float(b.first), cascade, 0.0f, 0.0f)};
+            const shader::DrawUniforms du{
+                glm::vec4(float(b.first), shadowPass ? float(cascade) : 0.0f, shadowPass ? 1.0f : 0.0f, 0.0f)};
             pass.pushUniforms(kVertex, 1, du);
             pass.drawIndexed(b.mesh->indexCount, b.count);
             ++counter;
         }
     };
     const gpu::BufferRef instances(instanceBuffer);
+    const gpu::TextureSamplerBinding noShadowBinding{dummyShadow, shadowSampler};
 
-    // ---- 1. Sun shadow cascades (standard depth)
+    // ---- 1. Sun shadow cascades (standard depth), then the transmittance of their translucent casters
+    bool transmittanceCycled = false;
     for (int c = 0; c < shadow.count; ++c) {
         const gpu::DepthTarget dt{.texture = shadowMap,
                                   .layer = std::uint32_t(c),
@@ -1145,7 +1312,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         gpu::RenderPass pass = commands.beginRenderPass(std::span<const gpu::ColorTarget>{}, &dt);
         if (!pass) continue;
         pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
-        drawBatches(pass, shadowBatches[std::size_t(c)], float(c), false, stats.shadowDraws);
+        pass.bindSampler(kFragment, 0, noShadowBinding);
+        drawBatches(pass, shadowBatches[std::size_t(c)], c, stats.shadowDraws);
         PassContext ctx{commands,
                         &pass,
                         fu,
@@ -1158,6 +1326,19 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                         c};
         runPasses(PassStage::Shadow, ctx, fu);
         pass.end();
+
+        if ((transmittanceMask & (1u << c)) == 0) continue;
+        const gpu::ColorTarget color{.texture = transmittanceMap,
+                                     .layer = std::uint32_t(c),
+                                     .clear = {1.0f, 1.0f, 1.0f, 0.0f},
+                                     .cycle = !transmittanceCycled};
+        transmittanceCycled = true;
+        gpu::RenderPass tpass = commands.beginRenderPass(color);
+        if (!tpass) continue;
+        tpass.bindStorageBuffers(kVertex, 0, {&instances, 1});
+        tpass.bindSampler(kFragment, 0, noShadowBinding);
+        drawBatches(tpass, transmittanceBatches[std::size_t(c)], c, stats.transmittanceDraws);
+        tpass.end();
     }
 
     // ---- 2. HDR pass: opaque surfaces, game passes, sky, transparent surfaces
@@ -1178,13 +1359,17 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (pass) {
             const gpu::TextureSamplerBinding shadowBinding{
                 shadow.count > 0 ? gpu::TextureRef(shadowMap) : gpu::TextureRef(dummyShadow), shadowSampler};
+            const gpu::TextureSamplerBinding transmittanceBinding{
+                transmittanceMask != 0 ? gpu::TextureRef(transmittanceMap) : gpu::TextureRef(dummyTransmittance),
+                linearClamp};
             const auto bindFrame = [&] {
                 pass.pushUniforms(kFragment, 1, lu);
                 pass.bindSampler(kFragment, 0, shadowBinding);
+                pass.bindSampler(kFragment, 5, transmittanceBinding);
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
             };
             bindFrame();
-            drawBatches(pass, opaqueBatches, 0.0f, true, stats.draws);
+            drawBatches(pass, opaqueBatches, -1, stats.draws);
             PassContext ctx{commands, &pass, fu, hdr, depth, hdrFormat, depthFormat, rw, rh, -1};
             runPasses(PassStage::Opaque, ctx, fu);
             if (settings.sky) {
@@ -1193,7 +1378,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             }
             if (!transparentBatches.empty()) {
                 bindFrame();
-                drawBatches(pass, transparentBatches, 0.0f, true, stats.draws);
+                drawBatches(pass, transparentBatches, -1, stats.draws);
             }
             runPasses(PassStage::Transparent, ctx, fu);
             pass.end();
@@ -1221,7 +1406,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 const gpu::BufferRef movedBuffer(velocityBuffer);
                 pass.bindStorageBuffers(kVertex, 0, {&movedBuffer, 1});
                 std::uint32_t draws = 0;
-                drawBatches(pass, velocityBatches, 0.0f, false, draws);
+                drawBatches(pass, velocityBatches, -1, draws);
                 pass.end();
             }
         }
@@ -1403,12 +1588,16 @@ Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
     const std::string name(desc.name.empty() ? std::string_view("surface") : desc.name);
     if (!desc.vertexShader || !desc.fragmentShader || desc.vertexShader->stage != ShaderStage::Vertex ||
         desc.fragmentShader->stage != ShaderStage::Fragment ||
-        (desc.shadowVertexShader && desc.shadowVertexShader->stage != ShaderStage::Vertex))
+        (desc.shadowVertexShader && desc.shadowVertexShader->stage != ShaderStage::Vertex) ||
+        (desc.shadowFragmentShader && desc.shadowFragmentShader->stage != ShaderStage::Fragment) ||
+        (desc.transmittanceShader && desc.transmittanceShader->stage != ShaderStage::Fragment))
         return Error{std::format("surface '{}': needs a vertex and a fragment shader", name)};
     detail::SurfaceEntry entry;
     entry.vertex = desc.vertexShader;
     entry.fragment = desc.fragmentShader;
     entry.shadowVertex = desc.shadowVertexShader;
+    entry.shadowFragment = desc.shadowFragmentShader;
+    entry.transmittanceFragment = desc.transmittanceShader;
     entry.name = name;
     if (!m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false)))
         return Error{std::format("surface '{}': the pipeline could not be created (logged)", name)};

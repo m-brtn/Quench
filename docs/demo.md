@@ -13,7 +13,7 @@ ends with a packaged build of it in `dist/` (`tools/package_demo.sh`, below).
 
 | # | Id | Shows | Controls besides the camera |
 |---|---|---|---|
-| 1 | `materials` | Dielectric and metal spheres from smooth to rough, a textured box, glass (alpha blend), an alpha-tested fence, an emissive lamp; the sun, three point lights and a spot; a game surface shader (the checker ground) and a game render pass (the light discs) | lights on and off, light intensity, animation, discs, checker |
+| 1 | `materials` | Dielectric and metal spheres from smooth to rough, a textured box, glass (alpha blend) with its translucent, tinted shadow, an alpha-tested fence whose shadow has its holes, an emissive lamp; the sun, three point lights and a spot; a game surface shader (the checker ground) and a game render pass (the light discs) | lights on and off, light intensity, animation, discs, checker |
 | 2 | `shadows` | Sun shadow cascades over 90 m of columns, thin bars, a spinning torus, a bouncing ball | cascades (0 to 4), map size, distance, filter (1, 4, 12 taps), sun elevation and azimuth, turning sun |
 | 3 | `sky` | The daylight palette for any sun elevation, the atmosphere model and its gradient fallback, the clear color without a sky, height fog; the sun disc above its glow (in SDR at a low sun both are white) | sun, run the day, sky, atmosphere, sun disc, fog density, falloff, base, maximum, sun scatter |
 | 4 | `post` | Bloom, tone mapping and anti-aliasing at dusk: glowing rings and lamps, thin poles, spinning blades | none, FXAA, TAA (with the fallback shown), render scale, sharpen, bloom strength and threshold, ACES or AgX, exposure, vignette, dither |
@@ -111,7 +111,8 @@ audio check 18.5 s with vsync, 9.8 s with immediate). Where a window is paced to
 
 The scenarios turn dithering off (`set dither 0`), which keeps the golden PNGs at 120 to 380 KB. Game values a
 scenario can read: `section`, `sections`, `ui`, `aa` (0 none, 1 FXAA, 2 TAA, after fallbacks), `cascades`, `bloom`,
-`draws`, `instances`, `culled`, `shadow_draws`, `shadow_instances`, `moved`, `lights`, `render_w`, `render_h`,
+`draws`, `instances`, `culled`, `shadow_draws`, `shadow_instances`, `transmittance_draws`, `translucent_shadows` (0
+transmittance map, 1 dithered, after fallbacks), `moved`, `lights`, `render_w`, `render_h`,
 `camera_yaw`, `camera_pitch`, `camera_distance`, `clicks`, `skinned_instances`, `skinned_vertices`, then the
 section's own (for example `bodies`, `blasts`,
 `player_x`, `jumps`, `marker_draws`, `exposure`; the assets section's `assets_loading`, `assets_ready`,
@@ -123,7 +124,8 @@ jump), `hero_transition`, `hero_look_at`, `hero_angle`, `footsteps`, `landings`,
 `slope_pelvis`, and per stand and leg `slope_leg0_offset` (also `_reached`, `_grounded`; `slope` or `step`, leg 0
 or 1)). Game commands: `section ID`,
 `camera YAW PITCH DISTANCE` (degrees, meters), `set NAME VALUE` (render settings: `aa none|fxaa|taa`,
-`tone aces|agx`, `cascades`, `shadow_size`, `shadow_filter`, `shadow_distance`, `scale`, `bloom`, `bloom_strength`,
+`tone aces|agx`, `cascades`, `shadow_size`, `shadow_filter`, `shadow_distance`, `translucent_shadows map|dithered`,
+`scale`, `bloom`, `bloom_strength`,
 `sky`, `dither`, `sharpen`, `vignette`; otherwise the section's options, for the assets section `latency SECONDS`,
 `texture_budget BYTES|unlimited`, `upload_budget BYTES|unlimited`, `focus_angle DEGREES`, `move_focus`, `reload`,
 `models`, `hot_reload`; for the audio section `orbit`, `flyby` (also restarts the pass), `tone`, `tone_hz`,

@@ -73,7 +73,7 @@ public:
              .material = s.addMaterial({.baseColor = glm::vec4(0.9f, 0.4f, 0.1f, 1.0f), .roughness = 0.4f})});
         const MaterialId glow = s.addMaterial({.baseColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f),
                                                .emissive = glm::vec3(2.0f, 6.0f, 8.0f),
-                                               .castsShadows = false});
+                                               .shadows = ShadowMode::None});
         for (Shot& sh : m_shots) sh.instance = s.addInstance({.mesh = *shot, .material = glow, .visible = false});
         s.addLight({.type = LightType::Directional,
                     .color = glm::vec3(5.0f, 4.8f, 4.4f),

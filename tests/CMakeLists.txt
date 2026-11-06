@@ -64,7 +64,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
                 rects_vs:vertex scale_cs:compute)
     quench_add_shaders(quench_device_tests NAME render_test SOURCE render/shaders/custom.hlsl
-        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex)
+        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
+                surface_transmittance_fs:fragment)
     return()
 endif()
 
@@ -244,7 +245,8 @@ if(NOT QUENCH_HEADLESS)
         ENVIRONMENT ${gpu_environment})
     target_include_directories(quench_render_tests PRIVATE gpu)
     quench_add_shaders(quench_render_tests NAME render_test SOURCE render/shaders/custom.hlsl
-        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex)
+        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
+                surface_transmittance_fs:fragment)
     if(QUENCH_TEST_VULKAN_LOADER)
         quench_add_test_variant(quench_render_tests PREFIX render_vulkan
             ENVIRONMENT ${vulkan_environment}

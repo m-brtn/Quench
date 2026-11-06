@@ -58,7 +58,7 @@ public:
         for (int i = 0; i < 3; ++i) {
             const MaterialId glow = s.addMaterial({.baseColor = glm::vec4(0.02f, 0.02f, 0.02f, 1.0f),
                                                    .emissive = neon[std::size_t(i)],
-                                                   .castsShadows = false});
+                                                   .shadows = ShadowMode::None});
             glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(-2.6f + 2.6f * float(i), 1.0f, -1.5f));
             m = glm::rotate(m, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
             s.addInstance({.mesh = *ring, .material = glow, .transform = m});

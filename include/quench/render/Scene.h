@@ -81,16 +81,26 @@ enum class BlendMode : std::uint8_t {
     Additive,   // color added, drawn back to front
 };
 
+// How a material casts the sun's shadows. Cut-out holes (MaterialDesc::alphaCutoff) let the light through in every
+// mode that casts.
+enum class ShadowMode : std::uint8_t {
+    Auto,        // by the blend mode: Opaque is Solid, AlphaBlend Translucent, Additive (light) casts none
+    None,        // no shadows
+    Solid,       // blocks the light
+    Translucent, // lets the light through by the surface's opacity, tinted by its hue
+                 // (RenderSettings::translucentShadows)
+};
+
 struct MaterialDesc {
     SurfaceId surface{};       // Renderer::addSurface of the renderer that draws the scene; null: the standard surface
     glm::vec4 baseColor{1.0f}; // linear rgb, a: opacity
     glm::vec3 emissive{0.0f};  // linear radiance, added after lighting (bloom picks up values above about 1.6)
     float roughness = 0.5f;    // perceptual, 0..1
     float metallic = 0.0f;     // 0..1
-    float alphaCutoff = 0.0f;  // > 0: pixels with a lower opacity are discarded (the shadows stay solid)
+    float alphaCutoff = 0.0f;  // > 0: pixels with a lower opacity are discarded, in the shadows too
     BlendMode blend = BlendMode::Opaque;
     bool doubleSided = false; // no back-face culling; back faces are shaded with the flipped normal
-    bool castsShadows = true;
+    ShadowMode shadows = ShadowMode::Auto;
     // The standard surface reads 0: base color (sRGB), 1: metallic-roughness (green: roughness, blue: metallic, as
     // in glTF). A custom surface reads them as quenchTexture0..3. Unset slots sample white.
     std::array<TextureId, 4> textures{};
@@ -105,7 +115,7 @@ struct InstanceDesc {
     glm::vec4 color{1.0f};     // multiplies the vertex color (the standard surface: also the base color)
     glm::vec4 custom{0.0f};    // passed to the surface shader as QuenchSurfaceInput::custom
     bool visible = true;
-    bool castsShadows = true; // and the material's castsShadows
+    bool castsShadows = true; // as the material's ShadowMode says; false: none
 };
 
 enum class LightType : std::uint8_t { Directional, Point, Spot };

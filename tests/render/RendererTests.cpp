@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -77,6 +78,54 @@ LightId addSun(Scene& scene, glm::vec3 direction) {
     return scene.addLight({.type = LightType::Directional, .color = glm::vec3(5.0f), .direction = direction});
 }
 
+// The shadow scenes below: a 20 m ground seen from 9 m above, a sun from 45 degrees toward +x, so a caster 2 m up
+// shadows the ground 2 m toward +x, and a 2 m square panel 2 m up (its texture u runs along +x).
+RenderSettings shadowSettings() {
+    RenderSettings s = plainSettings();
+    s.shadowCascades = 2;
+    s.shadowMapSize = 512;
+    s.shadowDistance = 30.0f;
+    return s;
+}
+
+const View kTopView = lookAt(glm::vec3(0, 9.0f, 0), glm::vec3(0), glm::vec3(0, 0, -1));
+const glm::vec3 kSunDown = glm::normalize(glm::vec3(1.0f, -1.0f, 0.0f));
+const glm::mat4 kPanelPlace = glm::translate(glm::mat4(1.0f), {0, 2.0f, 0});
+
+// Only the sun lights the scene: no ambient, sky or sun disc, so a pixel's scene value is the sun's light on it.
+Environment sunOnly() {
+    Environment e;
+    e.skyAmbient = e.groundAmbient = glm::vec3(0.0f);
+    e.skyZenith = e.skyHorizon = e.skyGround = e.sunGlow = e.sunDisc = glm::vec3(0.0f);
+    e.atmosphere = 0.0f;
+    return e;
+}
+
+// The scene value (exposure 1) per channel of an 8-bit UNORM pixel, through the inverse of the default curve (ACES,
+// per channel) and the target's gamma 2.2.
+glm::vec3 sceneValue(Rgba8 c) {
+    const float channels[3] = {float(c.r), float(c.g), float(c.b)};
+    glm::vec3 out(0.0f);
+    for (int i = 0; i < 3; ++i) {
+        const float display = std::pow(channels[i] / 255.0f, 2.2f);
+        float lo = 0.0f, hi = 64.0f;
+        for (int k = 0; k < 40; ++k) {
+            const float mid = 0.5f * (lo + hi);
+            (toneMapSdr(ToneCurve::Aces, glm::vec3(mid)).r < display ? lo : hi) = mid;
+        }
+        out[i] = 0.5f * (lo + hi);
+    }
+    return out;
+}
+
+// A 16 x 16 RGBA8 texture: transparent where u < 0.5, opaque white elsewhere.
+std::vector<std::byte> halfCutPixels() {
+    std::vector<std::byte> pixels(16 * 16 * 4, std::byte{255});
+    for (std::size_t y = 0; y < 16; ++y)
+        for (std::size_t x = 0; x < 8; ++x) pixels[(y * 16 + x) * 4 + 3] = std::byte{0};
+    return pixels;
+}
+
 } // namespace
 
 QUENCH_TEST(renderer_draws_surfaces_over_the_sky) {
@@ -135,6 +184,168 @@ QUENCH_TEST(renderer_shadow_darkens_the_ground) {
     const int noShadow = sum(at(pixels, shadowPixel));
     CHECK(std::abs(noShadow - sum(at(pixels, litPixel))) < 12, "without shadows both are lit: %d vs %d", noShadow,
           sum(at(pixels, litPixel)));
+}
+
+QUENCH_TEST(renderer_cutout_shadows_let_light_through_the_holes) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, shadowSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().shadowCascades == 0) QUENCH_SKIP("no shadow maps on this device");
+    Result<SurfaceId> custom =
+        renderer->addSurface({.vertexShader = shaders::render_test.find("surface_vs"),
+                              .fragmentShader = shaders::render_test.find("surface_fs"),
+                              .shadowFragmentShader = shaders::render_test.find("surface_shadow_fs"),
+                              .name = "flat"});
+    Result<SurfaceId> customWithout = renderer->addSurface({.vertexShader = shaders::render_test.find("surface_vs"),
+                                                            .fragmentShader = shaders::render_test.find("surface_fs"),
+                                                            .name = "flat without shadow entries"});
+    REQUIRE(custom && customWithout, "custom surfaces");
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId panel = addMesh(scene, planeMesh(glm::vec2(1.0f)));
+    const std::vector<std::byte> cut = halfCutPixels();
+    Result<TextureId> texture = scene.addTexture({.width = 16, .height = 16, .pixels = cut, .mipmaps = false});
+    REQUIRE(texture, "%s", texture.error().c_str());
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.5f), .roughness = 0.9f})});
+    MaterialDesc fence{.alphaCutoff = 0.5f};
+    fence.textures[0] = *texture;
+    const MaterialId fenceMaterial = scene.addMaterial(fence);
+    const InstanceId caster = scene.addInstance({.mesh = panel, .material = fenceMaterial, .transform = kPanelPlace});
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // The holes (u < 0.5, x < 0 on the panel) shadow the ground at x 1..2, the solid half at x 2..3.
+    const glm::ivec2 hole = pixelOf(kTopView, {1.5f, 0, 0.3f}), solid = pixelOf(kTopView, {2.5f, 0, 0.3f}),
+                     lit = pixelOf(kTopView, {-3.0f, 0, 0.3f});
+    const auto measure = [&](const char* what, bool holes) {
+        const std::vector<Rgba8> pixels = renderOnce(device, *renderer, scene, kTopView, *target);
+        REQUIRE(pixels.size() == kSize * kSize, "%zu pixels", pixels.size());
+        const int h = sum(at(pixels, hole)), s = sum(at(pixels, solid)), l = sum(at(pixels, lit));
+        CHECK(s * 10 < l * 7, "%s: the solid part shadows: %d vs lit %d", what, s, l);
+        if (holes)
+            CHECK(std::abs(h - l) * 20 < l, "%s: light passes through the holes: %d vs lit %d", what, h, l);
+        else
+            CHECK(h * 10 < l * 7, "%s: no holes, the shadow is solid: %d vs lit %d", what, h, l);
+    };
+    measure("alpha cutoff 0.5", true);
+    CHECK(renderer->stats().shadowDraws >= 2, "shadow draws %u", renderer->stats().shadowDraws);
+    fence.alphaCutoff = 0.0f;
+    scene.setMaterial(fenceMaterial, fence);
+    measure("no cutoff", false);
+
+    // A surface's own opacity (the test surface: 0 where u < 0.5) cuts its shadow through its surface_shadow_fs;
+    // without it the standard surface's opacity (1 here) is used.
+    MaterialDesc own{.surface = *custom, .alphaCutoff = 0.5f};
+    own.params[1] = glm::vec4(1.0f);
+    scene.setInstanceMaterial(caster, scene.addMaterial(own));
+    measure("surface opacity", true);
+    own.surface = *customWithout;
+    scene.setInstanceMaterial(caster, scene.addMaterial(own));
+    measure("surface without shadow entries", false);
+}
+
+QUENCH_TEST(renderer_translucent_shadows_follow_opacity) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.sky = false;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().shadowCascades == 0) QUENCH_SKIP("no shadow maps on this device");
+    const bool mapped = renderer->effects().translucentShadows == TranslucentShadows::Map;
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId panel = addMesh(scene, planeMesh(glm::vec2(1.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.4f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    // An opaque box away from the panel, and one above it (nearer the sun): neither is tinted by the panel.
+    scene.addInstance(
+        {.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {-2.0f, 0.4f, -2.5f})});
+    scene.addInstance(
+        {.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0.0f, 2.8f, -0.6f})});
+    MaterialDesc glass{.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 0.5f), .blend = BlendMode::AlphaBlend};
+    const MaterialId glassMaterial = scene.addMaterial(glass);
+    const InstanceId caster = scene.addInstance({.mesh = panel, .material = glassMaterial, .transform = kPanelPlace});
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // The panel shadows the ground at x 1..3; the camera sees that part of the ground beside the panel.
+    const glm::ivec2 behind = pixelOf(kTopView, {2.0f, 0, 0.4f}), lit = pixelOf(kTopView, {-2.5f, 0, 2.0f}),
+                     boxShadow = pixelOf(kTopView, {-1.35f, 0, -2.5f}),
+                     boxTop = pixelOf(kTopView, {-0.3f, 3.2f, -0.6f});
+    for (const glm::ivec2 p : {behind, lit, boxShadow, boxTop})
+        REQUIRE(p.x >= 0 && p.y >= 0 && p.x < int(kSize) && p.y < int(kSize), "pixel %d,%d in the target", p.x, p.y);
+    scene.setVisible(caster, false);
+    const std::vector<Rgba8> without = renderOnce(device, *renderer, scene, kTopView, *target);
+    REQUIRE(without.size() == kSize * kSize, "%zu pixels", without.size());
+    CHECK(renderer->stats().transmittanceDraws == 0, "no translucent casters, no transmittance draws");
+    const glm::vec3 open = sceneValue(at(without, behind));
+    REQUIRE(open.r > 0.2f, "the ground is lit: %f", double(open.r));
+    scene.setVisible(caster, true);
+
+    // The light through the caster: its scene value over the value without it, per channel.
+    const auto transmitted = [&](const char* what, std::vector<Rgba8>* pixels = nullptr) {
+        std::vector<Rgba8> image = renderOnce(device, *renderer, scene, kTopView, *target);
+        CHECK(image.size() == kSize * kSize, "%s: %zu pixels", what, image.size());
+        if (image.size() != kSize * kSize) return glm::vec3(-1.0f);
+        const glm::vec3 t = sceneValue(at(image, behind)) / open;
+        std::printf("  %s: transmitted %.3f %.3f %.3f\n", what, double(t.r), double(t.g), double(t.b));
+        if (pixels) *pixels = std::move(image);
+        return t;
+    };
+    std::vector<Rgba8> with;
+    glm::vec3 t = transmitted("grey, opacity 0.5", &with);
+    CHECK(std::abs(t.r - 0.5f) < 0.06f && std::abs(t.g - 0.5f) < 0.06f && std::abs(t.b - 0.5f) < 0.06f,
+          "opacity 0.5 passes half the light: %.3f %.3f %.3f", double(t.r), double(t.g), double(t.b));
+    if (mapped)
+        CHECK(renderer->stats().transmittanceInstances >= 1 && renderer->stats().transmittanceDraws >= 1,
+              "transmittance draws %u", renderer->stats().transmittanceDraws);
+    // Opaque casters and receivers in front of the panel are as without it.
+    for (const glm::ivec2 p : {lit, boxShadow, boxTop})
+        CHECK(std::abs(sum(at(with, p)) - sum(at(without, p))) <= 3, "pixel %d,%d unchanged: %d vs %d", p.x, p.y,
+              sum(at(with, p)), sum(at(without, p)));
+    CHECK(sum(at(with, boxShadow)) * 10 < sum(at(with, lit)) * 3, "the opaque box shadows: %d vs %d",
+          sum(at(with, boxShadow)), sum(at(with, lit)));
+
+    for (const float opacity : {0.25f, 0.75f}) {
+        glass.baseColor.a = opacity;
+        scene.setMaterial(glassMaterial, glass);
+        t = transmitted("grey");
+        CHECK(std::abs(t.g - (1.0f - opacity)) < 0.06f, "opacity %.2f passes %.3f", double(opacity), double(t.g));
+    }
+
+    // Tinted: a red caster lets more red through. (1 - a) * lerp(1, hue, a) = (0.5, 0.28, 0.28) for this one.
+    glass.baseColor = glm::vec4(0.9f, 0.1f, 0.1f, 0.5f);
+    scene.setMaterial(glassMaterial, glass);
+    t = transmitted("red");
+    if (mapped)
+        CHECK(std::abs(t.r - 0.5f) < 0.06f && std::abs(t.g - 0.28f) < 0.06f && std::abs(t.b - 0.28f) < 0.06f,
+              "red, opacity 0.5: %.3f %.3f %.3f", double(t.r), double(t.g), double(t.b));
+
+    glass.shadows = ShadowMode::Solid;
+    scene.setMaterial(glassMaterial, glass);
+    t = transmitted("solid");
+    CHECK(t.r < 0.05f && t.g < 0.05f, "ShadowMode::Solid blocks the light: %.3f %.3f", double(t.r), double(t.g));
+    glass.shadows = ShadowMode::None;
+    scene.setMaterial(glassMaterial, glass);
+    t = transmitted("none");
+    CHECK(std::abs(t.r - 1.0f) < 0.03f && std::abs(t.g - 1.0f) < 0.03f, "ShadowMode::None: %.3f %.3f", double(t.r),
+          double(t.g));
+
+    // The fallback: the opacity dithered into the depth map, grey, smoothed by the filter.
+    glass.shadows = ShadowMode::Auto;
+    glass.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 0.5f);
+    scene.setMaterial(glassMaterial, glass);
+    settings.translucentShadows = TranslucentShadows::Dithered;
+    renderer->setSettings(settings);
+    CHECK(renderer->effects().translucentShadows == TranslucentShadows::Dithered, "dithered as asked");
+    t = transmitted("dithered");
+    CHECK(std::abs(t.g - 0.5f) < 0.2f, "dithered, opacity 0.5 passes about half: %.3f", double(t.g));
+    CHECK(renderer->stats().transmittanceDraws == 0 && renderer->stats().shadowDraws >= 2,
+          "dithered into the depth: %u transmittance, %u shadow draws", renderer->stats().transmittanceDraws,
+          renderer->stats().shadowDraws);
 }
 
 QUENCH_TEST(renderer_bloom_spreads_bright_light) {
@@ -562,6 +773,70 @@ QUENCH_TEST(renderer_skinned_motion_vectors) {
     scene.setJointPalette(instance, jump, true);
     renderOnce(device, *renderer, scene, view, *target);
     CHECK(renderer->stats().movedInstances == 0, "a teleported pose has no motion");
+}
+
+// Cut-out and translucent casters draw the skinned vertices into the cascades too: a skinned panel posed 2.5 m
+// toward -z shadows the ground there, and its bind place stays lit.
+QUENCH_TEST(renderer_skinned_cutout_and_translucent_shadows) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.sky = false;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().shadowCascades == 0) QUENCH_SKIP("no shadow maps on this device");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.5f), .roughness = 0.9f})});
+    const MeshData plane = planeMesh(glm::vec2(1.0f));
+    const std::vector<SkinVertex> skin(plane.vertices.size()); // every vertex on joint 0
+    Result<MeshId> panel = scene.addMesh({plane.vertices, plane.indices, "skinned panel", skin, 1});
+    REQUIRE(panel, "%s", panel.error().c_str());
+    const std::vector<std::byte> cut = halfCutPixels();
+    Result<TextureId> texture = scene.addTexture({.width = 16, .height = 16, .pixels = cut, .mipmaps = false});
+    REQUIRE(texture, "%s", texture.error().c_str());
+    MaterialDesc fence{.alphaCutoff = 0.5f};
+    fence.textures[0] = *texture;
+    const MaterialId fenceMaterial = scene.addMaterial(fence);
+    const MaterialId glassMaterial =
+        scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 0.5f), .blend = BlendMode::AlphaBlend});
+    const InstanceId caster = scene.addInstance({.mesh = *panel, .material = fenceMaterial, .transform = kPanelPlace});
+    const std::array<glm::mat4, 1> posed{glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, -2.5f})};
+    scene.setJointPalette(caster, posed, true);
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // The posed panel (z -3.5..-1.5) shadows the ground at x 1..3 there, its holes (x < 0 on the panel) at x 1..2;
+    // the bind pose would shadow z -1..1.
+    const glm::ivec2 hole = pixelOf(kTopView, {1.5f, 0, -2.5f}), solid = pixelOf(kTopView, {2.5f, 0, -2.5f}),
+                     bindPlace = pixelOf(kTopView, {2.5f, 0, 0.3f}), lit = pixelOf(kTopView, {-3.0f, 0, -2.5f});
+
+    std::vector<Rgba8> pixels = renderOnce(device, *renderer, scene, kTopView, *target);
+    REQUIRE(pixels.size() == kSize * kSize, "%zu pixels", pixels.size());
+    CHECK(renderer->stats().skinnedInstances == 1, "%u skinned instances", renderer->stats().skinnedInstances);
+    int l = sum(at(pixels, lit));
+    CHECK(sum(at(pixels, solid)) * 10 < l * 7, "cut-out: the posed solid half shadows: %d vs lit %d",
+          sum(at(pixels, solid)), l);
+    CHECK(std::abs(sum(at(pixels, hole)) - l) * 20 < l, "cut-out: light passes the posed holes: %d vs lit %d",
+          sum(at(pixels, hole)), l);
+    CHECK(std::abs(sum(at(pixels, bindPlace)) - l) * 20 < l, "cut-out: no shadow at the bind place: %d vs lit %d",
+          sum(at(pixels, bindPlace)), l);
+
+    scene.setInstanceMaterial(caster, glassMaterial);
+    pixels = renderOnce(device, *renderer, scene, kTopView, *target);
+    REQUIRE(pixels.size() == kSize * kSize, "%zu pixels", pixels.size());
+    const glm::vec3 open = sceneValue(at(pixels, lit)), behind = sceneValue(at(pixels, solid)),
+                    bind = sceneValue(at(pixels, bindPlace));
+    std::printf("  translucent: posed %.3f, bind place %.3f of lit\n", double(behind.g / open.g),
+                double(bind.g / open.g));
+    CHECK(std::abs(behind.g / open.g - 0.5f) < 0.1f, "translucent: half the light behind the posed panel: %.3f",
+          double(behind.g / open.g));
+    CHECK(std::abs(bind.g / open.g - 1.0f) < 0.05f, "translucent: the bind place is lit: %.3f",
+          double(bind.g / open.g));
+    if (renderer->effects().translucentShadows == TranslucentShadows::Map)
+        CHECK(renderer->stats().transmittanceDraws >= 1, "transmittance draws %u",
+              renderer->stats().transmittanceDraws);
 }
 
 QUENCH_TEST(renderer_rejects_bad_skins) {

@@ -201,7 +201,7 @@ if(NOT QUENCH_HEADLESS)
                 bloom_down_fs:fragment
                 bloom_up_fs:fragment tonemap_fs:fragment fxaa_fs:fragment)
     quench_add_shaders(quench_render NAME render_standard SOURCE src/render/shaders/standard.hlsl
-        ENTRIES surface_vs:vertex surface_fs:fragment)
+        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_fs:fragment surface_transmittance_fs:fragment)
     quench_add_shaders(quench_render NAME render_skin SOURCE src/render/shaders/skin.hlsl ENTRIES skin_cs:compute)
 
     # SDL main callbacks (src/app/Main.cpp): an object library, so the symbols land in the game executable.

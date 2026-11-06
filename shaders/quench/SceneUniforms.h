@@ -8,8 +8,9 @@
 // Bindings of a surface shader (SDL GPU slots, quench/Bindings.hlsli):
 //   vertex:   uniform 0 FrameUniforms, uniform 1 DrawUniforms, storage buffer 0 InstanceData[]
 //   fragment: uniform 0 FrameUniforms, uniform 1 LightUniforms, uniform 2 MaterialUniforms,
-//             sampler 0 the sun's shadow cascades (Texture2DArray<float>, comparison sampler),
-//             samplers 1..4 the material's textures 0..3
+//             sampler 0 the sun's shadow cascades (Texture2DArray<float>, read with Gather),
+//             samplers 1..4 the material's textures 0..3,
+//             sampler 5 the cascades' transmittance of translucent casters (Texture2DArray<float4>)
 
 #include "quench/Shared.h"
 
@@ -44,6 +45,10 @@ struct QUENCH_ALIGN16 FrameUniforms {
     float4 fogColor;      // rgb: fog radiance away from the sun, w: maximum fog amount (0..1)
     float4 screen;        // xy: render size (pixels), zw: 1 / render size
     float4 options;       // x: exposure, y: frame index, z: TAA jitter on (0/1), w: unused
+    // Translucent casters (render::ShadowMode::Translucent) in the transmittance maps: x: the cascades that have them
+    // (bit n: cascade n; 0: none, the maps are not read), y: 1 / transmittance map size, zw: unused.
+    float4 shadowTransmittance;
+    float4 transmittanceBias; // per cascade: how far (shadow depth) a receiver lies behind a caster before it is tinted
 };
 
 // One registered instance in the frame's instance buffer.
@@ -55,12 +60,14 @@ struct QUENCH_ALIGN16 InstanceData {
 };
 
 struct QUENCH_ALIGN16 DrawUniforms {
-    float4 info; // x: first instance of the draw in the instance buffer, y: shadow cascade (shadow passes)
+    // x: first instance of the draw in the instance buffer, y: shadow cascade (shadow passes), z: 1 in shadow passes
+    // (surface_vs projects with the cascade instead of the camera)
+    float4 info;
 };
 
 struct QUENCH_ALIGN16 MaterialUniforms {
     float4 baseColor; // rgb: linear albedo, a: opacity
-    float4 emissive;  // rgb: linear radiance
+    float4 emissive;  // rgb: linear radiance, w: 1 in the depth pass of a cascade when the opacity is dithered into it
     float4 surface;   // x: roughness, y: metallic, z: alpha cutoff (0: off), w: textures set (bit n: texture n)
     float4 params[4]; // MaterialDesc::params, for the surface shader
 };

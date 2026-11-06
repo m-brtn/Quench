@@ -82,6 +82,9 @@ void effectsPanel(Context& c, const render::RenderSettings& settings) {
     ImGui::TextWrapped("Shadows: %d of %d cascades%s", e.shadowCascades, settings.shadowCascades,
                        e.shadowCascades > 0 ? (e.shadowDepthClamp ? ", depth clamp" : ", no depth clamp (fallback)")
                                             : "");
+    ImGui::TextWrapped("Translucent shadows: %s%s, %u transmittance draws",
+                       e.translucentShadows == render::TranslucentShadows::Map ? "transmittance map" : "dithered",
+                       e.translucentShadows != settings.translucentShadows ? " (fallback)" : "", s.transmittanceDraws);
     ImGui::TextWrapped("Anti-aliasing: %s%s", antiAliasingName(e.antiAliasing),
                        e.antiAliasing != settings.antiAliasing ? " (fallback)" : "");
     ImGui::TextWrapped("Bloom: %s, sky: %s", e.bloom ? "on" : "off", settings.sky ? "on" : "off");

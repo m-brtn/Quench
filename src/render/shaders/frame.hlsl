@@ -21,6 +21,8 @@ float2 clipToUv(float4 c) {
 }
 
 // ---------------------------------------------------------------- shadow casters
+// Solid casters without a cut-out: depth only. Cut-out and translucent casters run their surface in the cascades
+// (surface_shadow_fs and surface_transmittance_fs in quench/SurfaceEntries.hlsli).
 
 #if defined(QUENCH_ENTRY_shadow_vs) || defined(QUENCH_ENTRY_velocity_obj_vs) || defined(QUENCH_ENTRY_velocity_skin_vs)
 cbuffer QuenchDrawBlock : QUENCH_UNIFORM(1) {

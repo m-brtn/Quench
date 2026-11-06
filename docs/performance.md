@@ -87,6 +87,50 @@ instances). No iPhone budget for it yet: it has not run on the phone.
 
 ## Measurements
 
+Stage 8 with the shadow fix, 2026-11-06 05:01-05:32, Release, vsync, Mac, Apple M4 Pro, `--frame-size 1920x1080`,
+`--audio-device null`, interleaved: `5bace7f` (`/tmp/qs8head`), stage 8 alone (`2117093`, from `git archive` in
+`/tmp/qs8stage8`) and the merged tree (stage 8 with the cut-out and translucent shadows). The display paced at about
+120 Hz (hello 1159 to 1201 frames in 10 s, the demo 415 to 601 in 5 s) with the demo's frame p95 near 25 ms, as in the
+session below. Medians of the runs, `5bace7f` / stage 8 / merged, in milliseconds, and the merged tree against
+`5bace7f`:
+
+| Run | Runs | CPU p50 | CPU p99 | GPU p50 |
+|---|---|---|---|---|
+| hello | 5 + 5 + 5 | 0.262 / 0.288 / 0.287 (+9.5 %) | 0.451 / 0.485 / 0.480 (+6.4 %) | 0.551 / 0.550 / 0.550 |
+| hello (again, order rotated) | 8 + 8 + 8 | 0.273 / 0.287 / 0.285 (+4.6 %) | 0.463 / 0.498 / 0.480 (+3.6 %) | 0.550 / 0.552 / 0.551 |
+| demo materials | 3 + 3 + 3 | 0.901 / 0.867 / 0.987 (+9.5 %) | 1.294 / 1.244 / 1.390 (+7.4 %) | 4.916 / 4.884 / 5.361 |
+| demo materials (focused, first region) | 5 + 5 + 5 | 0.921 / 0.920 / 0.987 (+7.2 %) | 1.390 / 1.290 / 1.401 (+0.8 %) | 5.207 / 4.950 / 5.481 |
+| demo materials (focused, second region) | 5 + 5 + 5 | 0.909 / 0.950 / 0.991 (+9.0 %) | 1.235 / 1.251 / 1.381 (+11.8 %) | 5.464 / 6.007 / 5.297 |
+| demo shadows | 3 + 3 + 3 | 0.839 / 0.853 / 0.871 (+3.8 %) | 1.149 / 1.252 / 1.207 (+5.0 %) | 3.676 / 4.952 / 4.752 |
+| demo shadows (focused, two regions) | 5 + 5 + 5 | 0.957 / 0.949 / 0.971 (+1.5 %), 0.965 / 0.949 / 0.963 (-0.2 %) | 1.239 / 1.252 / 1.257 (+1.5 %), 1.203 / 1.231 / 1.202 (-0.1 %) | 3.677 / 3.390 / 3.552, 3.377 / 4.329 / 3.781 |
+| demo sky | 3 + 3 + 3 | 0.820 / 0.837 / 0.814 (-0.7 %) | 1.094 / 1.116 / 1.122 (+2.6 %) | 5.527 / 4.294 / 5.322 |
+| demo post | 3 + 3 + 3 | 0.857 / 0.899 / 0.914 (+6.7 %) | 1.220 / 1.211 / 1.221 (+0.1 %) | 3.217 / 4.863 / 5.613 |
+| demo post (focused) | 5 + 5 + 5 | 0.887 / 0.865 / 0.891 (+0.5 %) | 1.158 / 1.194 / 1.199 (+3.5 %) | 5.475 / 5.049 / 5.418 |
+| demo hdr | 3 + 3 + 3 | 0.834 / 0.763 / 0.825 (-1.1 %) | 1.254 / 1.060 / 1.238 (-1.3 %) | 2.301 / 2.785 / 2.797 |
+| demo hdr (focused) | 5 + 5 + 5 | 0.897 / 0.828 / 0.847 (-5.6 %) | 1.210 / 1.157 / 1.135 (-6.2 %) | 2.754 / 2.938 / 4.182 |
+| demo hdr_on | 3 + 3 + 3 | 0.857 / 0.835 / 0.878 (+2.5 %) | 1.259 / 1.201 / 1.224 (-2.8 %) | 2.954 / 2.950 / 2.999 |
+| demo physics | 3 + 3 + 3 | 0.895 / 1.028 / 0.984 (+9.9 %) | 1.470 / 1.449 / 1.483 (+0.9 %) | 2.894 / 3.445 / 2.887 |
+| demo physics (focused) | 5 + 5 + 5 | 1.007 / 0.956 / 1.006 (-0.1 %) | 1.402 / 1.360 / 1.396 (-0.4 %) | 4.902 / 3.884 / 4.900 |
+| demo assets | 3 + 3 + 3 | 0.916 / 0.921 / 0.958 (+4.6 %) | 1.267 / 1.348 / 1.300 (+2.6 %) | 4.469 / 4.278 / 4.876 |
+| demo audio | 3 + 3 + 3 | 0.885 / 0.916 / 0.918 (+3.7 %) | 1.234 / 1.221 / 1.234 (0.0 %) | 4.404 / 5.862 / 5.869 |
+| demo animation (against stage 8) | 3 + 3 | 2.659 / 2.669 (+0.4 %) | 3.696 / 3.647 (-1.3 %) | 4.944 / 5.087 |
+
+The complete runs alternated `5bace7f`, stage 8, merged in that order; the focused runs (one section per process,
+05:14-05:32) rotated the order and started after one warm-up run. Every region more than 5 % worse in the complete
+runs was measured again. Only materials stayed above 5 %: in every focused run of the merged tree its CPU p50 (0.972
+to 1.032) is above every run of `5bace7f` (0.619 to 0.948), and stage 8 alone is within the noise of `5bace7f`. The
+cost is the translucent shadows' three transmittance passes (one render pass per cascade, one draw each): in one
+process of the merged tree, alternating the transmittance map and the dithered fallback (`set translucent_shadows`,
+12 + 12 regions of 3 s, 05:27-05:28), CPU p50 1.129 against 1.030 ms (+9.6 %), CPU p99 1.488 against 1.353 ms, GPU
+p50 5.93 against 5.57 ms; the map was dearer in 11 of the 12 pairs. About 0.1 ms per frame, about 33 µs per pass, not
+broken down further; only scenes with translucent casters pay it, and the section stays within its 2.0 ms budget.
+hello does not use `quench_render`: the merged tree equals stage 8 alone there (-0.5 % and -3.7 % in the 8 + 8 + 8
+runs). Stage 8 alone read +5.1 % and +7.6 % against `5bace7f` in those runs (+0.4 % and -5.8 % in the session
+below); the runs overlap (CPU p50 0.252 to 0.327 against 0.257 to 0.305), and the only change in hello's frame since
+`5bace7f` is one more branch in the GPU layer's uniform push. The GPU p50 of one build swings between about 3.2 and
+5.6 ms between runs, with the GPU clock under the irregular pacing; the benchmark does not time the shadow passes
+alone.
+
 Stage 8 A/B, 2026-11-06 04:18-04:37, Release, vsync, Mac, Apple M4 Pro, `--frame-size 1920x1080`,
 `--audio-device null`: HEAD `5bace7f` (built from `git archive` in `/tmp/qs8head`) against the stage 8 working tree,
 interleaved. In this session the display paced at about 120 Hz (hello 1129 to 1195 frames in 10 s, the demo 482 to

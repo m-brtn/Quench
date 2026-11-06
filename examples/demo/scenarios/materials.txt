@@ -1,5 +1,5 @@
 # Materials and lights (ctest: demo_materials_metal, demo_materials_vulkan): light switches, the game's render pass
-# and surface shader. Deterministic run (one 1/120 s step per frame); the capture is taken at 2 s, after the scene is
+# and surface shader, the shadows of the cut-out fence and the translucent glass. Deterministic run (one 1/120 s step per frame); the capture is taken at 2 s, after the scene is
 # back to its start state. Dithering is off so the golden PNG stays small.
 
 set dither 0
@@ -11,6 +11,17 @@ expect marker_draws == 4
 expect checker == 1
 expect draws >= 10
 expect shadow_draws > 0
+# The glass casts its shadow through the transmittance map, or dithered into the depth map (the fallback).
+expect translucent_shadows == 0
+expect transmittance_draws > 0
+set translucent_shadows dithered
+wait 0.05
+expect translucent_shadows == 1
+expect transmittance_draws == 0
+expect shadow_draws > 0
+set translucent_shadows map
+wait 0.05
+expect transmittance_draws > 0
 set point_lights 1
 wait 0.05
 expect lights == 2
@@ -29,6 +40,7 @@ expect checker == 0
 set sun 0
 wait 0.05
 expect shadow_draws == 0
+expect transmittance_draws == 0
 
 set point_lights 3
 set spot 1

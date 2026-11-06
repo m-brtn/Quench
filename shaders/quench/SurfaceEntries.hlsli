@@ -1,8 +1,9 @@
 #ifndef QUENCH_SURFACE_ENTRIES_HLSLI
 #define QUENCH_SURFACE_ENTRIES_HLSLI
 
-// The entry points of a surface shader (quench/Surface.hlsli): surface_vs, surface_fs and surface_shadow_vs. Include
-// it after the surface function; QUENCH_SURFACE names it (default: quenchStandardSurface).
+// The entry points of a surface shader (quench/Surface.hlsli): surface_vs, surface_fs, surface_shadow_vs,
+// surface_shadow_fs and surface_transmittance_fs. Include it after the surface function; QUENCH_SURFACE names it
+// (default: quenchStandardSurface).
 
 #include "quench/Surface.hlsli"
 
@@ -20,6 +21,7 @@ InstanceData quenchInstance(uint instance) { return quenchInstances[uint(quenchD
 #endif
 
 #if defined(QUENCH_ENTRY_surface_vs)
+// In the cascades' passes (cut-out and translucent casters) the position is the shadow map's.
 QuenchVaryings surface_vs(QuenchVertexIn v, uint instance : SV_InstanceID) {
     const InstanceData inst = quenchInstance(instance);
 #ifdef QUENCH_SURFACE_VERTEX
@@ -27,7 +29,8 @@ QuenchVaryings surface_vs(QuenchVertexIn v, uint instance : SV_InstanceID) {
 #endif
     QuenchVaryings o;
     const float4 world = mul(inst.model, float4(v.position, 1.0));
-    o.position = mul(quenchFrame.viewProj, world);
+    o.position = quenchDraw.info.z > 0.5 ? mul(quenchFrame.shadowViewProj[int(quenchDraw.info.y)], world)
+                                         : mul(quenchFrame.viewProj, world);
     o.world = world.xyz;
     o.normal = mul(inst.normalMatrix, float4(v.normal, 0.0)).xyz;
     o.uv = v.uv;
@@ -47,22 +50,50 @@ float4 surface_shadow_vs(QuenchVertexIn v, uint instance : SV_InstanceID) : SV_P
 }
 #endif
 
-#if defined(QUENCH_ENTRY_surface_fs)
-float4 surface_fs(QuenchVaryings v, bool front : SV_IsFrontFace) : SV_Target0 {
+#if defined(QUENCH_STAGE_FRAGMENT)
+QuenchSurfaceInput quenchSurfaceInput(QuenchVaryings v, bool front, float3 view) {
     QuenchSurfaceInput i;
     i.world = v.world;
     i.normal = normalize(v.normal) * (front ? 1.0 : -1.0);
-    i.view = normalize(quenchFrame.cameraPos.xyz - v.world);
+    i.view = view;
     i.uv = v.uv;
     i.color = v.color;
     i.custom = v.custom;
     i.pixel = v.position.xy;
     i.front = front;
+    return i;
+}
+#endif
+
+#if defined(QUENCH_ENTRY_surface_fs)
+float4 surface_fs(QuenchVaryings v, bool front : SV_IsFrontFace) : SV_Target0 {
+    const QuenchSurfaceInput i = quenchSurfaceInput(v, front, normalize(quenchFrame.cameraPos.xyz - v.world));
     const QuenchSurface s = QUENCH_SURFACE(i);
     if (quenchMaterial.surface.z > 0.0 && s.opacity < quenchMaterial.surface.z) discard;
     const float3 lit = quenchShade(s, i);
     const float4 fog = fogAt(v.world, quenchFrame.cameraPos.xyz);
     return float4(lerp(lit, fog.rgb, fog.a), saturate(s.opacity));
+}
+#endif
+
+#if defined(QUENCH_ENTRY_surface_shadow_fs)
+// The depth pass of a cascade for cut-out casters: no depth where the surface is cut out (MaterialDesc::alphaCutoff),
+// and for translucent casters dithered into the depth map (MaterialUniforms::emissive.w), where the ordered dither
+// is above the opacity.
+void surface_shadow_fs(QuenchVaryings v, bool front : SV_IsFrontFace) {
+    const QuenchSurface s = QUENCH_SURFACE(quenchSurfaceInput(v, front, quenchFrame.sunDir.xyz));
+    if (quenchMaterial.surface.z > 0.0 && s.opacity < quenchMaterial.surface.z) discard;
+    if (quenchMaterial.emissive.w > 0.5 && saturate(s.opacity) <= bayer4(v.position.xy)) discard;
+}
+#endif
+
+#if defined(QUENCH_ENTRY_surface_transmittance_fs)
+// The transmittance map of a cascade, blended by multiplying rgb and keeping the largest alpha: the light the
+// surface lets through (quenchTransmittance) and 1 - its depth.
+float4 surface_transmittance_fs(QuenchVaryings v, bool front : SV_IsFrontFace) : SV_Target0 {
+    const QuenchSurface s = QUENCH_SURFACE(quenchSurfaceInput(v, front, quenchFrame.sunDir.xyz));
+    if (quenchMaterial.surface.z > 0.0 && s.opacity < quenchMaterial.surface.z) discard;
+    return float4(quenchTransmittance(s), saturate(1.0 - v.position.z));
 }
 #endif
 

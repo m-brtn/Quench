@@ -40,8 +40,10 @@ renderer->render(scene, {.view = camera, .fovY = fov, .nearPlane = 0.1f, .time =
   are computed on upload.
 - **Textures** are RGBA8 (`TextureData`, sRGB or linear), mipmaps generated on the GPU. Loading files is stage 6.
 - **Materials** replace the games' fixed material enums: base color, emissive, roughness, metallic, alpha cutoff,
-  blend mode (opaque, alpha blend, additive), double-sided, shadow casting, four textures and four `vec4` parameters
-  for custom surfaces.
+  blend mode (opaque, alpha blend, additive), double-sided, shadow mode, four textures and four `vec4` parameters
+  for custom surfaces. The shadow mode (`ShadowMode`) is `Auto` by default: opaque materials cast solid shadows,
+  alpha-blended ones translucent shadows, additive ones (light) none; `None`, `Solid` and `Translucent` override it.
+  The alpha cutoff cuts the shadow too.
 - **Instances** carry a transform, a color, a `vec4` for the surface shader, visibility and shadow casting. The
   previous transform is kept for motion vectors; `setTransform(..., teleport = true)` drops it (a respawn).
 - **Lights**: the first directional light is the sun (cascaded shadows, the sun disc in the sky). Further directional,
@@ -63,7 +65,9 @@ render, and switching cameras or scenes needs `View::cut`.
 
 1. **Shadow cascades** of the sun (standard depth, `Depth32Float` texture array): the view is split between linear and
    logarithmic distances up to `shadowDistance`, each cascade snapped to its texels; casters are culled per cascade.
-   Game `Shadow` passes run in each cascade after the scene's casters.
+   Solid casters write depth with their position only; cut-out ones run their surface and discard where it is cut
+   out. Game `Shadow` passes run in each cascade after the scene's casters. A cascade with translucent casters then
+   gets a second pass into its transmittance map (below).
 2. **HDR pass** (`Rgba16Float`, reversed depth: near 1, far 0, infinite far plane): opaque surfaces sorted by
    pipeline and material, then game `Opaque` passes, then the sky (atmosphere or gradient, sun disc, fog toward the
    horizon), then alpha-blended and additive surfaces back to front, then game `Transparent` passes.
@@ -117,6 +121,34 @@ not written, because Apple's EDR path is extended linear and a PQ reference whit
 display. FXAA in HDR finds edges on display values clipped at paper white. How the app chooses the output, draws the UI
 and captures HDR frames: [App shell](app.md#hdr-output).
 
+### Cut-out and translucent shadows
+
+Cut-out casters (`alphaCutoff > 0`) are drawn into the cascades with their surface's `surface_vs` and
+`surface_shadow_fs`, which runs the surface function and discards below the cutoff, as `surface_fs` does: texture
+alpha, base color alpha, vertex alpha or an opacity the surface computes. Solid casters without a cutoff keep the
+position-only pass.
+
+Translucent casters (`ShadowMode::Translucent`, the default of alpha-blended materials) are not in the depth. Each
+cascade that has them gets a transmittance map: one layer of an `Rgba16Float` texture array at half the shadow map
+size, cleared to white, made when a frame first has translucent casters (24 MiB at the default 2048 and 3 cascades,
+half the depth array's 48 MiB; none in scenes without them). `surface_transmittance_fs` writes the light the surface
+lets through, `(1 - a) * lerp(1, hue, a)` with `a` its opacity and `hue` its albedo over the brightest channel (a
+grey surface passes `1 - a` in every channel, a colored one tints toward its color as far as it is opaque), blended
+by multiplying, so overlapping casters multiply; alpha keeps `1 - depth` of the caster nearest to the sun (blend
+`Max`).
+A receiver lit by the sun takes the map's color from 2 map texels behind that caster on (in shadow depth; fully from
+4), so the caster's own surface and anything between it and the sun stay untinted; the sun's direct light is
+multiplied by it and the ambient darkens by its luminance, as in a solid shadow. A receiver in the solid shadow does
+not read the map. The map is read with 4 bilinear taps (1 with `shadowFilter = 0`), the depth with one `GatherAlpha`.
+
+Why a map and not dithering alone: the map gives a smooth, colored shadow whose darkness follows the opacity
+(`render.renderer_translucent_shadows_follow_opacity`: opacity 0.25, 0.5 and 0.75 pass 0.749, 0.504 and 0.249 of the
+light, a red caster of opacity 0.5 passes 0.504 / 0.280 / 0.280 for the expected 0.5 / 0.278 / 0.278), costs a pass
+only in cascades with translucent casters, and opaque-only frames shade as before (their captures are bit for bit the
+same). The fallback (`TranslucentShadows::Dithered`, also selectable) dithers the opacity into the depth map with a
+4 x 4 ordered pattern and lets the shadow filter smooth it: grey and grainy, overlapping casters shadow like the most
+opaque one (their patterns coincide); the same test measures 0.504 at opacity 0.5.
+
 ### Fallbacks
 
 `Renderer::effects()` is what runs after the device check; `RenderSettings` is what the game asked for. The choice is
@@ -127,6 +159,7 @@ change is logged once:
 |---|---|---|
 | Shadow cascades | a sampleable depth texture array | no shadows (`shadowCascades = 0`) |
 | Casters in front of a cascade | `gpu::Caps::depthClamp` | without it they are clipped (pancaking off) |
+| Translucent shadows (transmittance) | a renderable, sampleable `Rgba16Float` array | dithered into the depth |
 | TAA | a sampleable scene depth and an `Rg16Float` target | FXAA |
 | HDR target | `Rgba16Float` | `Rg11b10Ufloat` |
 
@@ -183,6 +216,12 @@ scene.addMaterial({.surface = checker, .params = {...}});
   (wind, procedural motion). Build `surface_shadow_vs:vertex` too and pass it as `SurfaceDesc::shadowVertexShader`, so
   the shadows move with it. The demo's checker ground (`examples/demo/shaders/checker.hlsl`) and the test shader
   `tests/render/shaders/custom.hlsl` are examples.
+- A surface used by cut-out or translucent materials also builds `surface_shadow_fs:fragment` and
+  `surface_transmittance_fs:fragment` and passes them as `SurfaceDesc::shadowFragmentShader` and
+  `transmittanceShader`, so its shadows have its own holes and opacity. Without them those shadows use the standard
+  surface's opacity (base color alpha, texture 0 alpha, vertex alpha). In these entries `QuenchSurfaceInput::view`
+  points toward the sun and `pixel` is the shadow map texel; `surface_vs` projects with the cascade there
+  (`DrawUniforms::info.z`).
 - `addSurface` creates the opaque pipeline at once, so a shader that does not fit the interface fails there with an
   error, not at the first draw.
 
@@ -199,17 +238,19 @@ bytes).
 ## Settings
 
 `RenderSettings`: render scale (0.25..1), cascades (0..4), shadow map size, shadow distance, shadow filter (1, 4 or
-12 taps), anti-aliasing (none, FXAA, TAA) and sharpening, bloom (strength, threshold), sky on or off and the clear
-color, tone curve (ACES, AgX), vignette, dither. `setSettings` can be called every frame; the targets are recreated
-only when a size, the shadow map size or the set of active effects changes.
+12 taps), translucent shadows (transmittance map or dithered), anti-aliasing (none, FXAA, TAA) and sharpening,
+bloom (strength, threshold), sky on or off and the clear color, tone curve (ACES, AgX), vignette, dither.
+`setSettings` can be called every frame; the targets are recreated only when a size, the shadow map size or the set
+of active effects changes.
 
 ## Statistics
 
 `Renderer::stats()`: instances and draws in the HDR pass, culled instances, instances and draws in the shadow
-cascades, moved instances (motion vectors), local lights used, the 3D resolution, pipelines created, and (stage 8)
-skinned instances and vertices posed this frame and the skinning pass's GPU time (`skinningGpuMs`, -1 where
-`Caps::gpuTiming` is false or before the first measurement). The demo shows them and its scenarios check them
-(`draws`, `shadow_draws`, `lights`, `moved`, `render_w`, `skinned_instances`, `skinned_vertices`).
+cascades and in their transmittance maps, moved instances (motion vectors), local lights used, the 3D resolution,
+pipelines created, and (stage 8) skinned instances and vertices posed this frame and the skinning pass's GPU time
+(`skinningGpuMs`, -1 where `Caps::gpuTiming` is false or before the first measurement). The demo shows them and its
+scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`, `moved`, `render_w`,
+`skinned_instances`, `skinned_vertices`).
 
 ## Skinned meshes
 
@@ -222,7 +263,8 @@ for cooked models). Before the first palette an instance shows the bind pose.
 Every frame the renderer runs one compute pass (`skin_cs` in `src/render/shaders/skin.hlsl`, 64 vertices per group,
 linear blend skinning of positions and normals) over the skinned instances that are drawn in view or in a shadow
 cascade, into each instance's range of a shared vertex buffer; the shadow, main and velocity passes then draw those
-vertices like a rigid mesh, with the surface shaders unchanged. Two output buffers alternate, so the velocity pass
+vertices like a rigid mesh, with the surface shaders unchanged (also the cut-out and translucent shadow casters,
+which draw them with their surface's `surface_vs`). Two output buffers alternate, so the velocity pass
 (`velocity_skin_vs`) has last frame's skinned positions and TAA gets motion vectors of the deformation; a palette
 set with `teleport` has none. Culling uses bounds from the palette: per joint the sphere around the bind-pose
 vertices it moves, transformed by the joint's matrix. The skinning runs in its own command buffer, so its fence gives
@@ -232,9 +274,17 @@ pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; the
 
 ## Limitations
 
-- Alpha-tested and transparent materials cast solid shadows (no cut-out or colored shadows).
+- Translucent shadows: a caster is one layer (its faces toward the sun; double-sided materials both), with no
+  thickness, absorption along the path, refraction or caustics. A receiver between two translucent casters that share
+  a map texel takes both tints; within 4 map texels behind a caster it takes only part of the tint (none within 2).
+  The map has half the shadow map's resolution, so these shadows are softer than solid ones. Local lights cast no
+  shadows of any kind.
+- Cut-out and translucent casters run their surface function in the cascades' passes (cost per shadow texel); a
+  custom surface without `surface_shadow_fs` / `surface_transmittance_fs` is cut by the standard opacity instead of
+  its own.
 - The motion vectors use the instance transforms and skinning only: a `QUENCH_SURFACE_VERTEX` deformation does not
-  reach TAA (moving vertices smear a little under TAA).
+  reach TAA (moving vertices smear a little under TAA), and a moving cut-out object's motion also covers its holes
+  (the background seen through them may smear under TAA).
 - Skinning: four joints per vertex, linear blend (no dual quaternions), no blend shapes; every drawn skinned
   instance is skinned every frame (no caching of unchanged poses, no skinning LOD); the output buffers grow with the
   skinned vertices drawn (two copies).

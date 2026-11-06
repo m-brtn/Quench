@@ -228,6 +228,8 @@ public:
         if (name == "culled") return double(s.culled);
         if (name == "shadow_draws") return double(s.shadowDraws);
         if (name == "shadow_instances") return double(s.shadowInstances);
+        if (name == "transmittance_draws") return double(s.transmittanceDraws);
+        if (name == "translucent_shadows") return double(int(e.translucentShadows));
         if (name == "moved") return double(s.movedInstances);
         if (name == "lights") return double(s.lights);
         if (name == "skinned_instances") return double(s.skinnedInstances);
@@ -351,6 +353,13 @@ private:
             s.shadowFilter = std::clamp(int(*number), 0, 2);
         } else if (name == "shadow_distance" && number) {
             s.shadowDistance = std::max(*number, 1.0f);
+        } else if (name == "translucent_shadows") {
+            if (value == "map")
+                s.translucentShadows = render::TranslucentShadows::Map;
+            else if (value == "dithered")
+                s.translucentShadows = render::TranslucentShadows::Dithered;
+            else
+                return false;
         } else if (name == "scale" && number) {
             s.renderScale = std::clamp(*number, 0.25f, 1.0f);
         } else if (name == "bloom" && flag) {

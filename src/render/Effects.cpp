@@ -10,6 +10,9 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
     ActiveEffects e;
     e.shadowCascades = support.shadowArray ? std::clamp(settings.shadowCascades, 0, kMaxCascades) : 0;
     e.shadowDepthClamp = e.shadowCascades > 0 && support.depthClamp;
+    e.translucentShadows = settings.translucentShadows == TranslucentShadows::Map && support.transmittanceArray
+                               ? TranslucentShadows::Map
+                               : TranslucentShadows::Dithered;
     e.antiAliasing = settings.antiAliasing;
     if (e.antiAliasing == AntiAliasing::Taa && !(support.sampledDepth && support.velocityTarget))
         e.antiAliasing = AntiAliasing::Fxaa;
