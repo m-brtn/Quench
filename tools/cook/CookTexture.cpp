@@ -13,6 +13,7 @@
 #include <format>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
 
 namespace quench::cook {
 namespace {
@@ -82,6 +83,10 @@ void note(std::vector<std::string>* notes, std::string text) {
 
 constexpr astcenc_swizzle kRgba{ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A};
 
+// In 5.7.1 astcenc_context_alloc rewrites the encoder's global angular tables, which every compressing context reads:
+// contexts are allocated under the exclusive lock and compress under the shared one.
+std::shared_mutex g_astcTables;
+
 // astc-encoder contexts of one configuration: a context compresses one image at a time, so each job takes one of its
 // own and gives it back. Each is allocated from the configuration, not from a parent context: in 5.7.1
 // astcenc_context_alloc converts the quality limit of a parent's configuration, which is already converted, again.
@@ -106,7 +111,10 @@ public:
             return context;
         }
         astcenc_context* context = nullptr;
-        if (status == ASTCENC_SUCCESS) status = astcenc_context_alloc(&m_config, 1, &context, nullptr);
+        if (status == ASTCENC_SUCCESS) {
+            std::unique_lock tables(g_astcTables);
+            status = astcenc_context_alloc(&m_config, 1, &context, nullptr);
+        }
         if (status != ASTCENC_SUCCESS) return nullptr;
         m_all.push_back(context);
         return context;
@@ -136,8 +144,11 @@ Result<std::vector<std::uint8_t>> encodeAstcWith(AstcContexts& contexts, const I
             const std::uint32_t y0 = begin * 4, y1 = std::min(end * 4, image.height);
             void* slice = const_cast<std::uint8_t*>(&image.rgba[std::size_t(y0) * image.width * 4]);
             astcenc_image strip{image.width, y1 - y0, 1, ASTCENC_TYPE_U8, &slice};
-            status = astcenc_compress_image(context, &strip, &kRgba, &out[std::size_t(begin) * blocksX * 16],
-                                            std::size_t(end - begin) * blocksX * 16, 0);
+            {
+                std::shared_lock tables(g_astcTables);
+                status = astcenc_compress_image(context, &strip, &kRgba, &out[std::size_t(begin) * blocksX * 16],
+                                                std::size_t(end - begin) * blocksX * 16, 0);
+            }
             astcenc_compress_reset(context);
             contexts.give(context);
         }
