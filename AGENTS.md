@@ -91,7 +91,8 @@ section defaults on phones chosen from them: half size with MetalFX spatial, no 
 iPhone 18 Pro Max, and nobody has looked at the new effects in motion. The default stays SDL GPU and shadow maps,
 every stage 11 effect off, until the user has looked at them on the iPhone. The stage 12 area lights (the demo's
 tunnel, whose lamps move and whose camera drives a loop since the same day) ran on the Mac and on the iPhone 17
-(2026-11-06: costs and captures, still and in motion; the tunnel's phone defaults at 60 Hz),
+(2026-11-06: costs and captures, still and in motion; the tunnel's phone defaults at 60 Hz; ten minutes of the ray
+tracing section's and the tunnel's phone defaults, where the tunnel missed a few intervals after about 8 minutes),
 not on the iPhone 18 Pro Max, and nobody has looked at them in motion or on a phone's screen. The demo's compact layout and touch controls were
 looked at in the iOS Simulator only. The checks waiting for a person (on the iPhone, by ear, in motion) are the demo's check mode
 (`docs/demo.md`, "Check mode on the iPhone"). TrailForge builds on the engine's
