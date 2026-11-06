@@ -112,6 +112,21 @@ constexpr std::array kItems{
               "Native Metal backend: the path tracer settles into a still, noise-free image within a few seconds; "
               "turned off, the real-time image with the probe grid is about as bright.",
               "set path_tracer 1"},
+    CheckItem{"tunnel.lamps", "tunnel", "Area lights",
+              "Native Metal backend: each lamp's glowing shape matches the light it casts (the cyan strips along the "
+              "floor, the warm ceiling squares, the magenta panel, the neon tubes, the blue portal); shadows of the "
+              "crates, ribs and sphere are soft near their base and wider away from it, without crawling noise. "
+              "Fallback (SDL GPU): the same light without shadows.",
+              ""},
+    CheckItem{"tunnel.brushed", "tunnel", "Brushed aluminium",
+              "The highlights on the aluminium sphere, ribs and kick plates stretch across the brushing; with "
+              "Aluminium anisotropy at 0 they turn round, at 1 they stretch to streaks.",
+              "set sweep 1"},
+    CheckItem{"tunnel.puddle", "tunnel", "Puddle and wet floor",
+              "Native Metal backend: the puddle mirrors the tunnel (the ceiling lamps, the violet tube) sharply, the "
+              "wet asphalt shows blurred lamp streaks; Path traced settles to about the same image within a few "
+              "seconds.",
+              ""},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",

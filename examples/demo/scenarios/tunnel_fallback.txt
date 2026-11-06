@@ -1,0 +1,35 @@
+# The tunnel's fallbacks on SDL GPU (ctest: demo_tunnel_fallback_<backend>, a part of batch.txt): the eight area
+# lights still light and shine (LTC: diffuse and specular) but cast no shadows, reflections are the night sky's,
+# indirect light its ambient light, and the path tracer falls back to the real-time frame; the renderer names each
+# fallback (Renderer::fallbacks). The capture is taken at 2.5 s, as in tunnel.txt.
+section tunnel
+
+set dither 0
+until tunnel_ready == 1 10
+wait 0.1
+expect lights == 10
+expect area_lights == 8
+expect local_shadows == 0
+expect reflections == 0
+expect indirect == 0
+expect ray_instances == 0
+expect upscaling == 0
+expect render_scale == 1
+expect fallbacks >= 3
+set path_tracer 1
+wait 0.05
+expect path_tracer == 0
+set path_tracer 0
+set tubes 0
+set portal 0
+wait 0.05
+expect area_lights == 5
+set tubes 1
+set portal 1
+wait 0.05
+expect area_lights == 8
+until time >= 2.5 3
+windows off
+capture demo_tunnel.png
+windows on
+quit

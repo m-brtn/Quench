@@ -3,15 +3,15 @@
 
 expect mode == 1
 expect section == 0
-until tours >= 11 10
+until tours >= 12 10
 expect section == 0
-expect sections_ready == 11
+expect sections_ready == 12
 tap Space
 until mode == 0 1
 section audio
 mode tour 0.1
 expect mode == 1
-until tours >= 13 3
+until tours >= 14 3
 expect section == 10
 mode off
 expect mode == 0

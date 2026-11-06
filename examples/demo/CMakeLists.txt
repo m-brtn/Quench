@@ -39,6 +39,26 @@ quench_cook_assets(quench_demo_character SOURCE_DIR ${demo_character_dir}
     SKELETONS characters/mannequin.gltf
     ANIMATIONS characters/mannequin.gltf)
 
+# The Tunnel section's textures: procedural PNG files written at build time (tools/assets/make_demo_tunnel.py) and
+# cooked into KTX2: colors in sRGB, normal and metallic-roughness maps linear.
+set(demo_tunnel_dir ${CMAKE_CURRENT_BINARY_DIR}/tunnel_src)
+set(demo_tunnel_colors panel_color.png asphalt_color.png puddle.png)
+set(demo_tunnel_data panel_normal.png panel_mr.png asphalt_normal.png asphalt_mr.png plastic_normal.png
+    rubber_normal.png brushed_mr.png)
+list(TRANSFORM demo_tunnel_colors PREPEND tunnel/)
+list(TRANSFORM demo_tunnel_data PREPEND tunnel/)
+set(demo_tunnel_files ${demo_tunnel_colors} ${demo_tunnel_data})
+list(TRANSFORM demo_tunnel_files PREPEND ${demo_tunnel_dir}/)
+add_custom_command(
+    OUTPUT ${demo_tunnel_files}
+    COMMAND ${Python3_EXECUTABLE} ${Quench_SOURCE_DIR}/tools/assets/make_demo_tunnel.py ${demo_tunnel_dir}/tunnel
+    DEPENDS ${Quench_SOURCE_DIR}/tools/assets/make_demo_tunnel.py
+    COMMENT "Writing the demo's tunnel textures"
+    VERBATIM)
+quench_cook_assets(quench_demo_tunnel SOURCE_DIR ${demo_tunnel_dir}
+    TEXTURES ${demo_tunnel_colors}
+    DATA_TEXTURES ${demo_tunnel_data})
+
 # The licences the About panel shows, copied into the demo's assets.
 quench_cook_assets(quench_demo_licences SOURCE_DIR ${Quench_SOURCE_DIR} FILES LICENSE THIRD_PARTY_LICENSES)
 
@@ -58,7 +78,7 @@ quench_add_game(quench_demo
     ICON icon/icon.png
     ORIENTATIONS all
     ASSETS assets
-    COOKED_ASSETS quench_demo_cooked quench_demo_sounds quench_demo_character quench_demo_licences
+    COOKED_ASSETS quench_demo_cooked quench_demo_sounds quench_demo_character quench_demo_tunnel quench_demo_licences
     SOURCES
         Camera.cpp
         Checks.cpp
@@ -78,7 +98,8 @@ quench_add_game(quench_demo
         sections/PostSection.cpp
         sections/RayTracingSection.cpp
         sections/ShadowsSection.cpp
-        sections/SkySection.cpp)
+        sections/SkySection.cpp
+        sections/TunnelSection.cpp)
 quench_configure_target(quench_demo)
 target_link_libraries(quench_demo PRIVATE quench_render quench_physics quench_animation)
 target_include_directories(quench_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${demo_build_info_dir})

@@ -5,7 +5,7 @@ section materials
 
 wait 0.1
 expect section == 0
-expect sections == 11
+expect sections == 12
 tap ]
 until section == 1 1
 tap PageDown
@@ -34,13 +34,15 @@ gamepad button rightshoulder tap
 until section == 8 1
 gamepad button rightshoulder tap
 until section == 9 1
-# The eleventh section has no key; the shoulders reach it.
+# The eleventh and twelfth sections have no key; the shoulders reach them.
 gamepad button rightshoulder tap
 until section == 10 1
+gamepad button rightshoulder tap
+until section == 11 1
 gamepad button rightshoulder tap
 until section == 0 1
 gamepad button leftshoulder tap
-until section == 10 1
+until section == 11 1
 gamepad detach
 until gamepad == 0 2
 
@@ -49,13 +51,16 @@ until ui == 0 1
 tap H
 until ui == 1 1
 
-# Mouse and touch on the list: entry 2 (Shadows), entry 4 (Post-processing) and entry 11 (Ray tracing).
+# Mouse and touch on the list: entry 2 (Shadows), entry 4 (Post-processing), entry 11 (Ray tracing) and entry 12
+# (Tunnel).
 click @menu:shadows
 until section == 1 1
 touch @menu:post
 until section == 3 1
 click @menu:raytracing
 until section == 10 1
+touch @menu:tunnel
+until section == 11 1
 
 # Keyboard and gamepad on the windows: Tab or the D-pad give them the keys and buttons (the scene's actions stop),
 # Down and Enter (the D-pad and A) choose an entry, Escape (B) gives the keys back to the scene.

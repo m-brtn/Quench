@@ -1,4 +1,4 @@
-# Ray tracing and MetalFX costs (docs/performance.md), the ray tracing section on the native Metal backend:
+# Ray tracing and MetalFX costs (docs/performance.md), the ray tracing and tunnel sections on the native Metal backend:
 #   quench-demo --gpu-backend metal --frame-size 1920x1080 --script examples/demo/scenarios/raytracing_benchmark.txt
 # Each region 4 s with the sun turning and the character walking; the perf lines carry the GPU time per timed range
 # ("accel", "prepass", "raytrace" with "rays", "denoise", "probes", "reflections" and "indirect" in it, "path",
@@ -140,6 +140,56 @@ set scale 1
 set path_tracer 1
 wait 1
 perf_begin path_tracer
+wait 4
+perf_end
+set path_tracer 0
+
+# The tunnel: eight area lights and two spots at full size. The lamps unshadowed (the fallback's frame), then their
+# traced shadows (four of them), traced reflections, the probe grid (all traced), the section's default where MetalFX
+# runs (two thirds with MetalFX temporal) and the path tracer.
+section tunnel
+until tunnel_ready == 1 5
+set upscaling bilinear
+set scale 1
+set local_shadows 0
+set reflections sky
+set indirect sky
+wait 1
+perf_begin tunnel_lit
+wait 4
+perf_end
+expect perf_frames >= 120
+
+set local_shadows 4
+wait 1
+perf_begin tunnel_area_shadows
+wait 4
+perf_end
+
+set reflections rt
+wait 1
+perf_begin tunnel_plus_reflections
+wait 4
+perf_end
+
+set indirect probes
+wait 1
+perf_begin tunnel_all_traced
+wait 4
+perf_end
+
+set upscaling temporal
+set scale 0.67
+wait 1
+perf_begin tunnel_default
+wait 4
+perf_end
+
+set upscaling bilinear
+set scale 1
+set path_tracer 1
+wait 1
+perf_begin tunnel_path_tracer
 wait 4
 perf_end
 quit

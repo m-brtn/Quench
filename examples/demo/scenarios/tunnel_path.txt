@@ -1,0 +1,24 @@
+# The tunnel's path tracer on the native Metal backend (ctest: demo_tunnel_path_metal_native, a part of
+# batch_native.txt): the reference for tunnel.txt's real-time frame, 256 samples per pixel at full size with the
+# spot standing still. Its capture has no golden image (the noise makes it a 1.3 MB file); look at it beside
+# demo_tunnel_native.png. Area lights by next event estimation and multiple importance sampling, the aluminium's
+# anisotropic lobe sampled as it is; ray hits have no normal maps (the crates' emboss is flat here).
+section tunnel
+
+set dither 0
+set sweep 0
+until tunnel_ready == 1 10
+set upscaling bilinear
+set scale 1
+set path_tracer 1
+wait 0.05
+expect path_tracer == 1
+until path_samples >= 256 10
+windows off
+capture demo_tunnel_path_native.png
+windows on
+set path_tracer 0
+set sweep 1
+wait 0.05
+expect path_tracer == 0
+quit

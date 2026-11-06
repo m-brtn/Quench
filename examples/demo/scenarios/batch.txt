@@ -14,6 +14,7 @@ include assets.txt
 include audio.txt
 include animation.txt
 include raytracing_fallback.txt
+include tunnel_fallback.txt
 include ui.txt
 include compact_portrait.txt
 include compact_landscape.txt
