@@ -350,6 +350,8 @@ a free developer profile can be on a device at a time.
 
 ```sh
 cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id> -DQUENCH_IOS_BUNDLE_ID_SUFFIX=  # empty suffix: paid team only
+# A game with assets (the demo): its merged assets first, see below
+xcodebuild -project build/ios-xcode/Quench.xcodeproj -target quench_demo_assets -configuration Release -sdk iphoneos build
 xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_hello -configuration Release \
     -destination id=<device udid> -allowProvisioningUpdates -allowProvisioningDeviceRegistration build
 DEVICECTL=/Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Resources/bin/devicectl
@@ -359,6 +361,15 @@ $DEVICECTL device process launch --device <udid> --console --terminate-existing 
 $DEVICECTL device copy from --device <udid> --domain-type appDataContainer --domain-identifier org.quench.hello \
     --source "Library/Application Support/Quench/Quench Hello/hello.png" --destination /tmp/hello.png
 ```
+
+In the Xcode build a game's plain and cooked assets are merged into one folder (`<target>_assets`,
+`cmake/StageAssets.cmake`), which Xcode copies into the bundle as a folder reference and signs with it. Xcode decides
+whether to copy that folder when a build starts, before any target of the build runs, so a changed asset merged by a
+build reaches the bundle with the next build; building `<target>_assets` first, in its own `xcodebuild`, brings it in
+the same one (`tools/package_demo.sh` does). Until 2026-11-06 a re-cooked file in a subfolder never reached the
+bundle: the merge rewrote the file but not the folder, and Xcode looks at the folder (the demo ran on the iPhone with
+a mannequin of the old model format, which it rejected). The Xcode build also cooks every asset again in every build
+and copies the whole folder each time (about a second for the demo; not looked into).
 
 The bundle ids are the `BUNDLE_ID` of each target plus `QUENCH_IOS_BUNDLE_ID_SUFFIX`: with the default suffix,
 `org.quench.hello.<login name>`. Team ids are listed in Xcode's accounts, or with

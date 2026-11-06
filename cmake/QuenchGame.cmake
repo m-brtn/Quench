@@ -161,21 +161,24 @@ function(quench_add_game target)
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${arg_ICON})
             list(APPEND _resources ${_xcassets})
         endif()
-        if(arg_COOKED_ASSETS)
-            # One folder reference named assets/: the plain and the cooked assets are merged into it first.
+        if(_asset_dirs)
+            # One folder reference named assets/ (Xcode copies it to the bundle root and signs it): the plain and the
+            # cooked assets are merged into it first, and the folder is touched when a file in it changed
+            # (StageAssets.cmake). Xcode decides whether to copy the folder when a build starts, before any target of
+            # it runs: a change merged by a build reaches the bundle with the next one, or with this one when
+            # <target>_assets is built first (docs/app.md, "iOS runs"; tools/package_demo.sh).
             set(_stage ${_gen}/assets)
             file(MAKE_DIRECTORY ${_stage})
-            set(_copies "")
-            foreach(_dir IN LISTS _asset_dirs)
-                list(APPEND _copies COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${_dir} ${_stage})
-            endforeach()
-            add_custom_target(${target}_assets ${_copies} COMMENT "Merging the assets of ${target}" VERBATIM)
-            add_dependencies(${target}_assets ${arg_COOKED_ASSETS})
+            string(REPLACE ";" "|" _sources "${_asset_dirs}")
+            add_custom_target(${target}_assets
+                COMMAND ${CMAKE_COMMAND} -DSTAGE=${_stage} -DSOURCES=${_sources}
+                        -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/StageAssets.cmake
+                COMMENT "Merging the assets of ${target}" VERBATIM)
+            if(arg_COOKED_ASSETS)
+                add_dependencies(${target}_assets ${arg_COOKED_ASSETS})
+            endif()
             add_dependencies(${target} ${target}_assets)
             list(APPEND _resources ${_stage})
-        elseif(arg_ASSETS)
-            # A directory source becomes a folder reference: Xcode copies it to the bundle root as assets/.
-            list(APPEND _resources ${arg_ASSETS})
         endif()
         if(_resources)
             target_sources(${target} PRIVATE ${_resources})
