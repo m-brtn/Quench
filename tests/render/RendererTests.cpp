@@ -1304,6 +1304,25 @@ QUENCH_TEST(renderer_path_tracer_furnace) {
     scene.setTransform(ball, glm::translate(glm::mat4(1.0f), {0.01f, 0, 0}));
     renderOnce(device, *renderer, scene, view, *target);
     CHECK(renderer->stats().pathSamples == 1, "restarted: %u samples", renderer->stats().pathSamples);
+
+    // So does a new pose of a skinned mesh (behind the camera); the same pose set again does not.
+    const MeshData plane = planeMesh(glm::vec2(0.5f));
+    const std::vector<SkinVertex> skin(plane.vertices.size());
+    Result<MeshId> skinned = scene.addMesh({plane.vertices, plane.indices, "skinned panel", skin, 1});
+    REQUIRE(skinned, "%s", skinned.error().c_str());
+    const InstanceId panel = scene.addInstance({.mesh = *skinned,
+                                                .material = scene.addMaterial({.baseColor = glm::vec4(1.0f)}),
+                                                .transform = glm::translate(glm::mat4(1.0f), {0, 0, 6.0f})});
+    std::array<glm::mat4, 1> pose{glm::mat4(1.0f)};
+    for (int frame = 0; frame < 3; ++frame) {
+        scene.setJointPalette(panel, pose, frame == 0);
+        renderOnce(device, *renderer, scene, view, *target);
+    }
+    CHECK(renderer->stats().pathSamples == 3, "the same pose kept: %u samples", renderer->stats().pathSamples);
+    pose[0] = glm::translate(glm::mat4(1.0f), {0, 0.1f, 0});
+    scene.setJointPalette(panel, pose);
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().pathSamples == 1, "a new pose restarted: %u samples", renderer->stats().pathSamples);
 }
 
 // Ray-traced reflections on a mirror floor: the image of an emissive box (its emissive texture through the hit
@@ -1548,7 +1567,8 @@ QUENCH_TEST(renderer_ray_tracing_refit_and_compaction) {
     const ImageDiff d = compare(refitted, built);
     std::printf("  refitted against built: mean %.3f, %.2f%% over 16\n", d.mean, d.over16 * 100.0);
     CHECK(d.mean < 0.05 && d.over16 == 0.0, "the same shadows: mean %.3f", d.mean);
-    // boxMesh(0.5) is 0.5 m wide: its shadow covers x 2 to 3, z +-0.25 around the box.
+    // The 1 m box between heights 0.5 and 1.5 shadows x 1.5 to 3.5 under the 45 degree sun (x 2 to 3.5 beside it), z
+    // +-0.5 around the box: about 7 pixels across.
     const glm::ivec2 shadow = pixelOf(kTopView, {2.5f, 0, 2.0f}), old = pixelOf(kTopView, {2.5f, 0, 0});
     CHECK(sum(at(refitted, shadow)) * 4 < sum(at(refitted, old)), "the shadow moved with the box: %d vs %d",
           sum(at(refitted, shadow)), sum(at(refitted, old)));
@@ -1568,6 +1588,56 @@ QUENCH_TEST(renderer_ray_tracing_refit_and_compaction) {
           sum(at(after, old)), sum(at(settled, old)));
     CHECK(sum(at(after, shadow)) + 20 > sum(at(settled, shadow)), "lit at once where it was: %d, settled %d",
           sum(at(after, shadow)), sum(at(settled, shadow)));
+}
+
+// The indirect light's furnace: under a uniform sky of radiance 1 whose ambient values are 1 too, the probe grid and
+// the per-pixel rays light an open floor and a sphere on it as the sky's ambient light does (the grid's light has
+// the scale of Environment::skyAmbient); the sphere a little less, as it also sees the darker floor.
+QUENCH_TEST(renderer_indirect_light_furnace) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.indirectLight = IndirectLight::Probes;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "the probe grid: ")) QUENCH_SKIP("no ray tracing: the sky's ambient light");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyZenith = e.skyHorizon = e.skyGround = glm::vec3(1.0f);
+    e.fogColor = glm::vec3(1.0f / 0.85f); // skyRadiance's below-horizon blend
+    e.skyAmbient = e.groundAmbient = glm::vec3(1.0f);
+    scene.setEnvironment(e);
+    const MaterialId white = scene.addMaterial({.baseColor = glm::vec4(0.8f, 0.8f, 0.8f, 1.0f), .roughness = 1.0f});
+    scene.addInstance({.mesh = addMesh(scene, planeMesh(glm::vec2(20.0f))), .material = white});
+    scene.addInstance({.mesh = addMesh(scene, sphereMesh(1.0f)),
+                       .material = white,
+                       .transform = glm::translate(glm::mat4(1.0f), {0, 1.0f, 0})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    View view = lookAt(glm::vec3(0, 3.5f, 6.0f), glm::vec3(0, 0.5f, 0));
+    view.probeCenter = glm::vec3(0, 1.0f, 0);
+    const auto measure = [&](IndirectLight mode) {
+        settings.indirectLight = mode;
+        renderer->setSettings(settings);
+        const std::vector<Rgba8> pixels = settle(device, *renderer, scene, view, *target, 48);
+        const auto mean = [&](glm::vec3 p) {
+            const glm::ivec2 c = pixelOf(view, p);
+            float v = 0.0f;
+            for (int y = -1; y <= 1; ++y)
+                for (int x = -1; x <= 1; ++x) v += sceneValue(at(pixels, c + glm::ivec2(x, y))).g / 9.0f;
+            return v;
+        };
+        return glm::vec2(mean({2.6f, 0, 1.0f}), mean({0, 1.5f, 0.866f}));
+    };
+    const glm::vec2 sky = measure(IndirectLight::Sky), probes = measure(IndirectLight::Probes),
+                    traced = measure(IndirectLight::RayTraced);
+    std::printf("  floor / sphere: sky %.3f %.3f, probes %.3f %.3f, traced %.3f %.3f\n", double(sky.x), double(sky.y),
+                double(probes.x), double(probes.y), double(traced.x), double(traced.y));
+    for (const glm::vec2 v : {probes, traced}) {
+        CHECK(std::abs(v.x / sky.x - 1.0f) < 0.06f, "the open floor as with the sky's light: %.3f vs %.3f", double(v.x),
+              double(sky.x));
+        CHECK(v.y / sky.y > 0.85f && v.y / sky.y < 1.03f, "the sphere about as with the sky's light: %.3f vs %.3f",
+              double(v.y), double(sky.y));
+    }
 }
 
 // The MetalFX denoising upscaler (gpu::Caps::denoisedUpscaling): the raw one-ray shadows and occlusion at half size,

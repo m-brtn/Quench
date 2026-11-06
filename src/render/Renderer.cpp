@@ -1858,7 +1858,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             h.add(c.instance->desc.transform);
             h.add(c.instance->desc.color);
             h.add(c.instance->desc.mesh);
-            h.add(c.instance->posed);
+            for (const glm::mat4& joint : c.instance->palette) h.add(joint);
             h.add(m.baseColor);
             h.add(m.emissive);
             h.add(m.roughness);
