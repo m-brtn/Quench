@@ -85,10 +85,11 @@ public:
 
     Result<void> init(Context& c) override {
         // All of it costs more than a phone's frame at the phone's size (docs/performance.md): where MetalFX scales
-        // up, the section renders at two thirds of the size and MetalFX denoises (its temporal upscaler and the
-        // engine's denoiser where it has no denoising upscaler).
+        // up, the section renders at two thirds of the size with MetalFX's temporal upscaler and the engine's
+        // denoiser. MetalFX's denoising upscaler is a choice in the panel: on the M4 Pro it costs about three times
+        // as much at 1080p.
         if (c.app.device().caps().temporalUpscaling) {
-            settings.upscaling = Upscaling::TemporalDenoised;
+            settings.upscaling = Upscaling::Temporal;
             settings.renderScale = 0.67f;
         }
         m_scene.emplace(c.app.device());

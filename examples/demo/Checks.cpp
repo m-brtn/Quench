@@ -104,10 +104,10 @@ constexpr std::array kItems{
               "of it, and the white block shadows the corner from the lamp. Lamp shadows 0: a plain glow.",
               "set turn_sun 0\nset sun_elevation 6"},
     CheckItem{"raytracing.denoising", "raytracing", "MetalFX denoising",
-              "Native Metal backend, Upscaling MetalFX denoising at 0.67 (the default where MetalFX runs): shadows, "
-              "reflections and indirect light are smooth, without smears behind the walker or the torus; compare "
-              "with MetalFX temporal and the Temporal denoiser.",
-              ""},
+              "Native Metal backend, Upscaling MetalFX denoising at 0.67: shadows, reflections and indirect light are "
+              "smooth, without smears behind the walker or the torus; compare with MetalFX temporal and the Temporal "
+              "denoiser (the default where MetalFX runs) and note the GPU time of both.",
+              "set upscaling denoised"},
     CheckItem{"raytracing.path_tracer", "raytracing", "Path tracer",
               "Native Metal backend: the path tracer settles into a still, noise-free image within a few seconds; "
               "turned off, the real-time image with the probe grid is about as bright.",

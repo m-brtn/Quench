@@ -2,9 +2,11 @@
 # every section, with a reset of each in the first and the third. The first round creates or resets every section (and
 # waits for the assets of those that load some), so that the parts before it in a batch leave no settings behind; after
 # it, switching leaves the scene and the log as they are, the GPU resources within 3 (fences and transfer buffers of the
-# frames and uploads in flight come and go), the memory grows by less than 32 MB (allocator noise; a section that leaked
-# its scene at every switch would be far more), and a reset makes the same section again (the assets section logs its
-# broken and missing model again, on purpose).
+# frames and uploads in flight come and go), and a reset makes the same section again (the assets section logs its
+# broken and missing model again, on purpose). The memory is marked after the second round and grows by less than
+# 32 MB in the third (allocator noise; a section that leaked its scene at every switch would be far more): after the
+# first round alone, the footprint swung between -24 and +47 MB on the native backend, where the ray tracing section's
+# filter histories (about 25 MB by their formats at this size) come and go and the driver hands freed GPU memory back late.
 
 wait 0.1
 section materials
@@ -78,8 +80,8 @@ wait 0.2
 expect d_gpu_resources < 4
 expect d_gpu_resources > -4
 expect d_scene_instances == 0
-expect d_memory_mb < 32
 expect d_log_errors == 0
+mark memory_mb
 section materials
 reset_section
 wait 0.03
