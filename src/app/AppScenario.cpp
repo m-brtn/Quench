@@ -252,7 +252,8 @@ void startPerf(AppState& s, std::string label) {
     s.perf = PerfRegion{.label = std::move(label),
                         .serial = ++s.perfSerial,
                         .thermalStart = s.stats.thermal,
-                        .thermalMax = s.stats.thermal};
+                        .thermalMax = s.stats.thermal,
+                        .processCpuStart = processCpuTime()};
 }
 
 PerfReport finishPerf(AppState& s) {
@@ -284,6 +285,15 @@ PerfReport finishPerf(AppState& s) {
         if (s.fences[i] && s.fencePerf[i] == r.serial) ++inFlight;
     v["perf_gpu_samples"] = double(r.gpuMs.size());
     v["perf_gpu_lost"] = r.timedFrames == 0 ? 0.0 : double(r.timedFrames) - double(r.gpuMs.size() + inFlight);
+    // The process's CPU time per frame and the share of it on performance cores: the frame's CPU times depend on
+    // where the scheduler ran the threads (on the M4 Pro about 4 times longer on efficiency cores at the same work).
+    const std::optional<ProcessCpuTime> processEnd = r.processCpuStart ? processCpuTime() : std::nullopt;
+    const double processMs = processEnd ? processEnd->totalMs - r.processCpuStart->totalMs : 0.0;
+    v["perf_process_cpu"] = processEnd && !r.cpuMs.empty() ? processMs / double(r.cpuMs.size()) : -1.0;
+    v["perf_cpu_performance_share"] =
+        processEnd && processMs > 0.0
+            ? 100.0 * (processEnd->performanceMs - r.processCpuStart->performanceMs) / processMs
+            : -1.0;
     v["perf_thermal_start"] = double(r.thermalStart);
     v["perf_thermal_end"] = double(thermalEnd);
     v["perf_thermal_max"] = double(thermalMax);
@@ -293,14 +303,19 @@ PerfReport finishPerf(AppState& s) {
     if (thermalMax > r.thermalStart && thermalMax > thermalEnd)
         thermal += std::format(" (max {})", thermalStateName(thermalMax));
     std::string details = s.game->perfDetails(s.app);
-    log::info("perf",
-              "{}: {} frames; frame ms avg {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f} max {:.3f}; cpu ms avg "
-              "{:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f}; gpu ms avg {:.3f} min {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} "
-              "({} samples); thermal {}{}{}",
-              r.label, r.frameMs.size(), v["perf_frame_avg"], v["perf_frame_p10"], v["perf_frame_p50"],
-              v["perf_frame_p95"], v["perf_frame_p99"], v["perf_frame_max"], v["perf_cpu_avg"], v["perf_cpu_p50"],
-              v["perf_cpu_p95"], v["perf_cpu_p99"], v["perf_gpu_avg"], v["perf_gpu_min"], v["perf_gpu_p10"],
-              v["perf_gpu_p50"], v["perf_gpu_p95"], r.gpuMs.size(), thermal, details.empty() ? "" : "; ", details);
+    const std::string process = v["perf_process_cpu"] < 0.0
+                                    ? std::string()
+                                    : std::format(", process {:.3f} per frame ({:.0f}% on performance cores)",
+                                                  v["perf_process_cpu"], v["perf_cpu_performance_share"]);
+    log::info(
+        "perf",
+        "{}: {} frames; frame ms avg {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f} max {:.3f}; cpu ms avg "
+        "{:.3f} p50 {:.3f} p95 {:.3f} p99 {:.3f}{}; gpu ms avg {:.3f} min {:.3f} p10 {:.3f} p50 {:.3f} p95 {:.3f} "
+        "({} samples); thermal {}{}{}",
+        r.label, r.frameMs.size(), v["perf_frame_avg"], v["perf_frame_p10"], v["perf_frame_p50"], v["perf_frame_p95"],
+        v["perf_frame_p99"], v["perf_frame_max"], v["perf_cpu_avg"], v["perf_cpu_p50"], v["perf_cpu_p95"],
+        v["perf_cpu_p99"], process, v["perf_gpu_avg"], v["perf_gpu_min"], v["perf_gpu_p10"], v["perf_gpu_p50"],
+        v["perf_gpu_p95"], r.gpuMs.size(), thermal, details.empty() ? "" : "; ", details);
     PerfReport report{.label = r.label,
                       .frames = r.frameMs.size(),
                       .frameAvg = v["perf_frame_avg"],
@@ -317,7 +332,9 @@ PerfReport finishPerf(AppState& s) {
                       .details = std::move(details),
                       .thermalStart = r.thermalStart,
                       .thermalEnd = thermalEnd,
-                      .thermalMax = thermalMax};
+                      .thermalMax = thermalMax,
+                      .processCpu = v["perf_process_cpu"],
+                      .cpuPerformanceShare = v["perf_cpu_performance_share"]};
     if (!r.passMs.empty()) {
         std::string passes;
         for (const auto& [name, ms] : r.passMs) {

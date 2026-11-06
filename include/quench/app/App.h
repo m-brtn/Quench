@@ -99,6 +99,9 @@ struct PerfReport {
     // The thermal state at the start and the end of the region and the highest one read in it.
     ThermalState thermalStart = ThermalState::Unknown, thermalEnd = ThermalState::Unknown,
                  thermalMax = ThermalState::Unknown;
+    // The process's CPU time per frame (all threads) and the percentage of it on performance cores; -1 where unknown
+    // (Apple platforms report them). The frame's CPU times are about 4 times longer on efficiency cores (M4 Pro).
+    double processCpu = -1.0, cpuPerformanceShare = -1.0;
 };
 
 struct WindowRect {

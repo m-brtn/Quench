@@ -243,7 +243,8 @@ on the Mac, `Library/Application Support/Quench/Quench Demo/` in the app's data 
   `problem`, `skipped`), `note`, `backend` and `time` of the mark; `summary`: the count per status.
 - `benchmark.json`: the same run information, `seconds`, `window` (pixels); `sections`, one per section: `section`,
   `frames`, `frame_avg_ms`, `frame_p50_ms`, `frame_p99_ms`, `frame_max_ms`, `cpu_avg_ms`, `cpu_p50_ms`,
-  `cpu_p99_ms`, `gpu_avg_ms`, `gpu_p50_ms`, `gpu_samples`, `pass_p50_ms` (the median per timed GPU range, native
+  `cpu_p99_ms`, `process_cpu_ms` and `cpu_performance_share` (the process's CPU time per frame and its percentage
+  on performance cores; -1 where unknown), `gpu_avg_ms`, `gpu_p50_ms`, `gpu_samples`, `pass_p50_ms` (the median per timed GPU range, native
   Metal backend), `details` (the renderer's state, as on a `perf:` line).
 
 ## About and settings

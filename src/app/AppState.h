@@ -52,6 +52,12 @@ struct ImGuiContextGuard {
     ~ImGuiContextGuard();
 };
 
+// The CPU time of the process's threads, all of it and the part on performance cores (processCpuTime).
+struct ProcessCpuTime {
+    double totalMs = 0.0;
+    double performanceMs = 0.0;
+};
+
 // Frame-time statistics of a scenario's perf_begin .. perf_end region.
 struct PerfRegion {
     std::string label;
@@ -71,6 +77,7 @@ struct PerfRegion {
     std::vector<double> passShare;
     ThermalState thermalStart = ThermalState::Unknown;
     ThermalState thermalMax = ThermalState::Unknown;
+    std::optional<ProcessCpuTime> processCpuStart;
 };
 
 // Multi-frame scenario input (tap, click, touch): what the next frames still have to send.
@@ -197,5 +204,8 @@ Result<void> writeCaptureFile(std::string_view path, std::span<const std::uint8_
 
 // App.cpp: applies the HDR mode and the window's display state to the swapchain and to `output`.
 void updateOutput(AppState& state);
+
+// App.cpp: the CPU time of the process's threads so far (Apple platforms; elsewhere none).
+std::optional<ProcessCpuTime> processCpuTime();
 
 } // namespace quench::app::detail

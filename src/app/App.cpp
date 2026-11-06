@@ -15,6 +15,7 @@
 
 #if QUENCH_PLATFORM_APPLE
 #include <mach/mach.h>
+#include <mach/mach_time.h>
 #endif
 #if QUENCH_PLATFORM_MACOS
 extern "C" void quench_app_prohibit_activation(void); // ActivationApple.m
@@ -165,6 +166,24 @@ std::optional<std::uint64_t> App::memoryFootprint() const {
 }
 
 namespace detail {
+
+std::optional<ProcessCpuTime> processCpuTime() {
+#if QUENCH_PLATFORM_APPLE
+    // Times in Mach absolute time units, as the kernel's thread timers count them.
+    task_power_info_v2_data_t info{};
+    mach_msg_type_number_t count = TASK_POWER_INFO_V2_COUNT;
+    if (task_info(mach_task_self(), TASK_POWER_INFO_V2, reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS)
+        return std::nullopt;
+    mach_timebase_info_data_t timebase{};
+    if (mach_timebase_info(&timebase) != KERN_SUCCESS || timebase.denom == 0) return std::nullopt;
+    const auto ms = [&](std::uint64_t t) { return double(t) * timebase.numer / timebase.denom / 1e6; };
+    return ProcessCpuTime{.totalMs = ms(info.cpu_energy.total_user + info.cpu_energy.total_system),
+                          .performanceMs = ms(info.task_ptime)};
+#else
+    return std::nullopt;
+#endif
+}
+
 namespace {
 
 // ImGui sizes for the display: the content scale (user setting on desktops; 1 offscreen, where no display is

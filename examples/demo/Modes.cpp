@@ -254,6 +254,8 @@ bool DemoGame::writeBenchmark(App& app) {
         s.object["cpu_avg_ms"] = ms(r.cpuAvg);
         s.object["cpu_p50_ms"] = ms(r.cpuP50);
         s.object["cpu_p99_ms"] = ms(r.cpuP99);
+        s.object["process_cpu_ms"] = ms(r.processCpu);
+        s.object["cpu_performance_share"] = ms(r.cpuPerformanceShare);
         s.object["gpu_avg_ms"] = ms(r.gpuAvg);
         s.object["gpu_p50_ms"] = ms(r.gpuP50);
         s.object["gpu_samples"] = json::Value::makeNumber(double(r.gpuSamples));

@@ -71,6 +71,21 @@ of the runs. At today's sizes the CPU time of one run swings by up to two times 
 normally paced runs (one run paced like a 120 Hz display read 0.587 ms, last table). Say in the devlog which numbers
 a claim rests on.
 
+### CPU time and the cores
+
+The frame's CPU time (`cpu ms`) depends on where the scheduler runs the frame thread: on an efficiency core, or on a
+performance core at a low clock, the same work takes several times longer. Since 2026-11-06 (after stage 12) the
+`perf:` line adds the process's CPU time per frame (all threads) and the share of it on performance cores
+(`perf_process_cpu`, `perf_cpu_performance_share`; Apple platforms, from `TASK_POWER_INFO_V2`). The ray tracing
+section offscreen on the M4 Pro (native backend, 1920 x 1080, everything traced, MetalFX denoising at 0.67, the
+same region twice; `proc_pid_rusage` read alongside in a temporary build): 8.6 and 8.5 million instructions per
+frame in both, but 12% on performance cores with CPU p50 1.202 ms, then 97% at 3.44 GHz with CPU p50 0.293 ms.
+Other regions of the same run read 4 to 50% with CPU p50 0.63 to 1.21 ms, and 90% at 1.55 GHz with 0.594 ms. The
+earlier anomalies (CPU p50 0.45 ms in the MetalFX denoising row on the Mac, 0.247 ms against about 1.9 ms on the
+iPhone 17 in the tunnel's MetalFX temporal row) fit this: frames that ran on performance cores, not less work
+(the iPhone's not checked with the share yet). Compare CPU times only at a similar share; the scheduler, not the
+engine, chooses it (the frame thread is the main thread, user-interactive).
+
 ## GPU time per pass
 
 With `gpu::Caps::gpuPassTiming` (the native Metal backend; SDL GPU has no timestamp queries, so it reports false and
@@ -503,11 +518,17 @@ indirect light +4.8 ms (3.6 ms of rays and filter over the probes). Everything t
 engine's denoiser. MetalFX's denoising upscaler costs 6.2 ms at 0.67 and 4.3 ms at 0.5 (it replaces the engine's
 denoiser, 1.7 ms here, and TAA): on the M4 Pro it is the dearest way to the same frame, so the demo's default is
 MetalFX temporal with the engine's denoiser (the MetalFX denoising row at 0.67 also read 2.9 ms of `bloom` against
-0.2 ms elsewhere and 0.45 ms of CPU p50; cause not examined, the row at 0.5 is clean). MetalFX temporal costs 1.25 to 1.76 ms at a 1080p output, spatial 0.39 ms. The path tracer takes 10.9 ms
+0.2 ms elsewhere and 0.45 ms of CPU p50, the row at 0.5 clean. Offscreen after stage 12, three regions of MetalFX
+denoising at 0.67 read `bloom` 0.231 and 0.317 ms, `upscale` 6.29 to 7.50 ms: not reproduced there; the run above
+was in a window, with the GPU times of that day's code, which repeated samples. The CPU p50 is the scheduler's:
+[CPU time and the cores](#cpu-time-and-the-cores)). MetalFX temporal costs 1.25 to 1.76 ms at a 1080p output, spatial 0.39 ms. The path tracer takes 10.9 ms
 per frame. The temporal denoiser also filtered hard shadows without occlusion (0.82 ms in `rt_hard_shadows`); it no
 longer does (`19d9a6f`, not measured again). The frame's GPU time (its command buffer's start to end) is not in the
 table: unpaced, it is longer than the busy ranges in the heavier regions (6.34 against 4.21 ms in the base, 19.4
-against 11.1 ms with everything), gaps while frames queue, not examined.
+against 11.1 ms with everything). The frame interval there was 10.57 ms (380 frames in 4 s), shorter than the span of
+19.4 ms: the GPU starts a command buffer while the one before it still runs, so a span includes time the GPU spent
+on the frame before (offscreen, three frames in flight, the same: [The benchmark](#the-benchmark)). The busy times
+per range are the costs.
 
 **SDL GPU before and after** (the 5 % rule): `db5f4cd` (stage 10's code with the quick-tier change, its Release
 binaries in `/tmp/quench-base`) against the stage 11 tree, interleaved, vsync at 60 Hz, medians of the runs:

@@ -22,6 +22,10 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   slower in such frames than before stage 12 (unpaced, M4 Pro); with it within 0.6 %
   ([Performance](../performance.md#the-tunnel)).
 - `RenderStats::localShadowChanges`: the lights that took another light's ray-traced shadow channel this frame.
+- Perf regions report the process's CPU time per frame and the share of it on performance cores (Apple platforms;
+  `perf_process_cpu`, `perf_cpu_performance_share`, on the `perf:` line and in the demo's `benchmark.json`): the
+  frame's CPU time read 0.29 or 1.2 ms for the same work on the M4 Pro, by where the scheduler ran it
+  ([Performance](../performance.md#cpu-time-and-the-cores)).
 - The renderer's `accel` timing range has two ranges inside it: `blas` (the bottom levels' builds, refits and
   compactions; absent in a frame without them) and `tlas` (the top level's build or refit).
 - Offscreen perf regions also time GPU-bound frames on the GPU (before, they had no GPU sample and no times per
@@ -74,6 +78,8 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   in that entry, for code of its own around area lights or anisotropy. Without it nothing changes.
 - **`app::PerfReport::gpuSamples`** (and the perf line's sample count) is the number of frames whose GPU time was
   read, a few less than `frames` (the frames in flight at the end), where it equalled `frames` before; GPU times of
-  a region come only from its own frames.
+  a region come only from its own frames. **`PerfReport::processCpu`** and **`cpuPerformanceShare`** are new, at its
+  end. The `perf:` line has `, process <ms> per frame (<n>% on performance cores)` after the CPU percentiles on
+  Apple platforms: a parser of the line that expects `; gpu ms` right after `p99 <ms>` needs to allow it.
 - No new dependency library: the LTC data is code and a table in `quench_render` (BSD-2-Clause, with the paper
   reference its licence asks for).
