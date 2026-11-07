@@ -18,6 +18,20 @@ sample, the engine demo (finished in stage 10, with a tour, a check mode and a b
 game template. Where a document describes something planned, it says so. [Migration](migration.md) describes the
 engine code in the two games, what has moved and what is not moved yet.
 
+It has run on a Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator and on two iPhones (device tests and
+benchmarks; ray tracing, the area lights, ASTC textures and asset hot reload on one of them only, where the demo's
+ray tracing section was tried by hand; nobody has looked at the area lights on a phone yet); what ran where, per
+platform: [Platforms](platforms.md).
+
+Stack: SDL3, SDL GPU (Metal) and Metal directly, HLSL shaders compiled at build time (glslang; DXC for ray queries),
+Jolt Physics, Dear ImGui, GLM, enkiTS, meshoptimizer, fastgltf and astc-encoder (build time), miniaudio,
+ozz-animation; pins and licences: [Dependencies](dependencies.md).
+
+Building and testing: the commands of every preset (debug, release, the sanitizers, headless, iOS, WebAssembly under
+Node.js) and the gates are in [AGENTS.md](../AGENTS.md), "Build and test"; a new game starts with
+`python3 tools/new_game.py "My Game" ../my-game` ([App shell](app.md)). The screenshots of the top-level README are
+in `images/`.
+
 | Document | Contents |
 |---|---|
 | [Architecture](architecture.md) | Modules and targets, the graphics layer and its backends (SDL GPU, native Metal), GPU timestamps per pass, the ray tracing design, rendering, shaders, main loop, files, threads, assets, audio, animation |

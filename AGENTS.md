@@ -504,8 +504,8 @@ LFS only when unavoidable and keep it small.
 - Commit and push only when the user asks. Small, focused commits with a descriptive English message (imperative
   subject line, body with what was verified).
 - Commit only after the gates above pass; mention the verified numbers in the devlog.
-- Do not commit build output, captures or local files (`build/`, `dist/`, `*.bmp`, `*.png` outside `tests/golden/`
-  and asset folders, `imgui.ini`, `compile_commands.json`).
+- Do not commit build output, captures or local files (`build/`, `dist/`, `*.bmp`, `*.png` outside `tests/golden/`,
+  `docs/images/` (a few small README screenshots) and asset folders, `imgui.ini`, `compile_commands.json`).
 - Never commit secrets (API keys live only in the environment).
 - Never write personal identifiers into repository files, commit messages or tag and release texts: the user's name,
   Apple ID emails, Apple team IDs, certificate IDs, device UDIDs or device names (user decision, 2026-11-05). They go
@@ -582,6 +582,7 @@ tests/                 harness/, core/ (job system included), physics/, assets/,
 docs/                  documentation (index docs/README.md): architecture, app shell, jobs, assets and the cook,
                        audio, animation, render module, engine demo, performance, platforms, dependencies,
                        migration, roadmap, releases/
+docs/images/           the README's screenshots (a few small JPEG files from the demo, each under about 300 KB)
 dist/                  demo packages from tools/package_demo.sh (not committed)
 devlog/                daily development log (template in devlog/README.md)
 .clang-format          code format; .editorconfig for editors
