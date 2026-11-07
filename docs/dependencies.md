@@ -373,13 +373,64 @@ Checked in the 1.6.0 source and in the tests:
   every writer and reader of tile and layer data uses it. The layer header is 56 bytes either way, so cooked
   layers keep their size.
 
+## Added for profiling
+
+Tracy ([Performance](performance.md#profiling-with-tracy)), 2026-11-07, in `cmake/QuenchTracy.cmake`. Fetched only
+with `QUENCH_TRACY` (off by default; the `profile` preset): other builds download, compile and link none of it.
+Listed in `THIRD_PARTY_LICENSES`: Tracy with the libraries shipped (in profile builds only), its tools' libraries
+with the build-time tools.
+
+| Library | Version | Commit | Licence | Linked into | Purpose |
+|---|---|---|---|---|---|
+| Tracy (wolfpld/tracy) | 0.15.0 (2026-11-05) | `f2a4f2529e7e71844c9e434b877770a21ecf7587`, SHA256 `12e847c3a50e4dba3f7d05d3b0abce4c8d635fec979b6ba9395ce8e863d96dec` | BSD-3-Clause (`LICENSE`); in the client's sources: rpmalloc (public domain), libbacktrace (BSD-3-Clause), LZ4 (BSD-2-Clause), moodycamel's ConcurrentQueue (BSD-2-Clause), SPSCQueue (MIT) | `quench_core` (`quench_tracy`: the client) with `QUENCH_TRACY`; `tracy-capture` and `tracy-csvexport` (the server library) | zones, GPU zones, plots, messages; recording and exporting captures without the GUI |
+| capstone | 6.0.0-Alpha11 | `b2bf6327b5c7dc43829130b7ccdb02ef9a65a990`, SHA256 `f0f4c867df07b2d15fb5165e891a79bfa92b8098434b43a837d70f12b7b88cd9` | BSD-3-Clause (`LICENSE.TXT`; its LLVM-derived parts under the University of Illinois/NCSA licence, `LICENSES/`) | `tracy-capture`, `tracy-csvexport` only | Tracy's server disassembles sampled code with it (the tools link it; captures here have no samples) |
+| Zstandard | 1.5.7 | `f8745da6ff1ad1e7bab384bd1f9d742439278e99`, SHA256 `4b0bd1f0cfb25e61b9103c35f27395530ff5b4c0d2513a00fd745849e85ea52c` | BSD-3-Clause (`LICENSE`; dual with GPLv2, BSD chosen) | `tracy-capture`, `tracy-csvexport` only | the compression of `.tracy` files |
+| PPQSort | 1.0.6 | `21c5a20ca3daf572caaf0a8522db32e27e28fa1d`, SHA256 `b9b3a1b226bc19fffac2d080d1775b5350573856a61893e444f5ffa7cc982242` | MIT (`LICENSE`) | `tracy-capture`, `tracy-csvexport` only (header-only) | the server's parallel sort |
+
+How it is built: Tracy's own CMake builds the client as a library with options of its own and its tools with
+CPM, which fetches their dependencies by tag without a hash. The engine fetches Tracy's archive without it
+(`SOURCE_SUBDIR no-cmake`) and builds `public/TracyClient.cpp` (one translation unit, as upstream recommends) into
+`quench_tracy` with `TRACY_ENABLE` and `TRACY_ON_DEMAND`, plus `TRACY_ONLY_LOCALHOST` on desktops and
+`TRACY_NO_BROADCAST` on iOS and Android, without warnings (`-w`, third-party code). The tools (`QUENCH_TRACY_TOOLS`,
+on in host builds with `QUENCH_TRACY`, off when cross-compiling) are Tracy's server sources as its
+`cmake/server.cmake` lists them, with statistics, and `capture/` and `csvexport/`, against the versions its
+`cmake/vendor.cmake` names, pinned above by commit and hash. PPQSort gets the two changes Tracy's CPM call makes
+(`cmake/patches/TracyPpqsort.cmake`: no `<bitset>` include in debug builds, a counting semaphore instead of a binary
+one); capstone gets the architectures Tracy's build keeps (ARM, AArch64, x86, without AT&T syntax). The first
+configure of the `profile` preset downloads the four archives (33 MB, Tracy's 21 MB of it). `libquench_tracy.a`
+is 381,472 bytes; the demo's stripped program grows by 314,480 bytes with `QUENCH_TRACY` and by 208 bytes without
+it (the job names). Neither game uses it.
+
+Checked in the 0.15.0 source:
+
+- **Metal**: `public/tracy/TracyMetal.hmm` times command encoders (a zone around the creation of an encoder, its
+  name fixed at compile time, two timestamp buffers of 4096 queries it allocates itself, ARC required). The engine
+  does not use it: its native backend already samples every encoder for its own pass timing (one sample buffer per
+  command buffer), and a range there spans several encoders. It sends those timestamps to Tracy through the C API's
+  GPU calls instead (`___tracy_emit_gpu_new_context_serial` with `GpuContextType::Metal`, zones with names
+  allocated at run time, `___tracy_emit_gpu_time_serial`), in `src/core/Profile.cpp`.
+- **Vulkan**: `TracyVulkan.hpp` (timestamp queries; calibrated with `VK_EXT_calibrated_timestamps` where present);
+  also Direct3D 11 and 12, OpenGL, OpenCL, CUDA and WebGPU (`TracyWebGPU.hpp`). Not used: SDL GPU does not expose
+  its command buffers' native handles.
+- **On demand**: `TRACY_ON_DEMAND`. Unconnected, a zone checks one flag; the program announces itself by UDP
+  broadcast every 3 s unless `TRACY_NO_BROADCAST`. `TRACY_PORT` (the environment variable) fixes the port. Frames
+  before the connection are counted but not recorded; on every connection the client sends again what it deferred
+  (GPU contexts and their names among it).
+- **Fibers**: `TRACY_FIBERS` with `TracyFiberEnter` and `TracyFiberLeave` (opt-in, it costs every zone). Not
+  enabled: the job system runs jobs on threads, not fibers.
+- **Emscripten**: not a documented target; the client has a few `__EMSCRIPTEN__` checks (thread names, no
+  rpmalloc), and it needs threads and TCP sockets, which a browser does not give it. `QUENCH_TRACY` is forced off in
+  WebAssembly builds. (Tracy's GUI has a web build, a viewer of saved captures.)
+- On macOS `tracy-capture` started before the program listens fails at once ("disconnected during the initial
+  connection handshake", exit code 3); `tools/tracy_capture.py` starts it again until it connects. Tracy's GUI of
+  0.14.1 refuses 0.15.0 captures (`UnsupportedVersion` for a newer file).
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.
 
 | Library | Latest release | Licence | Planned use |
 |---|---|---|---|
-| Tracy | 0.14.1 (2026-08-22) | BSD-3-Clause | CPU and GPU profiler (development builds) |
 | Flecs | 4.2.0 (2026-11-04) | MIT | optional ECS module for games that want one |
 
 Already pinned and kept: Dear ImGui (diagnostics). miniaudio was pinned with stage 7 (above); Vorbis decoding

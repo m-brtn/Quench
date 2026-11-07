@@ -35,9 +35,23 @@ if(EMSCRIPTEN)
     # SDL GPU has no WebGPU backend in the pinned SDL.
     set(QUENCH_HEADLESS ON CACHE BOOL "" FORCE)
 endif()
+# Tracy profiling (cmake/QuenchTracy.cmake, docs/performance.md): its client in the engine and the QUENCH_PROFILE_*
+# macros of include/quench/core/Profile.h, which compile to nothing when it is off.
+option(QUENCH_TRACY "Profile with Tracy (its on-demand client in the engine)" OFF)
+option(QUENCH_TRACY_MEMORY "With QUENCH_TRACY: Tracy tracks allocations through operator new and delete" OFF)
+if(EMSCRIPTEN AND QUENCH_TRACY)
+    message(STATUS "QUENCH_TRACY is off in WebAssembly builds: Tracy's client needs threads and TCP sockets")
+    set(QUENCH_TRACY OFF CACHE BOOL "" FORCE)
+endif()
+include(CMakeDependentOption)
+cmake_dependent_option(QUENCH_TRACY_TOOLS "With QUENCH_TRACY: build tracy-capture and tracy-csvexport" ON
+                       "QUENCH_TRACY;NOT CMAKE_CROSSCOMPILING" OFF)
 
 include(cmake/QuenchTargets.cmake)
 include(cmake/Dependencies.cmake)
+if(QUENCH_TRACY)
+    include(cmake/QuenchTracy.cmake)
+endif()
 include(cmake/QuenchShaders.cmake)
 include(cmake/QuenchGame.cmake)
 
@@ -54,6 +68,14 @@ add_library(quench_core STATIC
     src/core/Thread.cpp)
 quench_configure_target(quench_core)
 target_link_libraries(quench_core PRIVATE quench_enkits)
+if(QUENCH_TRACY)
+    target_sources(quench_core PRIVATE src/core/Profile.cpp)
+    target_compile_definitions(quench_core PUBLIC QUENCH_TRACY=1)
+    target_link_libraries(quench_core PUBLIC quench_tracy)
+    if(QUENCH_TRACY_MEMORY)
+        target_compile_definitions(quench_core PRIVATE QUENCH_TRACY_MEMORY=1)
+    endif()
+endif()
 if(QUENCH_ASSERTS STREQUAL "ON")
     target_compile_definitions(quench_core PUBLIC QUENCH_ENABLE_ASSERTS=1)
 elseif(QUENCH_ASSERTS STREQUAL "OFF")

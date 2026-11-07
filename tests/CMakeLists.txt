@@ -41,6 +41,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             core/JobsTests.cpp
             core/JsonTests.cpp
             core/LogTests.cpp
+            core/ProfileTests.cpp
             core/ResultTests.cpp
             core/ThreadTests.cpp
             physics/PhysicsWorldTests.cpp
@@ -148,6 +149,7 @@ quench_add_test_executable(quench_core_tests PREFIX core LABEL core
         core/JobsTests.cpp
         core/JsonTests.cpp
         core/LogTests.cpp
+        core/ProfileTests.cpp
         core/ResultTests.cpp
         core/ThreadTests.cpp
     LIBS quench_core)
