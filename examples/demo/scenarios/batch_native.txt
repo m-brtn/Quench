@@ -37,4 +37,5 @@ include animation_blendshapes.txt
 include heat.txt
 include raytracing_mirror.txt
 include raytracing_probes.txt
+include assets_basis.txt
 quit

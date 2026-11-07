@@ -1,0 +1,30 @@
+# Basis Universal tiles (ctest: demo_assets_basis_<backend>, a part of the batches; no capture): the streaming tiles
+# switch to the Basis Universal sets (cooked with TEXTURE_FORMAT basis: ETC1S, then UASTC). They load, are transcoded
+# on the loading jobs to a block format the device samples (none is decoded to RGBA8 on the Mac's backends: BC7 or
+# ASTC there, ETC2 for ETC1S on the native backend) and nothing new fails (the broken and the missing model stay the
+# two failed assets); then the platform's set comes back.
+section assets
+reset_section
+set latency 0
+set move_focus 0
+until assets_idle == 1 5
+expect tile_set == 0
+expect tiles_basis == 0
+expect assets_failed == 2
+set tile_set etc1s
+expect tile_set == 1
+until tiles_basis >= 4 5
+until assets_idle == 1 5
+expect tiles_decoded == 0
+expect assets_failed == 2
+set tile_set uastc
+expect tile_set == 2
+until tiles_basis >= 4 5
+until assets_idle == 1 5
+expect tiles_decoded == 0
+expect assets_failed == 2
+set tile_set platform
+until assets_idle == 1 5
+expect tile_set == 0
+expect tiles_basis == 0
+expect assets_failed == 2

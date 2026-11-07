@@ -3,8 +3,10 @@
 // load states: gray placeholder boxes while loading (a simulated latency makes them visible), magenta boxes for a
 // broken and a missing file. Behind it a grid of tiles streams around a moving focus point (assets::StreamingGrid),
 // each tile with one of eight textures and a model: cells that come near load, cells left behind release their assets
-// to the cache, which evicts the least recently used ones over the texture budget. Reload swaps new data in under the
-// same handles; with hot reload on, files changed on disk (re-cooked by the build) are loaded again.
+// to the cache, which evicts the least recently used ones over the texture budget. The tiles' textures come from the
+// platform's set (BC7, ASTC 4x4 on iOS) or from one of two Basis Universal sets (ETC1S, UASTC), transcoded on the
+// loading jobs to what the device samples. Reload swaps new data in under the same handles; with hot reload on, files
+// changed on disk (re-cooked by the build) are loaded again.
 
 #include "Demo.h"
 
@@ -25,6 +27,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace demo {
 namespace {
@@ -47,6 +50,14 @@ constexpr std::array<ShowcaseEntry, 5> kShowcase{{{"models/crate.qmodel", "crate
                                                   {"models/missing.qmodel", "missing"}}};
 constexpr std::array<const char*, 3> kCellModels{"models/crate.qmodel", "models/pillar.qmodel", "models/ball.qmodel"};
 constexpr int kTileTextures = 8;
+struct TileSet {
+    const char* name;  // the menu's and the scenario's
+    const char* label; // the panel's
+    const char* directory;
+};
+constexpr std::array<TileSet, 3> kTileSets{{{"platform", "Platform's", "tiles"},
+                                            {"etc1s", "Basis ETC1S", "tiles_etc1s"},
+                                            {"uastc", "Basis UASTC", "tiles_uastc"}}};
 constexpr float kCellSize = 3.0f;
 constexpr int kCellsX = 6;
 constexpr int kCellsZ = 5;
@@ -87,7 +98,8 @@ public:
     std::string_view about() const override {
         return "Cooked glTF models and KTX2 textures loading on jobs: gray boxes while loading, magenta for a broken "
                "and a missing file. Behind them tiles stream around the orange focus; left cells go to the cache, "
-               "which evicts over its texture budget.";
+               "which evicts over its texture budget. The tiles can come from Basis Universal files, transcoded at "
+               "load time to what the device samples.";
     }
 
     Result<void> init(Context& c) override {
@@ -188,10 +200,17 @@ public:
         ImGui::SameLine();
         bool showcase = m_showShowcase;
         if (ImGui::Checkbox("Models", &showcase)) setShowcase(showcase);
+        if (ImGui::BeginCombo("Tile textures", kTileSets[std::size_t(m_tileSet)].label)) {
+            for (std::size_t i = 0; i < kTileSets.size(); ++i)
+                if (ImGui::Selectable(kTileSets[i].label, int(i) == m_tileSet)) setTileSet(int(i));
+            ImGui::EndCombo();
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", tileFormatText(!c.app.deterministic()).c_str());
+        ImGui::PopStyleColor();
         if (ImGui::Checkbox("Hot reload", &m_hotReload)) manager.setHotReload(m_hotReload);
         ImGui::SameLine();
         if (ImGui::Button("Reload all")) reloadAll(manager);
-        ImGui::TextDisabled("BC7 %s", m_assets->bcTextures() ? "sampled" : "decoded on load");
         if (m_hotReload)
             ImGui::TextWrapped("Edit examples/demo/assets_src, rebuild quench_demo_assets: changed files reload "
                                "(on an iPhone, a development build: push them with tools/push_assets.sh).");
@@ -290,6 +309,16 @@ public:
                 if (m_assets->model(m_showcase[i]).state() == wanted) ++n;
             return double(n);
         }
+        if (name == "tile_set") return double(m_tileSet);
+        if (name == "tiles_basis" || name == "tiles_decoded") {
+            // Ready tile textures from a Basis Universal file, or decoded to RGBA8 on the CPU.
+            int n = 0;
+            for (const TileTexture& tile : m_tiles)
+                if (tile.texture.ready() &&
+                    (name == "tiles_basis" ? tile.texture->basisCodec().has_value() : tile.texture->decodedOnCpu()))
+                    ++n;
+            return double(n);
+        }
         if (name == "streaming_active") return double(m_grid->stats().active);
         if (name == "streaming_loads") return double(m_grid->stats().loads);
         if (name == "streaming_unloads") return double(m_grid->stats().unloads);
@@ -328,6 +357,11 @@ public:
         } else if (name == "hot_reload" && flag) {
             m_hotReload = *flag;
             manager.setHotReload(m_hotReload);
+        } else if (name == "tile_set") {
+            const auto found = std::find_if(kTileSets.begin(), kTileSets.end(),
+                                            [value](const TileSet& set) { return set.name == value; });
+            if (found == kTileSets.end()) return false;
+            setTileSet(int(found - kTileSets.begin()));
         } else {
             return false;
         }
@@ -396,6 +430,40 @@ private:
             removeShowcase();
     }
 
+    // The cells load again with the other set's textures; the old ones go to the cache.
+    void setTileSet(int set) {
+        if (set == m_tileSet) return;
+        clearCells();
+        m_tileSet = set;
+        updateStreaming();
+    }
+
+    // What the tiles' files became on this device: the format, how (sampled as cooked, decoded, transcoded from a
+    // Basis Universal codec) and the median time of reading a file on its job (the first Basis file of a run also
+    // starts the transcoder).
+    std::string tileFormatText(bool withTime) const {
+        const TextureAsset* first = nullptr;
+        std::vector<double> ms;
+        for (const TileTexture& tile : m_tiles)
+            if (tile.texture.ready()) {
+                if (!first) first = &*tile.texture;
+                ms.push_back(tile.texture->decodeMilliseconds());
+            }
+        if (!first) return "Tiles: loading";
+        const char* format = assets::pixelFormatInfo(first->format()).name;
+        std::string text;
+        if (const std::optional<assets::BasisCodec> codec = first->basisCodec())
+            text = std::format("Tiles: {} transcoded to {}", *codec == assets::BasisCodec::Uastc ? "UASTC" : "ETC1S",
+                               format);
+        else
+            text = std::format("Tiles: {}{}", format, first->decodedOnCpu() ? " (decoded on load)" : "");
+        if (withTime) {
+            std::nth_element(ms.begin(), ms.begin() + std::ptrdiff_t(ms.size() / 2), ms.end());
+            text += std::format(", {:.2f} ms per file", ms[ms.size() / 2]);
+        }
+        return text;
+    }
+
     // Reloads every asset in use (the row, the cells, their textures); unchanged files give the same pictures.
     void reloadAll(AssetManager& manager) {
         manager.forEach([&](const assets::Asset& asset) {
@@ -414,7 +482,8 @@ private:
         TileTexture& tile = m_tiles[std::size_t(t)];
         if (tile.users++ == 0) {
             // The texture handle is valid at once (white until the pixels arrive): the material is made now.
-            tile.texture = m_assets->loadTexture(std::format("tiles/tile_{}.ktx2", t), cell.distance);
+            tile.texture = m_assets->loadTexture(
+                std::format("{}/tile_{}.ktx2", kTileSets[std::size_t(m_tileSet)].directory, t), cell.distance);
             MaterialDesc desc{.roughness = 0.85f, .name = "tile"};
             desc.textures[0] = tile.texture->texture();
             tile.material = m_scene->addMaterial(desc);
@@ -463,6 +532,7 @@ private:
     float m_latency = 0.4f;
     int m_textureBudget = 1;
     int m_uploadBudget = 0;
+    int m_tileSet = 0;
     bool m_hotReload = false;
     bool m_showShowcase = true;
     bool m_moveFocus = true;

@@ -36,5 +36,6 @@ include raytracing_maps.txt
 include raytracing_screen.txt
 include tunnel_maps.txt
 include heat.txt
+include assets_basis.txt
 include cycle.txt
 quit

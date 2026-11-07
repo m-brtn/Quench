@@ -6,6 +6,24 @@ quench_cook_assets(quench_demo_cooked
         tiles/tile_4.png tiles/tile_5.png tiles/tile_6.png tiles/tile_7.png
     MODELS
         models/ball.gltf models/crate.gltf models/pillar.glb)
+# The same tiles as Basis Universal files for every device (the section's "Tile textures"): tiles_etc1s/ and
+# tiles_uastc/, copied at build time from assets_src (so that hot reload sees an edited tile) and cooked once per codec.
+set(demo_basis_dir ${CMAKE_CURRENT_BINARY_DIR}/basis_src)
+foreach(codec etc1s uastc)
+    set(demo_basis_tiles)
+    foreach(i RANGE 7)
+        add_custom_command(
+            OUTPUT ${demo_basis_dir}/tiles_${codec}/tile_${i}.png
+            COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/tiles/tile_${i}.png
+                    ${demo_basis_dir}/tiles_${codec}/tile_${i}.png
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/assets_src/tiles/tile_${i}.png
+            VERBATIM)
+        list(APPEND demo_basis_tiles tiles_${codec}/tile_${i}.png)
+    endforeach()
+    quench_cook_assets(quench_demo_basis_${codec} SOURCE_DIR ${demo_basis_dir}
+        TEXTURES ${demo_basis_tiles}
+        TEXTURE_FORMAT basis BASIS_CODEC ${codec})
+endforeach()
 
 # The Audio section's sounds: procedural WAV files written at build time (tools/assets/make_demo_sounds.py), checked
 # and copied by quench_cook into the demo's assets/sounds.
@@ -114,8 +132,9 @@ quench_add_game(quench_demo
     ICON icon/icon.png
     ORIENTATIONS all
     ASSETS assets
-    COOKED_ASSETS quench_demo_cooked quench_demo_sounds quench_demo_character quench_demo_strider
-                  quench_demo_retargeted quench_demo_blob quench_demo_tunnel quench_demo_licences
+    COOKED_ASSETS quench_demo_cooked quench_demo_basis_etc1s quench_demo_basis_uastc quench_demo_sounds
+                  quench_demo_character quench_demo_strider quench_demo_retargeted quench_demo_blob
+                  quench_demo_tunnel quench_demo_licences
     SOURCES
         Camera.cpp
         Checks.cpp

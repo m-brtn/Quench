@@ -53,6 +53,11 @@ constexpr std::array kItems{
               "Gray boxes while loading, then three models; the broken and the missing one stay magenta. Tiles load "
               "and unload around the orange focus inside the rings.",
               ""},
+    CheckItem{"assets.basis", "assets", "Basis Universal tiles",
+              "Switch Tile textures to Basis Universal ETC1S, then UASTC: the tiles keep their pictures (ETC1S a bit "
+              "blockier, UASTC like the platform's set), and the line under it names the format they were "
+              "transcoded to (on the iPhone ASTC, or ETC2 for ETC1S on the native backend).",
+              "set tile_set etc1s"},
     CheckItem{"audio.panning", "audio", "3D panning",
               "Listen: the orange emitter circling the head moves from ear to ear; turn the camera and the sides "
               "follow. The meter's left and right levels move with it.",
