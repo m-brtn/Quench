@@ -840,6 +840,52 @@ QUENCH_TEST(renderer_skins_on_the_gpu) {
     CHECK(isRed(at(pixels, pixelOf(view, moved))), "posed back into view from 20 m away");
 }
 
+// A palette that does not change (a held animation) is not skinned again: the vertices are copied from the previous
+// frame's, and the image is the same as with skinning.
+QUENCH_TEST(renderer_reuses_unchanged_skins) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, plainSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const SkinnedBars bars = skinnedBars();
+    Result<MeshId> mesh = scene.addMesh(bars.desc());
+    REQUIRE(mesh, "%s", mesh.error().c_str());
+    const MaterialId red = scene.addMaterial({.baseColor = glm::vec4(0.8f, 0.05f, 0.05f, 1.0f)});
+    // A second instance, added first: hidden in one frame, it can move the other's range in the skinned buffer.
+    const InstanceId other = scene.addInstance(
+        {.mesh = *mesh, .material = red, .transform = glm::translate(glm::mat4(1.0f), {-1.5f, 0.0f, 0.0f})});
+    const InstanceId instance = scene.addInstance({.mesh = *mesh, .material = red});
+    addSun(scene, glm::vec3(-0.3f, -1.0f, -0.5f));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0.75f, 1.0f, 6.0f), glm::vec3(0.75f, 1.0f, 0.0f));
+    const std::array<glm::mat4, 2> palette{glm::mat4(1.0f), glm::translate(glm::mat4(1.0f), {1.5f, -1.0f, 0.0f})};
+    const std::array<glm::mat4, 2> otherPalette{glm::mat4(1.0f), glm::translate(glm::mat4(1.0f), {0.0f, 0.3f, 0.0f})};
+
+    scene.setJointPalette(instance, palette);
+    scene.setJointPalette(other, otherPalette);
+    const std::vector<Rgba8> skinned = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().skinnedInstances == 2 && renderer->stats().skinnedReused == 0,
+          "first frame: %u skinned, %u reused", renderer->stats().skinnedInstances, renderer->stats().skinnedReused);
+    for (int frame = 0; frame < 3; ++frame) {
+        scene.setJointPalette(instance, palette); // the same matrices: no change
+        scene.setVisible(other, frame != 1);
+        const std::vector<Rgba8> held = renderOnce(device, *renderer, scene, view, *target);
+        const std::uint32_t expected = frame == 0 ? 2u : 1u;
+        CHECK(renderer->stats().skinnedReused == expected, "frame %d: %u reused, expected %u", frame,
+              renderer->stats().skinnedReused, expected);
+        const bool same = std::equal(held.begin(), held.end(), skinned.begin(), skinned.end(),
+                                     [](Rgba8 x, Rgba8 y) { return std::memcmp(&x, &y, sizeof(Rgba8)) == 0; });
+        if (frame != 1) CHECK(same, "frame %d: the same image as when skinned", frame);
+        CHECK(renderer->stats().movedInstances == 0, "frame %d: an unchanged pose has no motion", frame);
+    }
+    const std::array<glm::mat4, 2> changed{glm::mat4(1.0f), glm::translate(glm::mat4(1.0f), {1.4f, -1.0f, 0.0f})};
+    scene.setJointPalette(instance, changed);
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().skinnedReused == 1, "a changed palette is skinned again (the other one is reused): %u",
+          renderer->stats().skinnedReused);
+}
+
 QUENCH_TEST(renderer_skinned_motion_vectors) {
     QUENCH_GPU_DEVICE(device);
     RenderSettings settings = plainSettings();

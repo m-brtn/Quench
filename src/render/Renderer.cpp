@@ -160,6 +160,8 @@ struct SkinJob {
     const MeshEntry* mesh = nullptr;
     std::uint32_t firstJoint = 0;
     std::uint32_t offset = 0; // first vertex in the skinned vertex buffer
+    // The palette has not changed since the instance was skinned last frame at this offset: copied from there.
+    std::uint32_t reuseFrom = kNotSkinned;
 };
 
 struct Item {
@@ -310,7 +312,8 @@ struct RendererImpl {
     std::vector<SkinJob> skinJobs;
     std::vector<std::uint32_t> skinnedOffsets; // per instance slot; kNotSkinned
     std::uint32_t skinnedVertices = 0;
-    std::vector<gpu::Fence> skinFences; // oldest first
+    std::uint32_t skinnedReusedCount = 0; // of the last skin(): jobs copied from the previous frame
+    std::vector<gpu::Fence> skinFences;   // oldest first
     float skinningGpuMs = -1.0f;
 
     // Ray tracing (the RayTraced effects, the probe grid and the path tracer)
@@ -1114,7 +1117,10 @@ std::uint32_t RendererImpl::skinnedOffset(const InstanceEntry& inst, std::uint32
     if (offset != kNotSkinned) return offset;
     offset = skinnedVertices;
     skinnedVertices += mesh.vertexCount;
-    skinJobs.push_back({&mesh, std::uint32_t(paletteData.size() / 3), offset});
+    const bool unchanged = !inst.posed && inst.skinnedFrame != ~0ull && inst.skinnedFrame + 1 == frameIndex &&
+                           inst.palette.size() == mesh.jointCount;
+    skinJobs.push_back(
+        {&mesh, std::uint32_t(paletteData.size() / 3), offset, unchanged ? inst.skinnedOffset : kNotSkinned});
     const auto row = [](const glm::mat4& m, int r) { return glm::vec4(m[0][r], m[1][r], m[2][r], m[3][r]); };
     if (inst.palette.size() == mesh.jointCount) {
         for (const glm::mat4& m : inst.palette)
@@ -1142,6 +1148,7 @@ bool RendererImpl::skin(gpu::CommandBuffer& commands) {
         skinFences.erase(skinFences.begin());
     }
     skinnedReset = false;
+    skinnedReusedCount = 0;
     if (skinJobs.empty()) return true;
     const auto grow = [](std::uint32_t capacity, std::size_t needed) {
         std::uint32_t c = std::max(capacity, 1024u);
@@ -1196,13 +1203,20 @@ bool RendererImpl::skin(gpu::CommandBuffer& commands) {
         gpu::CopyPass copy = target.beginCopyPass();
         copy.upload(paletteTransfer, 0, paletteBuffer, 0, bytes, true);
     }
+    // Unchanged palettes are copied from the previous frame's vertices, unless the buffers are new.
+    const auto reused = [&](const SkinJob& job) { return !skinnedReset && job.reuseFrom != kNotSkinned; };
     {
+        // Begun even when every job is a copy: it gives the buffer fresh memory (cycle) before the copies write it.
         const gpu::StorageBufferWrite write{.buffer = skinned[frameIndex & 1], .cycle = true};
         gpu::ComputePass pass = target.beginComputePass({&write, 1});
         if (!pass) return false;
         pass.bindPipeline(skinPipeline);
         const MeshEntry* bound = nullptr;
         for (const SkinJob& job : skinJobs) {
+            if (reused(job)) {
+                ++skinnedReusedCount;
+                continue;
+            }
             if (job.mesh != bound) {
                 const std::array<gpu::BufferRef, 3> inputs{job.mesh->vertices, job.mesh->skin, paletteBuffer};
                 pass.bindStorageBuffers(0, inputs);
@@ -1212,6 +1226,14 @@ bool RendererImpl::skin(gpu::CommandBuffer& commands) {
                                                                 float(job.offset), 0.0f)});
             pass.dispatch((job.mesh->vertexCount + kSkinGroup - 1) / kSkinGroup);
         }
+    }
+    if (skinnedReusedCount > 0) {
+        gpu::CopyPass copy = target.beginCopyPass();
+        constexpr auto stride = std::uint32_t(sizeof(Vertex));
+        for (const SkinJob& job : skinJobs)
+            if (reused(job))
+                copy.copy(skinned[(frameIndex + 1) & 1], job.reuseFrom * stride, skinned[frameIndex & 1],
+                          job.offset * stride, job.mesh->vertexCount * stride);
     }
     if (own) {
         Result<gpu::Fence> fence = own.submitWithFence();
@@ -1649,6 +1671,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     for (RayCaster& c : rayCasters) c.skinned = skinnedVerticesOf(c.slot);
     stats.skinnedInstances = std::uint32_t(skinJobs.size());
     stats.skinnedVertices = skinnedVertices;
+    stats.skinnedReused = skinnedReusedCount;
     stats.skinningGpuMs = skinningGpuMs;
     std::sort(opaque.begin(), opaque.end(), [](const Item& a, const Item& b) { return a.key < b.key; });
     std::sort(transparent.begin(), transparent.end(),

@@ -63,7 +63,7 @@ one), MetalFX's denoising upscaler and a reference path tracer, falling back to 
 unshadowed local lights, the sky's reflection and ambient light and bilinear scaling; since stage 12 area lights
 (rect, disk, tube: LTC shading, soft traced shadows, in the path tracer; unshadowed as the fallback) and anisotropic
 GGX; game passes and surface
-shaders (with a G-buffer entry for the rays); GPU skinning by compute; `SceneAssets` puts asset textures and models
+shaders (with a G-buffer entry for the rays); GPU skinning by compute (unchanged poses copied); `SceneAssets` puts asset textures and models
 into the scene),
 `quench_audio` (headless: a float stereo 48 kHz mixer, buses with volume, mute, pause and meters, reverb buses with
 per-sound sends (after 0.9.0, not released), sounds as an asset
@@ -74,7 +74,8 @@ and signal analysis), `quench_audio_device` (output through miniaudio, the iOS a
 (headless, on ozz-animation: skeletons, clips and graphs as assets, blend trees, 2D blend spaces (after 0.9.0, not
 released), JSON state machines with
 cross-fades, events, root motion, masked and additive layers, two-bone and aim IK, look-at, foot placement, bone
-attachments, the update in parallel on the job system) and `quench_add_game()` (macOS executables, iOS bundles,
+attachments, the update in parallel on the job system, animation LOD by screen size (after 0.9.0, not released))
+and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons and clips).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (finished in stage 10: a section per feature,
 each in its own file with a scripted check and golden captures of the scene, checked in one batch run per GPU
@@ -112,7 +113,7 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
-work), retargeting, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
+work), retargeting, dual quaternion skinning or blend shapes (stage 8 remaining
 work), the native backend as the default, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
 ray tracing (stage 9 and 11 remaining work) or shadows of area lights without ray tracing (stage 12 remaining work)

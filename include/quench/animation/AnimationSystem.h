@@ -4,6 +4,7 @@
 // frame on the job system (characters in parallel; with zero worker threads on the calling thread). An update
 // advances the state machines, samples and blends the clips, applies the layers, IK (look-at, foot placement on the
 // ground), and computes the model-space joint matrices, the skinning palettes, the events passed and the root motion.
+// With animation LOD (AnimationLod) characters small on the screen update every 2nd or 4th frame and leave out IK.
 //
 // Skeletons (.qskel), clip sets (.qanim) and graphs (.json) load through the asset manager as the types "skeleton",
 // "animation" and "animgraph". Until a character's skeleton is ready its palettes are identity (the mesh in its bind
@@ -131,7 +132,8 @@ struct CharacterDesc {
     glm::mat4 transform{1.0f};             // model -> world
     std::optional<FootPlacementDesc> feet; // needs AnimationSystem::setGroundQuery
     std::optional<LookAtDesc> lookAt;
-    bool events = true; // collect the clip events this character passes
+    bool events = true;  // collect the clip events this character passes
+    float height = 1.8f; // m above its origin: its size on the screen for animation LOD
 };
 
 // One event a character passed during the last update.
@@ -175,6 +177,9 @@ struct CharacterState {
     float pelvisOffset = 0.0f;   // foot placement
     std::span<const LegState> legs;
     bool lookAtReached = false;
+    int lodRate = 1;         // animation LOD: the clips are sampled every lodRate-th frame
+    bool lodIk = true;       // animation LOD: foot placement and look-at run (when the character has them)
+    bool poseChanged = true; // the last update changed the joint matrices (false: held, the palettes as before)
 };
 
 struct AnimationStats {
@@ -186,6 +191,28 @@ struct AnimationStats {
     std::uint32_t events = 0;
     double updateMs = 0.0; // wall time of the last update (sampling, blending, IK, palettes)
     int threads = 1;
+    // Animation LOD: characters whose clips were sampled in the last update (the others interpolated or held their
+    // pose), and the characters at each rate (every frame, every 2nd, every 4th).
+    std::uint32_t evaluated = 0;
+    std::uint32_t lodRates[3] = {};
+};
+
+// Animation LOD: a character's height on the screen (a fraction of the view's height, from setLodView) picks how
+// often its clips are sampled: every frame, every 2nd or every 4th, the characters at one rate staggered over the
+// frames. Between its updates a character's pose is interpolated (each update is computed one period ahead, so the
+// pose shown is not late) or held (the palettes do not change, so the renderer reuses the skinned vertices). Below
+// `ik` foot placement and look-at are off. Root motion is spread over the frames of a period, so a character moved
+// by it does not jump; events come with the updates (in interpolation up to a period early). A size is left for a
+// finer level only past its threshold by `hysteresis` (relative), so a character on a threshold does not flicker.
+// With the defaults and a 50 degree view a 1.8 m character updates every frame within 12.9 m, every 4th frame past
+// 32 m, and leaves out IK past 19 m.
+struct AnimationLod {
+    bool enabled = false;
+    float half = 0.15f;    // below: every 2nd frame
+    float quarter = 0.06f; // below: every 4th frame
+    float ik = 0.1f;       // below: no foot placement or look-at
+    float hysteresis = 0.15f;
+    bool interpolate = true; // false: held between updates
 };
 
 struct AnimationSettings {
@@ -194,6 +221,7 @@ struct AnimationSettings {
     assets::AssetMemory skeletonBudget = assets::AssetManager::kUnlimited;
     assets::AssetMemory clipBudget = assets::AssetManager::kUnlimited;
     assets::AssetMemory graphBudget = assets::AssetManager::kUnlimited;
+    AnimationLod lod; // off: every character every frame
 };
 
 class AnimationSystem {
@@ -222,6 +250,14 @@ public:
     void setLookAt(CharacterId character, std::optional<glm::vec3> worldTarget, float weight = 1.0f);
     // Multiplies the update's dt for this character (0 freezes it).
     void setTimeScale(CharacterId character, float scale);
+
+    // Animation LOD (AnimationSettings::lod): the settings, and the camera the characters' screen sizes are measured
+    // from (fovY: the vertical field of view in radians). Without a view, or with LOD off, every character updates
+    // every frame with its IK.
+    void setLod(const AnimationLod& lod);
+    const AnimationLod& lod() const { return m_settings.lod; }
+    void setLodView(const glm::vec3& eye, float fovY);
+    void clearLodView();
     // Moves the first layer's current state to a normalized time (spreads a crowd's phases); takes effect once bound.
     void setPhase(CharacterId character, float normalizedTime);
 
@@ -279,6 +315,12 @@ private:
     std::vector<Character*> m_active; // the update's order (slot order)
     std::vector<Event> m_events;
     AnimationStats m_stats;
+    struct LodView {
+        glm::vec3 eye{0.0f};
+        float fovY = 1.0f;
+    };
+    std::optional<LodView> m_lodView;
+    std::uint64_t m_frame = 0;
 };
 
 } // namespace quench::animation

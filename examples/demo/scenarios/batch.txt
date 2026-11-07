@@ -28,5 +28,6 @@ include audio_hrtf.txt
 include tunnel_motion_fallback.txt
 # Parts added later come after the other captures: their frames would move the frame clock of every capture after them.
 include animation_blend2d.txt
+include animation_lod.txt
 include cycle.txt
 quit

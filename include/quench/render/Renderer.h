@@ -262,6 +262,9 @@ struct RenderStats {
     std::uint32_t pipelines = 0;        // pipelines created so far
     std::uint32_t skinnedInstances = 0; // skinned instances posed on the GPU this frame (drawn in view or shadows)
     std::uint32_t skinnedVertices = 0;
+    // Of skinnedInstances, those whose palette did not change since the last frame: their skinned vertices are copied
+    // from that frame's instead of skinned again.
+    std::uint32_t skinnedReused = 0;
     // GPU time of the latest skinning pass whose time is known (palette upload and compute, a few frames old);
     // -1: none yet, or no GPU timing on this device (gpu::Caps::gpuTiming).
     float skinningGpuMs = -1.0f;

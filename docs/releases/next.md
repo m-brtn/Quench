@@ -84,6 +84,15 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   with a character steered by its velocity while facing one way (`animation_blend2d.txt`: its root motion within
   0.3 to 11 degrees of the asked direction; a golden capture; a check mode item). Nobody has looked at it in
   motion.
+- Animation LOD (stage 8 remaining work): `AnimationSystem::setLod` and `setLodView` sample the clips of characters
+  small on the screen every 2nd or 4th frame (thresholds of screen size with hysteresis, staggered over the frames),
+  interpolated between updates (computed a period ahead, so not late) or held, with foot placement and look-at off
+  below a size, root motion spread over the frames ([Animation](../animation.md#animation-lod)). Off by default; with
+  it off the update is bit for bit what it was. The renderer copies the skinned vertices of an instance whose palette
+  did not change instead of skinning it again (`RenderStats::skinnedReused`). On the demo's crowd of 256 (M4 Pro,
+  offscreen) from 45 m: 65 of 260 characters sampled per frame; the update 0.31 ms on one thread, 0.26 interpolated,
+  0.14 held; the skinning pass 1.75 ms GPU, 0.46 held. The demo's Animation section has the option, a scripted check
+  (`animation_lod.txt`) and a check mode item. Nobody has looked at it in motion.
 
 ## Fixes
 
@@ -210,3 +219,13 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   **`kMaxBlendPoints`** and **`blendSpaceWeights()`** are new.
 - **Graphs:** a 1D blend tree takes at most 16 clips (`kMaxBlendPoints`; before, any number), and a state with both
   `clip` and `blend2d`, or `blend` and `blend2d`, is refused by `parseGraph`.
+- **Animation LOD:** **`animation::AnimationLod`**, **`AnimationSettings::lod`** (at its end; off),
+  **`AnimationSystem::setLod`**, **`lod()`**, **`setLodView`** and **`clearLodView`** are new;
+  **`CharacterDesc::height`** (1.8 m, at its end), **`CharacterState::lodRate`**, **`lodIk`** and **`poseChanged`**
+  and **`AnimationStats::evaluated`** and **`lodRates`** (at their ends) are new. Nothing changes until a game turns
+  it on.
+- **`render::Scene::setJointPalette`** with the matrices the instance already has (and no `teleport`) is ignored:
+  the instance no longer counts as moved (`RenderStats::movedInstances`) for it. An unchanged palette's vertices are
+  copied from the frame before instead of skinned again; **`RenderStats::skinnedReused`** is new, after
+  `skinnedVertices` (designated initializers compile unchanged, a positional aggregate initialization would fill the
+  members after it one off).

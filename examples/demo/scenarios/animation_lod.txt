@@ -1,0 +1,43 @@
+# Animation, LOD (ctest: demo_animation_lod_<backend>, a part of batch.txt, no capture): the crowd of 256 from the
+# hero's view, with animation LOD on the characters far from the camera update every 2nd frame, from 45 m every 4th;
+# held between their updates their palettes do not change and the renderer reuses their skinned vertices; off, every
+# character updates every frame again.
+section animation
+
+set dither 0
+until anim_ready == 1 3
+expect anim_failed == 0
+set restart 1
+set view hero
+set crowd 256
+until anim_ready == 1 3
+expect anim_characters == 260
+expect anim_evaluated == 260
+expect anim_lod_rate2 == 0
+
+set lod 1
+wait 0.2
+expect anim_lod_rate1 > 0
+expect anim_lod_rate2 > 150
+expect anim_evaluated < 180
+expect skinned_reused == 0
+
+set lod_interpolate 0
+wait 0.2
+expect skinned_reused > 80
+camera 2 22 45
+wait 0.2
+expect anim_lod_rate4 > 200
+expect anim_evaluated < 90
+expect skinned_reused > 150
+set view hero
+
+set lod 0
+wait 0.2
+expect anim_evaluated == 260
+expect anim_lod_rate2 == 0
+expect skinned_reused == 0
+set lod_interpolate 1
+set crowd 48
+until anim_ready == 1 3
+quit

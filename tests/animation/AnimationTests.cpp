@@ -875,32 +875,50 @@ QUENCH_TEST(clips_for_another_skeleton_and_unknown_names) {
 }
 
 QUENCH_TEST(reload_rebinds_and_keeps_parameters) {
-    Rig rig("anim_reload");
-    rig.writeData();
-    const CharacterId id = rig.add(R"({"parameters": {"speed": 0}, "layers": [{"states": [{"name": "s",
-        "blend": {"parameter": "speed", "clips": [{"clip": "a", "at": 0}, {"clip": "b", "at": 1}]}}]}]})");
-    rig.load();
-    rig.anim.setFloat(id, "speed", 1.0f);
-    rig.step(0.0f);
-    CHECK(near(rig.joint(id, "pelvis").x, 2.0f), "b before the reload");
-    std::vector<ClipDesc> clips = testClips();
-    clips[2].tracks[kPelvis].translations = {{0.0f, {-1, 1, 0}}};
-    rig.writeData(clips);
-    const assets::AssetRef<ClipSetAsset> ref = rig.anim.loadClips("figure.qanim");
-    rig.assets.reload(ref->id());
-    rig.load();
-    rig.step(0.0f);
-    CHECK(near(rig.joint(id, "pelvis").x, -1.0f), "the reloaded b: x %.4f", rig.joint(id, "pelvis").x);
-    CHECK(rig.anim.parameter(id, "speed") == 1.0f, "the parameter survives the rebind");
+    for (const bool lod : {false, true}) {
+        Rig rig(lod ? "anim_reload_lod" : "anim_reload");
+        rig.writeData();
+        CharacterDesc desc;
+        if (lod) {
+            // Far away with animation LOD: the reload comes between two updates, in an interpolation.
+            rig.anim.setLod({.enabled = true});
+            rig.anim.setLodView({0.0f, 0.9f, 0.0f}, glm::radians(50.0f));
+            desc.transform = glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, -40.0f});
+        }
+        const CharacterId id = rig.add(R"({"parameters": {"speed": 0}, "layers": [{"states": [{"name": "s",
+            "blend": {"parameter": "speed", "clips": [{"clip": "a", "at": 0}, {"clip": "b", "at": 1}]}}]}]})",
+                                       std::move(desc));
+        rig.load();
+        rig.anim.setFloat(id, "speed", 1.0f);
+        const float dt = lod ? 1.0f / 60.0f : 0.0f;
+        for (int frame = 0; frame < (lod ? 5 : 1); ++frame) rig.step(dt);
+        CHECK(near(rig.joint(id, "pelvis").x, 2.0f), "b before the reload");
+        CHECK(rig.anim.state(id).lodRate == (lod ? 4 : 1), "rate %d", rig.anim.state(id).lodRate);
+        std::vector<ClipDesc> clips = testClips();
+        clips[2].tracks[kPelvis].translations = {{0.0f, {-1, 1, 0}}};
+        rig.writeData(clips);
+        const assets::AssetRef<ClipSetAsset> ref = rig.anim.loadClips("figure.qanim");
+        rig.assets.reload(ref->id());
+        rig.load();
+        rig.step(dt);
+        CHECK(near(rig.joint(id, "pelvis").x, -1.0f), "LOD %s: the reloaded b at once: x %.4f", lod ? "on" : "off",
+              rig.joint(id, "pelvis").x);
+        CHECK(rig.anim.parameter(id, "speed") == 1.0f, "the parameter survives the rebind");
+    }
 }
 
 // ---- many characters, skins
 
 namespace {
 
-std::vector<glm::mat4> crowd(const char* dir, int workers, int count) {
+// With lod, the characters stand from 3 to about 40 m from the eye: every LOD rate, with and without IK.
+std::vector<glm::mat4> crowd(const char* dir, int workers, int count, bool lod = false) {
     Rig rig(dir, workers);
     rig.writeData();
+    if (lod) {
+        rig.anim.setLod({.enabled = true});
+        rig.anim.setLodView({0.0f, 0.9f, 0.0f}, glm::radians(50.0f));
+    }
     const char* graph = R"({"parameters": {"speed": 0}, "layers": [{"states": [{"name": "move",
         "blend": {"parameter": "speed", "clips": [{"clip": "a", "at": 0}, {"clip": "walk", "at": 1},
         {"clip": "keys", "at": 2}]}}]}]})";
@@ -908,6 +926,7 @@ std::vector<glm::mat4> crowd(const char* dir, int workers, int count) {
     for (int i = 0; i < count; ++i) {
         CharacterDesc desc;
         desc.feet = feet();
+        if (lod) desc.transform = glm::translate(glm::mat4(1.0f), {float(i % 4), 0.0f, -3.0f - 0.8f * float(i)});
         ids.push_back(rig.add(graph, std::move(desc)));
         rig.anim.setFloat(ids.back(), "speed", float(i % 5) * 0.5f);
         rig.anim.setPhase(ids.back(), float(i) / float(count));
@@ -933,15 +952,20 @@ QUENCH_TEST(parallel_update_matches_one_thread) {
         JobSystem probe(JobSystemDesc{.workerThreads = 3});
         if (probe.workerCount() == 0) QUENCH_SKIP("no worker threads in this build");
     }
-    const std::vector<glm::mat4> one = crowd("anim_crowd_one", 0, 48), many = crowd("anim_crowd_many", 3, 48);
-    REQUIRE(one.size() == 48u * 10u && one.size() == many.size(), "%zu and %zu matrices", one.size(), many.size());
-    const auto* a = reinterpret_cast<const std::uint32_t*>(one.data());
-    const auto* b = reinterpret_cast<const std::uint32_t*>(many.data());
-    const std::size_t floats = one.size() * 16;
-    const std::size_t first = std::size_t(std::mismatch(a, a + floats, b).first - a);
-    CHECK(first == floats, "the same bits on 1 and 4 threads (first difference: matrix %zu, element %zu: %.9g, %.9g)",
-          first / 16, first % 16, first < floats ? double(reinterpret_cast<const float*>(a)[first]) : 0.0,
-          first < floats ? double(reinterpret_cast<const float*>(b)[first]) : 0.0);
+    for (const bool lod : {false, true}) {
+        const std::vector<glm::mat4> one = crowd("anim_crowd_one", 0, 48, lod);
+        const std::vector<glm::mat4> many = crowd("anim_crowd_many", 3, 48, lod);
+        REQUIRE(one.size() == 48u * 10u && one.size() == many.size(), "%zu and %zu matrices", one.size(), many.size());
+        const auto* a = reinterpret_cast<const std::uint32_t*>(one.data());
+        const auto* b = reinterpret_cast<const std::uint32_t*>(many.data());
+        const std::size_t floats = one.size() * 16;
+        const std::size_t first = std::size_t(std::mismatch(a, a + floats, b).first - a);
+        CHECK(first == floats,
+              "LOD %s: the same bits on 1 and 4 threads (first difference: matrix %zu, element %zu: %.9g, %.9g)",
+              lod ? "on" : "off", first / 16, first % 16,
+              first < floats ? double(reinterpret_cast<const float*>(a)[first]) : 0.0,
+              first < floats ? double(reinterpret_cast<const float*>(b)[first]) : 0.0);
+    }
 }
 
 QUENCH_TEST(one_thread_updates_a_crowd) {
@@ -974,4 +998,160 @@ QUENCH_TEST(skin_palettes) {
           "jointWorld: the transform times the model matrix");
     rig.anim.removeCharacter(id);
     CHECK(!rig.anim.contains(id) && rig.anim.characterCount() == 0, "removed");
+}
+
+// ---- animation LOD
+
+namespace {
+
+// The eye of the LOD cases: at the characters' middle height, 50 degrees vertical field of view. A 1.8 m character
+// at d meters is 1.930 / d of the view's height.
+constexpr glm::vec3 kLodEye{0.0f, 0.9f, 0.0f};
+const float kLodFov = glm::radians(50.0f);
+
+glm::mat4 at(float distance) { return glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, -distance}); }
+
+} // namespace
+
+QUENCH_TEST(lod_rates_by_screen_size) {
+    for (const bool interpolate : {false, true}) {
+        Rig rig("anim_lod_rates");
+        rig.writeData();
+        rig.anim.setLod({.enabled = true, .interpolate = interpolate});
+        rig.anim.setLodView(kLodEye, kLodFov);
+        const float distances[] = {5.0f, 16.0f, 40.0f}; // 0.39, 0.12 and 0.048 of the view: rates 1, 2 and 4
+        std::vector<CharacterId> ids;
+        for (const float d : distances) {
+            CharacterDesc desc;
+            desc.transform = at(d);
+            ids.push_back(rig.add(oneState("walk"), std::move(desc)));
+        }
+        rig.load();
+        for (int frame = 0; frame < 8; ++frame) rig.step(1.0f / 60.0f);
+        int changed[3] = {}, evaluated = 0;
+        for (int frame = 0; frame < 8; ++frame) {
+            rig.step(1.0f / 60.0f);
+            evaluated += int(rig.anim.stats().evaluated);
+            for (std::size_t i = 0; i < 3; ++i) changed[i] += rig.anim.state(ids[i]).poseChanged ? 1 : 0;
+        }
+        const AnimationStats& stats = rig.anim.stats();
+        CHECK(stats.lodRates[0] == 1 && stats.lodRates[1] == 1 && stats.lodRates[2] == 1, "one character per rate");
+        for (std::size_t i = 0; i < 3; ++i)
+            CHECK(rig.anim.state(ids[i]).lodRate == 1 << i, "%.0f m: rate %d", double(distances[i]),
+                  rig.anim.state(ids[i]).lodRate);
+        CHECK(rig.anim.state(ids[1]).lodIk && !rig.anim.state(ids[2]).lodIk, "IK on at 16 m, off at 40 m");
+        CHECK(evaluated == 8 + 4 + 2, "%s: %d evaluations in 8 frames", interpolate ? "interpolated" : "held",
+              evaluated);
+        if (interpolate)
+            CHECK(changed[0] == 8 && changed[1] == 8 && changed[2] == 8, "interpolated: a new pose every frame");
+        else
+            CHECK(changed[0] == 8 && changed[1] == 4 && changed[2] == 2, "held: new poses %d %d %d in 8 frames",
+                  changed[0], changed[1], changed[2]);
+    }
+}
+
+// Pelvis x of "keys" moves 4 m/s for its first 0.5 s: interpolation between updates puts it where an update every
+// frame does; held, it lags by up to 3 frames at rate 4. 24 frames: an update 3 frames ahead stays before 0.5 s.
+QUENCH_TEST(lod_interpolation_and_hold) {
+    for (const bool interpolate : {true, false}) {
+        Rig full("anim_lod_full"), lod("anim_lod_far");
+        for (Rig* rig : {&full, &lod}) rig->writeData();
+        lod.anim.setLod({.enabled = true, .interpolate = interpolate});
+        lod.anim.setLodView(kLodEye, kLodFov);
+        CharacterDesc desc;
+        desc.transform = at(40.0f);
+        const CharacterId a = full.add(oneState("keys"), desc), b = lod.add(oneState("keys"), desc);
+        full.load();
+        lod.load();
+        float maxError = 0.0f;
+        int exact = 0;
+        for (int frame = 0; frame < 24; ++frame) {
+            full.step(1.0f / 60.0f);
+            lod.step(1.0f / 60.0f);
+            const float error = std::abs(full.joint(a, "pelvis").x - lod.joint(b, "pelvis").x);
+            maxError = std::max(maxError, error);
+            exact += error < 1e-4f ? 1 : 0;
+        }
+        CHECK(lod.anim.state(b).lodRate == 4, "rate %d at 40 m", lod.anim.state(b).lodRate);
+        if (interpolate) {
+            CHECK(maxError < 1e-4f, "interpolated: %.6f m from an update every frame", double(maxError));
+        } else {
+            CHECK(maxError > 0.15f && maxError < 0.21f, "held: up to 3 frames behind (%.4f m)", double(maxError));
+            CHECK(exact >= 6 && exact <= 9, "held: exact on the update frames only (%d of 24)", exact);
+        }
+    }
+}
+
+// Root motion evaluated for several frames is reported a share per frame: the same per frame as an update every
+// frame at a constant speed, the same sum always.
+QUENCH_TEST(lod_root_motion_spread) {
+    for (const bool interpolate : {true, false}) {
+        Rig full("anim_lod_motion_full"), lod("anim_lod_motion_far");
+        for (Rig* rig : {&full, &lod}) rig->writeData();
+        lod.anim.setLod({.enabled = true, .interpolate = interpolate});
+        lod.anim.setLodView(kLodEye, kLodFov);
+        CharacterDesc desc;
+        desc.transform = at(40.0f);
+        const CharacterId a = full.add(oneState("move"), desc), b = lod.add(oneState("move"), desc);
+        full.load();
+        lod.load();
+        float sumFull = 0.0f, sumLod = 0.0f, maxStep = 0.0f;
+        constexpr int kFrames = 4 * 30;
+        for (int frame = 0; frame < kFrames; ++frame) {
+            full.step(1.0f / 60.0f);
+            lod.step(1.0f / 60.0f);
+            const float zFull = full.anim.rootMotion(a).translation.z, zLod = lod.anim.rootMotion(b).translation.z;
+            sumFull += zFull;
+            sumLod += zLod;
+            if (frame >= 8) maxStep = std::max(maxStep, std::abs(zFull - zLod));
+        }
+        CHECK(lod.anim.state(b).lodRate == 4, "rate %d at 40 m", lod.anim.state(b).lodRate);
+        CHECK(near(sumFull, 2.0f, 2e-3f), "an update every frame: %.4f m in 2 s", double(sumFull));
+        CHECK(maxStep < 1e-4f, "%s: per frame within %.6f m of an update every frame",
+              interpolate ? "interpolated" : "held", double(maxStep));
+        CHECK(std::abs(sumLod - sumFull) < 4.0f / 60.0f + 1e-4f, "%s: %.4f m against %.4f m (owed: at most 4 frames)",
+              interpolate ? "interpolated" : "held", double(sumLod), double(sumFull));
+    }
+}
+
+// Levels change past their thresholds, back to a finer one only past the threshold by the hysteresis; foot placement
+// stops with IK.
+QUENCH_TEST(lod_hysteresis_and_ik) {
+    Rig rig("anim_lod_hysteresis");
+    rig.writeData();
+    rig.anim.setLod({.enabled = true});
+    rig.anim.setLodView(kLodEye, kLodFov);
+    CharacterDesc desc;
+    desc.feet = feet();
+    const CharacterId id = rig.add(oneState("walk"), std::move(desc));
+    rig.anim.setGroundQuery([](const glm::vec3& from, float) -> std::optional<GroundHit> {
+        return GroundHit{{from.x, 0.0f, from.z}, {0, 1, 0}};
+    });
+    rig.load();
+    rig.step(1.0f / 60.0f);
+    // Rate 2 below 0.15 of the view (12.87 m), back above 0.1725 (11.19 m); rate 4 below 0.06 (32.2 m), back above
+    // 0.069 (28.0 m); IK off below 0.1 (19.3 m), back above 0.115 (16.8 m).
+    struct Step {
+        float distance;
+        int rate;
+        bool ik;
+    };
+    const Step steps[] = {{12.5f, 1, true},  {13.2f, 2, true},  {12.0f, 2, true},  {11.0f, 1, true},
+                          {19.0f, 2, true},  {19.6f, 2, false}, {18.0f, 2, false}, {16.5f, 2, true},
+                          {33.0f, 4, false}, {30.0f, 4, false}, {27.5f, 2, false}, {3.0f, 1, true}};
+    for (const Step& step : steps) {
+        rig.anim.setTransform(id, at(step.distance));
+        for (int frame = 0; frame < 4; ++frame) {
+            rig.step(1.0f / 60.0f);
+            const CharacterState state = rig.anim.state(id);
+            CHECK(state.lodRate == step.rate && state.lodIk == step.ik, "%.1f m: rate %d (expected %d), IK %d",
+                  double(step.distance), state.lodRate, step.rate, int(state.lodIk));
+            if (!step.ik)
+                CHECK(rig.anim.stats().groundQueries == 0, "%.1f m: no ground queries", double(step.distance));
+        }
+    }
+    rig.anim.clearLodView();
+    rig.anim.setTransform(id, at(40.0f));
+    rig.step(1.0f / 60.0f);
+    CHECK(rig.anim.state(id).lodRate == 1 && rig.anim.state(id).lodIk, "no view: every frame");
 }

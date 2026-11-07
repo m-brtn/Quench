@@ -329,19 +329,17 @@ void updateModels(Character& c, int from) {
     QUENCH_ASSERT(ok, "local-to-model job");
 }
 
+namespace {
+
+// Samples, blends and poses the character by `dt` into c.pose and c.models (with IK), its events and its root motion
+// into c.evaluatedMotion.
 void evaluate(Character& c, float dt, const AnimationSettings& settings, const GroundQuery& ground) {
-    c.events.clear();
-    c.rootMotion = {};
-    c.clipsSampled = 0;
-    c.groundQueries = 0;
-    if (!c.skeleton) return;
+    c.evaluatedMotion = {};
     const auto rest = c.skeleton->impl().skeleton.joint_rest_poses();
     dt = std::max(0.0f, dt * c.timeScale);
     if (!c.bound) {
         copyPose(rest, c.pose);
         updateModels(c);
-        for (std::size_t j = 0; j < c.models.size(); ++j) c.modelMatrices[j] = toGlm(c.models[j]);
-        writePalettes(c);
         return;
     }
     if (c.pendingPhase >= 0.0f) {
@@ -433,16 +431,68 @@ void evaluate(Character& c, float dt, const AnimationSettings& settings, const G
         }
     }
     if (motion.weight > 0.0f) {
-        c.rootMotion.translation = motion.translation / motion.weight;
+        c.evaluatedMotion.translation = motion.translation / motion.weight;
         const float length = glm::length(motion.rotation);
-        if (length > 1e-6f) c.rootMotion.rotation = motion.rotation / length;
+        if (length > 1e-6f) c.evaluatedMotion.rotation = motion.rotation / length;
     }
 
     updateModels(c);
-    if (!c.legs.empty() && c.feetEnabled && ground) placeFeet(c, dt, ground);
-    if (!c.lookChain.empty()) lookAt(c, dt);
+    if (!c.legs.empty() && c.feetEnabled && c.lodIk && ground) placeFeet(c, dt, ground);
+    if (!c.lookChain.empty() && c.lodIk) lookAt(c, dt);
     c.legStates.resize(c.legs.size());
     for (std::size_t i = 0; i < c.legs.size(); ++i) c.legStates[i] = c.legs[i].state;
+}
+
+// Reports the owed root motion over the frames it is spread over: all of it at once without LOD.
+void reportMotion(Character& c) {
+    if (c.owedFrames <= 1) {
+        c.rootMotion = c.owedMotion;
+        c.owedMotion = {};
+        c.owedFrames = 0;
+        return;
+    }
+    const float share = 1.0f / float(c.owedFrames);
+    c.rootMotion.translation = c.owedMotion.translation * share;
+    c.rootMotion.rotation = glm::slerp(glm::quat(1.0f, 0.0f, 0.0f, 0.0f), c.owedMotion.rotation, share);
+    c.owedMotion.translation -= c.rootMotion.translation;
+    c.owedMotion.rotation = glm::normalize(glm::inverse(c.rootMotion.rotation) * c.owedMotion.rotation);
+    --c.owedFrames;
+}
+
+} // namespace
+
+void update(Character& c, const AnimationSettings& settings, const GroundQuery& ground) {
+    c.events.clear();
+    c.rootMotion = {};
+    c.clipsSampled = 0;
+    c.groundQueries = 0;
+    if (!c.skeleton) return;
+    // An evaluation ahead of the time shown is reached from the pose shown last frame (lodSpan before it).
+    const bool ahead = c.lodEvaluate && c.lodLag > 1e-6f;
+    if (ahead) copyPose(ozz::make_span(c.pose), c.lodFrom);
+    if (c.lodEvaluate) {
+        evaluate(c, c.lodDt, settings, ground);
+        c.owedMotion.translation += c.evaluatedMotion.translation;
+        c.owedMotion.rotation = c.owedMotion.rotation * c.evaluatedMotion.rotation;
+        c.owedFrames = std::max(c.lodFrames, 1);
+        c.lodBlending = ahead;
+        if (ahead) copyPose(ozz::make_span(c.pose), c.lodTo);
+    }
+    reportMotion(c);
+
+    c.poseChanged = c.lodEvaluate || c.lodBlending;
+    c.lodShown = true;
+    if (c.lodBlending) {
+        const float f = c.lodSpan > 0.0f ? std::clamp(1.0f - c.lodLag / c.lodSpan, 0.0f, 1.0f) : 1.0f;
+        if (f >= 1.0f) {
+            copyPose(ozz::make_span(c.lodTo), c.pose);
+            c.lodBlending = false;
+        } else {
+            blend2(c, ozz::make_span(c.lodFrom), 1.0f - f, ozz::make_span(c.lodTo), f, c.pose);
+        }
+        updateModels(c);
+    }
+    if (!c.poseChanged) return;
     for (std::size_t j = 0; j < c.models.size(); ++j) c.modelMatrices[j] = toGlm(c.models[j]);
     writePalettes(c);
 }

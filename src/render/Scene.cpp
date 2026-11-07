@@ -304,6 +304,8 @@ void Scene::setJointPalette(InstanceId instance, std::span<const glm::mat4> pale
     const MeshEntry* mesh = m_impl->meshes.get(entry->desc.mesh);
     QUENCH_ASSERT(mesh && palette.size() == mesh->jointCount, "setJointPalette: one matrix per joint of the mesh");
     if (!mesh || palette.size() != mesh->jointCount || palette.empty()) return;
+    // The same pose (a held animation): no motion, and the renderer copies the vertices it skinned last frame.
+    if (!teleport && std::ranges::equal(palette, entry->palette)) return;
     entry->palette.assign(palette.begin(), palette.end());
     entry->posed = !teleport;
     if (teleport) entry->skinnedFrame = ~0ull;

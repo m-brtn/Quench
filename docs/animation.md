@@ -2,8 +2,8 @@
 
 Stage 8 of the [Roadmap](roadmap.md): `quench_animation`, a headless module on ozz-animation (skeletons and clip sets
 as assets, sampling and blending, data-driven state machines, events, root motion, masked and additive layers,
-two-bone and aim IK, foot placement, bone attachments), the cooking of glTF skins and animations in `quench_cook`,
-and GPU skinning in `quench_render`'s retained scene. The engine demo's "Animation" section shows it
+two-bone and aim IK, foot placement, bone attachments, animation LOD), the cooking of glTF skins and animations in
+`quench_cook`, and GPU skinning in `quench_render`'s retained scene. The engine demo's "Animation" section shows it
 ([Engine demo](demo.md)). Written for the engine: neither game has skeletal animation to move (Ashfall animates one
 mesh procedurally in a vertex shader, TrailForge has none). What was run where is under [Platforms](#platforms);
 nothing in this stage was looked at in motion by the user yet. All documentation: [index](README.md).
@@ -30,7 +30,10 @@ auto heroModel = sceneAssets.loadModel("characters/hero.qmodel");
 render::ModelInstanceId model = sceneAssets.addModel(heroModel, heroTransform);
 int skin = -1; // once heroModel.ready(): animation.addSkin(hero, skins[0].joints, skins[0].inverseBindMatrices)
 
+animation.setLod({.enabled = true}); // optional: characters small on the screen update less often
+
 // Every frame
+animation.setLodView(cameraEye, cameraFovY); // with LOD on
 animation.setFloat(hero, "speed", speed);
 if (jumpPressed) animation.trigger(hero, "jump");
 animation.update(dt);                                  // all characters on the job system
@@ -139,6 +142,45 @@ of a cross-fade's two) deliver events, with the clip's weight; `CharacterDesc::e
 - **Attachments**: `jointWorld(character, joint)` is a joint's world matrix after the update (the demo's torch on
   `hand_l`); `findJoint` maps names.
 
+## Animation LOD
+
+Off by default. `AnimationSystem::setLod(AnimationLod)` turns it on (or `AnimationSettings::lod`), and
+`setLodView(eye, fovY)` gives the camera each frame (`clearLodView()`: every character every frame again). A
+character's size on the screen is `CharacterDesc::height` (1.8 m) over its distance from the eye (to the middle of
+its height) times `2 tan(fovY / 2)`: the fraction of the view's height it covers. That picks its rate:
+
+| Size (default threshold) | Clips sampled | IK |
+|---|---|---|
+| at least `half` (0.15) | every frame | on |
+| below `half` | every 2nd frame | on down to `ik` (0.1) |
+| below `quarter` (0.06) | every 4th frame | off below `ik` |
+
+With a 50 degree view a 1.8 m character updates every frame within 12.9 m, every 4th frame past 32 m, and leaves out
+foot placement and look-at past 19 m. A finer rate (and IK again) only once the size is past its threshold by
+`hysteresis` (15 %), so a character on a threshold does not switch back and forth. The characters at one rate are
+staggered by their slots, so every frame updates about the same number.
+
+- **Interpolated** (`interpolate`, the default): an update is computed for the frame before the character's next
+  one (one period ahead), and the frames in between blend the pose shown last from there toward it (the local
+  transforms, as a cross-fade does). The pose shown is on time: on a clip that moves linearly it is where an update
+  every frame puts it (within 1e-6 m in `lod_interpolation_and_hold`). It still runs the local-to-model step and the
+  palettes every frame, so it saves only the clip sampling.
+- **Held** (`interpolate = false`): the pose stays until the next update and then catches up (up to 3 frames
+  behind at rate 4). Its palettes do not change between updates, so the renderer reuses the skinned vertices
+  ([GPU skinning](#gpu-skinning)).
+- **Root motion** of an update is spread evenly over the frames to the next, so a character moved by it does not
+  step; at a constant speed each frame gets exactly what an update every frame gives. Held, the motion lags the same
+  frames as the pose.
+- **Events** come with the updates: interpolated, up to a period early; held, on time or up to 3 frames late.
+- A character is updated every frame in its first update after binding; a change of rate updates it at once (with
+  interpolation, once the pose shown has reached the last update).
+- `CharacterState::lodRate`, `lodIk` and `poseChanged` (false: the palettes and model matrices are the last frame's);
+  `AnimationStats::evaluated` (characters whose clips were sampled) and `lodRates[3]` (characters per rate).
+
+With LOD off the update is the same as before it existed (the same bits; the demo's captures did not change).
+Decided without the user (2026-11-07): screen size rather than distance (the field of view and the character's
+size count), rates 1, 2 and 4 only, interpolation on by default.
+
 ## Cooking
 
 `quench_cook skeleton IN OUT` writes the joints of a glTF or GLB file's skins (with their ancestors and the non-mesh
@@ -192,8 +234,14 @@ acceleration structures. It needs compute in `quench::gpu` (added in this stage:
 `ComputePass`, storage buffers for compute) and `quench_shaderc --stage compute`. It costs a vertex buffer per
 drawn skinned instance and frame (two, for motion vectors).
 
-`RenderStats::skinnedInstances`, `skinnedVertices` and `skinningGpuMs` (GPU time of the skinning pass, measured
-through its own command buffer's fence where `Caps::gpuTiming` holds, a few frames late; -1 otherwise).
+An instance whose palette did not change since the last frame (`setJointPalette` with the same matrices is ignored,
+like a held animation LOD pose) and that was skinned in the frame before is not skinned again: a copy pass copies
+its vertices from the frame before's buffer into this frame's (`RenderStats::skinnedReused`), and it has no motion
+vectors.
+
+`RenderStats::skinnedInstances`, `skinnedVertices`, `skinnedReused` and `skinningGpuMs` (GPU time of the skinning
+pass, with the copies, measured through its own command buffer's fence where `Caps::gpuTiming` holds, a few frames
+late; -1 otherwise).
 
 ## Cost
 
@@ -210,8 +258,25 @@ Measured in the demo's benchmark region `animation` (a crowd of 256 plus three c
 - The skinning pass on the GPU (its own command buffer): 1.1 to 2.0 ms on average, 0.4 to 0.7 ms for three
   characters, which is mostly a fixed cost.
 
-Not measured on the iPhone. The renderer dispatches the skinning per instance; one dispatch over all of them, and an
-animation LOD (sampling distant characters less often), are the obvious next steps if a game needs more characters.
+With animation LOD (2026-11-07, the same crowd of 256, 260 characters; Release, Mac, Apple M4 Pro, 1920 x 1080,
+**offscreen**, so the frames are not paced and the update time is lower than in the benchmark on the screen above;
+means over 240 frames, two runs; before: the commit before LOD, the same session):
+
+| Camera | LOD | Characters sampled per frame | Update, 12 threads | Update, 1 thread | Skinning GPU |
+|---|---|---|---|---|---|
+| the hero's view | before | 260 | 0.153 ms | 0.343 ms | 2.13 ms |
+| the hero's view | off | 260 | 0.159 to 0.164 ms | 0.334 ms | 2.14 to 2.25 ms |
+| the hero's view | interpolated | 124 to 129 | 0.150 to 0.152 ms | 0.329 ms | 2.18 to 2.24 ms |
+| the hero's view | held | 143 | 0.119 to 0.132 ms | 0.240 ms | 1.13 to 1.18 ms |
+| 45 m away | before | 260 | 0.152 ms | 0.334 ms | 1.72 ms |
+| 45 m away | off | 260 | 0.148 to 0.153 ms | 0.309 ms | 1.75 to 1.77 ms |
+| 45 m away | interpolated | 65 | 0.129 to 0.136 ms | 0.256 ms | 1.58 to 1.61 ms |
+| 45 m away | held | 65 | 0.088 to 0.093 ms | 0.139 ms | 0.46 to 0.47 ms |
+
+On this 20-joint character with a three-clip blend the sampling is a small part of an update: interpolation saves
+up to a quarter of the update, holding more than half of it and most of the skinning pass. Skeletons with more joints
+and more clips sample more per update. Not measured on the iPhone. The renderer dispatches the skinning per
+instance; one dispatch over all of them is the next step if a game needs more characters.
 
 ## Budgets and failures
 
@@ -225,22 +290,26 @@ characters that use the asset and keeps their parameters.
 
 - **Demo**: section 10, "Animation" (key 0): the hero on a circle by root motion (speed blend, jump, wave on a
   masked layer, additive lean, look-at, a torch on its hand, footstep sounds from events), two characters with foot
-  placement on a ramp and a step, a crowd of up to 512 with the update and skinning times on screen; in the view
+  placement on a ramp and a step, a crowd of up to 512 with the update and skinning times on screen and animation LOD
+  as an option (off by default; interpolated or held); in the view
   "2D blend space", a character steered by its velocity through a blend space while it faces one way
   ([Engine demo](demo.md)). Its character is procedural (`tools/assets/make_demo_character.py`, generated and cooked
   at build time; 20 joints, 836 vertices, clips idle, walk, run, jump, wave, lean, walk_back, strafe_l, strafe_r).
-- **Tests**: `animation.*` (25 cases: sampling at and between keys, blend weights and phase sync, 2D blend space
+- **Tests**: `animation.*` (29 cases: sampling at and between keys, blend weights and phase sync, 2D blend space
   weights (on a grid: in 0..1, a sum of 1 within 1.2e-7, at most 0.0018 of change per mm, exact at the points,
   mirror symmetric) and their pose, phases and root motion, graph errors, masked and additive
   layers, transitions, cross-fades, triggers and exit times, events in order, across loops and with a large dt, root
   motion, two-bone IK reached and unreachable, aim IK, foot placement on a step and a slope, look-at, missing and
-  corrupt assets, clips for another skeleton, reload, a parallel update equal to a single-threaded one, a crowd on
-  one thread, skin palettes); `cook.cook_skeleton_from_skins`, `cook_animation_keys_and_settings`,
+  corrupt assets, clips for another skeleton, reload, a parallel update equal to a single-threaded one (with LOD off
+  and on), a crowd on one thread, skin palettes; animation LOD: the rates and the updates per frame by screen size,
+  interpolated against held poses, root motion spread over the frames, the thresholds' hysteresis and IK off); `cook.cook_skeleton_from_skins`, `cook_animation_keys_and_settings`,
   `cook_animation_errors`, `cook_skinned_model`, and `cook_cli` (the demo's character cooked twice, the same bytes);
-  `render.renderer_skins_on_the_gpu`, `renderer_skinned_motion_vectors`, `renderer_rejects_bad_skins` (also
-  `render_vulkan.*`); `gpu_device.compute_dispatch`; `demo_animation_metal` and `demo_animation_vulkan` (21 checks
+  `render.renderer_skins_on_the_gpu`, `renderer_reuses_unchanged_skins` (the same image from copied vertices,
+  also when an instance's range in the buffer moves), `renderer_skinned_motion_vectors`, `renderer_rejects_bad_skins`
+  (also `render_vulkan.*`); `gpu_device.compute_dispatch`; `demo_animation_metal` and `demo_animation_vulkan` (21 checks
   and a golden capture); `demo_animation_blend2d_<backend>` (the steered character's root motion against its
-  velocity, 17 checks and a golden capture).
+  velocity, 17 checks and a golden capture); `demo_animation_lod_<backend>` (the crowd of 256 with LOD: the rates,
+  the characters sampled and the reused skins from the hero's view and from 45 m, 18 checks, no capture).
 
 ## Platforms
 
@@ -258,7 +327,9 @@ characters that use the asset and keeps their parameters.
 - **No sync markers** beyond normalized time (and a point's `phase`): clips whose foot contacts are not at the same
   phases do not stay in step. No directional blend spaces (polar gradient bands): a space's weights are Cartesian.
 - **Linear blend skinning** only (no dual quaternions), four joints per vertex, no blend shapes (morph targets).
-- **No animation LOD**: every character is sampled every frame; no update rate by distance.
+- **Animation LOD** has three rates (1, 2, 4) by screen size only (no visibility: a character outside the view or in
+  a shadow only still updates at its size's rate), interpolation still poses every frame, and its look in motion
+  was not seen by a person (the demo's check mode has an item).
 - **One `SceneAssets` per `AssetManager`** (stage 6): a second scene needs a second manager (the demo's section has
   one).
 - **Foot placement** is per leg on a single ray; no prediction of the next footfall, no toe or heel separation.

@@ -4,7 +4,8 @@
 // trigger with cross-fades (the wave on a layer masked to the right arm), an additive lean, its head turned toward
 // the camera, a torch held in its left hand and a footstep sound at each contact event. Two characters stand on a
 // slope and across a step, their feet placed on the ground by a ray query into a physics world. Behind them a crowd
-// walks in rings, updated in parallel on the job system and skinned by a compute pass. A showcase away from them
+// walks in rings, updated in parallel on the job system and skinned by a compute pass; with animation LOD (off by
+// default) the characters small on the screen update every 2nd or 4th frame. A showcase away from them
 // (the views other than the hero's) has a character steered in 2D through a blend space over its velocity (idle,
 // walk, run, walk back, strafes), facing one way while it walks in every direction.
 
@@ -225,9 +226,14 @@ public:
         bindSkins();
         m_manager->update();
         m_assets->update();
+        const glm::vec2 window = windowSize(c);
+        m_anim->setLod({.enabled = m_lod, .interpolate = m_lodInterpolate});
+        m_anim->setLodView(camera.eye(), camera.fovFor(window.x / std::max(window.y, 1.0f)));
         m_anim->update(dt);
+        m_skinnedReused = c.renderer.stats().skinnedReused; // of the frame before
         m_recentUpdateMs[m_recentNext] = float(m_anim->stats().updateMs);
         m_recentSkinningMs[m_recentNext] = c.renderer.stats().skinningGpuMs;
+        m_recentEvaluated[m_recentNext] = float(m_anim->stats().evaluated);
         m_recentNext = (m_recentNext + 1) % kRecentFrames;
         m_recentCount = std::min(m_recentCount + 1, kRecentFrames);
         footsteps(c);
@@ -283,6 +289,11 @@ public:
                 if (ImGui::Selectable(kViews[i].label, int(i) == m_view)) setView(int(i));
             ImGui::EndCombo();
         }
+        ImGui::Checkbox("Animation LOD", &m_lod);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!m_lod);
+        ImGui::Checkbox("Interpolate", &m_lodInterpolate);
+        ImGui::EndDisabled();
         ImGui::SeparatorText("2D blend space");
         ImGui::Checkbox("Steer by itself", &m_autoSteer);
         ImGui::BeginDisabled(m_autoSteer);
@@ -296,7 +307,9 @@ public:
         const RenderStats& r = c.renderer.stats();
         ImGui::Text("Characters %u, joints %u", stats.characters, stats.joints);
         ImGui::Text("Samples %u, rays %u, events %u", stats.clipsSampled, stats.groundQueries, stats.events);
-        ImGui::Text("Skinned %u (%u vertices)", r.skinnedInstances, r.skinnedVertices);
+        ImGui::Text("Skinned %u (%u vertices), %u reused", r.skinnedInstances, r.skinnedVertices, r.skinnedReused);
+        ImGui::Text("Updated %u; every frame %u, 2nd %u, 4th %u", stats.evaluated, stats.lodRates[0], stats.lodRates[1],
+                    stats.lodRates[2]);
         ImGui::Text("Steered: asked %.2f %.2f, moves %.2f %.2f m/s", m_steerInput.x, m_steerInput.y, m_strafeMotion.x,
                     m_strafeMotion.y);
         if (c.app.deterministic()) {
@@ -312,13 +325,14 @@ public:
 
     Scene& scene() override { return *m_scene; }
 
-    // Over the last kRecentFrames frames: the mean and largest update time, the mean skinning GPU time (frames
-    // without a measurement left out).
+    // Over the last kRecentFrames frames: the mean and largest update time, the mean number of characters updated
+    // (animation LOD), the mean skinning GPU time (frames without a measurement left out).
     std::string perfDetails() const override {
         if (!m_anim || m_recentCount == 0) return {};
-        float updateSum = 0.0f, updateMax = 0.0f, skinningSum = 0.0f;
+        float updateSum = 0.0f, updateMax = 0.0f, skinningSum = 0.0f, evaluatedSum = 0.0f;
         int skinningFrames = 0;
         for (std::size_t i = 0; i < m_recentCount; ++i) {
+            evaluatedSum += m_recentEvaluated[i];
             updateSum += m_recentUpdateMs[i];
             updateMax = std::max(updateMax, m_recentUpdateMs[i]);
             if (m_recentSkinningMs[i] < 0.0f) continue;
@@ -326,8 +340,10 @@ public:
             ++skinningFrames;
         }
         return std::format("anim_frames={} anim_update_ms={:.3f} anim_update_max_ms={:.3f} anim_threads={} "
-                           "skinning_gpu_ms={:.3f}",
+                           "anim_lod={} anim_evaluated={:.1f} skinning_gpu_ms={:.3f}",
                            m_recentCount, updateSum / float(m_recentCount), updateMax, m_anim->stats().threads,
+                           m_lod ? (m_lodInterpolate ? "interpolate" : "hold") : "off",
+                           evaluatedSum / float(m_recentCount),
                            skinningFrames > 0 ? skinningSum / float(skinningFrames) : -1.0f);
     }
 
@@ -348,6 +364,13 @@ public:
         if (name == "footsteps") return double(m_footsteps);
         if (name == "landings") return double(m_landings);
         if (name == "crowd") return double(m_crowd.size());
+        // Animation LOD: the characters updated in the last update, at each rate, and the skinned instances the
+        // renderer reused in the frame before.
+        if (name == "anim_evaluated") return double(stats.evaluated);
+        if (name == "anim_lod_rate1") return double(stats.lodRates[0]);
+        if (name == "anim_lod_rate2") return double(stats.lodRates[1]);
+        if (name == "anim_lod_rate4") return double(stats.lodRates[2]);
+        if (name == "skinned_reused") return double(m_skinnedReused);
         if (name == "held_distance") {
             // The torch's grip from the hand joint (m): 0.096 when attached.
             const glm::mat4 hand = m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, "hand_l"));
@@ -404,6 +427,10 @@ public:
             setSlope(std::clamp(*number, 0.0f, 30.0f));
         } else if (name == "crowd" && number) {
             setCrowd(std::clamp(int(*number), 0, kMaxCrowd));
+        } else if (name == "lod" && flag) {
+            m_lod = *flag;
+        } else if (name == "lod_interpolate" && flag) {
+            m_lodInterpolate = *flag;
         } else if (name == "view") {
             const auto it = std::ranges::find_if(kViews, [&](const View& v) { return v.id == value; });
             if (it == kViews.end()) return false;
@@ -717,9 +744,11 @@ private:
     int m_footsteps = 0, m_landings = 0;
     int m_view = 0;
     bool m_autoSteer = true;
+    bool m_lod = false, m_lodInterpolate = true;
+    std::uint32_t m_skinnedReused = 0;
     float m_steerAngle = 0.0f;
     glm::vec2 m_steerVelocity{0.0f}, m_steerInput{0.0f}, m_strafeMotion{0.0f};
-    std::array<float, kRecentFrames> m_recentUpdateMs{}, m_recentSkinningMs{};
+    std::array<float, kRecentFrames> m_recentUpdateMs{}, m_recentSkinningMs{}, m_recentEvaluated{};
     std::size_t m_recentNext = 0, m_recentCount = 0;
     Random m_random;
 };

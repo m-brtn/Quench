@@ -93,6 +93,12 @@ constexpr std::array kItems{
               "the camera, blending smoothly between them without pops; its feet stay planted and do not cross. "
               "Untick Steer by itself and move the sliders: it follows them.",
               "set view blend2d"},
+    CheckItem{"animation.lod", "animation", "Animation LOD",
+              "Crowd 256, Animation LOD on: the far walkers move as smoothly as with it off (Interpolate on); zoomed "
+              "out, the farthest ones still walk without stutter. Untick Interpolate: far walkers move in small "
+              "steps, the near ones and the hero stay smooth. No walker pops when it crosses from one rate to another "
+              "while the camera zooms.",
+              "set crowd 256\nset lod 1"},
     CheckItem{"raytracing.noise", "raytracing", "Ray-traced noise",
               "Native Metal backend: with Shadow rays 1 and then 2 the soft shadows stay calm while the sun turns "
               "(little crawling noise).",

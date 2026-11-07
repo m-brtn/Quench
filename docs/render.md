@@ -554,6 +554,14 @@ vertices it moves, transformed by the joint's matrix. The skinning runs in its o
 joints, a skin entry count other than the vertex count) is refused with an error by `Scene::addMesh`. The compute
 pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; there is no CPU skinning fallback.
 
+An unchanged pose is not skinned again (since 2026-11-07): `setJointPalette` with the matrices the instance already
+has is ignored (no motion either), and an instance whose palette did not change and that was skinned in the frame
+before gets its vertices by a copy from the frame before's buffer, in a copy pass after the compute pass
+(`RenderStats::skinnedReused`). Animation LOD's held poses are such palettes
+([Animation](animation.md#animation-lod)); with a crowd of 260 held at every 4th frame the skinning pass took 0.46
+instead of 1.75 ms on the M4 Pro. `render.renderer_reuses_unchanged_skins` checks that the image from copied
+vertices is the one from skinned vertices, also when an instance's range in the buffer moves.
+
 ## Limitations
 
 - Ray tracing: the shadow and occlusion rays start from a normal made from the depth, not the shading normal, offset
@@ -592,8 +600,8 @@ pass needs `quench::gpu`'s compute support, which every SDL GPU backend has; the
   surface less than 0.1% of the distance behind a hole takes the object's motion. A moving alpha-blended object's
   motion covers what is seen through it.
 - Skinning: four joints per vertex, linear blend (no dual quaternions), no blend shapes; every drawn skinned
-  instance is skinned every frame (no caching of unchanged poses, no skinning LOD); the output buffers grow with the
-  skinned vertices drawn (two copies).
+  instance whose palette changed is skinned every frame (an unchanged one is copied from the frame before; no
+  skinning LOD); the output buffers grow with the skinned vertices drawn (two copies).
 - No MSAA, no image-based lighting from a cubemap (the sky model is the environment), shadows of local and area
   lights only by rays (at most 4), at most 16 local lights per frame (8 of them area lights) and no clustered or
   tiled light lists.

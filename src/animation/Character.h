@@ -107,17 +107,34 @@ struct AnimationSystem::Character {
     std::vector<glm::mat4> modelMatrices;
     std::vector<Skin> skins;
 
+    // Animation LOD, decided by AnimationSystem::update before the characters update.
+    int lodLevel = 0;          // rate 1 << lodLevel
+    int lodEvaluatedLevel = 0; // at the last evaluation
+    bool lodIk = true;
+    bool lodShown = false;   // a pose was shown (the first one is not interpolated toward)
+    bool lodEvaluate = true; // this update samples the clips, with lodDt
+    float lodDt = 0.0f;
+    int lodFrames = 1;        // frames the root motion of this evaluation is spread over, from this one
+    float lodLag = 0.0f;      // s the latest evaluated pose is ahead of the time shown (< 0: behind)
+    float lodSpan = 0.0f;     // s from the previous evaluated pose to the latest
+    bool lodBlending = false; // the pose shown is between lodFrom and lodTo
+    ozz::vector<ozz::math::SoaTransform> lodFrom, lodTo;
+    RootMotion evaluatedMotion, owedMotion; // of the last evaluation; not reported yet
+    int owedFrames = 0;
+
     // Outputs of the last update.
     std::vector<EventRecord> events;
     RootMotion rootMotion;
+    bool poseChanged = true;
     std::vector<LegState> legStates;
     std::uint32_t clipsSampled = 0, groundQueries = 0;
 };
 
 namespace detail {
 
-// One update of a bound or unbound character (job threads; touches only the character and immutable assets).
-void evaluate(AnimationSystem::Character& c, float dt, const AnimationSettings& settings, const GroundQuery& ground);
+// One update of a bound or unbound character (job threads; touches only the character and immutable assets): the
+// evaluation that AnimationSystem::update decided on (c.lodEvaluate, c.lodDt), then the pose and root motion shown.
+void update(AnimationSystem::Character& c, const AnimationSettings& settings, const GroundQuery& ground);
 // Ik.cpp, called by evaluate() after the layers, with `models` up to date.
 void placeFeet(AnimationSystem::Character& c, float dt, const GroundQuery& ground);
 void lookAt(AnimationSystem::Character& c, float dt);

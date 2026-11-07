@@ -399,7 +399,7 @@ if(NOT QUENCH_HEADLESS)
             set(demo_scenarios ${Quench_SOURCE_DIR}/examples/demo/scenarios)
             set(demo_parts materials:demo_materials shadows:demo_shadows sky:demo_sky post:demo_post hdr:demo_hdr
                 hdr_on:demo_hdr_on physics:demo_physics input:demo_input assets:demo_assets audio:demo_audio
-                animation:demo_animation animation_blend2d:demo_animation_blend2d
+                animation:demo_animation animation_blend2d:demo_animation_blend2d animation_lod
                 ui:demo_ui compact_portrait:demo_compact_portrait
                 compact_landscape:demo_compact_landscape menu audio_tone audio_flyby audio_music audio_reverb
                 audio_hrtf)

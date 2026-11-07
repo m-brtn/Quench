@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <format>
 
 namespace quench::animation {
@@ -147,6 +148,12 @@ void AnimationSystem::setTimeScale(CharacterId id, float scale) {
     c->timeScale = std::max(0.0f, scale);
 }
 
+void AnimationSystem::setLod(const AnimationLod& lod) { m_settings.lod = lod; }
+
+void AnimationSystem::setLodView(const glm::vec3& eye, float fovY) { m_lodView = LodView{eye, fovY}; }
+
+void AnimationSystem::clearLodView() { m_lodView.reset(); }
+
 void AnimationSystem::setPhase(CharacterId id, float normalizedTime) {
     QUENCH_CHARACTER(id);
     c->pendingPhase = std::max(0.0f, normalizedTime);
@@ -274,7 +281,9 @@ void AnimationSystem::bind(Character& c) {
         }
         if (skeleton) {
             const auto soa = std::size_t(skeleton->impl().skeleton.num_soa_joints());
-            for (auto* pose : {&c.statePose[0], &c.statePose[1], &c.layerPose, &c.pose, &c.scratch}) pose->resize(soa);
+            for (auto* pose :
+                 {&c.statePose[0], &c.statePose[1], &c.layerPose, &c.pose, &c.scratch, &c.lodFrom, &c.lodTo})
+                pose->resize(soa);
             for (auto& pose : c.samples) pose.resize(soa);
             c.weightsA.resize(soa);
             c.weightsB.resize(soa);
@@ -333,6 +342,8 @@ void AnimationSystem::bind(Character& c) {
     c.graph = graph;
     c.clipSets = clipSets;
     c.bound = false;
+    c.lodLag = 0.0f; // an interpolation in progress ends; the pose buffers may have changed size
+    c.lodBlending = false;
     c.layers.clear();
     c.contexts.clear();
     if (!skeleton || !graph || std::ranges::any_of(clipSets, [](const auto& s) { return !s; })) {
@@ -363,6 +374,7 @@ void AnimationSystem::bind(Character& c) {
     c.params.resize(graph->parameters.size());
     for (std::size_t i = 0; i < graph->parameters.size(); ++i) c.params[i] = graph->parameters[i].initial;
     c.bound = true;
+    c.lodShown = false; // the pose shown until now (the rest pose, another skeleton's) is not interpolated from
     c.unknownParameters.clear();
     for (const auto& [name, value] : c.pending) {
         const int index = graph->findParameter(name);
@@ -448,11 +460,48 @@ void AnimationSystem::update(float dt) {
         bind(*slot.character);
         m_active.push_back(slot.character.get());
     }
+    ++m_frame;
+    const AnimationLod& lod = m_settings.lod;
+    const bool lodOn = lod.enabled && m_lodView;
+    const float viewScale = lodOn ? 2.0f * std::tan(std::max(m_lodView->fovY, 1e-3f) * 0.5f) : 1.0f;
+    for (std::size_t i = 0; i < m_active.size(); ++i) {
+        Character& c = *m_active[i];
+        // The screen size picks the level; a finer level only past its threshold by the hysteresis.
+        int level = 0;
+        bool ik = true;
+        if (lodOn && c.bound && c.lodShown) {
+            const glm::vec3 center(c.desc.transform * glm::vec4(0.0f, c.desc.height * 0.5f, 0.0f, 1.0f));
+            const float distance = glm::length(center - m_lodView->eye);
+            const float size = distance > 1e-3f ? c.desc.height / (distance * viewScale) : 1e9f;
+            const auto levelAt = [&](float scale) { return size < lod.quarter * scale ? 2 : size < lod.half * scale; };
+            level = int(levelAt(1.0f));
+            if (level < c.lodLevel) level = std::min(c.lodLevel, int(levelAt(1.0f + lod.hysteresis)));
+            ik = size >= lod.ik * (c.lodIk ? 1.0f : 1.0f + lod.hysteresis);
+        }
+        c.lodLevel = level;
+        c.lodIk = ik;
+        // An evaluation on the character's frame of its rate (staggered by its slot) or when its level changed, once
+        // the pose shown has caught up with the last one; with interpolation it is computed for the frame before the
+        // next, so the pose shown between them is on time.
+        const int rate = 1 << level;
+        const std::uint64_t phase = (m_frame + i) % std::uint64_t(rate);
+        const int frames = phase == 0 ? rate : rate - int(phase);
+        const float want = lod.interpolate ? float(frames - 1) * dt : 0.0f;
+        c.lodLag -= dt;
+        c.lodEvaluate = (phase == 0 || level != c.lodEvaluatedLevel) && c.lodLag <= want + 1e-6f;
+        if (c.lodEvaluate) {
+            c.lodDt = want - c.lodLag;
+            c.lodSpan = want + dt;
+            c.lodLag = want;
+            c.lodFrames = frames;
+            c.lodEvaluatedLevel = level;
+        }
+    }
     if (!m_active.empty()) {
         const Job job = m_jobs.parallelFor(std::uint32_t(m_active.size()), std::max(1u, m_settings.charactersPerJob),
-                                           [this, dt](std::uint32_t begin, std::uint32_t end) {
+                                           [this](std::uint32_t begin, std::uint32_t end) {
                                                for (std::uint32_t i = begin; i < end; ++i)
-                                                   detail::evaluate(*m_active[i], dt, m_settings, m_ground);
+                                                   detail::update(*m_active[i], m_settings, m_ground);
                                            });
         m_jobs.wait(job);
     }
@@ -465,6 +514,8 @@ void AnimationSystem::update(float dt) {
         if (c->bound) ++m_stats.bound;
         if (c->skeleton) m_stats.joints += std::uint32_t(c->skeleton->jointCount());
         m_stats.clipsSampled += c->clipsSampled;
+        if (c->lodEvaluate) ++m_stats.evaluated;
+        ++m_stats.lodRates[std::size_t(c->lodLevel)];
         m_stats.groundQueries += c->groundQueries;
         for (const Character::EventRecord& e : c->events)
             m_events.push_back({c->id, e.event->name, e.clip->name(), e.event->value, e.weight, e.count, e.layer});
@@ -493,6 +544,9 @@ CharacterState AnimationSystem::state(CharacterId id) const {
     s.pelvisOffset = c->pelvisOffset;
     s.legs = c->legStates;
     s.lookAtReached = c->lookReached;
+    s.lodRate = 1 << c->lodLevel;
+    s.lodIk = c->lodIk;
+    s.poseChanged = c->poseChanged;
     return s;
 }
 

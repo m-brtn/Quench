@@ -177,6 +177,31 @@ crowd (51 skinned characters, `--benchmark-all` on 2026-11-06, below) stays with
 
 ## Measurements
 
+### Animation LOD
+
+2026-11-07 03:38-03:47, Release, Mac (Apple M4 Pro), the demo's Animation section with a crowd of 256 (260
+characters), **offscreen** (`--frame-size 1920x1080 --audio-device null --script`, frames not paced: 1.5 to 2.4 ms
+per frame, so the update times are lower than on the screen at vsync), perf regions of 5 s after a second each, from
+the hero's view and from 45 m (`camera 2 22 45`); the commit before animation LOD (`01834f7`) built and run in the
+same session between two runs of the new build. Means over the last 240 frames:
+
+| Camera, LOD | Sampled per frame | Update, 12 threads | Update, 1 thread | Skinning GPU | CPU avg |
+|---|---|---|---|---|---|
+| hero's view, `01834f7` | 260 | 0.153 | 0.343 | 2.13 | 1.030 |
+| hero's view, off | 260 | 0.159, 0.164 | 0.334 | 2.21, 2.25 | 1.041, 1.035 |
+| hero's view, interpolated | 124 to 129 | 0.150, 0.152 | 0.329 | 2.18, 2.24 | 1.050, 1.036 |
+| hero's view, held | 143 | 0.119, 0.132 | 0.240 | 1.13, 1.18 | 1.017, 1.029 |
+| 45 m, `01834f7` | 260 | 0.152 | 0.334 | 1.72 | 0.911 |
+| 45 m, off | 260 | 0.148, 0.153 | 0.309 | 1.75, 1.77 | 0.959, 0.953 |
+| 45 m, interpolated | 65 | 0.129, 0.136 | 0.256 | 1.58, 1.61 | 0.959, 0.922 |
+| 45 m, held | 65 | 0.088, 0.093 | 0.139 | 0.46, 0.47 | 0.817, 0.809 |
+
+All in milliseconds; the 1-thread column is one run with `--worker-threads 0`. With LOD off the update is within
+the runs' spread of the commit before. Interpolation saves little on this character (20 joints, a three-clip
+blend): it still blends, poses and writes palettes every frame. Holding halves the update and cuts the skinning
+pass to a quarter at 45 m, where 195 of the 260 skins are copied instead of skinned. Not measured on the screen or
+on the iPhone.
+
 ### On the screen after the bug packages
 
 2026-11-07 00:00-00:06, Release, Mac (Mac mini, Apple M4 Pro), its one display (the LG UltraFine 5K at 60 Hz; no
