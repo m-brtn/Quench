@@ -51,6 +51,10 @@ SDL_GPUTextureFormat sdl::toSdl(TextureFormat format) {
     case TextureFormat::Bc7RgbaUnormSrgb: return SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM_SRGB;
     case TextureFormat::Astc4x4Unorm: return SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM;
     case TextureFormat::Astc4x4UnormSrgb: return SDL_GPU_TEXTUREFORMAT_ASTC_4x4_UNORM_SRGB;
+    case TextureFormat::Etc2Rgb8Unorm:
+    case TextureFormat::Etc2Rgb8UnormSrgb:
+    case TextureFormat::Etc2Rgba8Unorm:
+    case TextureFormat::Etc2Rgba8UnormSrgb: return SDL_GPU_TEXTUREFORMAT_INVALID; // not in SDL GPU 3.4
     case TextureFormat::Depth16Unorm: return SDL_GPU_TEXTUREFORMAT_D16_UNORM;
     case TextureFormat::Depth24UnormStencil8: return SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT;
     case TextureFormat::Depth32Float: return SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
@@ -61,6 +65,7 @@ SDL_GPUTextureFormat sdl::toSdl(TextureFormat format) {
 }
 
 TextureFormat sdl::fromSdl(SDL_GPUTextureFormat format) {
+    if (format == SDL_GPU_TEXTUREFORMAT_INVALID) return TextureFormat::Invalid;
     for (std::size_t i = 1; i < std::size_t(TextureFormat::Count); ++i)
         if (toSdl(TextureFormat(i)) == format) return TextureFormat(i);
     return TextureFormat::Invalid;
@@ -199,7 +204,9 @@ SdlGpuDevice::~SdlGpuDevice() {
 }
 
 bool SdlGpuDevice::supportsFormat(TextureFormat format, TextureType type, TextureUsage usage) const {
-    return SDL_GPUTextureSupportsFormat(m_device, sdl::toSdl(format), sdl::toSdl(type), sdl::toSdl(usage));
+    const SDL_GPUTextureFormat sdlFormat = sdl::toSdl(format);
+    if (sdlFormat == SDL_GPU_TEXTUREFORMAT_INVALID) return false;
+    return SDL_GPUTextureSupportsFormat(m_device, sdlFormat, sdl::toSdl(type), sdl::toSdl(usage));
 }
 
 bool SdlGpuDevice::supportsSampleCount(TextureFormat format, std::uint32_t sampleCount) const {

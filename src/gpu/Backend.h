@@ -184,7 +184,8 @@ struct DeviceImpl {
     virtual std::vector<GpuTiming> gpuTimings(void* fence) const = 0;
 };
 
-// The backends. Each fills caps except bcTextures and astcTextures (Device::create asks supportsFormat).
+// The backends. Each fills caps except bcTextures, astcTextures and etc2Textures (Device::create asks
+// supportsFormat).
 Result<std::unique_ptr<DeviceImpl>> createSdlGpuDevice(const DeviceDesc& desc);
 #if QUENCH_PLATFORM_APPLE
 Result<std::unique_ptr<DeviceImpl>> createMetalDevice(const DeviceDesc& desc);

@@ -33,6 +33,9 @@ QUENCH_TEST(format_info) {
     CHECK(levelByteSize(TextureFormat::Bc7RgbaUnorm, 5, 5) == 64, "Bc7 5 x 5");
     CHECK(levelByteSize(TextureFormat::Bc1RgbaUnorm, 1, 1) == 8, "Bc1 1 x 1");
     CHECK(levelByteSize(TextureFormat::Astc4x4Unorm, 8, 4) == 32, "Astc4x4 8 x 4");
+    CHECK(levelByteSize(TextureFormat::Etc2Rgb8Unorm, 8, 4) == 16 &&
+              levelByteSize(TextureFormat::Etc2Rgba8Unorm, 8, 4) == 32,
+          "Etc2 8 x 4");
     CHECK(formatInfo(TextureFormat::Depth32FloatStencil8).depth &&
               formatInfo(TextureFormat::Depth32FloatStencil8).stencil,
           "Depth32FloatStencil8");
@@ -44,11 +47,12 @@ QUENCH_TEST(caps) {
     QUENCH_GPU_DEVICE(device);
     const Caps& caps = device.caps();
     std::printf("  backend %s, driver %s, device '%s', shaders %s, gpuTiming %d, gpuPassTiming %d, depthClamp %d, "
-                "depthBiasClamp %d, indirectDraw %d, BC %d, ASTC %d\n",
+                "depthBiasClamp %d, indirectDraw %d, BC %d, ASTC %d, ETC2 %d\n",
                 backendName(caps.backend), caps.driver.c_str(), caps.deviceName.c_str(),
                 shaderFormatName(caps.shaderFormat), caps.gpuTiming, caps.gpuPassTiming, caps.depthClamp,
-                caps.depthBiasClamp, caps.indirectDraw, caps.bcTextures, caps.astcTextures);
+                caps.depthBiasClamp, caps.indirectDraw, caps.bcTextures, caps.astcTextures, caps.etc2Textures);
     CHECK(caps.backend != Backend::Default, "the device reports the default backend");
+    if (caps.backend == Backend::SdlGpu) CHECK(!caps.etc2Textures, "ETC2 on SDL GPU");
     // SDL GPU has no timestamps inside a command buffer; Apple silicon Macs sample them at pass boundaries.
     if (caps.backend == Backend::SdlGpu) CHECK(!caps.gpuPassTiming, "SDL GPU with pass timing");
     if (caps.backend == Backend::Metal && QUENCH_PLATFORM_MACOS) CHECK(caps.gpuPassTiming, "no pass timing");

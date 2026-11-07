@@ -135,6 +135,9 @@ Result<Device> Device::create(const DeviceDesc& desc) {
         device.supportsFormat(TextureFormat::Bc7RgbaUnorm, TextureType::Texture2D, TextureUsage::Sampled);
     caps.astcTextures =
         device.supportsFormat(TextureFormat::Astc4x4Unorm, TextureType::Texture2D, TextureUsage::Sampled);
+    caps.etc2Textures =
+        device.supportsFormat(TextureFormat::Etc2Rgb8Unorm, TextureType::Texture2D, TextureUsage::Sampled) &&
+        device.supportsFormat(TextureFormat::Etc2Rgba8Unorm, TextureType::Texture2D, TextureUsage::Sampled);
     log::info("gpu", "backend {}, driver {}, device '{}', shaders {}", backendName(caps.backend), caps.driver,
               caps.deviceName, shaderFormatName(caps.shaderFormat));
     return device;

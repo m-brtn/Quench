@@ -43,6 +43,10 @@ enum class TextureFormat : std::uint8_t {
     Bc7RgbaUnormSrgb,
     Astc4x4Unorm,
     Astc4x4UnormSrgb,
+    Etc2Rgb8Unorm, // ETC2: the native Metal backend only (SDL GPU has no ETC2 formats)
+    Etc2Rgb8UnormSrgb,
+    Etc2Rgba8Unorm,
+    Etc2Rgba8UnormSrgb,
     Depth16Unorm,
     Depth24UnormStencil8,
     Depth32Float,

@@ -151,6 +151,10 @@ bool isAstc(TextureFormat format) {
     return format == TextureFormat::Astc4x4Unorm || format == TextureFormat::Astc4x4UnormSrgb;
 }
 
+bool isEtc2(TextureFormat format) {
+    return format >= TextureFormat::Etc2Rgb8Unorm && format <= TextureFormat::Etc2Rgba8UnormSrgb;
+}
+
 // The swapchain format and color space of each composition, as SDL GPU sets them.
 TextureFormat compositionFormat(SwapchainComposition composition) {
     switch (composition) {
@@ -226,6 +230,10 @@ MTLPixelFormat metal::pixelFormat(TextureFormat format) {
     case TextureFormat::Bc7RgbaUnormSrgb: return MTLPixelFormatBC7_RGBAUnorm_sRGB;
     case TextureFormat::Astc4x4Unorm: return MTLPixelFormatASTC_4x4_LDR;
     case TextureFormat::Astc4x4UnormSrgb: return MTLPixelFormatASTC_4x4_sRGB;
+    case TextureFormat::Etc2Rgb8Unorm: return MTLPixelFormatETC2_RGB8;
+    case TextureFormat::Etc2Rgb8UnormSrgb: return MTLPixelFormatETC2_RGB8_sRGB;
+    case TextureFormat::Etc2Rgba8Unorm: return MTLPixelFormatEAC_RGBA8;
+    case TextureFormat::Etc2Rgba8UnormSrgb: return MTLPixelFormatEAC_RGBA8_sRGB;
     case TextureFormat::Depth16Unorm: return MTLPixelFormatDepth16Unorm;
     case TextureFormat::Depth24UnormStencil8:
 #if QUENCH_PLATFORM_MACOS
@@ -367,7 +375,8 @@ bool MetalDevice::supportsFormat(TextureFormat format, TextureType type, Texture
         (void)type;
 #endif
         if (isBc(format)) return !any(usage & TextureUsage::ColorTarget) && m_device.supportsBCTextureCompression;
-        if (isAstc(format)) {
+        if (isAstc(format) || isEtc2(format)) {
+            if (isEtc2(format) && any(usage & TextureUsage::ColorTarget)) return false;
 #if QUENCH_PLATFORM_MACOS
             return [m_device supportsFamily:MTLGPUFamilyApple7];
 #else

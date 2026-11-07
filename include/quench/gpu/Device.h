@@ -61,6 +61,7 @@ struct Caps {
     bool indirectDraw = false;   // RenderPass::draw*Indirect (not in the iOS Simulator)
     bool bcTextures = false;     // BC1-BC7 can be sampled
     bool astcTextures = false;   // ASTC 4x4 can be sampled
+    bool etc2Textures = false;   // ETC2 RGB8 and RGBA8 can be sampled (native Metal backend only; not in SDL GPU)
     // Acceleration structures and ray queries in fragment and compute shaders (native Metal backend on GPUs with
     // ray tracing; not on SDL GPU, which has no acceleration structures).
     bool rayTracing = false;
