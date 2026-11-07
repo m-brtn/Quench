@@ -288,6 +288,9 @@ QUENCH_TEST(weather_wind_and_heights) {
     CHECK(std::abs(glm::length(high) - 12.0f) < 1e-3f, "%.3f m/s at the cloud base", glm::length(high));
     CHECK(std::abs(high.x / high.z - 0.75f) < 1e-4f && high.y == 0.0f, "direction");
     CHECK(glm::length(low) > 0.3f * 12.0f && glm::length(low) < 0.5f * 12.0f, "%.2f m/s at 2 m", glm::length(low));
+    const glm::vec3 rain = w.rainVelocity({0.0f, 2.0f, 0.0f});
+    CHECK(rain.y == -Weather::kRainFallSpeed && rain.x == low.x && rain.z == low.z, "rain (%.2f %.2f %.2f) at 2 m",
+          rain.x, rain.y, rain.z);
 
     float previous = 0.0f;
     for (float type : {0.0f, 0.2f, 1.0f / 3.0f, 0.5f, 2.0f / 3.0f, 0.9f, 1.0f}) {
@@ -338,6 +341,101 @@ QUENCH_TEST(weather_queries_in_parallel) {
     }));
     CHECK(ranges.load() > 0, "no ranges ran");
     CHECK(serial == parallel, "parallel queries differ");
+}
+
+// Ground under rain wets by Settings::wettingTime and puddleFillTime and dries by dryingTime and puddleDryTime once
+// the rain stops; ground the rain never reached stays dry.
+QUENCH_TEST(weather_wetness_builds_and_dries) {
+    Settings s = clearSky();
+    s.wind.speed = 0.0f;
+    Weather w(s);
+    CHECK(w.wetness({0.0f, 0.0f}).ground == 0.0f && w.wetness({0.0f, 0.0f}).water == 0.0f, "wet under a clear sky");
+    const CellId shower = w.addCell({.position = {0.0f, 0.0f},
+                                     .radius = 3000.0f,
+                                     .type = CloudType::Cumulonimbus,
+                                     .precipitation = 1.0f,
+                                     .drifts = false});
+    const auto run = [&](double seconds) {
+        for (int i = 0; i < int(std::lround(seconds * 60.0)); ++i) w.update(1.0 / 60.0);
+    };
+    run(60.0);
+    Wetness at = w.wetness({10.0f, -20.0f});
+    std::printf("  after 60 s of rain: ground %.3f, water %.3f\n", at.ground, at.water);
+    CHECK(std::abs(at.ground - 0.5f) < 0.01f, "ground %.3f after half the wetting time", at.ground);
+    CHECK(std::abs(at.water - 60.0f / 900.0f) < 0.005f, "water %.3f", at.water);
+    CHECK(w.wetnessGrid()[std::size_t(8 * Weather::kWetnessGrid + 8)].precipitation == 1.0f, "no rain in the grid");
+    run(90.0);
+    at = w.wetness({10.0f, -20.0f});
+    CHECK(at.ground == 1.0f, "ground %.3f after the wetting time", at.ground);
+    CHECK(w.wetness({0.0f, 9000.0f}).ground == 0.0f, "wet where it never rained");
+    CHECK(w.removeCell(shower), "removeCell");
+    run(450.0);
+    at = w.wetness({10.0f, -20.0f});
+    std::printf("  450 s after the rain: ground %.3f, water %.3f\n", at.ground, at.water);
+    CHECK(std::abs(at.ground - 0.5f) < 0.01f, "ground %.3f after half the drying time", at.ground);
+    CHECK(at.water == 0.0f, "water %.3f after 450 s of drying", at.water);
+    run(500.0);
+    CHECK(w.wetness({10.0f, -20.0f}).ground == 0.0f, "still wet after the drying time");
+}
+
+// A shower drifting over the focus: dry before it comes, soaked under it, drying after it; setTime() estimates the
+// same wetness from the weather's past, and the same calls give the same grid.
+QUENCH_TEST(weather_wetness_follows_a_passing_shower) {
+    Settings s = clearSky();
+    s.wind = {{1.0f, 0.0f}, 10.0f};
+    s.evolution = 0.0f;
+    const Cell cell{.position = {-6000.0f, 0.0f}, .radius = 3000.0f, .precipitation = 1.0f};
+    Weather a(s);
+    a.addCell(cell);
+    Weather b = a;
+    float before = -1.0f;
+    for (int i = 1; i <= 1200 * 30; ++i) {
+        a.update(1.0 / 30.0);
+        b.update(1.0 / 30.0);
+        if (i == 400 * 30) before = a.wetness({0.0f, 0.0f}).ground;
+    }
+    const Wetness integrated = a.wetness({0.0f, 0.0f});
+    Weather c(s);
+    c.addCell(cell);
+    c.setTime(1200.0);
+    const Wetness estimated = c.wetness({0.0f, 0.0f});
+    std::printf("  at 400 s: ground %.3f; at 1200 s: integrated ground %.3f water %.3f, estimated %.3f %.3f\n", before,
+                integrated.ground, integrated.water, estimated.ground, estimated.water);
+    CHECK(before == 0.0f, "wet at 400 s, before the shower: %.3f", before);
+    CHECK(integrated.ground > 0.3f && integrated.ground < 0.7f, "ground %.3f, 460 s after the shower",
+          integrated.ground);
+    CHECK(std::abs(integrated.ground - estimated.ground) < 0.12f, "estimate %.3f against %.3f", estimated.ground,
+          integrated.ground);
+    CHECK(std::abs(integrated.water - estimated.water) < 0.05f, "water estimate %.3f against %.3f", estimated.water,
+          integrated.water);
+    // The versions differ (unique to each Weather); the grids do not.
+    bool same = a.wetnessVersion() != b.wetnessVersion();
+    for (std::size_t i = 0; i < a.wetnessGrid().size(); ++i)
+        same = same && a.wetnessGrid()[i].wetness.ground == b.wetnessGrid()[i].wetness.ground &&
+               a.wetnessGrid()[i].wetness.water == b.wetnessGrid()[i].wetness.water;
+    CHECK(same, "the same calls gave another grid");
+}
+
+// The grid follows its focus in whole cells: wetness it holds stays where it fell, cells it brings in are estimated.
+QUENCH_TEST(weather_wetness_focus_moves) {
+    Settings s = clearSky();
+    s.wind.speed = 0.0f;
+    Weather w(s);
+    const CellId shower =
+        w.addCell({.position = {0.0f, 0.0f}, .radius = 3000.0f, .precipitation = 1.0f, .drifts = false});
+    for (int i = 0; i < 60 * 30; ++i) w.update(1.0 / 30.0);
+    w.removeCell(shower);
+    const float here = w.wetness({100.0f, 50.0f}).ground;
+    const glm::vec2 origin = w.wetnessOrigin();
+    w.setWetnessFocus({200.0f, -130.0f});
+    CHECK(w.wetnessOrigin() != origin, "the grid did not move");
+    CHECK(w.wetnessFocus() == glm::vec2(200.0f, -130.0f), "focus");
+    const float moved = w.wetness({100.0f, 50.0f}).ground;
+    CHECK(std::abs(moved - here) < 1e-6f, "wetness %.4f became %.4f when the grid moved", here, moved);
+    // Far away the grid starts from the estimate: dry, since no rain fell there (and the shower is gone).
+    w.setWetnessFocus({20000.0f, 0.0f});
+    CHECK(w.wetness({20000.0f, 0.0f}).ground == 0.0f, "wet far from the rain");
+    CHECK(w.wetness({100.0f, 50.0f}).ground == 0.0f, "outside the grid the estimate kept the removed shower");
 }
 
 // What a query costs (printed; the bound only catches a pathological slowdown).

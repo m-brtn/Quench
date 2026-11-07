@@ -6,7 +6,9 @@
 // a game asks it what is above a point (precipitation, how overcast it is, the wind).
 //
 // The weather is a pure function of its settings, its cells and its clock: the same seed, settings, cells and time
-// give the same weather in every run and on every platform. The field itself is shared with the GPU
+// give the same weather in every run and on every platform. The one thing it remembers is how wet the ground is
+// around a focus (wetness), which follows the rain that actually fell there; the same calls in the same order give
+// the same wetness. The field itself is shared with the GPU
 // (shaders/quench/WeatherField.h), so a query and the clouds on the screen agree. Not thread-safe: one thread changes
 // it; const queries may run on several threads at once while nothing changes it.
 
@@ -59,6 +61,13 @@ struct Settings {
     float cloudBase = 1500.0f;   // m: the height of the cloud bases above y = 0
     float cloudTop = 9000.0f;    // m: the top of the tallest clouds (cumulonimbus); the other types are lower
     float cirrusHeight = 8000.0f;
+    // Wetness (Weather::wetness): seconds of precipitation 1 that soak dry ground (twice as long at 0.5) and that fill
+    // the hollows with standing water, and seconds without precipitation that dry soaked ground and empty full
+    // puddles.
+    float wettingTime = 120.0f;
+    float dryingTime = 900.0f;
+    float puddleFillTime = 900.0f;
+    float puddleDryTime = 2400.0f;
     bool operator==(const Settings&) const = default;
 };
 
@@ -84,21 +93,44 @@ struct Sample {
     float cirrus = 0.0f;
 };
 
+// How wet open ground is: each 0..1.
+struct Wetness {
+    float ground = 0.0f; // 0 dry .. 1 soaked (darker, glossier)
+    float water = 0.0f;  // standing water in the hollows: 0 none .. 1 full puddles
+};
+
+// A cell of the remembered wetness (Weather::wetnessGrid): the wetness at its centre and the precipitation falling
+// there at its last update.
+struct WetnessCell {
+    Wetness wetness{};
+    float precipitation = 0.0f;
+};
+
 class Weather {
 public:
     static constexpr std::size_t kMaxCells = QUENCH_MAX_CLOUD_CELLS;
     // Weather time for one unit of evolution at Settings::evolution 1 (s).
     static constexpr double kEvolutionPeriod = 600.0;
+    // The remembered wetness: kWetnessGrid x kWetnessGrid cells of kWetnessCell m around the wetness focus, updated
+    // once kWetnessStep s of weather time have passed.
+    static constexpr int kWetnessGrid = 16;
+    static constexpr float kWetnessCell = 64.0f;
+    static constexpr double kWetnessStep = 0.25;
+    // Precipitation below this neither wets nor keeps the ground from drying.
+    static constexpr float kWettingThreshold = 0.02f;
 
     explicit Weather(const Settings& settings = {});
 
     // Takes effect at once; the air's offset and the evolution time stay (a new wind moves the air from where it is).
+    // The wetness stays too and follows the new precipitation from now on.
     void setSettings(const Settings& settings);
     const Settings& settings() const { return m_settings; }
 
-    // The weather's clock. update() moves the air by the wind and advances the evolution by the current settings;
-    // setTime() jumps to a time as if the settings had always been the current ones (what a scripted check or a
-    // saved game uses: the weather at time t is then the same however it got there).
+    // The weather's clock. update() moves the air by the wind and advances the evolution by the current settings, and
+    // wets or dries the remembered ground by the precipitation now (in steps of at least kWetnessStep; one long update
+    // is one step); setTime() jumps to a time as if the settings had always been the current ones (what a scripted
+    // check or a saved game uses: the weather at time t is then the same however it got there), the wetness included
+    // (estimated from the last hours of that weather).
     void update(double dt);
     void setTime(double time);
     double time() const { return m_time; }
@@ -131,6 +163,10 @@ public:
     // The wind at a point: the settings' wind at the clouds' height, less near the ground (a logarithmic profile,
     // about 0.3 of it at 2 m under a base at 1.5 km). Gusts and local wind come with part 4 (docs/weather.md).
     glm::vec3 windAt(glm::vec3 point) const;
+    // The velocity of the rain falling at a point (m/s): kRainFallSpeed down, carried by windAt. The renderer's rain
+    // occlusion map looks along it; a game's own test for cover (a raycast up against it from a listener) can too.
+    static constexpr float kRainFallSpeed = 7.5f;
+    glm::vec3 rainVelocity(glm::vec3 point) const;
     // The height of the cloud tops of a type value (m).
     float cloudTop(float type) const;
     // An upper bound of Sample::type anywhere on the map, the field's and the cells' (what the renderer marches
@@ -140,6 +176,21 @@ public:
     // The map on a grid: resolution x resolution samples at the texel centres of [origin, origin + size] (world xz),
     // row by row in +z. `out` holds resolution * resolution samples.
     void fill(glm::vec2 origin, float size, std::uint32_t resolution, std::span<Sample> out) const;
+
+    // How wet open ground is at a point (no roofs or trees are known here; the renderer's rain map adds them). Within
+    // the remembered grid it is the rain that fell there since the grid came there; elsewhere the estimate setTime()
+    // makes (about 0.01 ms: 48 samples of the weather's last hours).
+    Wetness wetness(glm::vec2 xz) const;
+    // Where the grid of remembered wetness is centred: a game's camera or player, set every frame (the grid moves in
+    // whole cells; the cells it brings in start from the estimate). At the origin until set.
+    void setWetnessFocus(glm::vec2 xz);
+    glm::vec2 wetnessFocus() const { return m_wetFocus; }
+    // The grid: kWetnessGrid * kWetnessGrid cells, row by row in +z, the first with its corner at wetnessOrigin().
+    std::span<const WetnessCell> wetnessGrid() const { return m_wetCells; }
+    glm::vec2 wetnessOrigin() const { return m_wetOrigin; }
+    // Changes with every update and move of the grid, to a number no other Weather has had (what the renderer
+    // uploads again when it changes); a copy keeps it.
+    std::uint64_t wetnessVersion() const { return m_wetVersion; }
 
     // What the renderer's weather pass reads (shaders/quench/WeatherField.h).
     const shader::WeatherUniforms& uniforms() const { return m_uniforms; }
@@ -153,6 +204,12 @@ private:
 
     void refresh();
     glm::vec2 cellPosition(const CellEntry& entry) const;
+    // The field as it was `ago` seconds before now, had the settings always been the current ones.
+    shader::WeatherUniforms pastUniforms(double ago) const;
+    // The wetness the last hours of this weather leave at each point (and the precipitation there now).
+    void estimateWetness(std::span<const glm::vec2> points, std::span<WetnessCell> out) const;
+    void estimateGrid();
+    Wetness wetted(Wetness w, float precipitation, double dt) const;
 
     Settings m_settings{};
     double m_time = 0.0;
@@ -161,6 +218,11 @@ private:
     std::vector<CellEntry> m_cells; // in id order
     CellId m_nextId = 1;
     shader::WeatherUniforms m_uniforms{};
+    glm::vec2 m_wetFocus{0.0f};
+    glm::vec2 m_wetOrigin{0.0f};
+    std::vector<WetnessCell> m_wetCells;
+    double m_wetPending = 0.0; // weather time since the grid's last update
+    std::uint64_t m_wetVersion = 0;
 };
 
 } // namespace quench::weather

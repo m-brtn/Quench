@@ -1,13 +1,21 @@
 #include <quench/weather/Weather.h>
 
+#include <glm/common.hpp>
 #include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace quench::weather {
 
 namespace {
+
+// Versions of the remembered wetness, unique across every Weather (a renderer that is given another one uploads its
+// grid even when the two have changed as often).
+std::atomic<std::uint64_t> g_wetVersions{0};
+
+std::uint64_t nextWetVersion() { return g_wetVersions.fetch_add(1, std::memory_order_relaxed) + 1; }
 
 glm::vec2 unitOr(glm::vec2 v, glm::vec2 fallback) {
     const float len = glm::length(v);
@@ -19,6 +27,15 @@ Sample toSample(glm::vec4 v) { return {v.x, v.y, v.z, v.w}; }
 // A per-cell phase of the evolution, so two cells never have the same lobes.
 float cellPhase(CellId id) { return float(id % 64u) * 7.31f; }
 
+// The wetness estimate: steps over the weather's past, as far back as soaked ground and full puddles take to dry
+// after wetting (at most two hours).
+constexpr int kEstimateSteps = 48;
+
+glm::vec2 gridOrigin(glm::vec2 focus) {
+    const float cell = Weather::kWetnessCell;
+    return glm::floor(focus / cell) * cell - float(Weather::kWetnessGrid / 2) * cell;
+}
+
 } // namespace
 
 float typeValue(CloudType type) { return float(type) / 3.0f; }
@@ -27,7 +44,12 @@ CloudType nearestType(float value) {
     return CloudType(std::clamp(int(std::lround(std::clamp(value, 0.0f, 1.0f) * 3.0f)), 0, 3));
 }
 
-Weather::Weather(const Settings& settings) : m_settings(settings) { refresh(); }
+Weather::Weather(const Settings& settings) : m_settings(settings) {
+    refresh();
+    m_wetOrigin = gridOrigin(m_wetFocus);
+    m_wetCells.resize(std::size_t(kWetnessGrid) * kWetnessGrid);
+    estimateGrid();
+}
 
 void Weather::setSettings(const Settings& settings) {
     m_settings = settings;
@@ -41,6 +63,18 @@ void Weather::update(double dt) {
     m_airOffset += dir * float(double(m_settings.wind.speed) * dt);
     m_evolution += dt * double(std::max(m_settings.evolution, 0.0f)) / kEvolutionPeriod;
     refresh();
+    m_wetPending += dt;
+    if (m_wetPending < kWetnessStep) return;
+    const float cell = kWetnessCell;
+    for (int z = 0; z < kWetnessGrid; ++z)
+        for (int x = 0; x < kWetnessGrid; ++x) {
+            WetnessCell& c = m_wetCells[std::size_t(z * kWetnessGrid + x)];
+            c.precipitation =
+                sample(m_wetOrigin + glm::vec2((float(x) + 0.5f) * cell, (float(z) + 0.5f) * cell)).precipitation;
+            c.wetness = wetted(c.wetness, c.precipitation, m_wetPending);
+        }
+    m_wetPending = 0.0;
+    m_wetVersion = nextWetVersion();
 }
 
 void Weather::setTime(double time) {
@@ -49,6 +83,110 @@ void Weather::setTime(double time) {
     m_airOffset = dir * float(double(m_settings.wind.speed) * time);
     m_evolution = time * double(std::max(m_settings.evolution, 0.0f)) / kEvolutionPeriod;
     refresh();
+    estimateGrid();
+}
+
+Wetness Weather::wetted(Wetness w, float precipitation, double dt) const {
+    const Settings& s = m_settings;
+    const float t = float(dt);
+    if (precipitation > kWettingThreshold) {
+        w.ground = std::min(1.0f, w.ground + t * precipitation / std::max(s.wettingTime, 1.0f));
+        w.water = std::min(1.0f, w.water + t * precipitation / std::max(s.puddleFillTime, 1.0f));
+    } else {
+        w.ground = std::max(0.0f, w.ground - t / std::max(s.dryingTime, 1.0f));
+        w.water = std::max(0.0f, w.water - t / std::max(s.puddleDryTime, 1.0f));
+    }
+    return w;
+}
+
+shader::WeatherUniforms Weather::pastUniforms(double ago) const {
+    shader::WeatherUniforms u = m_uniforms;
+    const glm::vec2 moved = glm::vec2(u.air.z, u.air.w) * float(double(m_settings.wind.speed) * ago);
+    u.air.x -= moved.x;
+    u.air.y -= moved.y;
+    u.shape.y = float(m_evolution - ago * double(std::max(m_settings.evolution, 0.0f)) / kEvolutionPeriod);
+    for (std::size_t i = 0; i < m_cells.size(); ++i) {
+        if (!m_cells[i].cell.drifts) continue;
+        u.cells[i * 2].x -= moved.x;
+        u.cells[i * 2].y -= moved.y;
+    }
+    return u;
+}
+
+void Weather::estimateWetness(std::span<const glm::vec2> points, std::span<WetnessCell> out) const {
+    const Settings& s = m_settings;
+    const double span =
+        std::min(7200.0, double(std::max(std::max(s.wettingTime, 1.0f) + std::max(s.dryingTime, 1.0f),
+                                         std::max(s.puddleFillTime, 1.0f) + std::max(s.puddleDryTime, 1.0f))));
+    const double step = span / double(kEstimateSteps);
+    for (std::size_t i = 0; i < points.size(); ++i) out[i] = {};
+    for (int k = 0; k < kEstimateSteps; ++k) {
+        const shader::WeatherUniforms u = pastUniforms(span - (double(k) + 0.5) * step);
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            const float p = shader::quenchWeatherSample(u, points[i]).z;
+            out[i].wetness = wetted(out[i].wetness, p, step);
+        }
+    }
+    for (std::size_t i = 0; i < points.size(); ++i) out[i].precipitation = sample(points[i]).precipitation;
+}
+
+void Weather::estimateGrid() {
+    std::vector<glm::vec2> points(m_wetCells.size());
+    for (int z = 0; z < kWetnessGrid; ++z)
+        for (int x = 0; x < kWetnessGrid; ++x)
+            points[std::size_t(z * kWetnessGrid + x)] =
+                m_wetOrigin + glm::vec2((float(x) + 0.5f) * kWetnessCell, (float(z) + 0.5f) * kWetnessCell);
+    estimateWetness(points, m_wetCells);
+    m_wetPending = 0.0;
+    m_wetVersion = nextWetVersion();
+}
+
+void Weather::setWetnessFocus(glm::vec2 xz) {
+    m_wetFocus = xz;
+    const glm::vec2 origin = gridOrigin(xz);
+    if (origin == m_wetOrigin) return;
+    const glm::ivec2 shift = glm::ivec2(glm::round((origin - m_wetOrigin) / kWetnessCell));
+    std::vector<WetnessCell> cells(m_wetCells.size());
+    std::vector<glm::vec2> fresh;
+    std::vector<std::size_t> freshIndex;
+    for (int z = 0; z < kWetnessGrid; ++z)
+        for (int x = 0; x < kWetnessGrid; ++x) {
+            const int ox = x + shift.x;
+            const int oz = z + shift.y;
+            const std::size_t i = std::size_t(z * kWetnessGrid + x);
+            if (ox >= 0 && ox < kWetnessGrid && oz >= 0 && oz < kWetnessGrid) {
+                cells[i] = m_wetCells[std::size_t(oz * kWetnessGrid + ox)];
+            } else {
+                fresh.push_back(origin + glm::vec2((float(x) + 0.5f) * kWetnessCell, (float(z) + 0.5f) * kWetnessCell));
+                freshIndex.push_back(i);
+            }
+        }
+    std::vector<WetnessCell> estimated(fresh.size());
+    estimateWetness(fresh, estimated);
+    for (std::size_t k = 0; k < fresh.size(); ++k) cells[freshIndex[k]] = estimated[k];
+    m_wetCells = std::move(cells);
+    m_wetOrigin = origin;
+    m_wetVersion = nextWetVersion();
+}
+
+Wetness Weather::wetness(glm::vec2 xz) const {
+    // Bilinear between the cell centres inside the grid; the estimate outside it.
+    const glm::vec2 g = (xz - m_wetOrigin) / kWetnessCell - 0.5f;
+    const float last = float(kWetnessGrid - 1);
+    if (g.x >= -0.5f && g.y >= -0.5f && g.x <= last + 0.5f && g.y <= last + 0.5f) {
+        const glm::vec2 c = glm::clamp(g, glm::vec2(0.0f), glm::vec2(last));
+        const glm::ivec2 i0 = glm::min(glm::ivec2(glm::floor(c)), glm::ivec2(kWetnessGrid - 2));
+        const glm::vec2 f = c - glm::vec2(i0);
+        const auto at = [&](int x, int z) { return m_wetCells[std::size_t(z * kWetnessGrid + x)].wetness; };
+        const Wetness a = at(i0.x, i0.y), b = at(i0.x + 1, i0.y), d = at(i0.x, i0.y + 1), e = at(i0.x + 1, i0.y + 1);
+        const auto mix = [&](float va, float vb, float vd, float ve) {
+            return (va * (1.0f - f.x) + vb * f.x) * (1.0f - f.y) + (vd * (1.0f - f.x) + ve * f.x) * f.y;
+        };
+        return {mix(a.ground, b.ground, d.ground, e.ground), mix(a.water, b.water, d.water, e.water)};
+    }
+    WetnessCell out{};
+    estimateWetness({&xz, 1}, {&out, 1});
+    return out.wetness;
 }
 
 CellId Weather::addCell(const Cell& cell) {
@@ -187,6 +325,8 @@ glm::vec3 Weather::windAt(glm::vec3 point) const {
     const float speed = m_settings.wind.speed * scale;
     return {dir.x * speed, 0.0f, dir.y * speed};
 }
+
+glm::vec3 Weather::rainVelocity(glm::vec3 point) const { return windAt(point) - glm::vec3(0.0f, kRainFallSpeed, 0.0f); }
 
 float Weather::cloudTop(float type) const {
     const float base = m_uniforms.layer.x;
