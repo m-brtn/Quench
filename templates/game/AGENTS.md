@@ -16,7 +16,8 @@ Automated runs (`--script`, `--capture`, `--quit-after`: ctest, captures, script
 on the screen, no input from real devices, no sound (the engine's `docs/app.md`, "Offscreen runs"). `--onscreen`
 shows the window, for example to watch a scenario or to measure a perf region.
 
-iOS: build the shader compiler for the Mac first (`cmake --preset host-tools && cmake --build --preset host-tools`),
+iOS: build the shader compiler and the asset cooker for the Mac first
+(`cmake --preset host-tools && cmake --build --preset host-tools`),
 then `ios-sim-release` (Simulator, ad-hoc signed) or `ios-xcode` (device, Xcode Automatic signing with
 `-DQUENCH_IOS_TEAM=<team id>`). Device runs: install and launch with `xcrun devicectl`.
 
@@ -25,13 +26,16 @@ Changes that can behave differently on a phone: run on the device, or ask the us
 
 ## Engine
 
+- How to build a game on the engine (modules, assets, scenarios, captures, iOS, pitfalls): the agent skill in
+  `.agents/skills/quench-game/`, copied from the engine by `tools/new_game.py`. When the engine pin moves, copy it
+  again from the engine's `.agents/skills/quench-game/` at that commit.
 - The engine is fetched at the commit pinned in `CMakeLists.txt` (`GIT_TAG`). For engine work at the same time,
   configure with `-DFETCHCONTENT_SOURCE_DIR_QUENCH=<engine checkout>`; before committing the game, pin a pushed engine
   commit and build without the override.
 - The engine's own rules, flags and scenario commands: its `AGENTS.md` and `docs/app.md`.
 - Read assets and write user files only through `quench::fs` (assets come from the bundle on iOS); no `std::ifstream`,
   `std::ofstream` or `fopen` in game code.
-- Graphics only through `quench::gpu`, never SDL GPU directly. Uniform blocks are defined once in `shaders/*.h` with
+- Graphics only through `quench::gpu` and `quench::render`, never SDL GPU directly. Uniform blocks are defined once in `shaders/*.h` with
   16-byte members only.
 - No blocking `while (running)` loop: the engine owns `main` and calls the game (`quench::app::Game`).
 - Right-handed, Y up, meters, kilograms, seconds. Reversed depth (near 1, far 0).

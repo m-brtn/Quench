@@ -5,7 +5,8 @@
                               [--organization "My Studio"] [--engine-commit SHA] [--no-check]
 
 The template's names are replaced (display name, target and executable id, C++ class, bundle id, organization) and
-the engine is pinned to a commit of this checkout (HEAD by default). Then, unless --no-check is given, the game is
+the engine is pinned to a commit of this checkout (HEAD by default). The agent skill .agents/skills/quench-game (how
+to build a game on the engine) is copied into the game as it is. Then, unless --no-check is given, the game is
 configured and built in Debug against this engine checkout (FETCHCONTENT_SOURCE_DIR_QUENCH) and started once with
 --quit-after 1 (offscreen: no window on the screen, no sound): the check is only that the game builds, starts and
 quits cleanly. Its own gates (ctest with the smoke scenario, a capture looked at) come after that, as described in the
@@ -23,6 +24,7 @@ from typing import Optional
 
 ENGINE_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = ENGINE_DIR / "templates" / "game"
+SKILL_DIR = ENGINE_DIR / ".agents" / "skills" / "quench-game"
 BINARY_SUFFIXES = {".png"}
 
 
@@ -66,6 +68,7 @@ def create(dest: Path, replacements: list) -> None:
         for old, new in replacements:
             text = text.replace(old, new)
         target.write_text(text, encoding="utf-8")
+    shutil.copytree(SKILL_DIR, dest / ".agents" / "skills" / SKILL_DIR.name)
 
 
 def check(dest: Path, game_id: str) -> None:
@@ -122,7 +125,8 @@ def main() -> int:
             print(f"check failed: {error}", file=sys.stderr)
             return 1
         print(f"check passed: {game_id} builds, starts and quits")
-    print(f"next: cd {dest} && git init, then follow AGENTS.md (gates: debug and release, ctest, a capture)")
+    print(f"next: cd {dest} && git init, then follow AGENTS.md (gates: debug and release, ctest, a capture) and the "
+          "skill in .agents/skills/quench-game")
     return 0
 
 

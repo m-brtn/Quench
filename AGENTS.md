@@ -242,7 +242,7 @@ decision, 2026-11-06); `tools/check.sh` runs them, offscreen:
   Look at a capture when its check fails or its golden image changes, not at all of them every time. Add the one step
   that can break where the change can: `tools/check.sh step asan` or `step tsan` (threaded code), `step wasm` (a
   headless module), `step ios` (platform code), `step new-game` (what a game's build uses: `cmake/QuenchGame.cmake`,
-  the template).
+  the template, the game skill).
 - **Shared foundations (core, the job system and threads, the GPU layer, the app loop, the build and CMake) and the
   end of a stage: `tools/check.sh full`.** format; `debug`, `release`, `asan` and `tsan` (build and ctest each; the
   captures of every backend in `release`); `wasm-node`; `host-tools`, `ios-sim-release` and `ios-sim-tests`;
@@ -431,6 +431,11 @@ are built:
 - Changes inside a game follow that game's `AGENTS.md` (its devlog, its gates, its commit rules). The migration
   procedure is in `docs/migration.md`.
 - Commit order: the engine first, then each game with its engine pin updated.
+- The agent skill `.agents/skills/quench-game/` says how to build a game on the engine, and `tools/new_game.py`
+  copies it into every new game: a change that affects how a game is built (public API, `quench_add_game()` and
+  `cmake/QuenchGame.cmake`, the template, `tools/new_game.py`, common flags, scenario commands, asset cooking)
+  updates the skill in the same commit. `tools/check.sh step new-game` checks that the paths, flags and names it uses
+  still exist (`tools/check_skill.py`) and that a new game gets it.
 
 ## Versioning and releases
 
@@ -518,6 +523,8 @@ LFS only when unavoidable and keep it small.
 
 ```
 AGENTS.md              these rules
+.agents/skills/        quench-game/: the agent skill on building a game on the engine (SKILL.md, reference.md),
+                       copied into every new game by tools/new_game.py
 README.md              short overview
 LICENSE                MIT licence of the engine; THIRD_PARTY_LICENSES: licences of the libraries it ships
 CMakeLists.txt         engine targets; CMakePresets.json: configure, build and test presets
@@ -569,7 +576,8 @@ tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the icons of the sample and the demo
 tools/make_ltc_table.py writes src/render/LtcTable.inc from selfshadow/ltc_code's fit (checks its SHA256)
 tools/make_hrtf_table.py writes src/audio/HrtfTable.inc from Resonance Audio's SADIE set (checks its SHA256)
-tools/new_game.py      creates a game from templates/game
+tools/new_game.py      creates a game from templates/game, with the quench-game skill
+tools/check_skill.py   checks that the paths, flags and names the quench-game skill uses exist (step new-game)
 tools/check.sh         the gates: quick (a small change), full, release, single steps
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
 tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a development-signed .ipa)

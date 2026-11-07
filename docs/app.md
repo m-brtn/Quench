@@ -345,7 +345,10 @@ time, per file and only when a source changed ([Jobs, assets and the cook](asset
 - `CUSTOM_MAIN`: the target defines `main` itself (the device test app).
 
 New games start from `templates/game`: `python3 tools/new_game.py "My Game" <directory>` copies it, renames it, pins
-the engine to a commit of this checkout and checks that the game builds and starts (see the script's `--help`).
+the engine to a commit of this checkout and checks that the game builds and starts (see the script's `--help`). It
+also copies the agent skill `.agents/skills/quench-game/` into the game: how to build a game on the engine (the
+modules, cooked assets, scenarios, captures and golden images, iOS builds, pitfalls), for coding agents in the
+game's repository.
 
 ## Shader hot reload
 

@@ -19,7 +19,7 @@ FetchContent_Declare(quench
     GIT_TAG QUENCH_ENGINE_COMMIT)
 FetchContent_MakeAvailable(quench)
 
-# The host-tools preset builds only the engine's shader compiler (for the iOS builds).
+# The host-tools preset builds only the engine's shader compiler and asset cooker (for the iOS builds).
 if(QUENCH_HEADLESS)
     return()
 endif()

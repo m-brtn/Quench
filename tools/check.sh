@@ -84,12 +84,15 @@ run_step() {
     new-game)
         local t dir
         t="$(now)"
-        step "new game from templates/game, built against this checkout and started once"
+        step "new game from templates/game, built against this checkout and started once; the quench-game skill"
+        python3 tools/check_skill.py || fail "check_skill.py: update .agents/skills/quench-game"
         dir="$(mktemp -d -t quench_new_game)"
-        local status=0
+        local status=0 copied=0
         python3 tools/new_game.py "Check Game" "$dir/check-game" || status=$?
+        diff -r .agents/skills/quench-game "$dir/check-game/.agents/skills/quench-game" || copied=$?
         rm -rf "$dir"
         [[ $status -eq 0 ]] || fail "new_game.py"
+        [[ $copied -eq 0 ]] || fail "the new game's copy of .agents/skills/quench-game"
         echo "new-game: $(elapsed "$t") s"
         ;;
     package)

@@ -12,7 +12,7 @@
     { "name": "release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } },
     {
       "name": "host-tools",
-      "displayName": "macOS shader compiler for the iOS builds",
+      "displayName": "macOS shader compiler and asset cooker for the iOS builds",
       "inherits": "base",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "QUENCH_HEADLESS": "ON" }
@@ -26,7 +26,8 @@
         "CMAKE_SYSTEM_NAME": "iOS",
         "CMAKE_OSX_ARCHITECTURES": "arm64",
         "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
-        "QUENCH_HOST_SHADERC": "${sourceDir}/build/host-tools/_deps/quench-build/quench_shaderc"
+        "QUENCH_HOST_SHADERC": "${sourceDir}/build/host-tools/_deps/quench-build/quench_shaderc",
+        "QUENCH_HOST_COOK": "${sourceDir}/build/host-tools/_deps/quench-build/quench_cook"
       }
     },
     {
@@ -46,7 +47,7 @@
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
     { "name": "release", "configurePreset": "release" },
-    { "name": "host-tools", "configurePreset": "host-tools", "targets": ["quench_shaderc"] },
+    { "name": "host-tools", "configurePreset": "host-tools", "targets": ["quench_shaderc", "quench_cook"] },
     { "name": "ios-sim-release", "configurePreset": "ios-sim-release" },
     {
       "name": "ios-xcode",
