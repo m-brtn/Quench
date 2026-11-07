@@ -231,6 +231,21 @@ if(TARGET quench_cook_lib)
         add_custom_target(quench_cook_test_characters DEPENDS ${_character_files})
         add_dependencies(quench_cook_tests quench_cook_test_characters)
     endif()
+    # The engine's default weather sounds for audio.weather_default_sounds (without Python the case skips).
+    if(Python3_Interpreter_FOUND)
+        set(_weather_sounds ${CMAKE_CURRENT_BINARY_DIR}/weather_sounds)
+        set(_weather_files rain_light.wav rain_heavy.wav rain_far.wav rain_cover.wav)
+        list(TRANSFORM _weather_files PREPEND ${_weather_sounds}/)
+        add_custom_command(
+            OUTPUT ${_weather_files}
+            COMMAND ${Python3_EXECUTABLE} ${Quench_SOURCE_DIR}/tools/assets/make_weather_sounds.py ${_weather_sounds}
+            DEPENDS ${Quench_SOURCE_DIR}/tools/assets/make_weather_sounds.py
+            COMMENT "Writing the default weather sounds for quench_audio_tests"
+            VERBATIM)
+        add_custom_target(quench_audio_test_weather_sounds DEPENDS ${_weather_files})
+        add_dependencies(quench_audio_tests quench_audio_test_weather_sounds)
+        target_compile_definitions(quench_audio_tests PRIVATE QUENCH_TEST_WEATHER_SOUNDS_DIR="${_weather_sounds}")
+    endif()
     target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_CHARACTER_DIR="${_characters}"
                                                          QUENCH_TEST_TUNNEL_DIR="${_tunnel}")
     add_test(NAME cook_cli COMMAND ${CMAKE_COMMAND} -DCOOK=$<TARGET_FILE:quench_cook>

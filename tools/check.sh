@@ -138,13 +138,17 @@ labels_for() {
     src/core/* | include/quench/core/* | tests/core/*) echo "core shared" ;;
     src/physics/* | include/quench/physics/* | tests/physics/*) echo "physics" ;;
     src/assets/* | include/quench/assets/* | tests/assets/*) echo "assets" ;;
+    src/audio/WeatherAudio.cpp | include/quench/audio/WeatherAudio.h | tools/assets/make_weather_sounds.py)
+        echo "audio demo"
+        ;;
     src/audio/* | include/quench/audio/* | tests/audio/*) echo "audio" ;;
     src/animation/* | include/quench/animation/* | tests/animation/*) echo "animation" ;;
     src/navigation/* | include/quench/navigation/* | tests/navigation/*) echo "navigation" ;;
     src/weather/* | include/quench/weather/* | tests/weather/* | shaders/quench/WeatherField.h)
         echo "weather render demo"
         ;;
-    tools/cook/* | tests/cook/* | tests/CookCli.cmake | cmake/CookToolchain.cmake | cmake/QuenchCook.cmake) echo "cook" ;;
+    cmake/QuenchCook.cmake) echo "cook hello demo" ;;
+    tools/cook/* | tests/cook/* | tests/CookCli.cmake | cmake/CookToolchain.cmake) echo "cook" ;;
     src/gpu/* | include/quench/gpu/* | tests/gpu/*) echo "gpu render shared" ;;
     src/app/* | include/quench/app/* | tests/app/* | tests/harness/*) echo "app hello demo shared" ;;
     src/render/* | include/quench/render/* | tests/render/* | shaders/*) echo "render demo" ;;

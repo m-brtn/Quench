@@ -121,7 +121,8 @@ add_library(quench_audio STATIC
     src/audio/Mixer.cpp
     src/audio/Sound.cpp
     src/audio/Spatial.cpp
-    src/audio/Wav.cpp)
+    src/audio/Wav.cpp
+    src/audio/WeatherAudio.cpp)
 quench_configure_target(quench_audio)
 target_link_libraries(quench_audio PUBLIC quench_core quench_assets quench_glm PRIVATE quench_miniaudio)
 

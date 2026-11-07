@@ -4,6 +4,7 @@
 #include <quench/audio/Analysis.h>
 #include <quench/audio/AudioSystem.h>
 #include <quench/audio/Wav.h>
+#include <quench/audio/WeatherAudio.h>
 #include <quench/core/FileSystem.h>
 #include <quench/core/Jobs.h>
 
@@ -1353,6 +1354,198 @@ QUENCH_TEST(sound_assets) {
     }
     // The AudioSystem unregistered its type: loading again needs a new one.
     CHECK(manager.stats().types.empty() || manager.stats().types[0].name != "sound", "type unregistered");
+}
+
+// ---------------------------------------------------------------------------------------------------- weather
+
+QUENCH_TEST(weather_audio_gains) {
+    const auto gains = [](float precipitation, float distance, float cover) {
+        return WeatherAudio::targetGains({precipitation, distance, cover}, 4000.0f);
+    };
+    const auto at = [](const std::array<float, kWeatherLayers>& g, WeatherLayer layer) {
+        return g[std::size_t(layer)];
+    };
+    for (float g : gains(0.0f, 1e9f, 0.0f)) CHECK(g == 0.0f, "dry and no rain near: silent");
+    const auto trace = gains(0.01f, 0.0f, 0.0f);
+    CHECK(at(trace, WeatherLayer::RainLight) == 0.0f && at(trace, WeatherLayer::RainHeavy) == 0.0f,
+          "a trace of rain is not heard at the listener");
+    const auto light = gains(0.15f, 0.0f, 0.0f);
+    CHECK(at(light, WeatherLayer::RainLight) > 0.2f && at(light, WeatherLayer::RainHeavy) == 0.0f, "light rain");
+    const auto heavy = gains(0.9f, 0.0f, 0.0f);
+    CHECK(at(heavy, WeatherLayer::RainHeavy) > 0.9f && at(heavy, WeatherLayer::RainLight) == 0.0f, "heavy rain");
+    // Equal power between light and heavy: their squares sum to the loudness at every precipitation.
+    for (float p = 0.05f; p <= 1.0f; p += 0.05f) {
+        const auto g = gains(p, 0.0f, 0.0f);
+        const float power = at(g, WeatherLayer::RainLight) * at(g, WeatherLayer::RainLight) +
+                            at(g, WeatherLayer::RainHeavy) * at(g, WeatherLayer::RainHeavy);
+        CHECK(near(power, (p - 0.02f) / 0.98f, 1e-4f), "power %f at %f", power, p);
+    }
+    const auto covered = gains(0.6f, 0.0f, 1.0f);
+    CHECK(at(covered, WeatherLayer::RainLight) == 0.0f && at(covered, WeatherLayer::RainHeavy) == 0.0f &&
+              at(covered, WeatherLayer::RainCover) > 0.7f,
+          "under a roof only the roof is heard");
+    const auto near_ = gains(0.0f, 500.0f, 0.0f), far = gains(0.0f, 3500.0f, 0.0f), beyond = gains(0.0f, 5000.0f, 0.0f);
+    CHECK(at(near_, WeatherLayer::RainFar) > at(far, WeatherLayer::RainFar) && at(far, WeatherLayer::RainFar) > 0.0f &&
+              at(beyond, WeatherLayer::RainFar) == 0.0f,
+          "distant rain grows as it comes nearer: %f %f %f", at(near_, WeatherLayer::RainFar),
+          at(far, WeatherLayer::RainFar), at(beyond, WeatherLayer::RainFar));
+    CHECK(at(gains(0.5f, 0.0f, 0.0f), WeatherLayer::RainFar) == 0.0f, "no distant layer inside the rain");
+}
+
+// The engine's default weather sounds (tools/assets/make_weather_sounds.py, written at build time where the build has
+// Python and the cook): loops without a seam, below full scale, heavy rain louder than light, the light rain's
+// energy the highest, the distant rain's the lowest and the roof's below the open-air rain's. The share of a band is
+// the energy of the sound through a one-pole low-pass (or what it leaves: the high-pass) against the whole; one pole
+// is a gentle slope, so the shares overlap.
+QUENCH_TEST(weather_default_sounds) {
+#ifndef QUENCH_TEST_WEATHER_SOUNDS_DIR
+    QUENCH_SKIP("the default weather sounds are written in host builds with Python only");
+#else
+    struct Measured {
+        float rms = 0.0f, peak = 0.0f, below700 = 0.0f, above2k = 0.0f, seam = 0.0f, step = 0.0f;
+    };
+    const auto lowShare = [](const std::vector<float>& mono, float hz, std::uint32_t rate, bool high) {
+        const float a = std::exp(-2.0f * std::numbers::pi_v<float> * hz / float(rate));
+        double total = 0.0, kept = 0.0;
+        float y = 0.0f;
+        for (int pass = 0; pass < 2; ++pass) // twice around the loop, the second kept
+            for (float x : mono) {
+                y = (1.0f - a) * x + a * y;
+                if (pass == 0) continue;
+                const float out = high ? x - y : y;
+                kept += double(out) * out;
+                total += double(x) * x;
+            }
+        return total > 0.0 ? float(kept / total) : 0.0f;
+    };
+    const auto measure = [&](const char* name) {
+        Measured m;
+        std::ifstream file(std::filesystem::path(QUENCH_TEST_WEATHER_SOUNDS_DIR) / name, std::ios::binary);
+        const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(file), {}};
+        Result<SoundData> sound = decodeSound(bytes);
+        CHECK(sound, "%s: %s", name, sound ? "" : sound.error().c_str());
+        if (!sound) return m;
+        const std::uint32_t channels = sound->format.channels, rate = sound->format.sampleRate;
+        std::vector<float> mono(sound->frames());
+        for (std::size_t f = 0; f < mono.size(); ++f) {
+            float sum = 0.0f;
+            for (std::uint32_t c = 0; c < channels; ++c) sum += sound->samples[f * channels + c];
+            mono[f] = sum / float(channels);
+        }
+        const Levels levels = measureLevels(sound->samples, channels);
+        m.rms = levels.rmsMono();
+        m.peak = std::max(levels.peak[0], levels.peak[1]);
+        m.below700 = lowShare(mono, 700.0f, rate, false);
+        m.above2k = lowShare(mono, 2000.0f, rate, true);
+        // The jump from the last frame to the first against the loop's largest change over two frames.
+        m.seam = std::abs(mono.front() - mono.back());
+        m.step = maxStep(mono);
+        std::printf("  %s: %.1f s, rms %.4f, peak %.3f, energy below 700 Hz %.2f, above 2 kHz %.2f, seam %.4f "
+                    "(largest step %.4f)\n",
+                    name, sound->duration(), double(m.rms), double(m.peak), double(m.below700), double(m.above2k),
+                    double(m.seam), double(m.step));
+        CHECK(m.peak < 0.99f && m.rms > 0.01f, "%s: rms %f, peak %f", name, double(m.rms), double(m.peak));
+        CHECK(m.seam <= m.step, "%s: the loop's seam %f is no larger than its steps (%f)", name, double(m.seam),
+              double(m.step));
+        return m;
+    };
+    const Measured light = measure("rain_light.wav"), heavy = measure("rain_heavy.wav");
+    const Measured far = measure("rain_far.wav"), cover = measure("rain_cover.wav");
+    CHECK(heavy.rms > light.rms * 1.5f, "heavy rain louder: %f against %f", double(heavy.rms), double(light.rms));
+    CHECK(light.above2k > 0.45f && light.above2k > heavy.above2k, "light rain is high: %.2f above 2 kHz (heavy %.2f)",
+          double(light.above2k), double(heavy.above2k));
+    CHECK(far.below700 > 0.6f && far.below700 > cover.below700 && far.above2k < 0.1f,
+          "distant rain is low: %.2f below 700 Hz, %.2f above 2 kHz", double(far.below700), double(far.above2k));
+    CHECK(cover.below700 > heavy.below700 && cover.above2k < light.above2k,
+          "the roof is duller than the open air: %.2f below 700 Hz (heavy %.2f)", double(cover.below700),
+          double(heavy.below700));
+#endif
+}
+
+// The layers mixed offline from sine loops of their own frequency: the strongest frequency of the mix says which
+// layer plays. A changed sound and a reloaded file crossfade in; a disabled object goes silent and stops its sounds.
+QUENCH_TEST(weather_audio_mix) {
+    AssetDir dir("audio_weather_audio_mix");
+    const std::pair<const char*, float> files[] = {{"light.wav", 3000.0f},
+                                                   {"heavy.wav", 1000.0f},
+                                                   {"far.wav", 200.0f},
+                                                   {"cover.wav", 500.0f},
+                                                   {"other.wav", 1500.0f}};
+    for (const auto& [name, hz] : files) dir.write(name, encodeWav(sineSamples(hz, 0.5f, 1.0, 1), 1, kRate));
+    JobSystem jobs(JobSystemDesc{.workerThreads = 0});
+    assets::AssetManager manager(jobs);
+    AudioSystem audio(jobs, &manager);
+    audio.setOffline(true);
+    std::vector<float> out;
+    {
+        WeatherAudio weather(
+            audio, {.sounds = {"light.wav", "heavy.wav", "far.wav", "cover.wav"}, .bus = "effects", .smoothing = 0.1f});
+        const auto run = [&](const WeatherSoundState& state, double seconds) {
+            out.clear();
+            for (double t = 0.0; t < seconds - 1e-9; t += 0.01) {
+                manager.update();
+                weather.update(state, 0.01);
+                audio.update();
+                audio.mixOffline(0.01, &out);
+            }
+        };
+        const auto strongest = [&] { return dominantFrequency(last(out, 0.25), 2, kRate, 100.0f, 4000.0f); };
+
+        run({.precipitation = 0.15f}, 1.0);
+        Peak peak = strongest();
+        CHECK(near(peak.frequency, 3000.0f, 2.0f), "light rain: %f Hz", peak.frequency);
+        const float lightRms = measureLevels(last(out, 0.25), 2).rmsMono();
+        run({.precipitation = 0.95f}, 1.0);
+        peak = strongest();
+        CHECK(near(peak.frequency, 1000.0f, 2.0f), "heavy rain: %f Hz", peak.frequency);
+        CHECK(dominantFrequency(last(out, 0.25), 2, kRate, 2500.0f, 3500.0f).level < 0.01f, "light layer gone");
+        CHECK(measureLevels(last(out, 0.25), 2).rmsMono() > lightRms * 1.5f, "heavy rain is louder");
+        run({.precipitation = 0.95f, .cover = 1.0f}, 1.0);
+        peak = strongest();
+        CHECK(near(peak.frequency, 500.0f, 2.0f), "under cover: %f Hz", peak.frequency);
+        CHECK(dominantFrequency(last(out, 0.25), 2, kRate, 800.0f, 1200.0f).level < 0.01f, "open-air layers gone");
+        run({.precipitation = 0.0f, .distanceToRain = 300.0f}, 1.0);
+        peak = strongest();
+        CHECK(near(peak.frequency, 200.0f, 2.0f), "distant rain: %f Hz", peak.frequency);
+        const float nearRms = measureLevels(last(out, 0.25), 2).rmsMono();
+        run({.precipitation = 0.0f, .distanceToRain = 3000.0f}, 1.0);
+        const float farRms = measureLevels(last(out, 0.25), 2).rmsMono();
+        CHECK(farRms > 0.0f && farRms < nearRms * 0.5f, "farther rain is quieter: %f < %f", farRms, nearRms);
+
+        // Another sound for a playing layer, then a hot reload of its file: each crossfades into the new data.
+        run({.precipitation = 0.95f}, 0.5);
+        weather.setSound(WeatherLayer::RainHeavy, "other.wav");
+        run({.precipitation = 0.95f}, 1.0);
+        peak = strongest();
+        CHECK(near(peak.frequency, 1500.0f, 2.0f), "the game's sound: %f Hz", peak.frequency);
+        CHECK(maxStep(out) < 0.2f, "no click in the crossfade: %f", maxStep(out));
+        dir.write("other.wav", encodeWav(sineSamples(1800.0f, 0.5f, 1.0, 1), 1, kRate));
+        manager.reload(audio.load("other.wav")->id());
+        run({.precipitation = 0.95f}, 1.0);
+        peak = strongest();
+        CHECK(near(peak.frequency, 1800.0f, 2.0f), "reloaded: %f Hz", peak.frequency);
+
+        // The bus a game names: muting it silences the rain.
+        weather.setBus("ui");
+        run({.precipitation = 0.95f}, 1.0);
+        audio.setBusMuted(audio.bus("ui"), true);
+        run({.precipitation = 0.95f}, 0.5);
+        CHECK(measureLevels(last(out, 0.25), 2).rmsMono() < 1e-4f, "on the bus it was given");
+        audio.setBusMuted(audio.bus("ui"), false);
+
+        // Dry weather: silent at once, the sounds stopped after two seconds.
+        run({.precipitation = 0.0f}, 1.0);
+        CHECK(measureLevels(last(out, 0.25), 2).rmsMono() < 1e-4f, "dry: silent");
+        run({.precipitation = 0.0f}, 2.5);
+        CHECK(audio.stats().sounds == 0, "dry: sounds stopped (%u alive)", audio.stats().sounds);
+
+        run({.precipitation = 0.95f}, 0.5);
+        CHECK(audio.stats().sounds > 0, "rain again");
+        weather.setEnabled(false);
+        run({.precipitation = 0.95f}, 1.0);
+        CHECK(measureLevels(last(out, 0.25), 2).rmsMono() < 1e-4f && audio.stats().sounds == 0, "disabled: silent");
+    }
+    audio.update();
 }
 
 // ---------------------------------------------------------------------------------------------------- analysis
