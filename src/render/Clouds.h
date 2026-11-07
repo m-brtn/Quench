@@ -43,6 +43,8 @@ public:
         glm::mat4 prevViewProjStable{1.0f};
         bool cut = false;
         std::uint64_t sequence = 0; // frames since the last cut
+        // The weather maps (Rain.h, kWeatherMapsFormat): the shadow is drawn into their first region; null: none.
+        const gpu::Texture* maps = nullptr;
     };
     // Outside passes, before the HDR pass: the cloud passes with `fu` in fragment slot 0 (pushed here), then the
     // cloud fields of `fu` (cloudShadow, skyCube, overcast) and the light under the clouds (its ambient and fog
@@ -52,9 +54,15 @@ public:
     // In the HDR pass in place of the plain sky (after render() drew this frame's clouds).
     bool drawsSky() const { return m_skyMode != Clouds::Off; }
     void drawSky(gpu::RenderPass& pass);
-    // Surface samplers 14 (the cloud shadow map) and 15 (the sky cube); placeholders when there are none.
-    gpu::TextureSamplerBinding shadowBinding(const gpu::Texture& white, const gpu::Sampler& sampler) const;
+    // This frame's shadow is in the weather maps (surface sampler 14).
+    bool shadows() const { return m_shadows; }
+    // Surface sampler 15 (the sky cube); a placeholder when there is none.
     gpu::TextureSamplerBinding cubeBinding(const gpu::Texture& noCube, const gpu::Sampler& sampler) const;
+    // The weather map of this frame (precipitation in b, with mips; the rain's shafts) and where it is: xy its corner
+    // (world xz, m), z 1 / its size (1/m), w its texels per metre; the cloud base (m).
+    gpu::TextureSamplerBinding weatherMap() const { return {m_weatherMap, m_weatherSampler}; }
+    glm::vec4 weatherMapPlace() const;
+    float cloudBase() const { return m_uniforms.layer.x; }
     // Frees the targets and the 3D noise (clouds off).
     void release();
 
@@ -65,14 +73,13 @@ private:
     bool createTexture(gpu::Texture& out, const gpu::TextureDesc& desc);
 
     gpu::Device* m_device = nullptr;
-    gpu::TextureFormat m_shadowFormat = gpu::TextureFormat::Invalid;
     gpu::TextureFormat m_depthFormat = gpu::TextureFormat::Invalid;
     gpu::Sampler m_weatherSampler, m_noiseSampler, m_cubeSampler, m_pointSampler, m_linearSampler;
     gpu::GraphicsPipeline m_noisePipeline, m_weatherPipeline, m_shadowPipeline, m_shadowLayerPipeline, m_marchPipeline,
         m_temporalPipeline, m_skyPipeline, m_skyLayerPipeline, m_cubePipeline, m_cubeLayerPipeline;
     gpu::Texture m_layerNoise, m_shapeNoise, m_detailNoise;
     bool m_noiseFailed = false;
-    gpu::Texture m_weatherMap, m_shadowMap;
+    gpu::Texture m_weatherMap;
     glm::vec2 m_weatherOrigin{0.0f}, m_shadowOrigin{0.0f}; // of the maps' contents
     bool m_weatherValid = false, m_shadowValid = false;
     std::uint64_t m_frame = 0; // the maps are drawn in turns

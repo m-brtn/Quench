@@ -1,5 +1,7 @@
 #include "Clouds.h"
 
+#include "Rain.h"
+
 #include <quench/core/Log.h>
 
 #include <render_cloudnoise_shaders.h>
@@ -31,11 +33,11 @@ constexpr std::uint32_t kShapeSize = 128;
 constexpr std::uint32_t kDetailSize = 32;
 constexpr std::uint32_t kLayerSize = 256;
 // The weather map: 250 m texels over 128 km around the camera (clouds farther away fade out; a cloud base at 1.5 km
-// meets the horizon at about 140 km); the shadow map: about 47 m texels over 24 km (shadows farther away take its
-// edge).
+// meets the horizon at about 140 km); the shadow map, the first region of the weather maps: about 47 m texels over
+// 24 km (shadows farther away take its edge).
 constexpr std::uint32_t kWeatherMapSize = 512;
 constexpr float kWeatherExtent = 128000.0f;
-constexpr std::uint32_t kShadowMapSize = 512;
+constexpr std::uint32_t kShadowMapSize = QUENCH_RAIN_MAP_ROW;
 constexpr float kShadowExtent = 24000.0f;
 constexpr float kPlanetRadius = 6360000.0f;
 // One tile of the shape noise over 6 km (cells of 1.5 km: cumulus 0.5 to 2 km across), of the detail over 800 m; the
@@ -92,7 +94,6 @@ bool CloudRenderer::init(gpu::Device& device, TextureFormat hdrFormat, TextureFo
     const auto supports = [&](TextureFormat f) {
         return device.supportsFormat(f, TextureType::Texture2D, kTargetSampled);
     };
-    m_shadowFormat = supports(TextureFormat::R8Unorm) ? TextureFormat::R8Unorm : TextureFormat::Rgba8Unorm;
     m_depthFormat = supports(TextureFormat::R16Float) ? TextureFormat::R16Float : TextureFormat::Rgba16Float;
     const bool volume = volumeSupported(device);
 
@@ -162,8 +163,8 @@ bool CloudRenderer::init(gpu::Device& device, TextureFormat hdrFormat, TextureFo
         return true;
     };
     const auto& clouds = shaders::render_clouds;
-    const gpu::ColorTargetDesc noiseTarget{kNoiseFormat}, weatherTarget{kWeatherFormat}, shadowTarget{m_shadowFormat},
-        cloudTarget{kCloudFormat}, hdrTarget{hdrFormat};
+    const gpu::ColorTargetDesc noiseTarget{kNoiseFormat}, weatherTarget{kWeatherFormat},
+        shadowTarget{kWeatherMapsFormat}, cloudTarget{kCloudFormat}, hdrTarget{hdrFormat};
     const gpu::ColorTargetDesc marchTargets[] = {{kCloudFormat}, {m_depthFormat}};
     bool ok =
         make(m_noisePipeline, shaders::render_cloudnoise, "cloud_noise_fs", {&noiseTarget, 1}, false,
@@ -314,7 +315,6 @@ void CloudRenderer::release() {
     m_shapeNoise = {};
     m_detailNoise = {};
     m_weatherMap = {};
-    m_shadowMap = {};
     m_march = {};
     m_marchDepth = {};
     m_history = {};
@@ -416,17 +416,15 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
         commands.generateMipmaps(m_weatherMap);
         m_weatherValid = true;
     }
-    const bool shadows = settings.cloudShadows && fu.sunDir.w > 0.0f && fu.sunDir.y > 0.0f &&
-                         (m_shadowMap || createTexture(m_shadowMap, {.format = m_shadowFormat,
-                                                                     .usage = kTargetSampled,
-                                                                     .width = kShadowMapSize,
-                                                                     .height = kShadowMapSize,
-                                                                     .name = "render cloud shadows"}));
+    const bool shadows = settings.cloudShadows && fu.sunDir.w > 0.0f && fu.sunDir.y > 0.0f && frame.maps;
     if (shadows && drawShadow) {
         m_shadowOrigin = shadowOrigin;
         u.shadowMap = glm::vec4(m_shadowOrigin, 1.0f / kShadowExtent, kShadowExtent);
-        if (gpu::RenderPass pass = commands.beginRenderPass(
-                gpu::ColorTarget{.texture = m_shadowMap, .load = gpu::LoadOp::DontCare, .cycle = true})) {
+        // Its region only: the rest of the weather maps stays.
+        if (gpu::RenderPass pass =
+                commands.beginRenderPass(gpu::ColorTarget{.texture = *frame.maps, .load = gpu::LoadOp::Load})) {
+            pass.setViewport({0.0f, 0.0f, float(kShadowMapSize), float(kShadowMapSize)});
+            pass.setScissor({0, 0, int(kShadowMapSize), int(kShadowMapSize)});
             const bool volume = mode == Clouds::Volumetric;
             const gpu::TextureSamplerBinding second{volume ? m_shapeNoise : m_layerNoise, m_noiseSampler};
             const gpu::TextureSamplerBinding bindings[] = {weatherBinding, second};
@@ -562,9 +560,9 @@ void CloudRenderer::drawSky(gpu::RenderPass& pass) {
     pass.draw(3);
 }
 
-gpu::TextureSamplerBinding CloudRenderer::shadowBinding(const gpu::Texture& white, const gpu::Sampler& sampler) const {
-    if (m_shadows) return {m_shadowMap, m_linearSampler};
-    return {white, sampler};
+glm::vec4 CloudRenderer::weatherMapPlace() const {
+    const glm::vec4 u = m_uniforms.weatherMap;
+    return {u.x, u.y, u.z, float(kWeatherMapSize) * u.z};
 }
 
 gpu::TextureSamplerBinding CloudRenderer::cubeBinding(const gpu::Texture& noCube, const gpu::Sampler& sampler) const {

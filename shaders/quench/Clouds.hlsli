@@ -9,14 +9,18 @@
 #include "quench/Sky.hlsli"
 
 // The share of the sun's light the clouds let through to a world point (1 without cloud shadows). The cloud shadow
-// map (surface sampler 14) holds the transmittance of the cloud layer along the sun's direction above the ground
-// plane y = 0; a point reads it where its ray toward the sun, followed back, meets that plane.
-float quenchCloudShadow(Texture2D<float4> map, SamplerState s, float3 P) {
+// map (the first region of the weather maps, surface sampler 14) holds the transmittance of the cloud layer along the
+// sun's direction above the ground plane y = 0; a point reads it where its ray toward the sun, followed back, meets
+// that plane.
+float quenchCloudShadow(Texture2D<float4> maps, SamplerState s, float3 P) {
     if (quenchFrame.cloudShadow.w <= 0.0) return 1.0;
     const float3 sun = quenchFrame.sunDir.xyz;
     const float2 ground = P.xz - sun.xz * (P.y / max(sun.y, 0.05));
     const float2 uv = (ground - quenchFrame.cloudShadow.xy) * quenchFrame.cloudShadow.z;
-    return map.SampleLevel(s, uv, 0.0).r;
+    // Clamped to the region's edge texels, as a texture of its own would be.
+    const float edge = 0.5 / float(QUENCH_RAIN_MAP_ROW);
+    const float v = clamp(uv.y, edge, 1.0 - edge) * (float(QUENCH_RAIN_MAP_ROW) / float(QUENCH_WEATHER_MAPS_HEIGHT));
+    return maps.SampleLevel(s, float2(uv.x, v), 0.0).r;
 }
 
 // The sky with the scene's clouds as one overcast amount: the plain sky blended toward the radiance of the cloud

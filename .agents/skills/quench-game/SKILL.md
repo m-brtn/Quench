@@ -4,7 +4,7 @@ description: >-
   Builds, extends and verifies a game on the Quench C++20 engine: tools/new_game.py and templates/game, the pinned
   engine (FetchContent and the local override), the quench::app::Game interface and fixed-step loop,
   quench_add_game, input actions, ImGui, the retained render::Scene, cooked assets (quench_cook_assets,
-  SceneAssets), weather and clouds, physics, audio, animation, navigation, jobs, quench::fs, iOS builds, scripted
+  SceneAssets), weather, clouds and rain, physics, audio, animation, navigation, jobs, quench::fs, iOS builds, scripted
   offscreen checks with captures and golden images, and Tracy profiles recorded without its GUI. Use when creating a
   game on Quench, working in a repository whose CMakeLists.txt fetches Quench or calls quench_add_game, or when the
   user asks how to make a game with the engine.
@@ -130,7 +130,12 @@ Link what the game uses beside `quench_add_game()`:
   (a single raining cloud), `update(dt)` in `Game::update`, then `scene.setWeather(weather)` every frame (a copy).
   Clouds are off by default: `RenderSettings::clouds = render::Clouds::Volumetric` (or `Layer`, the cheap 2D layer
   and the fallback), with `cloudResolution`, `cloudSteps`, `cloudShadows` and the sky cube for reflections. The game
-  asks the weather what is above a point: `precipitation`, `distanceToPrecipitation`, `cover`, `windAt`.
+  asks the weather what is above a point: `precipitation`, `distanceToPrecipitation`, `cover`, `windAt`. Rain is off
+  by default too: `RenderSettings::rain = render::Rain::Medium` (`Low` on phones) draws streaks, splashes, wet
+  surfaces with puddles (`MaterialDesc::puddles`, `water`; `wetness = 0` or `QUENCH_SURFACE_NO_RAIN` keeps one dry)
+  and, with clouds, shafts from afar; call `weather.setWetnessFocus(...)` with the camera's ground point. Its sound:
+  `audio::WeatherAudio` fed each frame from the weather and `stats().rainCover`, the defaults cooked by
+  `quench_weather_sounds(<name>)` and listed in `COOKED_ASSETS`, or a game's own (`setSound`, `setEnabled(false)`).
   [reference.md](reference.md), "Weather and clouds"; `docs/weather.md`.
 - **Physics.** `quench::PhysicsWorld` on `&app.jobs()` (Jolt, its jobs on the engine's pool); bodies through
   `bodies()` with `PhysicsLayers::kStatic` or `kMoving`; `step(float(dt))` in `fixedStep`.

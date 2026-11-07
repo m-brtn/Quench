@@ -258,6 +258,48 @@ reflect a cube of the sky with its clouds (`skyCubeSize`, `skyCubeFacesPerFrame`
 `docs/weather.md`, "Phones and fallbacks"; `examples/demo/sections/WeatherSection.cpp` (presets, a shower cell, the
 sun's day).
 
+Rain falls where the weather's precipitation does (a cell, or `Settings::precipitation`); the renderer draws it,
+the weather remembers how wet the ground got, and `audio::WeatherAudio` plays it:
+
+```cpp
+#include <quench/audio/WeatherAudio.h>
+
+std::optional<audio::WeatherAudio> m_rainSound; // member; destroyed before the AudioSystem
+
+// init
+rs.rain = render::Rain::Medium;             // off by default; Low on phones (no splashes); High for close-ups
+rs.rainShafts = true;                       // with clouds: the shafts under raining clouds from afar
+m_puddles = m_scene->addMaterial({.baseColor = {0.4f, 0.4f, 0.4f, 1}, .roughness = 0.7f, .puddles = 1.0f});
+m_lake = m_scene->addMaterial({.baseColor = {0.05f, 0.08f, 0.1f, 1}, .roughness = 0.05f, .water = true});
+m_rainSound.emplace(app.audio());           // the engine's default sounds (below), bus "effects"
+
+// Game::update, every frame, before setWeather
+m_weather.setWetnessFocus({cameraPosition.x, cameraPosition.z}); // the remembered wetness follows the camera
+m_rainSound->update({.precipitation = m_weather.precipitation(listener),
+                     .distanceToRain = m_weather.distanceToPrecipitation({listener.x, listener.z}),
+                     .cover = std::max(m_renderer->stats().rainCover, 0.0f)}, frameDt);
+```
+
+```cmake
+quench_weather_sounds(my_game_weather_sounds)                    # the defaults: quench/weather/rain_*.wav
+quench_add_game(my_game ... COOKED_ASSETS my_game_cooked my_game_weather_sounds)
+```
+
+- `MaterialDesc::wetness` (1 by default) scales how wet a material gets, `puddles` (0..1) collects standing water
+  in its hollows, `water` (a lake) shows only the drops' rings. Surfaces under a roof stay dry through the rain
+  occlusion map (the shadow casters, 64 m around the camera). A surface file that defines `QUENCH_SURFACE_NO_RAIN`
+  before `quench/SurfaceEntries.hlsli` is never wet.
+- `weather.wetness(xz)` gives `{ground, water}` for a game's own use (tyres, footsteps); `Settings::wettingTime`,
+  `dryingTime`, `puddleFillTime`, `puddleDryTime` set how fast. `setTime` estimates the wetness of that time, so a
+  scripted check that jumps in time gets the same ground.
+- The sound's layers (`audio::WeatherLayer`): `RainLight`, `RainHeavy` (crossfaded by the precipitation),
+  `RainFar` (the nearest rain within `farDistance`), `RainCover` (on the roof, by the cover). `setSound(layer,
+  "sounds/my_rain.wav")` replaces one (a cooked sound; "" silences it), `setEnabled(false)` turns the engine's off
+  and `WeatherAudio::targetGains(state, farDistance)` gives its mix rules to a game's own sounds.
+- `effects().rain` says what is drawn (none in the path tracer's frame), `stats().rainAtCamera`, `rainStreaks`,
+  `rainCover` what happened. Costs and phone settings: `docs/weather.md`, "Cost"; the demo's Weather section, view
+  Ground.
+
 ## Physics
 
 ```cpp

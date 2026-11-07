@@ -41,6 +41,10 @@
 // toward the ray's origin, pixel 0), the material and its textures as the hits' 256 x 256 copies without mip levels
 // (every Sample reads level 0), and ddx, ddy and fwidth are 0. A surface that declares resources of its own keeps
 // them out of the hits with #if !QUENCH_SURFACE_HIT. Without it the hits take the standard surface.
+//
+// With rain (RenderSettings::rain) the entries make the surface wet after its function by its material's wetness,
+// puddles and water (quenchApplyRain below; not in ray hits); a file that defines QUENCH_SURFACE_NO_RAIN before
+// including quench/SurfaceEntries.hlsli keeps its surface as the function makes it.
 
 #ifndef QUENCH_SURFACE_HIT
 #define QUENCH_SURFACE_HIT 0
@@ -63,6 +67,7 @@
 #include "quench/Fog.hlsli"
 #include "quench/Frame.hlsli"
 #include "quench/Probes.hlsli"
+#include "quench/Rain.hlsli"
 #include "quench/Shadows.hlsli"
 #include "quench/Sky.hlsli"
 
@@ -158,8 +163,8 @@ SamplerState quenchAreaSampler : QUENCH_SAMPLER(12);
 // The local lights' shadow maps (quenchLocalShadows), read where FrameUniforms::localShadows.x is not 0.
 Texture2DArray<float> quenchLocalShadowMaps : QUENCH_TEXTURE(13);
 SamplerState quenchLocalShadowSampler : QUENCH_SAMPLER(13);
-// The clouds' shadow and the sky cube (quench/Clouds.hlsli), read where FrameUniforms::cloudShadow.w and skyCube.x
-// are not 0.
+// The weather maps (the clouds' shadow, the rain's maps: quench/Clouds.hlsli, quench/Rain.hlsli) and the sky cube,
+// read where FrameUniforms::cloudShadow.w, rain.x and skyCube.x are not 0.
 Texture2D<float4> quenchCloudShadowMap : QUENCH_TEXTURE(14);
 SamplerState quenchCloudShadowSampler : QUENCH_SAMPLER(14);
 TextureCube<float4> quenchSkyCube : QUENCH_TEXTURE(15);
@@ -237,6 +242,47 @@ QuenchSurface quenchStandardSurface(QuenchSurfaceInput i) {
 float3 quenchTransmittance(QuenchSurface s) { return quenchTransmittanceOf(s.albedo, s.opacity); }
 
 #if !QUENCH_SURFACE_HIT
+
+// The rain on a surface (docs/weather.md, "Wetness and puddles"), where the rain reaches it (the rain occlusion map)
+// and by its material's MaterialUniforms::weather: wet surfaces darker (less where metallic) and glossier, standing
+// water in the hollows of up-facing materials with puddles (quenchPuddleHeight), and on it and on water the rings of
+// the drops falling now. The surface entries call it after the surface function (also for the G-buffer, so traced and
+// screen-space reflections see the wet surface); a surface file that defines QUENCH_SURFACE_NO_RAIN before including
+// quench/SurfaceEntries.hlsli keeps its surface as it is, and one that calls it itself may change what it gets.
+void quenchApplyRain(inout QuenchSurface s, QuenchSurfaceInput i) {
+    [branch] if (quenchFrame.rain.x <= 0.0 || quenchMaterial.shading.w > 0.5) return;
+    const float3 m = quenchMaterial.weather.xyz;
+    [branch] if (m.x <= 0.0 && m.y <= 0.0 && m.z <= 0.0) return;
+    const float exposed =
+        quenchRainExposure(quenchCloudShadowMap, quenchCloudShadowSampler, i.world + i.normal * 0.3);
+    const float4 w = quenchWetnessAt(quenchCloudShadowMap, quenchCloudShadowSampler, i.world.xz);
+    const float up = saturate(i.normal.y);
+    float water = 0.0;
+    if (m.z > 0.5) {
+        water = 1.0;
+    } else {
+        const float porous = 1.0 - s.metallic;
+        const float wet = saturate(w.r * m.x) * exposed * lerp(0.6, 1.0, up);
+        s.albedo *= lerp(1.0, 0.55, wet * porous);
+        s.roughness = lerp(s.roughness, min(s.roughness, max(0.12, s.roughness * 0.4)), wet);
+        [branch] if (m.y > 0.0 && up > 0.9) {
+            const float level = 0.42 * saturate(w.g * m.y) * exposed;
+            const float h = quenchPuddleHeight(i.world.xz);
+            water = smoothstep(h - 0.02, h + 0.02, level) * smoothstep(0.9, 0.98, up);
+            s.albedo *= lerp(1.0, 0.7, water * porous);
+            s.roughness = lerp(s.roughness, 0.02, water);
+            s.metallic = lerp(s.metallic, 0.0, water);
+            s.normal = normalize(lerp(s.normal, i.normal, water));
+        }
+    }
+    const float rain = w.b * exposed;
+    [branch] if (water > 0.0 && rain > 0.02 && quenchFrame.rain.w > 0.0) {
+        const float near = saturate(1.0 - distance(i.world, quenchFrame.cameraPos.xyz) / 60.0);
+        const float2 slope =
+            quenchRipples(i.world.xz, quenchFrame.cameraPos.w, rain) * (water * near * quenchFrame.rain.w);
+        s.normal = normalize(s.normal - float3(slope.x, 0.0, slope.y));
+    }
+}
 
 // Diffuse irradiance from the sky hemisphere, blended with the ground bounce by the normal.
 float3 quenchAmbient(float3 N) {

@@ -16,10 +16,22 @@
 //             (each read only where FrameUniforms::options.w says so), sampler 12 the table of the area lights
 //             (quench/AreaLights.hlsli, read where LightUniforms::count.y is not 0), sampler 13 the local lights'
 //             shadow maps (Texture2DArray<float>, read where FrameUniforms::localShadows.x is not 0), sampler 14 the
-//             clouds' shadow (Texture2D<float4>, read where FrameUniforms::cloudShadow.w is not 0), sampler 15 the
-//             sky cube (TextureCube<float4>, read where FrameUniforms::skyCube.x is not 0)
+//             weather maps (Texture2D<float4>: the clouds' shadow, read where FrameUniforms::cloudShadow.w is not 0,
+//             and the rain's maps, read where FrameUniforms::rain.x is not 0), sampler 15 the sky cube
+//             (TextureCube<float4>, read where FrameUniforms::skyCube.x is not 0)
 
 #include "quench/Shared.h"
+
+// The weather maps of surface sampler 14 (quench/Clouds.hlsli, quench/Rain.hlsli): one texture of
+// QUENCH_WEATHER_MAPS_WIDTH x QUENCH_WEATHER_MAPS_HEIGHT texels in three regions. Rows 0 to QUENCH_RAIN_MAP_ROW - 1:
+// the clouds' shadow (r); rows QUENCH_RAIN_MAP_ROW to QUENCH_WETNESS_ROW - 1: the rain occlusion map (r: the depth of
+// the highest surface along the rain, 0..1 over FrameUniforms::rain.y); rows QUENCH_WETNESS_ROW on, columns 0 to
+// QUENCH_WETNESS_GRID - 1: the weather's wetness grid (r: ground wetness, g: standing water, b: precipitation).
+#define QUENCH_WEATHER_MAPS_WIDTH 512
+#define QUENCH_WEATHER_MAPS_HEIGHT 1040
+#define QUENCH_RAIN_MAP_ROW 512
+#define QUENCH_WETNESS_ROW 1024
+#define QUENCH_WETNESS_GRID 16
 
 #define QUENCH_MAX_CASCADES 4
 #define QUENCH_MAX_LIGHTS 16
@@ -97,6 +109,14 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // How overcast it is around the camera: rgb: the radiance of a closed cloud deck's base, w: the cover (0..1). The
     // traced effects' sky (misses, the probe grid, the path tracer) takes it in place of the clouds themselves.
     float4 overcast;
+    // The rain (render::RenderSettings::rain; quench/Rain.hlsli). World -> the rain occlusion map: an orthographic
+    // view down the direction the rain falls, xy -1..1 over the map, z 0..1 from its top to its bottom.
+    float4x4 rainViewProj;
+    // x: 1 when the rain's maps are read (sampler 14), y: the occlusion map's depth range (m), z: the precipitation
+    // at the camera (0..1), w: the wet surfaces' ripples (0: none, 1: as the rain falls)
+    float4 rain;
+    // The wetness grid (sampler 14's last rows): xy its corner (world xz, m), z: 1 / its size (m), w: unused.
+    float4 rainGrid;
 };
 
 // One registered instance in the frame's instance buffer.
@@ -121,6 +141,9 @@ struct QUENCH_ALIGN16 MaterialUniforms {
     // x: anisotropy (0: isotropic), yz: cos and sin of its rotation, w: the shape of an area light, shown with its
     // emissive radiance only: 1 on the front face (the back is black), 2 on both
     float4 shading;
+    // The rain on it (quench/Rain.hlsli): x: how wet it gets (MaterialDesc::wetness), y: how much standing water it
+    // collects (MaterialDesc::puddles), z: 1 for water (MaterialDesc::water), w: unused
+    float4 weather;
 };
 
 // A light other than the sun: `color.w` selects the type (0 directional, 1 point, 2 spot, 3 rect, 4 disk, 5 tube).

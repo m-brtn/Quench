@@ -3,6 +3,7 @@
 #include "Clouds.h"
 #include "Effects.h"
 #include "PathTracer.h"
+#include "Rain.h"
 #include "RayTracing.h"
 #include "SceneImpl.h"
 #include "ScreenSpace.h"
@@ -393,6 +394,14 @@ struct RendererImpl {
     // The clouds of the scene's weather (RenderSettings::clouds)
     CloudRenderer clouds;
     bool cloudsTried = false;
+    // The rain (RenderSettings::rain), and the weather maps the clouds' shadow shares with it (surface sampler 14),
+    // made when either first needs them.
+    RainRenderer rain;
+    bool rainTried = false;
+    gpu::Texture weatherMaps;
+    bool weatherMapsFailed = false;
+    std::vector<Item> rainItems;
+    std::vector<Batch> rainBatches;
     bool targetVelocity = false; // the velocity target was made (TAA, or the temporal ray denoiser)
     // The light (scene slot + 1, 0: none) of each local shadow channel in the previous frame.
     std::array<std::uint32_t, QUENCH_RT_LOCAL_SHADOWS> shadowChannels{};
@@ -423,6 +432,7 @@ struct RendererImpl {
     bool ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32_t ow, std::uint32_t oh, TextureFormat ldrTarget);
     bool ensureTransmittance();
     bool ensureLocalShadowMaps(std::uint32_t size, std::uint32_t layers);
+    bool ensureWeatherMaps();
     bool ensureBuffers(gpu::CommandBuffer& commands);
     std::uint32_t skinnedOffset(const InstanceEntry& inst, std::uint32_t slot, const MeshEntry& mesh);
     bool skin(gpu::CommandBuffer& commands);
@@ -490,6 +500,7 @@ Result<void> RendererImpl::init() {
     support.cloudLayer = true; // until its pipelines fail (made when clouds are first drawn)
     support.cloudVolume = CloudRenderer::volumeSupported(*device);
     support.skyCube = CloudRenderer::cubeSupported(*device);
+    support.rain = support.shadowArray && RainRenderer::supported(*device, shadowFormat);
     if (!supports(ldrFormat, gpu::TextureType::Texture2D, targetSampled))
         return Error{"render: Rgba8Unorm cannot be rendered to and sampled"};
 
@@ -811,6 +822,12 @@ void RendererImpl::applySettings() {
         fallbacks.emplace_back("clouds: their pipelines failed; none");
     if (next.clouds != Clouds::Off && settings.skyCubeSize > 0 && !next.skyCube)
         fallbacks.emplace_back("sky cube: no Rgba16Float cube to render to; surfaces reflect the sky without clouds");
+    if (settings.rain != Rain::Off && next.rain == Rain::Off)
+        fallbacks.emplace_back(next.pathTracer ? "rain: not in the path tracer's frame; none"
+                                               : "rain: no Rgba16Float target and 2D depth texture to sample, or its "
+                                                 "pipelines failed; none");
+    if (next.rain != Rain::Off && settings.rainShafts && !next.rainShafts)
+        fallbacks.emplace_back("rain shafts: they read the clouds' weather map (RenderSettings::clouds); none");
     if (next == effects && effectsChosen) return;
     for (const std::string& line : fallbacks) log::warning("render", "{}", line);
     effects = next;
@@ -1197,6 +1214,34 @@ bool RendererImpl::ensureLocalShadowMaps(std::uint32_t size, std::uint32_t layer
     return true;
 }
 
+// Cleared to 1: no cloud shadow, nothing over the rain, until their passes draw them.
+bool RendererImpl::ensureWeatherMaps() {
+    if (weatherMaps) return true;
+    if (weatherMapsFailed) return false;
+    Result<gpu::Texture> t = device->createTexture({.format = kWeatherMapsFormat,
+                                                    .usage = TextureUsage::ColorTarget | TextureUsage::Sampled,
+                                                    .width = QUENCH_WEATHER_MAPS_WIDTH,
+                                                    .height = QUENCH_WEATHER_MAPS_HEIGHT,
+                                                    .name = "render weather maps"});
+    if (t) {
+        gpu::CommandBuffer commands = device->acquireCommandBuffer();
+        if (commands) {
+            commands.beginRenderPass(gpu::ColorTarget{.texture = *t, .clear = {1.0f, 1.0f, 1.0f, 1.0f}}).end();
+            if (Result<void> r = commands.submit(); !r) t = Error{r.error()};
+        } else {
+            t = Error{"no command buffer"};
+        }
+    }
+    if (!t) {
+        log::error("render", "weather maps {} x {}: {}; no cloud shadows or rain", QUENCH_WEATHER_MAPS_WIDTH,
+                   QUENCH_WEATHER_MAPS_HEIGHT, t.error());
+        weatherMapsFailed = true;
+        return false;
+    }
+    weatherMaps = std::move(*t);
+    return true;
+}
+
 bool RendererImpl::ensureBuffers(gpu::CommandBuffer& commands) {
     const auto grow = [](std::uint32_t capacity, std::size_t needed) {
         std::uint32_t c = std::max(capacity, 64u);
@@ -1491,6 +1536,8 @@ void RendererImpl::bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, c
                   material.light == 0      ? 0.0f
                   : material.lightTwoSided ? 2.0f
                                            : 1.0f);
+    u.weather =
+        glm::vec4(std::clamp(m.wetness, 0.0f, 1.0f), std::clamp(m.puddles, 0.0f, 1.0f), m.water ? 1.0f : 0.0f, 0.0f);
     pass.pushUniforms(kFragment, 2, u);
     pass.bindSamplers(kFragment, 1, bindings);
 }
@@ -1716,6 +1763,25 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         cloudsTried = true;
         if (!clouds.ready()) cloudMode = Clouds::Off;
     }
+    // The rain of the scene's weather: its pipelines when it first falls; where its occlusion map is this frame.
+    Rain rainMode = scene.weather && !pathTracing ? effects.rain : Rain::Off;
+    if (rainMode != Rain::Off && !rain.ready()) {
+        if (!rainTried && !rain.init(*device, hdrFormat, shadowFormat, pipelineCount)) {
+            support.rain = false; // logged
+            applySettings();
+        }
+        rainTried = true;
+        if (!rain.ready()) rainMode = Rain::Off;
+    }
+    if ((rainMode != Rain::Off || (cloudMode != Clouds::Off && settings.cloudShadows)) && !ensureWeatherMaps())
+        rainMode = Rain::Off;
+    const bool raining = rain.prepare({.weather = scene.weather ? &*scene.weather : nullptr,
+                                       .quality = rainMode,
+                                       .camera = cameraPos,
+                                       .time = view.time},
+                                      fu, stats);
+    const std::array<Plane, 5> rainPlanes = raining ? frustumPlanes(rain.viewProj()) : std::array<Plane, 5>{};
+    rainItems.clear();
     // Local lights with ray-traced shadows: the nearest ones that cast shadows, one channel each.
     int channels = 0;
     std::array<std::uint32_t, QUENCH_RT_LOCAL_SHADOWS> owners{};
@@ -1889,7 +1955,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         const glm::vec3 center(model * glm::vec4(inst->center, 1.0f));
         const float radius = inst->radius * maxScale(model);
         const bool inView = sphereVisible(planes, center, radius);
-        const bool needNormal = inView || ((cascades > 0 || !localMaps.empty()) && inst->desc.castsShadows);
+        const bool needNormal = inView || ((cascades > 0 || !localMaps.empty() || raining) && inst->desc.castsShadows);
         if (needNormal) normalMatrices[i] = glm::transpose(glm::inverse(model));
         if (inView) {
             const Shading shading =
@@ -1964,6 +2030,24 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 localShadowItems[f].push_back(local);
             }
         }
+        // The rain's occluders are the shadow casters, translucent ones solid (a glass roof keeps the rain off).
+        if (raining && sphereVisible(rainPlanes, center, radius)) {
+            Item item{0, 0.0f, i, nullptr, true};
+            if (m.alphaCutoff > 0.0f) {
+                item.pipeline = surfaceMaskPipeline(*surface);
+                item.key =
+                    (std::uint64_t(1) << 62) | (std::uint64_t(surfaceIndex & 0xfff) << 48) | materialKey | meshKey;
+            } else {
+                item.pipeline = surfaceShadowPipeline(*surface, m.doubleSided);
+                item.key = (std::uint64_t(surface->shadowVertex ? surfaceIndex : 0) << 49) |
+                           (std::uint64_t(m.doubleSided ? 1 : 0) << 48) | meshKey;
+                item.material = false;
+            }
+            if (item.pipeline) {
+                skinnedOffset(*inst, i, *mesh);
+                rainItems.push_back(item);
+            }
+        }
         if (cascades == 0) continue;
         const bool mapped = translucent && effects.translucentShadows == TranslucentShadows::Map;
         if (mapped && !ensureTransmittance()) continue;
@@ -2028,6 +2112,9 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         buildBatches(scene, localShadowItems[f], localShadowBatches[f]);
         stats.localShadowInstances += std::uint32_t(localShadowItems[f].size());
     }
+    std::sort(rainItems.begin(), rainItems.end(), byKey);
+    buildBatches(scene, rainItems, rainBatches);
+    stats.rainOccluders = std::uint32_t(rainItems.size());
     velocityData.clear();
     velocityBatches.clear();
     velocityCutoutBatches.clear();
@@ -2061,8 +2148,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     stats.instances = std::uint32_t(opaque.size() + transparent.size());
     stats.movedInstances = std::uint32_t(moved.size());
     // Timed ranges (gpu::Caps::gpuPassTiming): upload, accel, prepass, raytrace with rays and denoise (ray tracing),
-    // cloud_noise (once), weather, clouds and sky_cube (clouds), shadows, local_shadows and local_filter (local light
-    // shadow maps), hdr, taa, upscale, bloom, tonemap.
+    // cloud_noise (once), weather, clouds and sky_cube (clouds), rain_map (rain), shadows, local_shadows and
+    // local_filter (local light shadow maps), hdr, rain_shafts, taa, upscale, rain, bloom, tonemap.
     commands.beginTiming("upload");
     const bool buffers = ensureBuffers(commands);
     commands.endTiming();
@@ -2154,7 +2241,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                    .viewProjStable = viewProjStable,
                    .prevViewProjStable = fu.prevViewProj,
                    .cut = cut,
-                   .sequence = sequenceIndex},
+                   .sequence = sequenceIndex,
+                   .maps = weatherMaps ? &weatherMaps : nullptr},
                   fu, stats);
     fu.options.w = float(rayBits);
     commands.pushUniforms(kVertex, 0, fu);
@@ -2200,6 +2288,45 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     };
     const gpu::BufferRef instances(instanceBuffer);
     const gpu::TextureSamplerBinding noShadowBinding{dummyShadow, shadowSampler};
+
+    // ---- 0c. The rain occlusion map (the casters' depth along the rain, drawn as cascade 0 of a frame with its
+    // projection), then the weather maps' rain regions; before every pass that runs the surfaces.
+    if (raining) {
+        commands.beginTiming("rain_map");
+        shader::FrameUniforms mapFrame = fu;
+        mapFrame.shadowViewProj[0] = rain.viewProj();
+        const gpu::DepthTarget dt{
+            .texture = rain.occlusion(), .store = gpu::StoreOp::Store, .clearDepth = 1.0f, .cycle = true};
+        if (gpu::RenderPass pass = commands.beginRenderPass(std::span<const gpu::ColorTarget>{}, &dt)) {
+            pass.pushUniforms(kVertex, 0, mapFrame);
+            pass.pushUniforms(kFragment, 0, mapFrame);
+            pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
+            pass.bindSampler(kFragment, 0, noShadowBinding);
+            std::uint32_t draws = 0;
+            drawBatches(pass, rainBatches, 0, draws);
+            pass.end();
+        }
+        commands.pushUniforms(kVertex, 0, fu);
+        commands.pushUniforms(kFragment, 0, fu);
+        rain.updateMaps(commands, weatherMaps, *scene.weather, pointClamp, stats);
+        commands.endTiming();
+    }
+    // Surface sampler 14 (the clouds' shadow and the rain's maps) and the samplers of the HDR pass's frame that the
+    // G-buffer entries declare before it, bound with placeholders in the prepasses.
+    const gpu::TextureSamplerBinding weatherMapsBinding{
+        (clouds.shadows() || raining) && weatherMaps ? gpu::TextureRef(weatherMaps) : gpu::TextureRef(white),
+        linearClamp};
+    const auto bindPrepassFrame = [&](gpu::RenderPass& pass) {
+        pass.bindSampler(kFragment, 0, noShadowBinding);
+        pass.bindSampler(kFragment, 5, {dummyTransmittance, linearClamp});
+        const gpu::TextureSamplerBinding whites[] = {{white, pointClamp}, {white, pointClamp},  {white, pointClamp},
+                                                     {white, pointClamp}, {white, linearClamp}, {white, linearClamp}};
+        pass.bindSamplers(kFragment, 6, whites);
+        pass.bindSampler(kFragment, 12, {areaTable, pointClamp});
+        pass.bindSampler(kFragment, 13, noShadowBinding);
+        pass.bindSampler(kFragment, 14, weatherMapsBinding);
+        pass.bindSampler(kFragment, 15, {noSkyCube, linearClamp});
+    };
 
     // Motion vectors from a depth of this frame: the camera's motion, then the instances that moved.
     bool velocityDrawn = false;
@@ -2259,7 +2386,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 gbuffer ? std::span<const gpu::ColorTarget>(colors) : std::span<const gpu::ColorTarget>{}, &dt);
             if (pass) {
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
-                pass.bindSampler(kFragment, 0, noShadowBinding);
+                bindPrepassFrame(pass);
                 std::uint32_t draws = 0;
                 drawBatches(pass, opaqueBatches, -1, draws, true);
                 pass.end();
@@ -2308,7 +2435,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             screenReflections ? std::span<const gpu::ColorTarget>(colors) : std::span<const gpu::ColorTarget>{}, &dt);
         if (pass) {
             pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
-            pass.bindSampler(kFragment, 0, noShadowBinding);
+            bindPrepassFrame(pass);
             drawBatches(pass, opaqueBatches, -1, stats.screenPrepassDraws, true);
             pass.end();
         }
@@ -2430,7 +2557,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (const PassEntry* e = passes.get(id);
             e && (e->stage == PassStage::PostHdr || e->stage == PassStage::Overlay))
             hasLaterPasses = true;
-    const bool keepDepth = taa || hasLaterPasses;
+    const bool keepDepth = taa || hasLaterPasses || raining;
     const glm::vec3 clear = settings.sky ? glm::vec3(0.0f) : settings.clearColor;
     if (pathFrame) {
         // ---- 2. The path tracer's mean in place of the HDR pass (sky, lights and materials as the hits see them)
@@ -2514,7 +2641,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.bindSamplers(kFragment, 10, probeBindings);
                 pass.bindSampler(kFragment, 12, {areaTable, pointClamp});
                 pass.bindSampler(kFragment, 13, localMapBinding);
-                pass.bindSampler(kFragment, 14, clouds.shadowBinding(white, linearClamp));
+                pass.bindSampler(kFragment, 14, weatherMapsBinding);
                 pass.bindSampler(kFragment, 15, clouds.cubeBinding(noSkyCube, linearClamp));
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
             };
@@ -2538,6 +2665,24 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         }
     }
     commands.endTiming();
+    // ---- 2b. The rain's shafts and rainbow over the HDR image (they read the clouds' weather map)
+    if (raining && !pathFrame && effects.rainShafts && clouds.drawsSky()) {
+        commands.beginTiming("rain_shafts");
+        rain.drawShafts(commands,
+                        {.hdr = hdr,
+                         .width = rw,
+                         .height = rh,
+                         .depth = &depth,
+                         .weatherMap = clouds.weatherMap(),
+                         .weatherMapUv = clouds.weatherMapPlace(),
+                         .cloudBase = clouds.cloudBase(),
+                         .rainbow = settings.rainbow,
+                         .sequence = sequenceIndex},
+                        weatherMaps, pointClamp, linearClamp, fu);
+        commands.endTiming();
+        stats.rainShafts = true;
+        stats.rainbow = settings.rainbow;
+    }
     // The image the next frame's screen-space reflections take their hits' color from.
     if (screenHistory) {
         commands.beginTiming("ssr history");
@@ -2614,6 +2759,18 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         }
         commands.endTiming();
         image = upscaled;
+    }
+    // ---- 3b. The rain's streaks and splashes, after TAA and upscaling (TAA's history is kept as it is)
+    if (raining && !pathFrame) {
+        commands.beginTiming("rain");
+        image = rain.drawDrops(commands,
+                               {.image = image,
+                                .keepImage = taaResolve && !upscaling,
+                                .depth = &depth,
+                                .viewProjStable = viewProjStable,
+                                .proj = proj},
+                               weatherMaps, pointClamp, linearClamp, fu, stats);
+        commands.endTiming();
     }
 
     // ---- 4. Game passes on the HDR image

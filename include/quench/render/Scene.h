@@ -131,6 +131,14 @@ struct MaterialDesc {
     // tangent (+u) turned by anisotropyRotation (radians) toward the bitangent; needs vertex tangents.
     float anisotropy = 0.0f;
     float anisotropyRotation = 0.0f;
+    // The rain on it (RenderSettings::rain; docs/weather.md, "Wetness and puddles"), where the rain reaches it: how
+    // wet it gets as the weather's ground does (0: never, 1: as open ground; darker and glossier), how much standing
+    // water collects in the hollows of its up-facing parts (0: none, 1: puddles over about a third of it when the
+    // weather's hollows are full), and whether it is water (a lake: only the rings of the rain's drops). Surface
+    // shaders get them through quench/Surface.hlsli (MaterialUniforms::weather).
+    float wetness = 1.0f;
+    float puddles = 0.0f;
+    bool water = false;
 };
 
 // How a skinned mesh's vertices follow their joints. Linear blends the joints' matrices: cheap and exact for one joint,

@@ -751,6 +751,143 @@ QUENCH_TEST(renderer_clouds_shadow_the_ground) {
     CHECK(renderer->stats().clouds == Clouds::Off, "clouds without a weather: %d", int(renderer->stats().clouds));
 }
 
+// Rain (docs/weather.md, "Rain"): soaked ground darker where the rain reaches, dry under a roof (above the camera, so
+// the camera sees the ground under it); the renderer's cover over the camera; the drops drawn only when asked; puddles
+// with rings that move with the time; no rain without a weather, with the path tracer or where nothing rains.
+QUENCH_TEST(renderer_rain_wets_the_open_ground) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(100.0f)));
+    const MeshId roof = addMesh(scene, boxMesh(glm::vec3(25.0f, 0.2f, 40.0f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    // Over x -50 .. 0 at 20 m: the left half of the view below a camera at 10 m.
+    scene.addInstance(
+        {.mesh = roof, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {-25.0f, 20.0f, 0})});
+    // Only the sky's ambient light: the roof casts no shadow, the halves differ only by their wetness.
+    Environment e = sunOnly();
+    e.skyAmbient = e.groundAmbient = glm::vec3(1.0f);
+    scene.setEnvironment(e);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    View view = lookAt(glm::vec3(2.0f, 10.0f, 0), glm::vec3(2.0f, 0, 0), glm::vec3(0, 0, -1));
+    const glm::ivec2 open = pixelOf(view, glm::vec3(5.0f, 0, 0)), covered = pixelOf(view, glm::vec3(-2.0f, 0, 0));
+
+    weather::Weather w(weather::Settings{.coverage = 0.0f, .cirrus = 0.0f, .wind = {.speed = 0.0f}});
+    w.addCell({.position = {0.0f, 0.0f}, .radius = 8000.0f, .precipitation = 1.0f, .drifts = false});
+    w.setTime(4000.0);
+    scene.setWeather(w);
+    const std::vector<Rgba8> dry = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().rain == Rain::Off && renderer->effects().rain == Rain::Off, "rain is off by default");
+
+    settings.rain = Rain::Medium;
+    renderer->setSettings(settings);
+    std::vector<Rgba8> wet;
+    for (int frame = 0; frame < 6; ++frame) wet = renderOnce(device, *renderer, scene, view, *target);
+    const RenderStats s = renderer->stats();
+    CHECK(s.rain == Rain::Medium && renderer->effects().rain == Rain::Medium, "rain drawn as %d", int(s.rain));
+    CHECK(s.rainAtCamera > 0.9f, "precipitation at the camera %.3f", double(s.rainAtCamera));
+    CHECK(s.rainOccluders >= 2 && s.rainStreaks > 0, "%u objects in the rain map, %u streaks", s.rainOccluders,
+          s.rainStreaks);
+    CHECK(s.rainCover >= 0.0f && s.rainCover < 0.1f, "cover %.3f in the open", double(s.rainCover));
+    CHECK(!s.rainShafts, "no shafts without clouds");
+    const float openDry = sceneValue(at(dry, open)).g, openWet = sceneValue(at(wet, open)).g;
+    const float coveredDry = sceneValue(at(dry, covered)).g, coveredWet = sceneValue(at(wet, covered)).g;
+    std::printf("  open ground %.3f dry, %.3f wet; under the roof %.3f dry, %.3f wet; %u streaks\n", double(openDry),
+                double(openWet), double(coveredDry), double(coveredWet), s.rainStreaks);
+    CHECK(openWet < openDry * 0.75f, "the open ground darkens: %.3f against %.3f", double(openWet), double(openDry));
+    CHECK(std::abs(coveredWet - coveredDry) < coveredDry * 0.05f, "under the roof it stays dry: %.3f against %.3f",
+          double(coveredWet), double(coveredDry));
+
+    // Under the roof: the cover reaches 1 within a few frames (read back a frame or two later).
+    View under = lookAt(glm::vec3(-20.0f, 10.0f, 0), glm::vec3(-20.0f, 0, 0), glm::vec3(0, 0, -1));
+    for (int frame = 0; frame < 8; ++frame) renderOnce(device, *renderer, scene, under, *target);
+    CHECK(renderer->stats().rainCover > 0.9f, "cover %.3f under the roof", double(renderer->stats().rainCover));
+
+    // The drops only: a material the rain leaves as it is, with and without them.
+    scene.setMaterial(grey, {.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f, .wetness = 0.0f});
+    view = lookAt(glm::vec3(10.0f, 2.0f, 0), glm::vec3(10.0f, 2.0f, -10.0f));
+    view.time = 2.0;
+    const std::vector<Rgba8> drops = renderOnce(device, *renderer, scene, view, *target);
+    settings.rain = Rain::Off;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> none = renderOnce(device, *renderer, scene, view, *target);
+    int streaked = 0;
+    for (std::size_t i = 0; i < drops.size(); ++i) streaked += std::abs(sum(drops[i]) - sum(none[i])) > 6 ? 1 : 0;
+    std::printf("  %d of %u pixels with drops\n", streaked, kSize * kSize);
+    CHECK(streaked > 10, "the streaks show: %d pixels", streaked);
+
+    // Puddles fill the hollows and their rings move with the time.
+    settings.rain = Rain::Medium;
+    renderer->setSettings(settings);
+    scene.setMaterial(grey, {.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f, .puddles = 1.0f});
+    scene.addLight(
+        {.type = LightType::Directional, .color = glm::vec3(5.0f), .direction = glm::vec3(0.3f, -1.0f, 0.2f)});
+    view = lookAt(glm::vec3(8.0f, 3.0f, 3.0f), glm::vec3(8.0f, 0, -2.0f));
+    view.time = 10.0;
+    const std::vector<Rgba8> rings0 = renderOnce(device, *renderer, scene, view, *target);
+    view.time = 10.3;
+    const std::vector<Rgba8> rings1 = renderOnce(device, *renderer, scene, view, *target);
+    int moved = 0;
+    for (std::size_t i = 0; i < rings0.size(); ++i) moved += std::abs(sum(rings0[i]) - sum(rings1[i])) > 6 ? 1 : 0;
+    std::printf("  %d pixels change with the rings in 0.3 s\n", moved);
+    CHECK(moved > 20, "the rings move: %d pixels", moved);
+
+    // The path tracer (where the device has it) draws no rain; nor does a scene without a weather.
+    settings.pathTracer = true;
+    renderer->setSettings(settings);
+    renderOnce(device, *renderer, scene, view, *target);
+    if (renderer->effects().pathTracer)
+        CHECK(renderer->effects().rain == Rain::Off && renderer->stats().rain == Rain::Off,
+              "rain with the path tracer");
+    settings.pathTracer = false;
+    renderer->setSettings(settings);
+    scene.clearWeather();
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().rain == Rain::Off, "rain without a weather: %d", int(renderer->stats().rain));
+}
+
+// Rain shafts and the rainbow need the clouds (their weather map): drawn under a raining cell seen from afar.
+QUENCH_TEST(renderer_rain_shafts_from_afar) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.rain = Rain::Medium;
+    settings.rainbow = true;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(20000.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.3f, 0.3f, 0.3f, 1.0f)})});
+    addSun(scene, glm::normalize(glm::vec3(0.0f, -0.4f, -1.0f)));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    weather::Weather w(weather::Settings{.coverage = 0.0f, .cirrus = 0.0f, .wind = {.speed = 0.0f}});
+    w.addCell({.position = {0.0f, -6000.0f}, .radius = 3000.0f, .precipitation = 1.0f, .drifts = false});
+    scene.setWeather(w);
+    const View view = lookAt(glm::vec3(0, 50.0f, 0), glm::vec3(0, 400.0f, -6000.0f));
+
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(!renderer->stats().rainShafts && renderer->effects().rainShafts == false, "no shafts without clouds");
+    settings.clouds = Clouds::Volumetric;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> with = renderOnce(device, *renderer, scene, view, *target);
+    const RenderStats s = renderer->stats();
+    CHECK(s.rainShafts && s.rainbow, "shafts %d, rainbow %d", int(s.rainShafts), int(s.rainbow));
+    CHECK(s.rainAtCamera == 0.0f, "no rain at the camera: %.3f", double(s.rainAtCamera));
+    settings.rainShafts = false;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> without = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(!renderer->stats().rainShafts, "shafts off");
+    int veiled = 0;
+    for (std::size_t i = 0; i < with.size(); ++i) veiled += std::abs(sum(with[i]) - sum(without[i])) > 6 ? 1 : 0;
+    std::printf("  %d of %u pixels veiled by the shaft\n", veiled, kSize * kSize);
+    CHECK(veiled > 20, "the shaft shows: %d pixels", veiled);
+}
+
 QUENCH_TEST(renderer_taa_motion_vectors_and_render_scale) {
     QUENCH_GPU_DEVICE(device);
     RenderSettings settings = plainSettings();

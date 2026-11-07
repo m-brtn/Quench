@@ -85,8 +85,11 @@ QuenchSurfaceInput quenchSurfaceInput(QuenchVaryings v, bool front, float3 view)
 #endif
 float4 QUENCH_SURFACE_FS(QuenchVaryings v, bool front : SV_IsFrontFace) : SV_Target0 {
     const QuenchSurfaceInput i = quenchSurfaceInput(v, front, normalize(quenchFrame.cameraPos.xyz - v.world));
-    const QuenchSurface s = QUENCH_SURFACE(i);
+    QuenchSurface s = QUENCH_SURFACE(i);
     if (quenchMaterial.surface.z > 0.0 && s.opacity < quenchMaterial.surface.z) discard;
+#ifndef QUENCH_SURFACE_NO_RAIN
+    quenchApplyRain(s, i);
+#endif
     const float3 lit = quenchShade(s, i);
     const float4 fog = fogAt(v.world, quenchFrame.cameraPos.xyz);
     return float4(lerp(lit, fog.rgb, fog.a), saturate(s.opacity));
@@ -103,8 +106,11 @@ struct QuenchGbuffer {
 
 QuenchGbuffer surface_gbuffer_fs(QuenchVaryings v, bool front : SV_IsFrontFace) {
     const QuenchSurfaceInput i = quenchSurfaceInput(v, front, normalize(quenchFrame.cameraPos.xyz - v.world));
-    const QuenchSurface s = QUENCH_SURFACE(i);
+    QuenchSurface s = QUENCH_SURFACE(i);
     if (quenchMaterial.surface.z > 0.0 && s.opacity < quenchMaterial.surface.z) discard;
+#ifndef QUENCH_SURFACE_NO_RAIN
+    quenchApplyRain(s, i);
+#endif
     QuenchGbuffer o;
     o.normal = float4(s.normal, saturate(s.roughness));
     o.albedo = float4(saturate(s.albedo), saturate(s.metallic));

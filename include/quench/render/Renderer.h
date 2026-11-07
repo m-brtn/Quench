@@ -130,6 +130,13 @@ enum class Clouds : std::uint8_t {
     Volumetric,
 };
 
+// The rain of the scene's weather (Scene::setWeather; docs/weather.md, "Rain"), where its precipitation falls: streaks
+// near the camera with splashes on what they hit, the rain occlusion map that keeps them and the wetness from under
+// roofs, wet surfaces with puddles and ripples, and (with clouds) the rain's shafts below raining clouds seen from
+// afar. The levels differ in how many streaks and splashes there are and how far around the camera, and in the shafts'
+// steps; Low has no splashes.
+enum class Rain : std::uint8_t { Off, Low, Medium, High };
+
 // Ray-traced shadows of at most this many local lights per frame (RenderSettings::localLightShadows).
 inline constexpr int kMaxRayLocalShadows = 4;
 // Cascades of the probe grid (RenderSettings::probeCascades).
@@ -211,6 +218,12 @@ struct RenderSettings {
     // place of the sky's radiance, and how many of its faces are drawn again each frame (1..6).
     std::uint32_t skyCubeSize = 64;
     int skyCubeFacesPerFrame = 6;
+    // The rain of the scene's weather. Off by default. The wetness and puddles on surfaces come with any level; the
+    // shafts need clouds (they read the clouds' weather map) and can be left out; the rainbow shows where the sun
+    // shines on rain in front of a viewer with the sun behind them (it rarely does).
+    Rain rain = Rain::Off;
+    bool rainShafts = true;
+    bool rainbow = false;
     ToneCurve toneCurve = ToneCurve::Aces;
     float vignette = 0.28f;
     bool dither = true;
@@ -246,6 +259,10 @@ struct ActiveEffects {
     // scene has a weather.
     Clouds clouds = Clouds::Off;
     bool skyCube = false; // needs an Rgba16Float cube the device can render to and sample
+    // Rain needs Rgba16Float targets the device can sample (the weather maps) and a depth texture to sample (the
+    // occlusion map, as the cascades); its shafts also clouds. Drawn in frames whose scene has a weather.
+    Rain rain = Rain::Off;
+    bool rainShafts = false;
 
     friend bool operator==(const ActiveEffects&, const ActiveEffects&) = default;
 };
@@ -385,6 +402,19 @@ struct RenderStats {
     std::uint32_t cloudHeight = 0;
     float cloudCover = 0.0f;
     std::uint32_t skyCubeFaces = 0;
+    // The rain drawn this frame (Off: none, or no weather), the precipitation at the camera, the streaks and splashes
+    // drawn (where it rains: every instance runs, most are empty), the casters drawn into the occlusion map, whether
+    // the shafts (and the rainbow) were drawn, and how much of the sky above the camera is covered (0 open .. 1 under
+    // a roof: the occlusion map around the camera, read back a few frames late; -1 before the first reading or
+    // without rain): what weather audio takes for its roof layer (audio::WeatherSoundState::cover).
+    Rain rain = Rain::Off;
+    float rainAtCamera = 0.0f;
+    std::uint32_t rainStreaks = 0;
+    std::uint32_t rainSplashes = 0;
+    std::uint32_t rainOccluders = 0;
+    bool rainShafts = false;
+    bool rainbow = false;
+    float rainCover = -1.0f;
 };
 
 class Renderer {

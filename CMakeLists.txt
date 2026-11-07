@@ -268,6 +268,7 @@ if(NOT QUENCH_HEADLESS)
         src/render/MeshBuilder.cpp
         src/render/PathTracer.cpp
         src/render/Projection.cpp
+        src/render/Rain.cpp
         src/render/RayTracing.cpp
         src/render/Renderer.cpp
         src/render/Scene.cpp
@@ -301,6 +302,11 @@ if(NOT QUENCH_HEADLESS)
                 sky_cube_fs:fragment sky_cube_layer_fs:fragment)
     quench_add_shaders(quench_render NAME render_cloudnoise SOURCE src/render/shaders/cloudnoise.hlsl
         ENTRIES cloud_noise_fs:fragment)
+    # The rain (RenderSettings::rain): its occlusion map into the weather maps, the drops' streaks and splashes, the
+    # shafts and the rainbow.
+    quench_add_shaders(quench_render NAME render_rain SOURCE src/render/shaders/rain.hlsl
+        ENTRIES rain_map_fs:fragment rain_streak_vs:vertex rain_streak_fs:fragment rain_splash_vs:vertex
+                rain_splash_fs:fragment rain_shafts_fs:fragment rain_shafts_up_fs:fragment)
     # Ray tracing (gpu::Caps::rayTracing): the rayquery entries need DXC (cmake/QuenchDxc.cmake); without it the sets
     # have the other entries only and the renderer uses the shadow maps and the sky's light.
     quench_add_shaders(quench_render NAME render_raytrace SOURCE src/render/shaders/raytrace.hlsl
