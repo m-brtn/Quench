@@ -654,16 +654,15 @@ The queue the user set on 2026-11-07, in this order:
 
 What else stays open, in the order it is useful (not scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (43 items:
-   the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
-   input devices, loading and streaming, the Basis Universal tiles, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
-   and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
-   the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, its lamp shadow maps on SDL GPU, the
-   tunnel for 10 minutes with Adapt to heat, the frame rate and the layout on the phone;
-   [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.10.0 code (on
-   the iPhone 17 last with the stage 11 code), on the iPhone 18 Pro Max the stage 11 and 12 runs (done on the
-   iPhone 17), Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes,
-   background).
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (44 items: the
+   cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the input
+   devices, loading and streaming, the Basis Universal tiles, the audio by ear, animation in motion, ray tracing noise,
+   MetalFX ghosting and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the
+   path tracer, the probe cascades, the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, its lamp
+   shadow maps on SDL GPU, the tunnel for 10 minutes with Adapt to heat, the frame rate and the layout on the phone;
+   [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.10.0 code (on the
+   iPhone 17 last with the stage 11 code), on the iPhone 18 Pro Max the stage 11 and 12 runs (done on the iPhone 17),
+   Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes, background).
 2. **Defaults from those runs:** the ray tracing section's phone defaults are chosen (stage 11, on the iPhone 17);
    the native Metal backend is the default on Apple platforms since 2026-11-07 (the user's decision; it ran the
    device tests and the benchmarks on both iPhones on 2026-11-06 as an option; open: the device test app, the
