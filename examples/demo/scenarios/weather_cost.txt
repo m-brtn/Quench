@@ -1,0 +1,60 @@
+# The cost of the clouds per quality setting (docs/performance.md, "Clouds"): the weather section's fair weather and
+# storm presets with the weather moving at 10 times its speed, 3 s per setting after 1 s to settle; the GPU busy
+# time per range comes from the line after each perf line (weather: the weather map and the cloud shadows; clouds:
+# the march and its accumulation; sky_cube: the cube's faces; hdr: the main pass with the sky). Offscreen, at any
+# size, for example on the native Metal backend:
+#   quench-demo --gpu-backend metal --window 1920x1080 --audio-device null --script weather_cost.txt
+section weather
+set dither 0
+set time_scale 10
+set preset fair
+set steps 64
+set cube_faces 2
+
+set quality off
+wait 1
+perf_begin weather_off
+wait 3
+perf_end
+
+set quality layer
+wait 1
+perf_begin weather_layer
+wait 3
+perf_end
+
+set quality reduced
+wait 1
+perf_begin weather_reduced
+wait 3
+perf_end
+
+set quality full
+wait 1
+perf_begin weather_full
+wait 3
+perf_end
+
+set preset storm
+set quality reduced
+wait 1
+perf_begin weather_storm_reduced
+wait 3
+perf_end
+
+set quality full
+wait 1
+perf_begin weather_storm_full
+wait 3
+perf_end
+
+# The phone defaults: half size, 48 steps, one sky cube face per frame.
+set preset fair
+set quality reduced
+set steps 48
+set cube_faces 1
+wait 1
+perf_begin weather_phone
+wait 3
+perf_end
+quit

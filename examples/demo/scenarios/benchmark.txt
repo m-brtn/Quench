@@ -1,5 +1,5 @@
 # Frame-time benchmark of the engine demo (docs/performance.md): each rendering section, physics, assets, audio,
-# animation, ray tracing, the tunnel and navigation for 5 s, at a fixed frame size and the default vsync:
+# animation, ray tracing, the tunnel, navigation and the weather for 5 s, at a fixed frame size and the default vsync:
 #   quench-demo --frame-size 1920x1080 --script examples/demo/scenarios/benchmark.txt
 # Every perf_end logs a perf line with the frame, CPU and GPU times and the section's draw counts. The perf regions run
 # in real time like normal play (5 s: about 300 frames at 60 Hz, 600 at 120 Hz).
@@ -125,6 +125,16 @@ set obstacles 1
 until nav_ready == 1 5
 wait 1
 perf_begin navigation
+wait 5
+perf_end
+expect perf_frames >= 150
+
+# Fair weather drifting at 10 times its speed with the section's quality (the perf line adds the clouds' setting).
+section weather
+set preset fair
+set time_scale 10
+wait 1
+perf_begin weather
 wait 5
 perf_end
 expect perf_frames >= 150

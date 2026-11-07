@@ -39,4 +39,5 @@ include raytracing_mirror.txt
 include raytracing_probes.txt
 include assets_basis.txt
 include navigation.txt
+include weather.txt
 quit

@@ -212,6 +212,14 @@ constexpr std::array kItems{
               "touching or jittering, and their feet do not slide. Tap a floor: the chosen group goes there (on the "
               "phone, through the compact layout's controls).",
               "set patrol 1\nset obstacles 1"},
+    CheckItem{"weather.clouds", "weather", "Clouds in motion",
+              "Fair weather at 10 times the weather's speed: the cumulus drift toward the camera and change shape "
+              "slowly without popping, crawling grain or smearing behind them when the camera turns; flat grey bases, "
+              "bright tops, bright edges toward the sun; their shadows move over the plain with them, and the lake "
+              "reflects them. The raining cumulonimbus on the right stands in a blue sky. Press Sunset: the clouds "
+              "turn orange and pink, their bases darker; then Overcast: the sun fades, the light turns grey and the "
+              "frame rate holds.",
+              "set preset fair\nset time_scale 10"},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",

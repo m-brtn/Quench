@@ -1,0 +1,53 @@
+# Weather (ctest: demo_weather_<backend>, a part of batch.txt and batch_native.txt): the volumetric clouds at half size
+# with accumulation over frames. The weather is frozen (time scale 0) at weather time 1200 s, so each capture shows the
+# same clouds in every run: fair-weather cumulus with the raining cumulonimbus placed as a cell on the right and its
+# shadow ahead on the left, the lake reflecting them (demo_weather.png); towering cumulus at sunset
+# (demo_weather_sunset.png); the 2D cloud layer, the fallback (demo_weather_layer.png). Then the overcast deck by
+# numbers: the cover around the camera and no rain on the plain below the fair sky.
+section weather
+
+set dither 0
+set time_scale 0
+set quality reduced
+set preset fair
+set sun_elevation 30
+set sun_azimuth 50
+set weather_time 1200
+wait 0.5
+expect clouds == 2
+expect cloud_width == 480
+expect cloud_height == 270
+expect cells == 1
+expect shower_rain > 0.5
+expect rain_here == 0
+expect rain_distance > 3000
+expect cloud_cover < 0.6
+wait 1
+windows off
+capture demo_weather.png
+windows on
+
+set preset towering
+set sun_elevation 3
+set sun_azimuth 25
+wait 1.5
+windows off
+capture demo_weather_sunset.png
+windows on
+
+set quality layer
+set preset fair
+set sun_elevation 30
+set sun_azimuth 50
+wait 0.5
+expect clouds == 1
+windows off
+capture demo_weather_layer.png
+windows on
+
+set quality reduced
+set preset overcast
+wait 0.5
+expect cloud_cover > 0.8
+expect clouds == 2
+quit

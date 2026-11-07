@@ -156,7 +156,8 @@ quench_add_game(quench_demo
         sections/RayTracingSection.cpp
         sections/ShadowsSection.cpp
         sections/SkySection.cpp
-        sections/TunnelSection.cpp)
+        sections/TunnelSection.cpp
+        sections/WeatherSection.cpp)
 quench_configure_target(quench_demo)
 target_link_libraries(quench_demo PRIVATE quench_render quench_physics quench_animation quench_navigation)
 target_include_directories(quench_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${demo_build_info_dir})

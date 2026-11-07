@@ -2,7 +2,7 @@
 # the frame at 1.5 s (the HDR output section, in SDR).
 
 wait 0.2
-expect sections == 13
+expect sections == 14
 section materials
 wait 0.25
 expect draws > 0
