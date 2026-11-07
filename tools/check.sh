@@ -5,11 +5,11 @@
 #   tools/check.sh quick [--preset NAME] [--base REF] [LABEL...]
 #       A small change: format the changed C and C++ files (check only), an incremental build of the preset
 #       (default: release, where the captures are compared), and ctest of the labels the changed files map to
-#       (or of the LABELs given): core physics assets audio animation cook gpu app render hello demo, without the
-#       variants on Vulkan through MoltenVK (label vulkan; full and release run them). The changed files are those
-#       that differ from HEAD (from REF with --base) and the untracked ones. A change to a shared foundation (core,
-#       gpu, app, the build) is reported: it needs the full gate; so is a change to other CMake files: it needs the
-#       step xcode.
+#       (or of the LABELs given): core physics assets audio animation navigation cook gpu app render hello demo,
+#       without the variants on Vulkan through MoltenVK (label vulkan; full and release run them). The changed files
+#       are those that differ from HEAD (from REF with --base) and the untracked ones. A change to a shared foundation
+#       (core, gpu, app, the build) is reported: it needs the full gate; so is a change to other CMake files: it needs
+#       the step xcode, and one to a headless module: it needs the step wasm.
 #   tools/check.sh full         the steps format debug release asan tsan wasm ios xcode new-game: the gate at the end
 #                               of a stage and for a change to a shared foundation
 #   tools/check.sh release      full, then the step package (tools/package_demo.sh, macOS): before a release
@@ -140,6 +140,7 @@ labels_for() {
     src/assets/* | include/quench/assets/* | tests/assets/*) echo "assets" ;;
     src/audio/* | include/quench/audio/* | tests/audio/*) echo "audio" ;;
     src/animation/* | include/quench/animation/* | tests/animation/*) echo "animation" ;;
+    src/navigation/* | include/quench/navigation/* | tests/navigation/*) echo "navigation" ;;
     tools/cook/* | tests/cook/* | tests/CookCli.cmake | cmake/CookToolchain.cmake | cmake/QuenchCook.cmake) echo "cook" ;;
     src/gpu/* | include/quench/gpu/* | tests/gpu/*) echo "gpu render shared" ;;
     src/app/* | include/quench/app/* | tests/app/* | tests/harness/*) echo "app hello demo shared" ;;
@@ -222,6 +223,11 @@ quick() {
         echo
         echo "NOTE: the change touches CMake files: run tools/check.sh step xcode (it generates the ios-xcode project,"
         echo "which refuses some things Ninja accepts) before committing it."
+    fi
+    if [[ $shared -eq 0 && " $labels " =~ \ (physics|assets|audio|animation|navigation)\  ]]; then
+        echo
+        echo "NOTE: the change touches a headless module: run tools/check.sh step wasm (its tests as WebAssembly under"
+        echo "Node.js) before committing it."
     fi
 }
 

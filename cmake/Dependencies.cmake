@@ -235,6 +235,56 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(quench_ozz PUBLIC -fwrapv)
 endif()
 
+# ---------------------------------------------------------------- Recast & Detour
+# recastnavigation 1.6.0 (zlib). quench_navigation builds navmeshes with Recast and DetourTileCache's layer builder,
+# queries them with Detour and moves crowds with DetourCrowd; their headers stay private to it. The project's own CMake
+# needs 3.1 and builds its demo and tests, so the four libraries are built here from their sources (DebugUtils is not
+# used). 64-bit polygon references (DT_POLYREF64): 28 bits of tiles and 20 of polygons per tile, for large worlds.
+FetchContent_Declare(recastnavigation
+    URL https://github.com/recastnavigation/recastnavigation/archive/6dc1667f580357e8a2154c28b7867bea7e8ad3a7.tar.gz
+    URL_HASH SHA256=f565cc91b85df95a656cfc672e41c02e8aa44ba2363905aa8277ce20ea87491d
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    # Tile sections aligned to 8 bytes with DT_POLYREF64, so that the 64-bit links are aligned.
+    PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/DetourAlign8.cmake
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(recastnavigation)
+set(_recast ${recastnavigation_SOURCE_DIR})
+add_library(quench_recast STATIC
+    ${_recast}/Recast/Source/Recast.cpp
+    ${_recast}/Recast/Source/RecastAlloc.cpp
+    ${_recast}/Recast/Source/RecastArea.cpp
+    ${_recast}/Recast/Source/RecastAssert.cpp
+    ${_recast}/Recast/Source/RecastContour.cpp
+    ${_recast}/Recast/Source/RecastFilter.cpp
+    ${_recast}/Recast/Source/RecastLayers.cpp
+    ${_recast}/Recast/Source/RecastMesh.cpp
+    ${_recast}/Recast/Source/RecastMeshDetail.cpp
+    ${_recast}/Recast/Source/RecastRasterization.cpp
+    ${_recast}/Recast/Source/RecastRegion.cpp
+    ${_recast}/Detour/Source/DetourAlloc.cpp
+    ${_recast}/Detour/Source/DetourAssert.cpp
+    ${_recast}/Detour/Source/DetourCommon.cpp
+    ${_recast}/Detour/Source/DetourNavMesh.cpp
+    ${_recast}/Detour/Source/DetourNavMeshBuilder.cpp
+    ${_recast}/Detour/Source/DetourNavMeshQuery.cpp
+    ${_recast}/Detour/Source/DetourNode.cpp
+    ${_recast}/DetourCrowd/Source/DetourCrowd.cpp
+    ${_recast}/DetourCrowd/Source/DetourLocalBoundary.cpp
+    ${_recast}/DetourCrowd/Source/DetourObstacleAvoidance.cpp
+    ${_recast}/DetourCrowd/Source/DetourPathCorridor.cpp
+    ${_recast}/DetourCrowd/Source/DetourPathQueue.cpp
+    ${_recast}/DetourCrowd/Source/DetourProximityGrid.cpp
+    ${_recast}/DetourTileCache/Source/DetourTileCache.cpp
+    ${_recast}/DetourTileCache/Source/DetourTileCacheBuilder.cpp)
+target_include_directories(quench_recast SYSTEM PUBLIC
+    ${_recast}/Recast/Include ${_recast}/Detour/Include ${_recast}/DetourCrowd/Include
+    ${_recast}/DetourTileCache/Include)
+target_compile_definitions(quench_recast PUBLIC DT_POLYREF64=1)
+target_compile_features(quench_recast PUBLIC cxx_std_20)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(quench_recast PRIVATE -w)
+endif()
+
 if(QUENCH_HEADLESS)
     return()
 endif()

@@ -120,6 +120,20 @@ quench_configure_target(quench_animation)
 target_link_libraries(quench_animation PUBLIC quench_core quench_assets quench_glm
                                        PRIVATE quench_ozz quench_ozz_offline quench_xxhash)
 
+# ------------------------------------------------------------------ navigation
+# Headless: navmeshes built tile by tile on the job system (also cooked, as .qnav assets), dynamic obstacles, path
+# queries and crowds. Recast & Detour underneath.
+add_library(quench_navigation STATIC
+    src/navigation/Build.cpp
+    src/navigation/Crowd.cpp
+    src/navigation/DebugGeometry.cpp
+    src/navigation/NavMesh.cpp
+    src/navigation/NavMeshAsset.cpp
+    src/navigation/NavMeshData.cpp
+    src/navigation/NavQuery.cpp)
+quench_configure_target(quench_navigation)
+target_link_libraries(quench_navigation PUBLIC quench_core quench_assets quench_glm PRIVATE quench_recast quench_xxhash)
+
 # The asset cooker (host tool, tools/cook) and quench_cook_assets().
 include(cmake/QuenchCook.cmake)
 

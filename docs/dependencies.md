@@ -319,13 +319,66 @@ a bare program name is looked up in `PATH`, and the app's ends of the pipes are 
 compiler's output and asks `SDL_WaitProcess(..., false, ...)` without waiting. On iOS SDL has no processes; the
 engine does not try them there.
 
+## Added for navigation
+
+Navigation ([Navigation](navigation.md)), 2026-11-07. One library, in `cmake/Dependencies.cmake` (also in the
+`headless` and `wasm-node` builds), listed with its licence in `THIRD_PARTY_LICENSES` (shipped).
+
+| Library | Version | Commit | Licence | Linked into | Purpose |
+|---|---|---|---|---|---|
+| Recast & Detour (recastnavigation) | 1.6.0 | `6dc1667f580357e8a2154c28b7867bea7e8ad3a7`, SHA256 `f565cc91b85df95a656cfc672e41c02e8aa44ba2363905aa8277ce20ea87491d` | zlib (`License.txt`) | `quench_navigation` (`quench_recast`) | voxelizing level geometry into tile layers (Recast), navmesh tiles from layers with obstacles marked in (DetourTileCache's builder), the navmesh and its queries (Detour), crowds (DetourCrowd) |
+
+How it is built: its CMake (minimum 3.1) builds the demo, the tests and DebugUtils by default, so the engine fetches
+the archive without it (`SOURCE_SUBDIR no-cmake`) and compiles the 26 sources of Recast, Detour, DetourCrowd and
+DetourTileCache into `quench_recast`, without warnings (`-w`, third-party code) and with `DT_POLYREF64=1` (64-bit
+polygon references: 16 bits of salt, 28 of tile, 20 of polygon, so large tiled worlds fit; Detour's 32-bit default
+leaves at least 10 bits of salt and splits the rest). `libquench_recast.a` is 385,024 bytes in the `release` preset.
+DebugUtils and the demo are not compiled: the engine draws its own debug geometry. Neither game uses it.
+
+Checked in the 1.6.0 source and in the tests:
+
+- `dtTileCache` keeps its tiles, obstacles and rebuild queue itself and rebuilds tiles on the calling thread, one
+  call at a time. The engine uses only its builder functions (`dtBuildTileCacheLayer`, `dtDecompressTileCacheLayer`,
+  `dtMarkCylinderArea`, `dtMarkBoxArea` with a rotation, `dtBuildTileCacheRegions`, `...Contours`, `...PolyMesh`)
+  and keeps the layers and obstacles in `NavMesh`, so tiles build in parallel on the job system.
+- `dtDecompressTileCacheLayer` hands the compressor a buffer for four grids (heights, areas, connections and the
+  regions it fills itself); the engine stores layers uncompressed and its compressor accepts three quarters of that.
+- Obstacles are not grown by the agent's radius in DetourTileCache (the sample grows nothing either; its walls come
+  from erosion); the engine grows them by the radius and the climb height before marking them.
+- `dtNavMesh::addTile` writes links to the neighbouring tiles into the tile's data, so the same tile's bytes differ
+  with the order tiles were added; the engine hashes a tile's data before adding it (`NavMesh::contentHash()`).
+- `dtCreateNavMeshData` keeps an off-mesh link only in the tile its start lies in, and only when the start is
+  within the climb height of that tile's polygons.
+- `dtCrowd` crosses off-mesh links itself, along a straight line at half the agent's speed, in its private
+  `m_agentAnims`: a game cannot drive the crossing (a jump arc, a ladder clip) through it. The engine reports the
+  link's start and end and its progress; a game-driven crossing is remaining work.
+- `dtCrowd::checkPathValidity` asks for a new path when a tile under the corridor was replaced and leaves
+  `targetReplan` set after it, so arrival is checked on the target state and the corridor's end only.
+- `DT_CROWD_OPTIMIZE_VIS` (`dtPathCorridor::optimizePathVisibility`) shortcuts an agent's corridor along a raycast,
+  which takes any polygon the filter lets through whatever its area costs: agents walked straight across the demo's
+  mud at cost 5 (`navigation.crowd_keeps_area_costs` failed with it: 86 steps in the mud). The engine sets it only
+  for agents whose filter gives every area the same cost; `DT_CROWD_OPTIMIZE_TOPO` (a short path search with the
+  costs) stays on for all.
+- Tile references: `dtNavMesh::addTile` without a reference takes the next free tile slot, so references depended on
+  the order tiles finished in. The engine gives each layer of a tile column a fixed slot with the slot's next salt,
+  so the same build gives the same references and a rebuilt tile new ones.
+- Tiles made by DetourTileCache's builder have no detail meshes (`dtCreateNavMeshData` gets none), so a polygon's
+  height is that of its vertices: the demo's stairs are one sloped polygon under the steps, within the climb height
+  of each step; the debug geometry draws the polygons and the demo lifts it toward the camera.
+- With `DT_POLYREF64` a `dtLink` holds a 64-bit reference, but Detour aligns a tile's sections to 4 bytes
+  (`dtAlign4`), so the links can sit 4 bytes off an 8-byte boundary: UndefinedBehaviorSanitizer stopped 14
+  `navigation.*` cases, `cook.cook_navmesh` and the demo's smoke runs in the `asan` preset (upstream issue #669; the
+  open pull request #791 aligns to 8 bytes). The engine patches `dtAlign4` to round up to 8 bytes when
+  `DT_POLYREF64` is defined (`cmake/patches/DetourAlign8.cmake`, marked in the source as the zlib licence asks):
+  every writer and reader of tile and layer data uses it. The layer header is 56 bytes either way, so cooked
+  layers keep their size.
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.
 
 | Library | Latest release | Licence | Planned use |
 |---|---|---|---|
-| Recast & Detour | 1.6.0 (2023-05-21) | zlib | navmesh building, path queries, crowds |
 | Tracy | 0.14.1 (2026-08-22) | BSD-3-Clause | CPU and GPU profiler (development builds) |
 | Flecs | 4.2.0 (2026-11-04) | MIT | optional ECS module for games that want one |
 
