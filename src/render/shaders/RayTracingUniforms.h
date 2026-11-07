@@ -64,6 +64,9 @@ struct QUENCH_ALIGN16 RayHitUniforms {
     float4 probes;
     // Probe update: xyz: the cell of the grid's first probe in the previous frame, w: unused
     float4 previousGrid;
+    // x: the probes are traced in this many turns (1, 2, 4 or 8), y: this frame's turn, z: 1 where a probe can have
+    // no value (this or the previous frame in turns), w: unused
+    float4 probeTurns;
     // The path tracer: x: bounces, y: samples so far, z: 1 on the first sample, w: unused
     float4 path;
     float4x4 rotation; // a random rotation of the probe rays, new every frame

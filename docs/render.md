@@ -311,6 +311,23 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   probes that stay keep their history, new ones start from their first frame. Surfaces read it with trilinear
   weights, visibility and a normal bias (`quench/Probes.hlsli`, samplers 10 and 11, bit 32) in place of
   `Environment::skyAmbient` and `groundAmbient`; beyond the grid they fade to them.
+- **Probe updates in turns** (`RenderSettings::probeUpdatePeriod`, 1, 2, 4 or 8, default 1; after 0.9.0): the grid
+  traces 1 / n of its probes per frame, each probe once in n frames, for phones where the grid's 2048 probes cost
+  about 3 ms at any render scale. A probe's turn is a sub-lattice of the grid (2 turns a 3D checkerboard, 8 every
+  other probe along each axis), so every frame's probes are spread evenly; the probe ray target's rows are ordered by
+  turn and a frame traces one band of them (a scissor). The irradiance and distance passes still run over every
+  probe: the others keep their values. The hysteresis stays 0.97 per update, so light follows a change n times more
+  slowly in frames. Validity is the irradiance alpha: a probe that comes into a scrolling grid and is not in this
+  frame's turn gets alpha 0 and is left out of the shading (`Probes.hlsli` multiplies its weight by the alpha) until
+  it is traced, instead of showing the light of the cell its slot held before or black; a grid that moves by more than
+  a cell along an axis (a jump) traces every probe that frame, as a restart does. `RenderStats::probes` is the probes
+  traced this frame (2048 / n). With n = 1 the frame is the one before, bit for bit (the demo's ray tracing and
+  tunnel captures, mean difference 0.0000). Test `renderer_probe_grid_updates_in_turns` (native backend): a tile lit
+  only by the grid (from a sunlit wall, in a black roof's shadow) holds its light in turns (within 5 %), gets
+  halfway to the light of a doubled or halved sun in 18, 38, 68 and 156 frames with 1, 2, 4 and 8 turns (about n
+  times 18), keeps its light in the frame a grid scroll brings new probes next to it in every turn (at least 0.2627
+  against 0.2637 before; with the new probes taken as black 0.1259), and is lit at once after a jump (2048 probes
+  traced).
 - **Per-pixel indirect light** (`IndirectLight::RayTraced`): one cosine-weighted ray per pixel, its hit lit as above
   with the probe grid (which runs too); contact detail the grid is too coarse for (sampler 8, bit 16).
 - **Tests.** `renderer_indirect_light_bounces`: the ground next to a red wall turns red with the grid and the
@@ -507,7 +524,8 @@ bytes).
 sun shadows (shadow maps or ray traced), cascades (0..4), shadow map size, shadow distance, shadow filter (1, 4 or
 12 taps), translucent shadows (transmittance map or dithered), shadow rays and softness, ambient occlusion (none or
 ray traced) with its rays, radius and strength, local light shadows (0..4), reflections (sky or ray traced) and
-their roughness limit, indirect light (sky, probe grid or ray traced) and the probe spacing, the ray denoiser
+their roughness limit, indirect light (sky, probe grid or ray traced), the probe spacing and the probe updates
+(every probe per frame, 1/2, 1/4 or 1/8), the ray denoiser
 (spatial or temporal), the path tracer with its bounces and samples, anti-aliasing (none, FXAA, TAA) and sharpening,
 bloom (strength, threshold), sky on or off and the clear color, tone curve (ACES, AgX), vignette, dither.
 `setSettings` can be called every frame; the targets are recreated only when a size, the shadow map size or the set
@@ -618,8 +636,10 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   them. Hits are lit by local lights without shadow rays. Reflections are one bounce (a mirror in a mirror shows the
   second one lit, not reflecting); rough surfaces above `reflectionRoughness` keep the sky's reflection, with no
   screen-space fallback. The probe grid is one fixed size around one point (no cascades of grids), a few frames
-  behind changes of light, and its probes are not moved out of walls (a probe inside a wall is dark and its
-  neighbours' visibility hides it). The temporal denoiser has no variance estimate and no disocclusion boost: newly
+  behind changes of light (n times more with `probeUpdatePeriod` n: halfway in about 18 n frames, within 10 % in
+  about 70 n), and its probes are not moved out of walls (a probe inside a wall is dark and its neighbours'
+  visibility hides it). Turns are a fixed round-robin, not chosen by priority (a probe near the camera or in changing
+  light is not traced sooner), and the hysteresis does not shorten with n. The temporal denoiser has no variance estimate and no disocclusion boost: newly
   visible areas are noisy for a few frames. Local lights have no shadow maps, so without ray tracing they are
   unshadowed. The path tracer has no refraction, and its translucency is a coin flip.
 - Area lights: a tube's LTC has no end caps (-4.7 % against the integral for a 1.2 m tube of 5 cm); the traced

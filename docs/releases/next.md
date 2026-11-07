@@ -142,6 +142,15 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   ray tracing section, offscreen at 1080p on the M4 Pro: reflections 0.901 / 0.903 ms, the path tracer 12.70 /
   12.72 ms); in the tunnel, which has them, reflections cost 0.33 ms (5 %) and the path tracer 1.2 ms (4 %) more.
   The tunnel's two native golden images changed (the crates' studs in the puddle).
+- The probe grid in turns, for phones (stage 11 remaining work): `RenderSettings::probeUpdatePeriod` (1, 2, 4 or 8,
+  default 1) traces that fraction of the 2048 probes per frame, every probe once in n frames, spread evenly over
+  the grid ([Render module](../render.md#ray-traced-lighting)). Probes that come into a scrolling grid are left out
+  of the shading until their turn (irradiance alpha 0), and a grid that jumps traces every probe. On the M4 Pro
+  (offscreen, 1080p, native backend) the probes cost 1.16 ms every frame and 0.68, 0.43 and 0.32 ms in 2, 4 and 8
+  turns; light settles to within 10 % of a change in 70, 166, 276 and 629 frames
+  ([Performance](../performance.md#probe-grid-in-turns)). The default frame is the one before, bit for bit; the
+  `probes` range reads 0.01 ms more. The demo's Graphics panel has "Probe updates" (`set probe_updates`);
+  `scenarios/raytracing_phone_probes.txt` measures it on a phone (not run yet).
 
 ## Fixes
 
@@ -196,6 +205,10 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   material with a normal map (texture 2) looks different in reflections and bounced light than before (its normal
   map was ignored there); captures of such scenes change. The renderer makes three more pipelines when ray-traced
   lighting starts and the path tracer one more (`RenderStats::pipelines`).
+- **`render::RenderSettings::probeUpdatePeriod`** is new (after `probeSpacing`; default 1, as before).
+  `RenderStats::probes` is the probes traced this frame: 2048 as before by default, 2048 / n in turns. A shader of
+  a game's own that reads the probe atlases through `quenchProbeIrradiance` needs nothing; one that reads the
+  irradiance atlas directly should weight a probe by its alpha (0: no value yet).
 
 - **`render::LightType`** has `Rect`, `Disk` and `Tube` after `Spot`: a `switch` over it without a `default` warns
   (`-Wswitch`) until it handles them.

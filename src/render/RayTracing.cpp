@@ -755,12 +755,22 @@ ProbeGridState RayTracing::placeProbes(const glm::vec3& camera, float spacing) {
     return g;
 }
 
-void RayTracing::updateProbes(gpu::CommandBuffer& commands, shader::RayHitUniforms uniforms,
-                              const shader::LightUniforms& lights, bool reset) {
-    if (!m_lighting || !m_probeRays) return;
+std::uint32_t RayTracing::updateProbes(gpu::CommandBuffer& commands, shader::RayHitUniforms uniforms,
+                                       const shader::LightUniforms& lights, bool reset, int turns) {
+    if (!m_lighting || !m_probeRays) return 0;
     const bool restart = reset || m_frameReset || !m_probesValid;
+    // A restart traces every probe, and so does a grid that moved by more than a cell along an axis (a jump: most of
+    // its probes are new; a grid that scrolls a cell at a time has a slice of new probes, left out until their turn).
+    const glm::ivec3 moved = glm::abs(m_grid.first - m_previousFirst);
+    const bool jumped = std::max({moved.x, moved.y, moved.z}) > 1;
+    const int n = restart || jumped ? 1 : turns >= 8 ? 8 : turns >= 4 ? 4 : turns >= 2 ? 2 : 1;
+    const int turn = int(m_probeTurn++ % std::uint32_t(n));
+    const std::uint32_t probes = std::uint32_t(kProbeCounts.x * kProbeCounts.y * kProbeCounts.z);
+    const std::uint32_t band = probes / std::uint32_t(n);
     uniforms.probes = glm::vec4(float(kProbeRays), m_grid.spacing * 2.0f, 0.97f, restart ? 1.0f : 0.0f);
     uniforms.previousGrid = glm::vec4(glm::vec3(m_previousFirst), 0.0f);
+    uniforms.probeTurns = glm::vec4(float(n), float(turn), n > 1 || m_probeTurns > 1 ? 1.0f : 0.0f, 0.0f);
+    m_probeTurns = n;
     // The rays see the grid's last state (no probes in the first frame).
     uniforms.params.w = restart ? 0.0f : 1.0f;
     commands.beginTiming("probes");
@@ -768,6 +778,8 @@ void RayTracing::updateProbes(gpu::CommandBuffer& commands, shader::RayHitUnifor
         const gpu::ColorTarget color{.texture = m_probeRays, .load = gpu::LoadOp::DontCare, .cycle = true};
         if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
             pass.bindPipeline(m_normalMaps ? m_probeTraceMapsPipeline : m_probeTracePipeline);
+            // This turn's probes are one band of rows (raylight.hlsl, rtProbeRow).
+            if (n > 1) pass.setScissor({0, std::int32_t(band) * turn, std::int32_t(kProbeRays), std::int32_t(band)});
             bindHits(pass, !restart);
             pass.pushUniforms(kFragment, 1, uniforms);
             pass.pushUniforms(kFragment, 2, lights);
@@ -776,25 +788,28 @@ void RayTracing::updateProbes(gpu::CommandBuffer& commands, shader::RayHitUnifor
         }
     }
     const int write = m_probeIndex ^ 1;
+    const gpu::Texture& previousLight = m_probeIrradiance[std::size_t(m_probeIndex)];
     const auto update = [&](const gpu::GraphicsPipeline& pipeline, const gpu::Texture& target,
-                            const gpu::Texture& previous) {
+                            const gpu::Texture& previous, std::size_t count) {
         const gpu::ColorTarget color{.texture = target, .load = gpu::LoadOp::DontCare, .cycle = true};
         gpu::RenderPass pass = commands.beginRenderPass(color);
         if (!pass) return;
-        const gpu::TextureSamplerBinding samplers[] = {{m_probeRays, *m_samplers.point}, {previous, *m_samplers.point}};
+        // The distance update also reads the previous irradiance: its alpha says which probes have a value.
+        const gpu::TextureSamplerBinding samplers[] = {
+            {m_probeRays, *m_samplers.point}, {previous, *m_samplers.point}, {previousLight, *m_samplers.point}};
         pass.bindPipeline(pipeline);
-        pass.bindSamplers(kFragment, 0, samplers);
+        pass.bindSamplers(kFragment, 0, std::span(samplers, count));
         pass.pushUniforms(kFragment, 1, uniforms);
         pass.draw(3);
         pass.end();
     };
-    update(m_probeIrradiancePipeline, m_probeIrradiance[std::size_t(write)],
-           m_probeIrradiance[std::size_t(m_probeIndex)]);
-    update(m_probeDistancePipeline, m_probeDistance[std::size_t(write)], m_probeDistance[std::size_t(m_probeIndex)]);
+    update(m_probeIrradiancePipeline, m_probeIrradiance[std::size_t(write)], previousLight, 2);
+    update(m_probeDistancePipeline, m_probeDistance[std::size_t(write)], m_probeDistance[std::size_t(m_probeIndex)], 3);
     commands.endTiming();
     m_probeIndex = write;
     m_probesValid = true;
     m_previousFirst = m_grid.first;
+    return band;
 }
 
 void RayTracing::traceReflections(gpu::CommandBuffer& commands, const shader::RayHitUniforms& uniforms,

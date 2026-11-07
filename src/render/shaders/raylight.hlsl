@@ -38,6 +38,38 @@ int3 rtProbeCell(int3 slot, int3 first) {
     return first + (((slot - first) % c) + c) % c;
 }
 
+// Probes traced in turns (RenderSettings::probeUpdatePeriod; n = rtHit.probeTurns.x of 1, 2, 4 or 8): a probe's turn
+// is a sub-lattice of the grid, from its slot's bits: bit 0 the parity of x + y + z, bit 1 that of x, bit 2 that of y
+// (two turns: a 3D checkerboard; eight: every other probe along each axis); its turn is those bits modulo n. The rows
+// of the probe ray target are ordered by turn, so one turn's rays are one band of rows; with one turn the row is the
+// slot's index. The counts are even.
+uint rtProbeTurnBits(int3 slot) {
+    return uint((slot.x + slot.y + slot.z) & 1) | (uint(slot.x & 1) << 1) | (uint(slot.y & 1) << 2);
+}
+
+uint rtProbeRow(int3 slot, uint turns) {
+    const int3 c = quenchProbeCounts();
+    if (turns <= 1u) return uint(slot.x + slot.y * c.x + slot.z * c.x * c.y);
+    const int3 h = c / 2;
+    const uint bits = rtProbeTurnBits(slot);
+    const uint index = uint((slot.x >> 1) + (slot.y >> 1) * h.x + (slot.z >> 1) * h.x * h.y);
+    const uint band = uint(c.x * c.y * c.z) / turns;
+    return (bits & (turns - 1u)) * band + index * (8u / turns) + bits / turns;
+}
+
+int3 rtProbeSlotOfRow(uint row, uint turns) {
+    const int3 c = quenchProbeCounts();
+    if (turns <= 1u) return int3(int(row) % c.x, (int(row) / c.x) % c.y, int(row) / (c.x * c.y));
+    const int3 h = c / 2;
+    const uint band = uint(c.x * c.y * c.z) / turns, per = 8u / turns;
+    const uint turn = row / band, i = row % band;
+    const uint bits = turn + (i % per) * turns;
+    const int index = int(i / per);
+    const int bx = int(bits >> 1u) & 1, by = int(bits >> 2u) & 1;
+    const int bz = int(bits & 1u) ^ bx ^ by;
+    return int3(index % h.x, (index / h.x) % h.y, index / (h.x * h.y)) * 2 + int3(bx, by, bz);
+}
+
 #if defined(QUENCH_ENTRY_rt_reflect_maps_fs)
 #define QUENCH_ENTRY_rt_reflect_fs
 #define rt_reflect_fs rt_reflect_maps_fs
@@ -114,16 +146,16 @@ float4 rt_indirect_fs(FullscreenOut vin) : SV_Target0 {
 #endif
 
 #if defined(QUENCH_ENTRY_rt_probe_trace_fs)
-// The probe rays, one texel each (x: ray, y: probe slot): rgb the radiance, a the hit distance (negative where the
-// ray hit the back of a surface: the probe is inside geometry; the longest distance on a miss).
+// The probe rays, one texel each (x: ray, y: the probe's row, rtProbeRow; drawn for this frame's turn): rgb the
+// radiance, a the hit distance (negative where the ray hit the back of a surface: the probe is inside geometry; the
+// longest distance on a miss).
 float4 rt_probe_trace_fs(FullscreenOut vin) : SV_Target0 {
-    const uint ray = uint(vin.position.x), probe = uint(vin.position.y);
-    const int3 counts = quenchProbeCounts();
-    const int3 slot = int3(int(probe) % counts.x, (int(probe) / counts.x) % counts.y, int(probe) / (counts.x * counts.y));
+    const uint ray = uint(vin.position.x), row = uint(vin.position.y);
+    const int3 slot = rtProbeSlotOfRow(row, uint(rtHit.probeTurns.x));
     const int3 cell = rtProbeCell(slot, int3(quenchFrame.probeGrid.xyz));
     const float3 origin = quenchProbePosition(cell);
     const float3 dir = rtProbeRay(ray, uint(rtHit.probes.x), rtHit.rotation);
-    uint seed = rtSeed(uint2(ray, probe), uint(quenchFrame.options.y), 0x2545u);
+    uint seed = rtSeed(uint2(ray, row), uint(quenchFrame.options.y), 0x2545u);
     const RtHit hit = rtTraceClosest(origin, dir, rtHit.params.z, QUENCH_RT_MASK_VISIBLE, seed);
     if (!hit.hit) return float4(rtClampRadiance(skyRadiance(dir)), rtHit.params.z);
     const RtSurface s = rtSurfaceAt(hit, origin, dir);
@@ -157,56 +189,81 @@ int2 rtProbeInterior(int2 t, int tile) {
     return s;
 }
 
-// A texel of an atlas with tiles of `tile` texels: the probe it belongs to, the direction it stores and how much of
-// the previous value it keeps (none for a probe that came into the grid this frame).
-void rtProbeTexel(int2 texel, int tile, out uint probe, out float3 dir, out float keep) {
+// What becomes of a probe's texels this frame: traced (blended with the previous value), kept (not the probe's turn:
+// the previous value) or emptied (the probe came into the grid this frame and it is not its turn: no value, its
+// irradiance alpha 0 leaves it out of the shading until its turn).
+static const int kProbeTraced = 0;
+static const int kProbeKept = 1;
+static const int kProbeEmptied = 2;
+
+// A texel of an atlas with tiles of `tile` texels: the row of its probe's rays, the direction it stores, how much of
+// the previous value a traced probe keeps (none for a probe that came into the grid this frame or had no value) and
+// what becomes of it. `hadValue`: the probe's previous irradiance alpha.
+int rtProbeTexel(int2 texel, int tile, bool hadValue, out uint row, out float3 dir, out float keep) {
     const int3 counts = quenchProbeCounts();
     const int2 tileIndex = texel / tile;
     const int2 local = rtProbeInterior(texel - tileIndex * tile, tile);
     const float2 oct = (float2(local - 1) + 0.5) / float(tile - 2) * 2.0 - 1.0;
     dir = quenchOctDecode(oct);
     const int3 slot = int3(tileIndex.x % counts.x, tileIndex.x / counts.x, tileIndex.y);
-    probe = uint(slot.x + slot.y * counts.x + slot.z * counts.x * counts.y);
+    const uint turns = uint(rtHit.probeTurns.x);
+    row = rtProbeRow(slot, turns);
     const int3 now = rtProbeCell(slot, int3(quenchFrame.probeGrid.xyz));
     const int3 before = rtProbeCell(slot, int3(rtHit.previousGrid.xyz));
-    keep = rtHit.probes.w > 0.5 || any(now != before) ? 0.0 : rtHit.probes.z;
+    const bool entered = rtHit.probes.w > 0.5 || any(now != before);
+    keep = entered || !hadValue ? 0.0 : rtHit.probes.z;
+    if ((rtProbeTurnBits(slot) & (turns - 1u)) == uint(rtHit.probeTurns.y)) return kProbeTraced;
+    return entered ? kProbeEmptied : kProbeKept;
 }
 #endif
 
 #if defined(QUENCH_ENTRY_rt_probe_irradiance_fs)
 // The cosine-weighted mean of the probe's rays around the texel's direction (irradiance / pi), blended with the
-// previous value by the hysteresis.
+// previous value by the hysteresis; alpha 1 where the probe has a value.
 float4 rt_probe_irradiance_fs(FullscreenOut vin) : SV_Target0 {
     const int2 texel = int2(vin.position.xy);
-    uint probe;
+    const float4 previous = previousTex.Load(int3(texel, 0));
+    uint row;
     float3 dir;
     float keep;
-    rtProbeTexel(texel, int(quenchFrame.probeCounts.w), probe, dir, keep);
+    const int state = rtProbeTexel(texel, int(quenchFrame.probeCounts.w), previous.a > 0.5, row, dir, keep);
+    if (state == kProbeKept) return previous;
+    if (state == kProbeEmptied) return float4(0.0, 0.0, 0.0, 0.0);
     const uint rays = uint(rtHit.probes.x);
     float3 sum = float3(0.0, 0.0, 0.0);
     float weights = 0.0;
     for (uint r = 0u; r < rays; ++r) {
         const float w = max(dot(dir, rtProbeRay(r, rays, rtHit.rotation)), 0.0);
         if (w <= 0.0) continue;
-        const float4 s = rayTex.Load(int3(int(r), int(probe), 0));
+        const float4 s = rayTex.Load(int3(int(r), int(row), 0));
         if (s.a > 0.0) sum += s.rgb * w; // back faces bring no light
         weights += w;
     }
     const float3 value = weights > 0.0 ? sum / weights : float3(0.0, 0.0, 0.0);
     // Not lerp with keep 0: the previous atlas starts uninitialized (NaN times 0 stays NaN).
     if (keep <= 0.0) return float4(value, 1.0);
-    return float4(lerp(value, previousTex.Load(int3(texel, 0)).rgb, keep), 1.0);
+    return float4(lerp(value, previous.rgb, keep), 1.0);
 }
 #endif
 
 #if defined(QUENCH_ENTRY_rt_probe_distance_fs)
+Texture2D<float4> previousLightTex : QUENCH_TEXTURE(2);
+SamplerState previousLightSampler : QUENCH_SAMPLER(2);
+
 // The mean and mean square distance of the probe's rays in a narrow cone around the texel's direction.
 float4 rt_probe_distance_fs(FullscreenOut vin) : SV_Target0 {
     const int2 texel = int2(vin.position.xy);
-    uint probe;
+    const int tile = int(quenchFrame.probeAtlas.x);
+    // The probe's previous irradiance alpha, from an interior texel of its irradiance tile (only where a probe can
+    // have none: after a frame in turns).
+    const int2 lightTexel = texel / tile * int(quenchFrame.probeCounts.w) + 1;
+    const bool hadValue = rtHit.probeTurns.z < 0.5 || previousLightTex.Load(int3(lightTexel, 0)).a > 0.5;
+    uint row;
     float3 dir;
     float keep;
-    rtProbeTexel(texel, int(quenchFrame.probeAtlas.x), probe, dir, keep);
+    const int state = rtProbeTexel(texel, tile, hadValue, row, dir, keep);
+    if (state == kProbeKept) return previousTex.Load(int3(texel, 0));
+    if (state == kProbeEmptied) return float4(rtHit.probes.y, rtHit.probes.y * rtHit.probes.y, 0.0, 1.0);
     const uint rays = uint(rtHit.probes.x);
     float2 sum = float2(0.0, 0.0);
     float weights = 0.0;
@@ -214,7 +271,7 @@ float4 rt_probe_distance_fs(FullscreenOut vin) : SV_Target0 {
         const float c = max(dot(dir, rtProbeRay(r, rays, rtHit.rotation)), 0.0);
         if (c <= 0.0) continue;
         const float w = pow(c, 50.0);
-        const float d = min(abs(rayTex.Load(int3(int(r), int(probe), 0)).a), rtHit.probes.y);
+        const float d = min(abs(rayTex.Load(int3(int(r), int(row), 0)).a), rtHit.probes.y);
         sum += float2(d, d * d) * w;
         weights += w;
     }

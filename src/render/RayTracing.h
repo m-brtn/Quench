@@ -142,9 +142,10 @@ public:
     void traceShadows(gpu::CommandBuffer& commands, const shader::RayTracingUniforms& uniforms,
                       const shader::LightUniforms& lights, const FilterInputs& inputs, RayFiltering filtering);
     // The probe grid's rays, then its irradiance and distance maps (a grid that moved keeps the probes it still
-    // holds). reset: drop the history of every probe.
-    void updateProbes(gpu::CommandBuffer& commands, shader::RayHitUniforms uniforms,
-                      const shader::LightUniforms& lights, bool reset);
+    // holds). reset: drop the history of every probe; turns: trace the probes in that many turns, one per frame
+    // (RenderSettings::probeUpdatePeriod). Returns the probes traced.
+    std::uint32_t updateProbes(gpu::CommandBuffer& commands, shader::RayHitUniforms uniforms,
+                               const shader::LightUniforms& lights, bool reset, int turns);
     void traceReflections(gpu::CommandBuffer& commands, const shader::RayHitUniforms& uniforms,
                           const shader::LightUniforms& lights, const FilterInputs& inputs, RayFiltering filtering);
     void traceIndirect(gpu::CommandBuffer& commands, const shader::RayHitUniforms& uniforms,
@@ -244,7 +245,9 @@ private:
     std::array<gpu::Texture, 2> m_probeIrradiance, m_probeDistance;
     gpu::Texture m_probeRays;
     int m_probeIndex = 0;
-    bool m_probesValid = false; // the atlases hold a grid
+    std::uint32_t m_probeTurn = 0; // counts the updates; this frame's turn is its remainder
+    int m_probeTurns = 1;          // of the last update
+    bool m_probesValid = false;    // the atlases hold a grid
     ProbeGridState m_grid;
     glm::ivec3 m_previousFirst{0};
 };

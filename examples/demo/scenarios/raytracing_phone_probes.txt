@@ -1,0 +1,82 @@
+# The probe grid in turns on a phone (RenderSettings::probeUpdatePeriod; docs/performance.md, "Probe grid in
+# turns"): the ray tracing section's phone defaults (half size, MetalFX spatial, no probe grid; RayTracingSection.cpp)
+# with the probe grid added, traced every frame and in 2, 4 and 8 turns, at the display's rate in 4 s regions, each
+# group from the nominal thermal state (as in raytracing_phone.txt); then the defaults with the grid in 4 turns held
+# for 20 s at 60 frames per second:
+#   copy this file into the app's user directory, launch with --gpu-backend metal --script raytracing_phone_probes.txt
+# On the Mac (not a phone) the section's own defaults run instead.
+
+section raytracing
+until rt_ready == 1 5
+
+# Cool down: the cheapest frame, few of them; reset_section brings the defaults back.
+set sun_shadows maps
+set ao none
+set local_shadows 0
+set reflections sky
+set upscaling bilinear
+max_frame_rate 20
+until thermal_state <= 0 300
+reset_section
+until rt_ready == 1 5
+set limit_60hz 0
+wait 0.5
+perf_begin defaults
+wait 4
+perf_end
+set indirect probes
+wait 0.5
+perf_begin probes_1
+wait 4
+perf_end
+expect probes == 2048
+set probe_updates 2
+wait 0.5
+perf_begin probes_2
+wait 4
+perf_end
+expect probes == 1024
+
+set sun_shadows maps
+set ao none
+set local_shadows 0
+set reflections sky
+set indirect sky
+set upscaling bilinear
+max_frame_rate 20
+until thermal_state <= 0 300
+reset_section
+until rt_ready == 1 5
+set limit_60hz 0
+set indirect probes
+set probe_updates 4
+wait 0.5
+perf_begin probes_4
+wait 4
+perf_end
+expect probes == 512
+set probe_updates 8
+wait 0.5
+perf_begin probes_8
+wait 4
+perf_end
+expect probes == 256
+
+set sun_shadows maps
+set ao none
+set local_shadows 0
+set reflections sky
+set indirect sky
+set upscaling bilinear
+max_frame_rate 20
+until thermal_state <= 0 300
+reset_section
+until rt_ready == 1 5
+set limit_60hz 1
+set indirect probes
+set probe_updates 4
+wait 0.5
+perf_begin probes_4_60hz
+wait 20
+perf_end
+quit

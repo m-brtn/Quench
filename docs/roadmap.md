@@ -392,6 +392,13 @@ scaler.
 - [x] Ray-traced reflections with hit lighting and a roughness cut-off; sky fallback (no SSR this stage).
 - [x] Indirect light: DDGI-like probes (16 x 8 x 16, 64 rays each per frame), then per-pixel rays; sky ambient
   fallback; furnace test against the sky's light.
+- [x] The probe grid in turns for phones (after 0.9.0, 2026-11-07, on the Mac): `RenderSettings::probeUpdatePeriod`
+  traces 1/2, 1/4 or 1/8 of the probes per frame (a fixed round-robin over sub-lattices), probes that come into a
+  scrolling grid left out until traced, a jump traces all; on the M4 Pro the probes cost 1.16 ms every frame and
+  0.68, 0.43, 0.32 ms in turns, and light settles to within 10 % in 70, 166, 276, 629 frames
+  ([Performance](performance.md#probe-grid-in-turns)). Open: the run on the iPhone 17
+  (`scenarios/raytracing_phone_probes.txt`) and the phone default chosen from it; priority by distance or change,
+  relocation of probes out of walls, cascades.
 - [x] MetalFX temporal denoised scaler (`Caps::denoisedUpscaling`, `UpscalerType::TemporalDenoised`,
   `Upscaling::TemporalDenoised`); exposure passed to the MetalFX temporal scalers.
 - [x] Demo: the ray tracing scene grew (mirror, roughness strip, colored corner, emissive panel, shadowed lamps), the
@@ -489,8 +496,8 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    at it there yet). Recommended, not built: a game-level reaction to the thermal state (opt-in, for example 60 Hz
    or a lower render scale from serious on, with hysteresis and the player's choice first); the engine reports the
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
-   a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
-   render scale).
+   traced in turns since 2026-11-07 (`probeUpdatePeriod`, measured on the Mac only); its phone default waits for
+   `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns at half size, 60 Hz).
 3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); custom surfaces
    in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for devices without ray
    tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray tracing (stage 12).

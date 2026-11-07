@@ -276,6 +276,46 @@ level has a normal map. In the tunnel the maps cost reflections 0.1 to 0.33 ms (
 1.2 ms (4 %); its hit arrays hold 10 textures instead of 6 (ray memory 4.10 MB instead of 3.10). Not measured on
 the screen or on the iPhone.
 
+### Probe grid in turns
+
+`RenderSettings::probeUpdatePeriod` ([Render module](render.md#ray-traced-lighting)). 2026-11-07 06:52-06:57,
+Release, Mac (Apple M4 Pro), the native Metal backend, **offscreen** at 1920 x 1080 as above, unpaced, full size
+with bilinear scaling, 3 s regions after a second each, thermal state nominal throughout; the commit before
+(`69b1955`) and this change alternating, three pairs. GPU busy time p50 of the range, ms (the three runs):
+
+| Region | Probe updates | `probes` | `raytrace` | `game` (the frame) |
+|---|---|---|---|---|
+| ray tracing section, probe grid (sun shadows, occlusion, probes) | before | 1.156, 1.156, 1.153 | 3.858, 3.860, 3.864 | 6.726, 6.708, 6.717 |
+| | every frame | 1.162, 1.164, 1.163 | 3.871, 3.866, 3.873 | 6.701, 6.680, 6.693 |
+| | 1/2 | 0.681, 0.680, 0.683 | 3.360, 3.361, 3.364 | 6.001, 5.997, 6.056 |
+| | 1/4 | 0.426, 0.427, 0.429 | 2.896, 2.900, 2.901 | 5.453, 5.464, 5.488 |
+| | 1/8 | 0.324, 0.324, 0.325 | 2.783, 2.787, 2.786 | 5.379, 5.338, 5.321 |
+| tunnel, everything traced (4 lamp shadows, reflections, probes) | before | 1.190, 1.190, 1.188 | 14.951, 14.960, 14.956 | 19.637, 19.641, 19.641 |
+| | every frame | 1.203, 1.203, 1.204 | 14.815, 14.841, 14.818 | 19.504, 19.531, 19.505 |
+| | 1/2 | 0.671, 0.672, 0.671 | 14.287, 14.309, 14.326 | 18.958, 18.979, 18.990 |
+| | 1/4 | 0.410, 0.410, 0.409 | 14.019, 14.048, 14.016 | 18.707, 18.734, 18.701 |
+| | 1/8 | 0.330, 0.333, 0.331 | 13.978, 13.980, 13.958 | 18.665, 18.690, 18.651 |
+
+The probe rays scale with the fraction; the irradiance and distance passes over all 2048 probes stay, about
+0.2 ms here, so 1/8 saves 0.83 to 0.87 ms of the 1.16 to 1.20. Every frame, the `probes` range reads 0.008 and
+0.014 ms (0.7 and 1.2 %) above the commit before: the irradiance pass reads the previous value before it knows the
+probe's state, and the turn's bookkeeping (the distance pass reads the validity only after a frame in turns). The
+frames are not slower: `game` 0.02 ms and, in the tunnel, 0.13 ms lower, the latter in `reflections` (8.09 against
+8.23 ms, every pair), whose hits read the grid through `Probes.hlsli`; not examined further. The captures with every
+probe per frame are the same as before (mean difference 0.0000).
+
+How far the grid lags behind a change of light (test `renderer_probe_grid_updates_in_turns`, a tile lit only by
+the grid at 1 m spacing, after the sun doubles or halves; one run, plus one with a count to within 10 % that is not
+part of the test): halfway in 18, 38, 68 and 156 frames with 1, 2, 4 and 8 turns, within 10 % of the new light in
+70, 166, 276 and 629 frames. At 60 Hz that is 1.2, 2.8, 4.6 and 10.5 s to within 10 %; at 120 Hz half of it.
+
+On a phone (not run yet): the iPhone 17 measured the probe grid at 3.3 ms of `probes` at any render scale, and
+4.2 ms more in the main pass at the native size from the per-pixel sampling, which turns do not change
+([Stage 11 on the iPhone](#stage-11-on-the-iphone)). By the Mac's ratios 1/4 would take the probes to about 1.2 ms
+and 1/2 to about 1.9 ms; that is an estimate. Proposed for the ray tracing section's phone defaults, not set: the
+probe grid on in 4 turns at half size, at 60 Hz, if `scenarios/raytracing_phone_probes.txt` shows it fits the
+16.7 ms frame with room (light then settles within 10 % in about 4.6 s); else 2 turns or off as now.
+
 ### On the screen after the bug packages
 
 2026-11-07 00:00-00:06, Release, Mac (Mac mini, Apple M4 Pro), its one display (the LG UltraFine 5K at 60 Hz; no

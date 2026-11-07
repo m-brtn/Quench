@@ -150,7 +150,7 @@ count of fallbacks, "Use section defaults" (gives every option back) and how man
 | Anti-aliasing and resolution | anti-aliasing `aa` (none, FXAA, TAA), sharpen `sharpen` (0 to 1), render scale `scale` (0.25 to 1), upscaling `upscaling` (bilinear, MetalFX spatial, MetalFX temporal, MetalFX denoising) |
 | Sun shadows | `sun_shadows` (shadow maps, ray traced), `cascades` (0 to 4), map size `shadow_size` (512 to 4096), `shadow_distance` (m), filter `shadow_filter` (1, 4, 12 taps), translucent shadows `translucent_shadows` (transmittance map, dithered), shadow rays `shadow_rays` (1 to 8), softness `shadow_softness` (times the sun's angular radius) |
 | Ambient occlusion | `ao` (none, ray traced), rays `ao_rays` (1 to 8), radius `ao_radius` (m), strength `ao_strength` (0 to 1) |
-| Ray-traced lighting | lamp shadows `local_shadows` (0 to 4 lights), reflections `reflections` (sky, ray traced), their roughness limit `reflection_roughness`, indirect light `indirect` (sky, probes, ray traced), probe spacing `probe_spacing` (m), denoiser `denoiser` (spatial, temporal), path tracer `path_tracer` (on, off) and its bounces `path_bounces` (1 to 16) |
+| Ray-traced lighting | lamp shadows `local_shadows` (0 to 4 lights), reflections `reflections` (sky, ray traced), their roughness limit `reflection_roughness`, indirect light `indirect` (sky, probes, ray traced), probe spacing `probe_spacing` (m), probe updates `probe_updates` (1, 2, 4, 8: every probe per frame, 1/2, 1/4, 1/8 of them; `RenderSettings::probeUpdatePeriod`), denoiser `denoiser` (spatial, temporal), path tracer `path_tracer` (on, off) and its bounces `path_bounces` (1 to 16) |
 | Bloom, tone and sky | bloom `bloom` (on, off), `bloom_strength`, `bloom_threshold`, tone curve `tone` (ACES, AgX), `exposure` (a factor on each section's own exposure, 0.25 to 4), `vignette` (0 to 1), `dither` (on, off), `sky` (on, off) |
 | Display | HDR output (off, auto, on) and the present mode (vsync, immediate, mailbox): the same controls and values as in Settings, with the output in use (HDR, headroom, paper white) and a line when a present mode is not there for the window |
 | GPU backend | the backend, driver and device with ray tracing, MetalFX and GPU timing, why there is no ray tracing where there is none; on the Mac the relaunch with the other backend (as in About) |
@@ -535,7 +535,9 @@ read slower per range than they are (the stage 11 costs in [Performance](perform
 On a phone the same costs come from `scenarios/raytracing_phone.txt` (each effect at the device's size, then the
 render scales and upscalers with everything and with less, 4 s each; every group of regions waits for the nominal
 thermal state first, at 20 frames per second on the cheapest frame), and `scenarios/raytracing_phone_sustained.txt`
-holds the section's phone defaults for a minute at the display's rate and for a minute at 60 Hz. For the tunnel,
+holds the section's phone defaults for a minute at the display's rate and for a minute at 60 Hz;
+`scenarios/raytracing_phone_probes.txt` adds the probe grid to the phone defaults, traced every frame and in 2, 4
+and 8 turns, then holds it in 4 turns for 20 s at 60 Hz (not run on a phone yet). For the tunnel,
 `scenarios/tunnel_phone.txt` measures each option at half size (and the lamps at 0.67 and full size), then holds the
 section's phone defaults at 60 Hz for 40 s with the lamps still, then 20 s in motion (`tunnel_moving_60hz`), and
 captures them and the path tracer; `tunnel_phone_fallback.txt` runs the fallback frame on SDL GPU, still and in

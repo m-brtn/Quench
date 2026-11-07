@@ -8,7 +8,8 @@
 // from leaking through walls (Majercik et al. 2019, "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance
 // Fields"). A probe's maps are one tile of each atlas: its slot is its cell modulo the counts (the grid scrolls with
 // the camera without moving data), tile x = slot.x + slot.y * counts.x, tile y = slot.z; tiles have a one-texel
-// border copied from the opposite edge for bilinear filtering.
+// border copied from the opposite edge for bilinear filtering. The irradiance alpha is 1 where a probe has a value
+// and 0 where it has none yet (a probe that came into the grid and waits for its turn to be traced).
 
 #include "quench/Frame.hlsli"
 
@@ -54,8 +55,8 @@ float2 quenchProbeUv(int3 slot, float3 dir, float tile) {
 }
 
 // The light the grid gives a surface at P with normal N seen from V (irradiance / pi), from the 8 probes around it,
-// each weighted by trilinear position, by whether the surface faces it and by whether it can see the probe (a
-// Chebyshev test against the probe's distances); `fallback` outside the grid.
+// each weighted by trilinear position, by whether the surface faces it, by whether it can see the probe (a
+// Chebyshev test against the probe's distances) and by whether the probe has a value; `fallback` outside the grid.
 float3 quenchProbeIrradiance(Texture2D<float4> irradiance, Texture2D<float4> distances, SamplerState s, float3 P,
                              float3 N, float3 V, float3 fallback) {
     const float spacing = quenchFrame.probeGrid.w;
@@ -89,8 +90,9 @@ float3 quenchProbeIrradiance(Texture2D<float4> irradiance, Texture2D<float4> dis
         }
         w = max(w, 1e-6);
         if (w < 0.2) w *= w * w / 0.04; // small weights fall off faster: less light through thin walls
-        w *= trilinear.x * trilinear.y * trilinear.z;
-        sum += w * irradiance.SampleLevel(s, quenchProbeUv(slot, N, irradianceTile), 0.0).rgb;
+        const float4 e = irradiance.SampleLevel(s, quenchProbeUv(slot, N, irradianceTile), 0.0);
+        w *= trilinear.x * trilinear.y * trilinear.z * e.a;
+        sum += w * e.rgb;
         weights += w;
     }
     return weights > 1e-5 ? sum / weights : fallback;

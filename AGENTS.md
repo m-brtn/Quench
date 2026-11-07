@@ -58,7 +58,7 @@ shadows (cut-out shadows with holes, translucent tinted shadows through a transm
 pass with reversed depth, sky and atmosphere, height fog, normal and emissive maps, bloom, ACES or AgX tone mapping
 and TAA or FXAA, with fallbacks by device capability; where `gpu::Caps` allow it, ray-traced sun shadows and ambient
 occlusion and MetalFX upscaling, and since stage 11 ray-traced shadows of up to 4 local lights, reflections,
-indirect light by a probe grid (DDGI-like) or per-pixel rays, the engine's temporal denoiser (the default; a spatial
+indirect light by a probe grid (DDGI-like; traced in turns on request, after 0.9.0, not released) or per-pixel rays, the engine's temporal denoiser (the default; a spatial
 one), MetalFX's denoising upscaler and a reference path tracer, falling back to shadow maps, no occlusion,
 unshadowed local lights, the sky's reflection and ambient light and bilinear scaling; since stage 12 area lights
 (rect, disk, tube: LTC shading, soft traced shadows, in the path tracer; unshadowed as the fallback) and anisotropic

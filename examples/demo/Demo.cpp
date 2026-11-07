@@ -443,6 +443,8 @@ bool DemoGame::setRenderSetting(std::string_view name, std::string_view value) {
             return false;
     } else if (name == "probe_spacing" && number) {
         s.probeSpacing = std::clamp(*number, 0.25f, 16.0f);
+    } else if (name == "probe_updates" && (value == "1" || value == "2" || value == "4" || value == "8")) {
+        s.probeUpdatePeriod = value[0] - '0';
     } else if (name == "denoiser") {
         if (value == "spatial")
             s.rayDenoiser = render::RayDenoiser::Spatial;

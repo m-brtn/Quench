@@ -1969,11 +1969,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         commands.beginTiming("raytrace");
         if (rayShadows || rayOcclusion || localShadows > 0)
             rayTracing.traceShadows(commands, ru, lu, inputs, filtering);
-        if (probes) {
-            rayTracing.updateProbes(commands, hu, lu, cut);
-            stats.probes =
-                std::uint32_t(RayTracing::kProbeCounts.x * RayTracing::kProbeCounts.y * RayTracing::kProbeCounts.z);
-        }
+        if (probes) stats.probes = rayTracing.updateProbes(commands, hu, lu, cut, settings.probeUpdatePeriod);
         hu.params.w = probes && rayTracing.probesValid() ? 1.0f : 0.0f;
         if (rayReflections) rayTracing.traceReflections(commands, hu, lu, inputs, filtering);
         if (rayIndirect) rayTracing.traceIndirect(commands, hu, lu, inputs, filtering);

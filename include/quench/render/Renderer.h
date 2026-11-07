@@ -95,9 +95,10 @@ enum class Reflections : std::uint8_t {
 // The light that reaches surfaces from other surfaces and the sky (the diffuse part; reflections are separate).
 enum class IndirectLight : std::uint8_t {
     Sky, // Environment::skyAmbient and groundAmbient by the normal's direction
-    // A grid of 16 x 8 x 16 probes around View::probeCenter (probeSpacing apart), traced every frame: one bounce from
-    // the surfaces around them and more through the grid's history, with visibility so light does not leak through
-    // walls (DDGI). Smooth, a few frames behind changes. gpu::Caps::rayTracing; else Sky.
+    // A grid of 16 x 8 x 16 probes around View::probeCenter (probeSpacing apart), traced every frame or in turns
+    // (probeUpdatePeriod): one bounce from the surfaces around them and more through the grid's history, with
+    // visibility so light does not leak through walls (DDGI). Smooth, some frames behind changes.
+    // gpu::Caps::rayTracing; else Sky.
     Probes,
     // One ray per pixel over the hemisphere, its hits lit with the probe grid (also running): contact detail the grid
     // is too coarse for. gpu::Caps::rayTracing; else Sky.
@@ -131,6 +132,11 @@ struct RenderSettings {
     float reflectionRoughness = 0.5f; // traced reflections up to this roughness, faded into the sky's above
     IndirectLight indirectLight = IndirectLight::Sky;
     float probeSpacing = 2.0f; // m between the probes of the grid
+    // The probe grid traces 1 / probeUpdatePeriod of its probes per frame (1, 2, 4 or 8; other values round down to
+    // one of them), every probe once in that many frames: the grid's cost falls about as much, and it follows a
+    // change of light that many times more slowly. A probe that comes into the grid as it scrolls is left out of the
+    // shading until its turn.
+    int probeUpdatePeriod = 1;
     RayDenoiser rayDenoiser = RayDenoiser::Temporal;
     // The reference path tracer (gpu::Caps::rayTracing): every frame adds one path per pixel to a running mean of
     // the scene's light, until pathSamples or a change of the camera, the scene or the settings, in place of the

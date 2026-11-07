@@ -125,6 +125,16 @@ constexpr std::array<OptionInfo, kGraphicsOptions> kOptions{{
      {"sky", "probes", "rt"},
      {"Sky", "Probe grid", "Ray traced"}},
     {O::ProbeSpacing, "probe_spacing", "probe spacing", "Probe spacing", Kind::Number, 0.25, 16},
+    // The index of RenderSettings::probeUpdatePeriod 1, 2, 4 or 8.
+    {O::ProbeUpdates,
+     "probe_updates",
+     "probe updates",
+     "Probe updates",
+     Kind::Choice,
+     0,
+     3,
+     {"1", "2", "4", "8"},
+     {"Every probe per frame", "1/2 per frame", "1/4 per frame", "1/8 per frame"}},
     {O::RayDenoiser,
      "denoiser",
      "ray denoiser",
@@ -178,6 +188,7 @@ void setValue(RenderSettings& s, GraphicsOption option, double v) {
     case O::ReflectionRoughness: s.reflectionRoughness = float(v); break;
     case O::IndirectLight: s.indirectLight = render::IndirectLight(int(v)); break;
     case O::ProbeSpacing: s.probeSpacing = float(v); break;
+    case O::ProbeUpdates: s.probeUpdatePeriod = 1 << std::clamp(int(v), 0, 3); break;
     case O::RayDenoiser: s.rayDenoiser = render::RayDenoiser(int(v)); break;
     case O::PathTracer: s.pathTracer = v != 0.0; break;
     case O::PathBounces: s.pathBounces = int(v); break;
@@ -368,6 +379,8 @@ double graphicsValue(const RenderSettings& s, GraphicsOption option) {
     case O::ReflectionRoughness: return double(s.reflectionRoughness);
     case O::IndirectLight: return double(int(s.indirectLight));
     case O::ProbeSpacing: return double(s.probeSpacing);
+    case O::ProbeUpdates:
+        return s.probeUpdatePeriod >= 8 ? 3.0 : s.probeUpdatePeriod >= 4 ? 2.0 : s.probeUpdatePeriod >= 2 ? 1.0 : 0.0;
     case O::RayDenoiser: return double(int(s.rayDenoiser));
     case O::PathTracer: return s.pathTracer ? 1.0 : 0.0;
     case O::PathBounces: return double(s.pathBounces);
@@ -699,8 +712,15 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
                                              : whyNot),
                  true);
         else if (e.indirectLight != render::IndirectLight::Sky)
-            note(std::format("{} probes, 16 x 8 x 16 around the camera's focus", stats.probes), false);
+            note(
+                std::format("{} of 2048 probes traced this frame, 16 x 8 x 16 around the camera's focus", stats.probes),
+                false);
         rows.row(O::ProbeSpacing, [&] { return slider(s.probeSpacing, 0.5f, 8.0f, "%.2f m"); });
+        rows.row(O::ProbeUpdates, [&] { return combo(O::ProbeUpdates, int(graphicsValue(s, O::ProbeUpdates))); });
+        if (e.indirectLight != render::IndirectLight::Sky && s.probeUpdatePeriod > 1)
+            note(std::format("Every probe once in {} frames: the light follows changes {} times more slowly",
+                             s.probeUpdatePeriod, s.probeUpdatePeriod),
+                 false);
         rows.row(O::RayDenoiser, [&] { return combo(O::RayDenoiser, int(s.rayDenoiser)); });
         if (e.upscaling == render::Upscaling::TemporalDenoised)
             note("Not used: MetalFX denoises (Upscaling)", false);

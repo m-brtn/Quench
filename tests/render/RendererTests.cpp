@@ -2024,6 +2024,139 @@ QUENCH_TEST(renderer_indirect_light_bounces) {
           double(redness(at(grid, far))), double(redness(at(traced, near))), double(redness(at(traced, far))));
 }
 
+// RenderSettings::probeUpdatePeriod: the grid traces 1 / n of its probes per frame. A white tile on a black ground,
+// in a black roof's shadow, is lit by the grid only, from a sunlit white wall beside it (little light bounces back, so
+// the grid settles within the hysteresis). It holds its light while nothing changes, and after the sun doubles or
+// halves it takes about n times as many frames to get halfway to its new light. Probes that come into a grid that
+// scrolls by a cell are left out until their turn, not taken as black; a grid that jumps traces every probe.
+QUENCH_TEST(renderer_probe_grid_updates_in_turns) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.indirectLight = IndirectLight::Probes;
+    settings.probeSpacing = 1.0f;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "the probe grid: ")) QUENCH_SKIP("no ray tracing: the sky's ambient light");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MaterialId white = scene.addMaterial({.baseColor = glm::vec4(0.9f, 0.9f, 0.9f, 1), .roughness = 1});
+    const MaterialId black = scene.addMaterial({.baseColor = glm::vec4(0.0f, 0.0f, 0.0f, 1), .roughness = 1});
+    const auto place = [&](glm::vec3 half, glm::vec3 at, MaterialId material) {
+        scene.addInstance({.mesh = addMesh(scene, boxMesh(half)),
+                           .material = material,
+                           .transform = glm::translate(glm::mat4(1.0f), at)});
+    };
+    scene.addInstance({.mesh = addMesh(scene, planeMesh(glm::vec2(20.0f))), .material = black});
+    place({0.5f, 0.01f, 1.5f}, {2.1f, 0.01f, 0}, white); // the tile, x 1.6..2.6
+    place({0.1f, 1.5f, 3.0f}, {3.0f, 1.5f, 0}, white);   // the wall, its sunlit face at x 2.9
+    place({0.6f, 0.05f, 1.6f}, {1.1f, 1.0f, 0}, black);  // the roof: its shadow covers x 1.5..2.7
+    const LightId sun = addSun(scene, kSunDown);
+    const auto setSun = [&](float intensity) {
+        scene.setLight(sun, {.type = LightType::Directional, .color = glm::vec3(intensity), .direction = kSunDown});
+    };
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    View view = kTopView;
+    view.probeCenter = glm::vec3(0.0f, 2.0f, 0.0f);
+    // The strip of the tile x 2.0..2.4, z -1.2..1.2 (the camera sees it past the roof): several probes' worth, so
+    // less of their noise.
+    const glm::ivec2 from = pixelOf(view, {2.0f, 0, -1.2f}), to = pixelOf(view, {2.4f, 0, 1.2f});
+    const auto light = [&](int frames) {
+        const std::vector<Rgba8> pixels = settle(device, *renderer, scene, view, *target, frames);
+        float v = 0.0f;
+        int count = 0;
+        for (int y = std::min(from.y, to.y); y <= std::max(from.y, to.y); ++y)
+            for (int x = std::min(from.x, to.x); x <= std::max(from.x, to.x); ++x, ++count)
+                v += sceneValue(at(pixels, {x, y})).g;
+        return v / float(std::max(count, 1));
+    };
+    const auto setTurns = [&](int n) {
+        settings.probeUpdatePeriod = n;
+        renderer->setSettings(settings);
+    };
+    setSun(5.0f);
+    // Without the grid, what the strip has of the sun past the shadow's filtered edge.
+    settings.indirectLight = IndirectLight::Sky;
+    renderer->setSettings(settings);
+    const float direct = light(1);
+    settings.indirectLight = IndirectLight::Probes;
+    renderer->setSettings(settings);
+    const float low = light(150);
+    REQUIRE(low > 0.1f && direct < 0.2f * low, "the shadowed strip has bounce light: %.4f (%.4f without the grid)",
+            double(low), double(direct));
+    for (int n = 2; n <= 8; n *= 2) {
+        setTurns(n);
+        const float steady = light(2 * n);
+        CHECK(renderer->stats().probes == 16u * 8u * 16u / unsigned(n), "%d turns: %u probes traced", n,
+              renderer->stats().probes);
+        CHECK(std::abs(steady / low - 1.0f) < 0.05f, "%d turns: the light holds: %.4f vs %.4f", n, double(steady),
+              double(low));
+    }
+    // Light follows the sun: it settles at twice `low` with twice the sun, and halfway is 1.5 times `low`. The sun
+    // doubles and halves in turn; the grid settles with every probe traced before each change.
+    int halfway[4] = {};
+    float high = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+        const int n = 1 << i;
+        const bool up = i % 2 == 0;
+        setTurns(n);
+        setSun(up ? 10.0f : 5.0f);
+        int frames = 1;
+        for (; frames < 100 * n; ++frames) {
+            const float v = light(1);
+            if (up ? v >= 1.5f * low : v <= 1.5f * low) break;
+        }
+        halfway[i] = frames;
+        setTurns(1);
+        const float settled = light(150);
+        if (i == 0) high = settled;
+    }
+    std::printf("  bounce light %.4f, %.4f with twice the sun; frames to halfway with 1, 2, 4, 8 turns: %d %d %d %d\n",
+                double(low), double(high), halfway[0], halfway[1], halfway[2], halfway[3]);
+    CHECK(std::abs(high / low - 2.0f) < 0.1f, "twice the sun, twice the bounce light: %.4f, %.4f", double(low),
+          double(high));
+    for (int i = 1; i < 4; ++i) {
+        const float expected = float(halfway[0] << i);
+        CHECK(float(halfway[i]) > 0.75f * expected - 1.0f && float(halfway[i]) < 1.25f * expected + float(1 << i),
+              "%d turns: %d frames to halfway, about %d times %d", 1 << i, halfway[i], 1 << i, halfway[0]);
+    }
+
+    // The grid ends at x 1.5 (its last probes before the strip), then scrolls a cell: the probes at x 2.5 come in,
+    // one in 8 of them traced in that frame. Taken as black, the others would darken the strip in the frames whose
+    // turn has none of its new probes; left out, the strip keeps its light or gets more from the traced ones nearer
+    // the wall. The grid scrolls back and forth so that the scroll comes in every turn.
+    view.probeCenter = glm::vec3(-6.0f, 2.0f, 0.0f);
+    const float edge = light(150);
+    setTurns(8);
+    float darkest = edge * 10.0f;
+    for (int turn = 0; turn < 8; ++turn) {
+        view.probeCenter = glm::vec3(-6.0f, 2.0f, 0.0f);
+        light(2);
+        view.probeCenter = glm::vec3(-5.0f, 2.0f, 0.0f);
+        darkest = std::min(darkest, light(1));
+        CHECK(renderer->stats().probes == 256u, "a scroll by a cell: %u probes traced", renderer->stats().probes);
+    }
+    const float later = light(8);
+    std::printf("  a scroll by a cell with 8 turns: %.4f before, at least %.4f in the frame of the scroll, %.4f once "
+                "the new probes were traced\n",
+                double(edge), double(darkest), double(later));
+    CHECK(edge > 0.2f * low && darkest > 0.9f * edge && later > edge,
+          "the new probes left out until traced: at least %.4f, %.4f before and %.4f after", double(darkest),
+          double(edge), double(later));
+
+    // The grid jumps away (the strip outside it: no bounce light) and back: every probe is traced.
+    view.probeCenter = glm::vec3(-14.0f, 2.0f, 0.0f);
+    const float away = light(8);
+    CHECK(renderer->stats().probes == 256u, "away: %u probes traced", renderer->stats().probes);
+    view.probeCenter = glm::vec3(0.0f, 2.0f, 0.0f);
+    const float back = light(1);
+    CHECK(renderer->stats().probes == 16u * 8u * 16u, "a jump: %u probes traced", renderer->stats().probes);
+    std::printf("  a jump away and back with 8 turns: %.4f, %.4f\n", double(away), double(back));
+    CHECK(std::abs(away - direct) < 0.02f * low, "away: no bounce light (%.4f, %.4f without the grid)", double(away),
+          double(direct));
+    CHECK(std::abs(back / low - 1.0f) < 0.3f, "back: lit at once, %.4f vs %.4f", double(back), double(low));
+}
+
 // The temporal denoiser: a soft sun shadow traced with one ray per pixel, settled over frames, is closer to the same
 // shadow traced with eight rays than the spatial filter's, and steadier from frame to frame.
 QUENCH_TEST(renderer_temporal_ray_denoiser) {

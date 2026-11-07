@@ -39,6 +39,7 @@ enum class GraphicsOption : std::uint8_t {
     ReflectionRoughness,
     IndirectLight,
     ProbeSpacing,
+    ProbeUpdates,
     RayDenoiser,
     PathTracer,
     PathBounces,
