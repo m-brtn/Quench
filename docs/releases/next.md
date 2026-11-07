@@ -305,9 +305,9 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `render.scene_assets_basis_textures` on SDL GPU's Metal driver, the native backend (ETC1S to ETC2 RGB8) and
   Vulkan through MoltenVK (ASTC), the demo's `assets_basis` part on all three; the golden captures unchanged. In
   the iOS Simulator the same cases and targets (ETC2 on the native backend, ASTC on SDL GPU).
-- **Gates with Basis Universal:** `tools/check.sh full` (2026-11-07, 1335.7 s, fresh `asan`, `tsan` and iOS trees):
-  format; `debug` 521 tests; `release` 638 (the captures of every backend, Vulkan through MoltenVK included); `asan`
-  521; `tsan` 521; `wasm-node` 146 (under Node.js); `ios-sim-tests` 389 in the iOS Simulator; `ios-xcode`
+- **Gates with Basis Universal** (after surface shaders in ray hits): `tools/check.sh full` (2026-11-07, 565.1 s):
+  format; `debug` 524 tests; `release` 642 (the captures of every backend, Vulkan through MoltenVK included); `asan`
+  524; `tsan` 524; `wasm-node` 146 (under Node.js); `ios-sim-tests` 391 in the iOS Simulator; `ios-xcode`
   generated; a new game built and started. All passed.
 
 ## What was not verified
