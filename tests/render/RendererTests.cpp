@@ -1669,6 +1669,97 @@ QUENCH_TEST(renderer_ray_traced_ambient_occlusion) {
           "open ground and the box's top are not occluded: %.3f, %.3f", double(farRatio), double(topRatio));
 }
 
+// Screen-space ambient occlusion (GTAO) on every backend, from a depth prepass of its own: the ground darkens next to
+// a box standing on it, not far from it or on the box's top, as with the rays. With screenSpaceFallbacks it replaces
+// ray-traced occlusion where the device cannot trace; where it can, asked for with traced sun shadows, it writes
+// beside the sun's traced visibility.
+QUENCH_TEST(renderer_screen_space_ambient_occlusion) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.ambientOcclusion = AmbientOcclusion::ScreenSpace;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().ambientOcclusion != AmbientOcclusion::ScreenSpace)
+        QUENCH_SKIP("no depth buffer to sample: no screen-space ambient occlusion");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyAmbient = e.groundAmbient = glm::vec3(1.0f); // ambient light only
+    scene.setEnvironment(e);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 1.0f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0, 0.5f, 0})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const glm::ivec2 near = pixelOf(kTopView, {0.6f, 0, 0}), far = pixelOf(kTopView, {2.5f, 0, 0}),
+                     top = pixelOf(kTopView, {0.0f, 1.0f, 0.0f});
+    const std::vector<Rgba8> on = renderOnce(device, *renderer, scene, kTopView, *target);
+    REQUIRE(on.size() == kSize * kSize, "%zu pixels", on.size());
+    CHECK(renderer->stats().screenOcclusion && renderer->stats().screenPrepassDraws > 0,
+          "GTAO ran after a prepass of %u draws", renderer->stats().screenPrepassDraws);
+    settings.ambientOcclusion = AmbientOcclusion::None;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> off = renderOnce(device, *renderer, scene, kTopView, *target);
+    REQUIRE(off.size() == kSize * kSize, "%zu pixels", off.size());
+    CHECK(!renderer->stats().screenOcclusion && renderer->stats().screenPrepassDraws == 0,
+          "no prepass without it: %u draws", renderer->stats().screenPrepassDraws);
+    const auto ratio = [&](const std::vector<Rgba8>& with, glm::ivec2 p) {
+        return sceneValue(at(with, p)).g / sceneValue(at(off, p)).g;
+    };
+    std::printf("  ambient light with GTAO: %.3f next to the box, %.3f away, %.3f on its top\n",
+                double(ratio(on, near)), double(ratio(on, far)), double(ratio(on, top)));
+    // The term at half resolution and its blur over 8 x 8 pixels spread the contact over this small image.
+    CHECK(ratio(on, near) < 0.95f, "occluded next to the box: %.3f", double(ratio(on, near)));
+    CHECK(std::abs(ratio(on, far) - 1.0f) < 0.03f && std::abs(ratio(on, top) - 1.0f) < 0.03f,
+          "open ground and the box's top are not occluded: %.3f, %.3f", double(ratio(on, far)), double(ratio(on, top)));
+
+    // Ray-traced occlusion asked for, with the screen-space fallbacks.
+    settings.ambientOcclusion = AmbientOcclusion::RayTraced;
+    settings.screenSpaceFallbacks = true;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> fallback = renderOnce(device, *renderer, scene, kTopView, *target);
+    if (renderer->effects().ambientOcclusion == AmbientOcclusion::ScreenSpace) {
+        CHECK(!device.caps().rayTracing, "ray tracing on the device, GTAO in the renderer");
+        const ImageDiff d = compare(on, fallback);
+        CHECK(d.mean == 0.0, "the fallback is the same GTAO: mean %.3f", d.mean);
+        const bool named = std::ranges::any_of(renderer->fallbacks(), [](const std::string& line) {
+            return line.starts_with("ray-traced ambient occlusion: ") && line.ends_with("; screen space (GTAO)");
+        });
+        CHECK(named, "Renderer::fallbacks names the screen-space fallback");
+        return;
+    }
+    CHECK(renderer->effects().ambientOcclusion == AmbientOcclusion::RayTraced, "traced where the device can");
+    std::printf("  ambient light with the rays: %.3f next to the box\n", double(ratio(fallback, near)));
+
+    // GTAO with ray-traced sun shadows: alpha of the traced mask, the sun's visibility kept in its rgb.
+    e.skyAmbient = e.groundAmbient = glm::vec3(0.25f);
+    scene.setEnvironment(e);
+    addSun(scene, kSunDown); // the box's shadow covers the ground from x 0.5 to 1.5 m
+    RenderSettings traced = rayTraced(settings);
+    traced.shadowCascades = 2; // 0 turns the sun's shadows off, the traced ones too
+    traced.ambientOcclusion = AmbientOcclusion::None;
+    renderer->setSettings(traced);
+    const std::vector<Rgba8> sunOff = renderOnce(device, *renderer, scene, kTopView, *target);
+    traced.ambientOcclusion = AmbientOcclusion::ScreenSpace;
+    renderer->setSettings(traced);
+    const std::vector<Rgba8> sunOn = renderOnce(device, *renderer, scene, kTopView, *target);
+    CHECK(renderer->effects().sunShadows == SunShadows::RayTraced && renderer->stats().screenOcclusion &&
+              renderer->stats().screenPrepassDraws == 0,
+          "GTAO from the ray tracing prepass's depth (%u draws of its own)", renderer->stats().screenPrepassDraws);
+    const glm::ivec2 shadow = pixelOf(kTopView, {1.2f, 0, 0}), lit = pixelOf(kTopView, {-3.0f, 0, 0});
+    const float shadowed = sceneValue(at(sunOn, shadow)).g / sceneValue(at(sunOff, shadow)).g;
+    const float open = sceneValue(at(sunOn, lit)).g / sceneValue(at(sunOff, lit)).g;
+    const float nearSun = sceneValue(at(sunOn, near)).g / sceneValue(at(sunOff, near)).g;
+    std::printf("  with traced sun shadows: shadow %.3f, open %.3f, next to the box %.3f of the frame without GTAO\n",
+                double(shadowed), double(open), double(nearSun));
+    CHECK(sum(at(sunOn, shadow)) * 10 < sum(at(sunOn, lit)) * 7 && shadowed < 1.03f,
+          "the traced shadow stays: %d vs lit %d, %.3f of the frame without GTAO", sum(at(sunOn, shadow)),
+          sum(at(sunOn, lit)), double(shadowed));
+    CHECK(std::abs(open - 1.0f) < 0.03f && nearSun < 0.95f, "open ground %.3f, next to the box %.3f", double(open),
+          double(nearSun));
+}
+
 // MetalFX at half the target's size: the upscaled frame is close to the one rendered at full size.
 QUENCH_TEST(renderer_upscaling) {
     QUENCH_GPU_DEVICE(device);

@@ -58,7 +58,13 @@ enum class SunShadows : std::uint8_t {
 // Ambient occlusion of the sky and ambient light.
 enum class AmbientOcclusion : std::uint8_t {
     None,
-    RayTraced, // rays over the hemisphere of each pixel (gpu::Caps::rayTracing; falls back to None)
+    // Rays over the hemisphere of each pixel (gpu::Caps::rayTracing); falls back to ScreenSpace with
+    // RenderSettings::screenSpaceFallbacks, else to None.
+    RayTraced,
+    // GTAO from the depth of the opaque surfaces (a depth prepass where nothing is traced) at half resolution:
+    // occlusion by what is on the screen within occlusionRadius, cheaper than the rays. Needs a depth buffer the
+    // device can sample; else None.
+    ScreenSpace,
 };
 
 // How a frame rendered below the target's size (renderScale < 1) is scaled up.
@@ -122,9 +128,12 @@ struct RenderSettings {
     int shadowRays = 2;
     float shadowSoftness = 1.0f;
     AmbientOcclusion ambientOcclusion = AmbientOcclusion::None;
-    int occlusionRays = 2;        // 1..8 per pixel
+    int occlusionRays = 2;        // 1..8 per pixel (ScreenSpace: slices per pixel, each with 4 steps to either side)
     float occlusionRadius = 1.0f; // m
     float occlusionStrength = 1.0f;
+    // Where a ray-traced effect cannot run (no gpu::Caps::rayTracing, no ray query shaders in the build): its
+    // screen-space version (AmbientOcclusion::ScreenSpace) in place of none. Off: those fallbacks cost nothing.
+    bool screenSpaceFallbacks = false;
     // Ray-traced shadows of the frame's nearest local lights with castsShadows (0..kMaxRayLocalShadows; one ray per
     // pixel and light, soft by LightDesc::sourceRadius; gpu::Caps::rayTracing, else localShadowMapSize's maps).
     int localLightShadows = 0;
@@ -279,6 +288,10 @@ struct RenderStats {
     std::uint32_t localShadowMaps = 0;
     std::uint32_t localShadowInstances = 0;
     std::uint32_t localShadowDraws = 0;
+    // Screen-space effects this frame: GTAO ran (AmbientOcclusion::ScreenSpace or the fallback), and the draw calls
+    // of their own depth prepass (0 where the ray tracing prepass gave the depth).
+    bool screenOcclusion = false;
+    std::uint32_t screenPrepassDraws = 0;
     std::uint32_t renderWidth = 0; // the 3D resolution
     std::uint32_t renderHeight = 0;
     std::uint32_t pipelines = 0;        // pipelines created so far

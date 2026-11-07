@@ -97,12 +97,13 @@ constexpr std::array<OptionInfo, kGraphicsOptions> kOptions{{
      "Occlusion",
      Kind::Choice,
      0,
-     1,
-     {"none", "rt"},
-     {"None", "Ray traced"}},
+     2,
+     {"none", "rt", "screen"},
+     {"None", "Ray traced", "Screen space (GTAO)"}},
     {O::OcclusionRays, "ao_rays", "occlusion rays", "AO rays", Kind::Integer, 1, 8},
     {O::OcclusionRadius, "ao_radius", "occlusion radius", "AO radius", Kind::Number, 0.05, 10},
     {O::OcclusionStrength, "ao_strength", "occlusion strength", "AO strength", Kind::Number, 0, 1},
+    {O::ScreenSpaceFallbacks, "screen_fallbacks", "screen-space fallbacks", "Screen-space fallbacks", Kind::Flag, 0, 1},
     {O::LocalShadows, "local_shadows", "local light shadows", "Local shadows", Kind::Integer, 0,
      render::kMaxRayLocalShadows},
     // RenderSettings::localShadowMapSize: off, 256, 512 or 1024.
@@ -193,6 +194,7 @@ void setValue(RenderSettings& s, GraphicsOption option, double v) {
     case O::OcclusionRays: s.occlusionRays = int(v); break;
     case O::OcclusionRadius: s.occlusionRadius = float(v); break;
     case O::OcclusionStrength: s.occlusionStrength = float(v); break;
+    case O::ScreenSpaceFallbacks: s.screenSpaceFallbacks = v != 0.0; break;
     case O::LocalShadows: s.localLightShadows = int(v); break;
     case O::LocalShadowMaps: s.localShadowMapSize = v < 0.5 ? 0u : 128u << std::clamp(int(v), 1, 3); break;
     case O::Reflections: s.reflections = render::Reflections(int(v)); break;
@@ -385,6 +387,7 @@ double graphicsValue(const RenderSettings& s, GraphicsOption option) {
     case O::OcclusionRays: return double(s.occlusionRays);
     case O::OcclusionRadius: return double(s.occlusionRadius);
     case O::OcclusionStrength: return double(s.occlusionStrength);
+    case O::ScreenSpaceFallbacks: return s.screenSpaceFallbacks ? 1.0 : 0.0;
     case O::LocalShadows: return double(s.localLightShadows);
     case O::LocalShadowMaps:
         return s.localShadowMapSize >= 1024  ? 3.0
@@ -687,17 +690,29 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
 
     if (header("Ambient occlusion")) {
         rows.row(O::AmbientOcclusion, [&] { return combo(O::AmbientOcclusion, int(s.ambientOcclusion)); });
+        const bool screenOcclusion = e.ambientOcclusion == render::AmbientOcclusion::ScreenSpace;
         if (s.ambientOcclusion == render::AmbientOcclusion::RayTraced &&
             e.ambientOcclusion != render::AmbientOcclusion::RayTraced)
-            note(std::format("-> none: {}", caps.rayTracing
-                                                ? reason("ray-traced ambient occlusion", "no ray tracing here")
-                                                : std::string(rayTracingWhyNot(caps))),
+            note(std::format("-> {}: {}", screenOcclusion ? "screen space (GTAO)" : "none",
+                             caps.rayTracing ? reason("ray-traced ambient occlusion", "no ray tracing here")
+                                             : std::string(rayTracingWhyNot(caps))),
                  true);
-        if (e.ambientOcclusion != render::AmbientOcclusion::RayTraced)
-            note("Rays, radius and strength are for ray-traced occlusion", false);
+        else if (s.ambientOcclusion == render::AmbientOcclusion::ScreenSpace && !screenOcclusion)
+            note(std::format("-> none: {}", reason("screen-space ambient occlusion", "no depth buffer to sample")),
+                 true);
+        if (screenOcclusion)
+            note("From the depth of what is on the screen, at half resolution: rays are slices of 4 steps to either "
+                 "side",
+                 false);
+        else if (e.ambientOcclusion != render::AmbientOcclusion::RayTraced)
+            note("Rays, radius and strength are for ray-traced or screen-space occlusion", false);
         rows.row(O::OcclusionRays, [&] { return sliderInt(s.occlusionRays, 1, 8); });
         rows.row(O::OcclusionRadius, [&] { return slider(s.occlusionRadius, 0.2f, 3.0f, "%.1f m"); });
         rows.row(O::OcclusionStrength, [&] { return slider(s.occlusionStrength, 0.0f, 1.0f, "%.2f"); });
+        rows.row(O::ScreenSpaceFallbacks, [&] { return checkbox(s.screenSpaceFallbacks); });
+        note(s.screenSpaceFallbacks ? "Where occlusion cannot be ray traced: screen-space occlusion in place of none"
+                                    : "Where occlusion cannot be ray traced: none",
+             false);
     }
 
     if (header("Ray-traced lighting")) {

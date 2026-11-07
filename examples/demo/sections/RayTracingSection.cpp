@@ -2,11 +2,12 @@
 // backend, --gpu-backend metal, on a GPU with ray queries in render passes): soft sun shadows, ambient occlusion,
 // shadows of local lights, reflections, indirect light from a probe grid or per pixel, the engine's denoisers and
 // MetalFX's denoising upscaler, and the reference path tracer. Elsewhere the same settings fall back to the cascaded
-// shadow maps, no occlusion, unshadowed local lights, the sky's reflections and ambient light and bilinear scaling,
-// and the section says why. The scene has what the rays must handle: a fence with holes (cut-out) lit by a spot
-// behind it, a glass torus (translucent, tinted), a walking character (skinned, refitted every frame), a mirror, a
-// strip of gold spheres from smooth to rough, a red and green corner with a white block and a lamp (colour bleeding,
-// contact occlusion), a glowing panel (emissive light through the probes), under a turning sun.
+// shadow maps, no occlusion (GTAO with the screen-space fallbacks), unshadowed local lights (or their shadow maps),
+// the sky's reflections and ambient light and bilinear scaling, and the section says why. The scene has what the rays
+// must handle: a fence with holes (cut-out) lit by a spot behind it, a glass torus (translucent, tinted), a walking
+// character (skinned, refitted every frame), a mirror, a strip of gold spheres from smooth to rough, a red and green
+// corner with a white block and a lamp (colour bleeding, contact occlusion), a glowing panel (emissive light through
+// the probes), under a turning sun.
 
 #include "Demo.h"
 
@@ -79,8 +80,10 @@ public:
                "walking character), ambient occlusion, reflections (the mirror, the gold spheres from smooth to "
                "rough), indirect light (the red and green corner, the glowing panel), the engine's denoisers, "
                "MetalFX upscaling and denoising, and a reference path tracer: the native Metal backend on a GPU "
-               "with ray queries. Elsewhere: cascaded shadow maps, no occlusion, unshadowed lamps (or their shadow "
-               "maps, an option), the sky's reflections and ambient light, bilinear scaling.";
+               "with ray queries. Elsewhere: cascaded shadow maps, no occlusion (or screen-space occlusion, an "
+               "option), "
+               "unshadowed lamps (or their shadow maps, an option), the sky's reflections and ambient light, "
+               "bilinear scaling.";
     }
 
     Result<void> init(Context& c) override {
@@ -276,14 +279,16 @@ public:
         fallback(settings.sunShadows == e.sunShadows, "shadow maps");
         ImGui::SliderInt("Shadow rays", &settings.shadowRays, 1, 8);
         ImGui::SliderFloat("Softness", &settings.shadowSoftness, 0.0f, 6.0f, "%.1f x sun");
-        bool occlusion = settings.ambientOcclusion == AmbientOcclusion::RayTraced;
+        bool occlusion = settings.ambientOcclusion != AmbientOcclusion::None;
         if (ImGui::Checkbox("Ambient occlusion", &occlusion))
             settings.ambientOcclusion = occlusion ? AmbientOcclusion::RayTraced : AmbientOcclusion::None;
-        fallback(settings.ambientOcclusion == e.ambientOcclusion, "none");
+        fallback(settings.ambientOcclusion == e.ambientOcclusion,
+                 e.ambientOcclusion == AmbientOcclusion::ScreenSpace ? "screen space (GTAO)" : "none");
         ImGui::SliderInt("Lamp shadows", &settings.localLightShadows, 0, kMaxRayLocalShadows);
         fallback(settings.localLightShadows == 0 || e.localLightShadows > 0,
                  e.localShadowMaps > 0 ? "shadow maps" : "unshadowed");
         if (!caps.rayTracing) {
+            ImGui::Checkbox("Screen-space fallbacks", &settings.screenSpaceFallbacks);
             int maps = settings.localShadowMapSize >= 1024  ? 3
                        : settings.localShadowMapSize >= 512 ? 2
                        : settings.localShadowMapSize > 0    ? 1
@@ -356,7 +361,7 @@ public:
             c.app.requestPassTiming();
             // The renderer's ranges are inside the app's "game" range: what this section changes, side by side.
             double rays = 0.0, shadowRays = 0.0, denoise = 0.0, probes = 0.0, reflect = 0.0, indirect = 0.0, path = 0.0,
-                   maps = 0.0, upscale = 0.0;
+                   maps = 0.0, upscale = 0.0, screen = 0.0;
             for (const gpu::GpuTiming& t : c.app.stats().gpuPasses) {
                 if (t.name == "accel" || t.name == "prepass" || t.name == "raytrace") rays += t.milliseconds;
                 if (t.name == "rays") shadowRays += t.milliseconds;
@@ -367,6 +372,8 @@ public:
                 if (t.name == "path") path += t.milliseconds;
                 if (t.name == "shadows") maps += t.milliseconds;
                 if (t.name == "upscale") upscale += t.milliseconds;
+                if (t.name == "gtao") screen += t.milliseconds;
+                if (t.name == "prepass" && !traced) screen += t.milliseconds;
             }
             if (traced && !e.pathTracer) {
                 ImGui::Text("Rays GPU %.3f ms: shadows and AO %.3f, denoise %.3f", rays, shadowRays, denoise);
@@ -374,6 +381,7 @@ public:
             }
             if (e.pathTracer) ImGui::Text("Path tracer GPU %.3f ms", path);
             if (e.shadowCascades > 0) ImGui::Text("Shadow maps GPU %.3f ms", maps);
+            if (r.screenOcclusion) ImGui::Text("Screen space GPU %.3f ms (prepass and GTAO)", screen);
             if (e.upscaling != Upscaling::Bilinear) ImGui::Text("MetalFX GPU %.3f ms", upscale);
             ImGui::Text("Frame GPU %.3f ms", c.app.stats().gpuMs);
         }

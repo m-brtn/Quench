@@ -34,6 +34,7 @@ enum class GraphicsOption : std::uint8_t {
     OcclusionRays,
     OcclusionRadius,
     OcclusionStrength,
+    ScreenSpaceFallbacks,
     LocalShadows,
     LocalShadowMaps,
     Reflections,

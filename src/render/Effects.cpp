@@ -18,9 +18,14 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
                                ? TranslucentShadows::Map
                                : TranslucentShadows::Dithered;
     if (!sunShadows) e.sunShadows = SunShadows::ShadowMaps;
+    const bool screenSpace = support.screenSpace && support.sampledDepth;
+    const bool screenOcclusion =
+        settings.ambientOcclusion == AmbientOcclusion::ScreenSpace ||
+        (settings.ambientOcclusion == AmbientOcclusion::RayTraced && settings.screenSpaceFallbacks);
     e.ambientOcclusion = settings.ambientOcclusion == AmbientOcclusion::RayTraced && support.rayTracing
                              ? AmbientOcclusion::RayTraced
-                             : AmbientOcclusion::None;
+                         : screenOcclusion && screenSpace ? AmbientOcclusion::ScreenSpace
+                                                          : AmbientOcclusion::None;
     e.localLightShadows = support.rayTracing ? std::clamp(settings.localLightShadows, 0, kMaxRayLocalShadows) : 0;
     e.localShadowMaps = !support.rayTracing && support.shadowArray && settings.localShadowMapSize > 0
                             ? std::clamp(settings.localLightShadows, 0, kMaxRayLocalShadows)

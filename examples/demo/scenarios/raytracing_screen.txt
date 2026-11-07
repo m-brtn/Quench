@@ -1,0 +1,26 @@
+# Screen-space fallbacks on SDL GPU (ctest: demo_raytracing_screen_<backend>, a part of batch.txt): without ray
+# tracing the section's ray-traced ambient occlusion becomes GTAO with RenderSettings::screenSpaceFallbacks (Graphics
+# panel, "Screen-space fallbacks"), from the depth of a prepass of its own: the corner, the block and the spheres'
+# feet darken where the ambient light is shut out. The capture is taken at 2.5 s, as in raytracing_fallback.txt; the
+# fallbacks are switched off again before the part ends.
+section raytracing
+
+set dither 0
+until rt_ready == 1 5
+set screen_fallbacks 1
+wait 0.1
+expect ambient_occlusion == 2
+expect screen_occlusion == 1
+expect screen_prepass_draws > 0
+expect ray_instances == 0
+expect cascades == 3
+until time >= 2.5 3
+windows off
+capture demo_raytracing_screen.png
+windows on
+set screen_fallbacks 0
+wait 0.05
+expect ambient_occlusion == 0
+expect screen_occlusion == 0
+expect screen_prepass_draws == 0
+quit

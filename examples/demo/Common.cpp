@@ -105,7 +105,9 @@ void effectsPanel(Context& c, const render::RenderSettings& settings, const rend
     if (settings.ambientOcclusion != render::AmbientOcclusion::None ||
         e.ambientOcclusion != render::AmbientOcclusion::None)
         ImGui::TextWrapped("Ambient occlusion: %s",
-                           e.ambientOcclusion == render::AmbientOcclusion::RayTraced ? "ray traced" : "none");
+                           e.ambientOcclusion == render::AmbientOcclusion::RayTraced     ? "ray traced"
+                           : e.ambientOcclusion == render::AmbientOcclusion::ScreenSpace ? "screen space (GTAO)"
+                                                                                         : "none");
     ImGui::TextWrapped("Translucent shadows: %s, %u transmittance draws",
                        e.translucentShadows == render::TranslucentShadows::Map ? "transmittance map" : "dithered",
                        s.transmittanceDraws);

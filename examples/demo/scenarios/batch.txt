@@ -33,5 +33,6 @@ include animation_skinning.txt
 include animation_retarget.txt
 include animation_blendshapes.txt
 include raytracing_maps.txt
+include raytracing_screen.txt
 include cycle.txt
 quit

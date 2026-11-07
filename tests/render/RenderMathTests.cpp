@@ -132,6 +132,40 @@ QUENCH_TEST(effects_ray_tracing_and_upscaling_fall_back) {
     CHECK(e.sunShadows == SunShadows::ShadowMaps && e.shadowCascades == 0, "shadowCascades 0: no sun shadows");
 }
 
+QUENCH_TEST(effects_screen_space_fallbacks) {
+    using quench::render::detail::selectEffects;
+    RenderSettings s;
+    s.ambientOcclusion = AmbientOcclusion::RayTraced;
+    const quench::render::detail::DeviceSupport maps{.shadowArray = true,
+                                                     .depthClamp = true,
+                                                     .sampledDepth = true,
+                                                     .velocityTarget = true,
+                                                     .transmittanceArray = true,
+                                                     .screenSpace = true};
+    quench::render::detail::DeviceSupport full = maps;
+    full.rayTracing = full.rayLighting = true;
+    CHECK(selectEffects(s, maps).ambientOcclusion == AmbientOcclusion::None,
+          "without ray tracing and without the fallbacks: no occlusion");
+    s.screenSpaceFallbacks = true;
+    CHECK(selectEffects(s, maps).ambientOcclusion == AmbientOcclusion::ScreenSpace,
+          "with the fallbacks: screen-space occlusion");
+    CHECK(selectEffects(s, full).ambientOcclusion == AmbientOcclusion::RayTraced, "traced where the device can");
+    s.ambientOcclusion = AmbientOcclusion::ScreenSpace;
+    s.screenSpaceFallbacks = false;
+    CHECK(selectEffects(s, full).ambientOcclusion == AmbientOcclusion::ScreenSpace,
+          "asked for: screen-space occlusion also where rays could run");
+    quench::render::detail::DeviceSupport noDepth = maps;
+    noDepth.sampledDepth = false;
+    CHECK(selectEffects(s, noDepth).ambientOcclusion == AmbientOcclusion::None, "it needs a depth buffer to sample");
+    quench::render::detail::DeviceSupport noPipelines = maps;
+    noPipelines.screenSpace = false;
+    CHECK(selectEffects(s, noPipelines).ambientOcclusion == AmbientOcclusion::None, "and its pipelines");
+    s.upscaling = Upscaling::TemporalDenoised;
+    full.temporalUpscaling = full.denoisedUpscaling = true;
+    CHECK(selectEffects(s, full).upscaling == Upscaling::Temporal,
+          "nothing traced for the denoising upscaler: temporal upscaling");
+}
+
 QUENCH_TEST(effects_ray_traced_lighting_falls_back) {
     using quench::render::detail::selectEffects;
     RenderSettings s;

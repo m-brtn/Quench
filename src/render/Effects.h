@@ -15,6 +15,7 @@ struct DeviceSupport {
     bool transmittanceArray = false; // an Rgba16Float Texture2DArray that can be rendered to and sampled
     bool rayTracing = false;         // gpu::Caps::rayTracing and the ray query shaders in the build
     bool rayLighting = false;        // also the reflection, indirect light and path tracer shaders
+    bool screenSpace = false;        // sampledDepth and the screen-space effects' pipelines
     bool spatialUpscaling = false;   // gpu::Caps::spatialUpscaling
     bool temporalUpscaling = false;  // gpu::Caps::temporalUpscaling
     bool denoisedUpscaling = false;  // gpu::Caps::denoisedUpscaling

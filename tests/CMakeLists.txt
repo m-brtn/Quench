@@ -427,7 +427,8 @@ if(NOT QUENCH_HEADLESS)
                 quench_add_batch(demo metal APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND metal
                     ARGS ${demo_args} ENVIRONMENT MTL_DEBUG_LAYER=1
                     PARTS ${demo_parts} raytracing_fallback:demo_raytracing tunnel_fallback:demo_tunnel
-                    tunnel_motion_fallback raytracing_maps:demo_raytracing_maps cycle)
+                    tunnel_motion_fallback raytracing_maps:demo_raytracing_maps
+                    raytracing_screen:demo_raytracing_screen cycle)
                 if(APPLE)
                     quench_add_batch(demo metal_native APP quench_demo SCRIPT ${demo_scenarios}/batch_native.txt
                         BACKEND metal ARGS ${demo_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1
@@ -438,7 +439,8 @@ if(NOT QUENCH_HEADLESS)
                     quench_add_batch(demo vulkan APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND vulkan
                         ARGS ${demo_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment}
                         FAIL_REGEX "Validation (Error|Warning)" PARTS ${demo_parts} raytracing_fallback:demo_raytracing
-                        tunnel_fallback:demo_tunnel tunnel_motion_fallback raytracing_maps:demo_raytracing_maps cycle)
+                        tunnel_fallback:demo_tunnel tunnel_motion_fallback raytracing_maps:demo_raytracing_maps
+                        raytracing_screen:demo_raytracing_screen cycle)
                 endif()
                 # The tour (started by its flag), the check mode, the settings and benchmark-all with their files in a
                 # fresh user directory (they need runs of their own).

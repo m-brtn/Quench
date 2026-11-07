@@ -163,6 +163,18 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   points read 0 where the open ground reads 375 to 687 and the open ground matches the unshadowed image (no acne or
   seams). The demo's Graphics panel and the ray tracing section have "Shadow maps" (`set local_shadow_maps`), and the
   batches a part `raytracing_maps` with new golden images for Metal and Vulkan through MoltenVK. Not run on a phone.
+- Screen-space ambient occlusion, GTAO (stage 9 and 11 remaining work): `AmbientOcclusion::ScreenSpace`, and
+  `RenderSettings::screenSpaceFallbacks` (off by default), which turns the traced occlusion into GTAO where the
+  device cannot trace (SDL GPU, Vulkan through MoltenVK, the native backend without ray tracing)
+  ([Render module](../render.md#screen-space-ambient-occlusion)). Adapted from XeGTAO's main pass (MIT, Intel;
+  `THIRD_PARTY_LICENSES`, [Dependencies](../dependencies.md)) at half resolution, with a depth-aware 4 x 4 blur and
+  upsample into the mask the surfaces already read for the traced occlusion, after a depth prepass of its own where
+  nothing is traced. On the M4 Pro (offscreen, 1080p) 0.41 ms in the demo's shadows section and 0.17 ms in the ray
+  tracing section on the native backend; frames without it cost what they did
+  ([Performance](../performance.md#screen-space-ambient-occlusion)). The demo's Graphics panel has "Screen space
+  (GTAO)" and "Screen-space fallbacks" (`set ao screen`, `set screen_fallbacks`), the ray tracing section the
+  fallback without ray tracing, and the batches a part `raytracing_screen` with new golden images for Metal and
+  Vulkan through MoltenVK; `scenarios/gtao_phone.txt` measures it on a phone (not run yet).
 
 ## Fixes
 
@@ -227,6 +239,12 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   of `Surface.hlsli` are taken (`quenchLocalShadowMaps`), `LocalLight::shape` of a point or spot light now carries
   its maps (x the first layer + 1, y the spot map's tangent, z the near plane) and `LocalLight::cone.y` the channel
   of its maps as of its traced shadow.
+- **Screen-space ambient occlusion** (additions; nothing changes while a game does not ask for it):
+  `render::AmbientOcclusion::ScreenSpace` after `RayTraced` (a `switch` over the enum without a `default` warns
+  until it handles it), `RenderSettings::screenSpaceFallbacks` (after `occlusionStrength`; false), and
+  `RenderStats::screenOcclusion` and `screenPrepassDraws` (before `renderWidth`). With GTAO the renderer makes three
+  more pipelines (`RenderStats::pipelines`) the first time it runs. Surfaces read it as the traced occlusion
+  (`FrameUniforms::options.w` bit 2, sampler 6): a surface on `Surface.hlsli` needs nothing.
 - **`render::RenderSettings::probeUpdatePeriod`** is new (after `probeSpacing`; default 1, as before).
   `RenderStats::probes` is the probes traced this frame: 2048 as before by default, 2048 / n in turns. A shader of
   a game's own that reads the probe atlases through `quenchProbeIrradiance` needs nothing; one that reads the

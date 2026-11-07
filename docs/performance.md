@@ -357,6 +357,52 @@ draws); the size matters little at these counts of casters. The native backend's
 splits it per pass where it runs, but on the Mac the native backend traces these shadows instead. Not measured on
 a phone (the reason to have the maps: phones on the default SDL GPU backend).
 
+### Screen-space ambient occlusion
+
+`AmbientOcclusion::ScreenSpace`, GTAO ([Render module](render.md#screen-space-ambient-occlusion)). 2026-11-07
+07:58-08:15, Release, Mac (Apple M4 Pro), **offscreen** at 1920 x 1080 (`--frame-size 1920x1080 --audio-device null
+--script`, unpaced), 4 s regions after a second each, thermal state nominal.
+
+**Frames without GTAO** (the 5% rule and "no cost where unused"): the commit before (`b94e6ec`) and this change
+alternating, two pairs per backend, each section at its defaults (on the native backend the ray tracing section and
+the tunnel traced). Measured with the first version of the change; what changed after it runs only in frames with
+GTAO. Native backend, GPU busy time p50 of the frame's `game` range, ms; SDL GPU, frame p50 and CPU p50, ms:
+
+| Section | native `game` before | after | SDL GPU frame before | after | SDL GPU CPU before | after |
+|---|---|---|---|---|---|---|
+| materials | 1.815, 1.809 | 1.815, 1.815 | 1.665, 1.647 | 1.646, 1.647 | 0.506, 0.479 | 0.482, 0.480 |
+| shadows | 1.446, 1.452 | 1.445, 1.453 | 1.334, 1.320 | 1.326, 1.298 | 0.394, 0.430 | 0.424, 0.435 |
+| ray tracing | 7.658, 7.649 | 7.668, 7.655 | 1.582, 1.579 | 1.604, 1.603 | 0.561, 0.569 | 0.569, 0.554 |
+| tunnel | 11.170, 11.182 | 11.227, 11.178 | 1.000, 1.023 | 1.287, 1.224 | 0.596, 0.600 | 0.583, 0.583 |
+
+(The SDL GPU tunnel's frame p50 is bimodal and says little.)
+
+**Frames with GTAO** (`set ao screen` against none, or against the traced occlusion in the native ray tracing
+section; two runs each):
+
+| Region | native `game` | native `gtao` (`prepass`) | SDL GPU frame p50 | SDL GPU CPU p50 | SDL GPU's GPU time p50 |
+|---|---|---|---|---|---|
+| shadows section, no occlusion | 1.498, 1.498 | | 1.327, 1.324 | 0.418, 0.428 | 3.504, 3.381 |
+| the same, GTAO | 1.979, 1.976 | 0.413, 0.414 (0.029) | 1.784, 1.802 | 0.487, 0.362 | 4.845, 4.986 |
+| ray tracing section, its default (native: traced occlusion; SDL GPU: none) | 7.631, 7.628 | | 1.585, 1.581 | 0.547, 0.566 | 4.254, 4.236 |
+| the same, GTAO | 7.179, 7.183 | 0.174, 0.175 | 1.997, 1.997 | 0.658, 0.700 | 5.390, 5.353 |
+| tunnel, its default | 11.128, 11.144 | | (bimodal) | 0.603, 0.594 | 9.013, 9.057 |
+| the same, GTAO (the camera drives on: another view) | 11.320, 11.326 | 0.251, 0.251 | (bimodal) | 0.644, 0.648 | 11.129, 11.030 |
+
+On the native ray tracing section GTAO replaces the occlusion rays: `rays` 2.30 to 1.70 ms, the frame 0.45 ms
+cheaper. The first version ran GTAO at full resolution with world positions from the inverse view-projection per
+sample and a 5 x 5 blur over the center's plane: `gtao` 1.482 ms in the shadows section (0.93 the horizon search,
+0.55 the blur), 0.651 in the ray tracing section, 0.807 in the tunnel. Half resolution, positions along camera rays
+and a 4 x 4 blur of the term with its depth beside it (`Rg16Float`) brought that to 0.41, 0.17 and 0.25 ms; the
+contact gets softer (the test's 64 x 64 image: 0.940 against 0.885 next to the box). In the first version the
+radius cap (20 % of the render height) did not change the cost in these views (0.05 to 0.2 of the height: the
+same), and each step to either side of a slice cost about 0.1 ms.
+
+Not measured on a phone. `scenarios/gtao_phone.txt` measures it there on SDL GPU (the three sections without
+occlusion and with GTAO, from the nominal thermal state, and a capture); on the Mac offscreen at 1170 x 2532 it
+passed 8 of 8 (SDL GPU's GPU time p50 4.42 to 5.96 ms in the shadows section, 5.09 to 6.52 in the ray tracing
+section).
+
 ### On the screen after the bug packages
 
 2026-11-07 00:00-00:06, Release, Mac (Mac mini, Apple M4 Pro), its one display (the LG UltraFine 5K at 60 Hz; no

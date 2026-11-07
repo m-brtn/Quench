@@ -291,14 +291,17 @@ are noted below.
   creates their pipelines only where `Caps::rayTracing` holds, so the other backends never load them.
 - **Fallback slots** in `render::RenderSettings` and `render::ActiveEffects`: `SunShadows::ShadowMaps | RayTraced`
   (shadow maps are the fallback and stay the default until the user has looked at the traced ones on the iPhone),
-  `AmbientOcclusion::None | RayTraced`, and since stage 11 `localLightShadows` (unshadowed without rays, or since
+  `AmbientOcclusion::None | RayTraced | ScreenSpace` (since 2026-11-07 GTAO, the traced occlusion's fallback with
+  `screenSpaceFallbacks`), and since stage 11 `localLightShadows` (unshadowed without rays, or since
   2026-11-07 shadow maps for its point and spot lights where `localShadowMapSize` asks for them, drawn through a
   surface variant of their own so that frames without them pay nothing; since stage 12 also the area lights' soft
   shadows, unshadowed without rays),
   `Reflections::Sky | RayTraced`, `IndirectLight::Sky | Probes | RayTraced` (the sky's ambient values without rays),
   `RayDenoiser::Spatial | Temporal` and `pathTracer`. Without the capability the renderer takes the fallback and logs
-  why, as for TAA and depth clamp ([Render module](render.md#fallbacks)). The screen-space fallbacks the design
-  names (SSR, GTAO, Ashfall's bounce light) are not built: a device without ray tracing gets the sky's values.
+  why, as for TAA and depth clamp ([Render module](render.md#fallbacks)). Of the screen-space fallbacks the design
+  names, GTAO is built (2026-11-07, off by default: `RenderSettings::screenSpaceFallbacks` turns the traced
+  occlusion into GTAO where it cannot trace; [Render module](render.md#screen-space-ambient-occlusion)); SSR and
+  Ashfall's bounce light are not: a device without ray tracing gets the sky's values for those.
 - **Denoising** (stage 11): the engine's own filters (a spatial one and, the default, a temporal one with
   reprojection, a neighbourhood clamp, anti-lag and a-trous passes; [Render module](render.md#denoising)) run
   everywhere ray tracing does; MetalFX's temporal denoised scaler replaces them and TAA where `denoisedUpscaling`

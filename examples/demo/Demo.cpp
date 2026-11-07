@@ -405,8 +405,12 @@ bool DemoGame::setRenderSetting(std::string_view name, std::string_view value) {
             s.ambientOcclusion = render::AmbientOcclusion::None;
         else if (value == "rt")
             s.ambientOcclusion = render::AmbientOcclusion::RayTraced;
+        else if (value == "screen")
+            s.ambientOcclusion = render::AmbientOcclusion::ScreenSpace;
         else
             return false;
+    } else if (name == "screen_fallbacks" && flag) {
+        s.screenSpaceFallbacks = *flag;
     } else if (name == "ao_rays" && number) {
         s.occlusionRays = std::clamp(int(*number), 1, 8);
     } else if (name == "ao_radius" && number) {
@@ -636,6 +640,8 @@ std::optional<double> DemoGame::scenarioValue(std::string_view name) const {
     if (name == "local_map_lights") return double(s.localShadowLights);
     if (name == "local_maps") return double(s.localShadowMaps);
     if (name == "local_map_draws") return double(s.localShadowDraws);
+    if (name == "screen_occlusion") return s.screenOcclusion ? 1.0 : 0.0;
+    if (name == "screen_prepass_draws") return double(s.screenPrepassDraws);
     if (name == "reflections") return double(int(e.reflections));
     if (name == "indirect") return double(int(e.indirectLight));
     if (name == "probes") return double(s.probes);
@@ -838,7 +844,9 @@ std::string DemoGame::perfDetails(App& app) {
         current().id(), s.renderWidth, s.renderHeight, s.draws, s.instances, s.shadowDraws, s.lights,
         antiAliasingName(e.antiAliasing), e.shadowCascades, s.skinnedInstances,
         e.sunShadows == render::SunShadows::RayTraced ? "rt" : "maps",
-        e.ambientOcclusion == render::AmbientOcclusion::RayTraced ? "rt" : "none",
+        e.ambientOcclusion == render::AmbientOcclusion::RayTraced     ? "rt"
+        : e.ambientOcclusion == render::AmbientOcclusion::ScreenSpace ? "screen"
+                                                                      : "none",
         e.upscaling == render::Upscaling::TemporalDenoised ? "denoised"
         : e.upscaling == render::Upscaling::Temporal       ? "temporal"
         : e.upscaling == render::Upscaling::Spatial        ? "spatial"

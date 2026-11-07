@@ -81,7 +81,8 @@ on how many were rendered before it (in a scripted run, the frames spent waiting
    albedo and metallic), the motion vectors when the temporal denoiser needs them, then full-screen passes that
    trace the sun's and the local lights' shadows and the ambient occlusion, update the probe grid, trace the
    reflections and the indirect light, each followed by its filter. With ray-traced sun shadows the cascades of step
-   1 are not drawn. The path tracer replaces steps 0 to 3 (below).
+   1 are not drawn. The path tracer replaces steps 0 to 3 (below). Then screen-space ambient occlusion (GTAO,
+   below) where it runs, after a depth prepass of its own when nothing is traced.
 1. **Shadow cascades** of the sun (standard depth, `Depth32Float` texture array): the view is split between linear and
    logarithmic distances up to `shadowDistance`, each cascade snapped to its texels; casters are culled per cascade.
    Solid casters write depth with their position only; cut-out ones run their surface and discard where it is cut
@@ -225,7 +226,8 @@ and the area lights' LTC use a bent normal and the mean roughness instead (appro
 `gpu::Caps::rayTracing` holds and the build has the ray query shaders (`cmake/QuenchDxc.cmake`): today the native
 Metal backend on a GPU with ray tracing: the Mac's M4 Pro and the user's iPhone (stage 9's shadows and occlusion
 measured there on 2026-11-06: 8.0 ms GPU p50 at the native 1320 x 2868, over the 7.5 ms budget). Elsewhere the frame
-takes shadow maps and no occlusion, with one log line that says why (`Renderer::effects()` tells which runs). The
+takes shadow maps and no occlusion (GTAO with `screenSpaceFallbacks`, [below](#screen-space-ambient-occlusion)),
+with one log line that says why (`Renderer::effects()` tells which runs). The
 default stays shadow maps until the user has looked at them on the iPhone
 ([Roadmap](roadmap.md#stage-9-native-metal-backend-and-ray-tracing)).
 
@@ -386,6 +388,45 @@ nearest `localLightShadows` (at most 4) point and spot lights with `castsShadows
   caster closer to the light than the near plane is lost; in `surface_shadow_fs` drawn into these maps
   `QuenchSurfaceInput::view` still points toward the sun.
 
+### Screen-space ambient occlusion
+
+Since 2026-11-07 (after 0.9.0, not released). `AmbientOcclusion::ScreenSpace`, or `AmbientOcclusion::RayTraced`
+with `RenderSettings::screenSpaceFallbacks` (off by default) where the rays are not available (SDL GPU, so the
+default backend everywhere, and the native backend without `gpu::Caps::rayTracing`): GTAO from the depth of the
+opaque surfaces. It needs a sampleable depth and `Rg16Float` targets; else none, with a line in `fallbacks()`.
+Where the device traces, `RayTraced` stays traced; `ScreenSpace` set by the game runs GTAO there too.
+`RenderStats::screenOcclusion` says whether it ran, `screenPrepassDraws` the draws of its own prepass.
+
+- **Depth.** Where something is traced, the ray tracing prepass's depth; else a depth-only prepass of its own (the
+  opaque batches with the prepass pipelines, cut-out holes kept; timed range `prepass`).
+- **GTAO** (`ss_gtao_fs` in `src/render/shaders/screenspace.hlsl`, timed range `gtao`): adapted from XeGTAO's main
+  pass (MIT, Intel; GameTechDev/XeGTAO `a5b1686`; Jimenez et al. 2016, "Practical Real-Time Strategies for Accurate
+  Indirect Occlusion"), at half resolution (the top-left pixel of every 2 x 2 block, as Ashfall's screen-space
+  effects): `occlusionRays` slices per pixel (1..8, default 2), each with 4 steps to either side, out to
+  `occlusionRadius` times XeGTAO's 1.457 and at most 20 % of the render height on the screen (no depth MIP chain:
+  far samples would only miss the cache), XeGTAO's falloff and final power 2.2, normals from the depth, positions
+  along camera rays (`ScreenSpaceUniforms`, camera-relative). The noise is a 4 x 4 tile that changes every frame
+  under TAA, which averages it, and stays fixed otherwise. The term and its depth go into an `Rg16Float` target.
+- **Blur and upsample** (`ss_gtao_blur_fs`, full resolution): the 4 x 4 term texels around the pixel (one period of
+  the noise tile), each weighted by how well its depth continues the pixel's depth gradient (a reversed depth is
+  linear over a plane on the screen; tolerance 2 % of the view depth), so other surfaces do not bleed in; then
+  `occlusionStrength`. The result goes into alpha of the mask the surfaces read for traced occlusion (sampler 6,
+  `FrameUniforms::options.w` bit 2): with ray-traced sun shadows the traced mask, its rgb kept by the pipeline's
+  write mask, else a mask of its own. Surfaces built on `Surface.hlsli` take it without changes.
+- **Cost** on the M4 Pro at 1080p (offscreen, [Performance](performance.md#screen-space-ambient-occlusion)): native
+  backend `gtao` 0.41 ms in the demo's shadows section (its own prepass 0.03 ms), 0.17 ms in the ray tracing
+  section, where it replaces the occlusion rays (`rays` 2.30 to 1.70 ms), 0.25 ms in the tunnel; SDL GPU's Metal
+  driver frame p50 1.33 to 1.79 ms (shadows section) and 1.58 to 2.00 ms (ray tracing section).
+- **Test** `renderer_screen_space_ambient_occlusion` (64 x 64, a box on the ground under ambient light only; SDL
+  GPU's Metal driver, Vulkan through MoltenVK, the native backend): 0.940 of the light without it next to the box
+  (the rays: 0.822), 1.000 on open ground and on the box's top; the fallback from `RayTraced` the same image and
+  named in `fallbacks()`; on the native backend with traced sun shadows the shadow stays (0.965 of the frame
+  without GTAO, open ground 1.000, next to the box 0.930) and no prepass of its own is drawn.
+- **Limits.** Only what is on the screen occludes: nothing behind the camera, off the screen or hidden behind a
+  nearer surface, and a thin object seen edge on occludes as if it were thick behind. Half resolution and the
+  8 x 8 pixel footprint soften the contact (0.940 against the rays' 0.822 in the test's small image). No bent
+  normals, no temporal filter of its own, no occlusion of translucent surfaces.
+
 ### Denoising
 
 The traced signals (the sun's visibility and the occlusion, the local light shadows, the reflections, the indirect
@@ -468,7 +509,8 @@ maps"), so a game can show them (the demo's "Frame and fallbacks" panel); it is 
 | TAA | a sampleable scene depth and an `Rg16Float` target | FXAA |
 | HDR target | `Rgba16Float` | `Rg11b10Ufloat` |
 | Ray-traced sun shadows | `gpu::Caps::rayTracing`, the ray query shaders, a sampleable depth | shadow cascades |
-| Ray-traced ambient occlusion | the same | none |
+| Ray-traced ambient occlusion | the same | GTAO with `screenSpaceFallbacks`, else none |
+| Screen-space ambient occlusion (GTAO) | a sampleable depth, `Rg16Float` targets | none |
 | Ray-traced local light shadows (also area lights) | the same | point and spot lights: shadow maps if `localShadowMapSize` is set and a depth array is sampleable; else (and area lights always) unshadowed |
 | Ray-traced reflections | the same and the hit shaders | the sky's reflection |
 | Probe grid, per-pixel indirect light | the same and the hit shaders | `skyAmbient` and `groundAmbient` |
@@ -572,8 +614,9 @@ bytes).
 
 `RenderSettings`: render scale (0.25..1) and upscaling (bilinear, MetalFX spatial, temporal or temporal denoised),
 sun shadows (shadow maps or ray traced), cascades (0..4), shadow map size, shadow distance, shadow filter (1, 4 or
-12 taps), translucent shadows (transmittance map or dithered), shadow rays and softness, ambient occlusion (none or
-ray traced) with its rays, radius and strength, local light shadows (0..4) and the size of their shadow maps where
+12 taps), translucent shadows (transmittance map or dithered), shadow rays and softness, ambient occlusion (none, ray
+traced or screen space) with its rays, radius and strength, the screen-space fallbacks of the traced effects
+(`screenSpaceFallbacks`), local light shadows (0..4) and the size of their shadow maps where
 they are not traced (`localShadowMapSize`, 0: none), reflections (sky or ray traced) and
 their roughness limit, indirect light (sky, probe grid or ray traced), the probe spacing and the probe updates
 (every probe per frame, 1/2, 1/4 or 1/8), the ray denoiser
@@ -595,18 +638,21 @@ and (stage 11) the bottom levels compacted this frame (`rayCompactions`), whethe
 path tracer's samples (`pathSamples`), and (stage 12) the area lights among the frame's lights (`areaLights`) and
 the lights that took another light's shadow channel (`localShadowChanges`), and (2026-11-07, after 0.9.0) the
 lights with shadow maps, their maps, the instances and draws in them (`localShadowLights`, `localShadowMaps`,
-`localShadowInstances`, `localShadowDraws`).
+`localShadowInstances`, `localShadowDraws`), whether GTAO ran and the draws of its prepass (`screenOcclusion`,
+`screenPrepassDraws`).
 The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`,
 `area_lights`, `local_shadow_changes`, `local_map_lights`, `local_maps`, `local_map_draws`, `moved`,
 `render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`,
-`ray_compactions`, `ray_top_refit`, `ray_memory_mb`, `hit_textures`, `probes`, `path_samples`).
+`ray_compactions`, `ray_top_refit`, `ray_memory_mb`, `hit_textures`, `probes`, `path_samples`, `screen_occlusion`,
+`screen_prepass_draws`).
 
 GPU time per pass (stage 9, where `gpu::Caps::gpuPassTiming`: the native Metal backend): `Renderer::render` wraps its
 passes in timed ranges of the command buffer it records into, `upload` (the instance and light buffers), `accel`
 (with `blas`, the bottom levels' builds, refits and compactions, and `tlas`, the top level, inside it),
 `prepass` (with the G-buffer, the motion vectors for the temporal denoiser and the denoising upscaler's inputs) and
 `raytrace` (ray tracing; `rays`, `denoise`, `probes`, `reflections` and `indirect` inside it), `path` (the path
-tracer), `shadows` (the cascades and their
+tracer), `gtao` (screen-space ambient occlusion, after its own `prepass` where nothing is traced), `shadows` (the
+cascades and their
 transmittance maps), `local_shadows` (the local lights' shadow maps), `hdr` (opaque, sky, transparent and the game's passes in them), `taa` (motion vectors and the
 resolve), `upscale` (MetalFX), `bloom` and `tonemap` (with FXAA and the overlay passes). A range whose effect is off
 records nothing; the game's `PostHdr` passes are in no range of the renderer. The app reads them per frame
@@ -729,6 +775,6 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   lights only by rays (at most 4), at most 16 local lights per frame (8 of them area lights) and no clustered or
   tiled light lists.
 - One render per scene and frame (several views of one scene need a scene per view).
-- Not in this stage, listed in the roadmap: Ashfall's screen-space effects (ambient occlusion, bounce light,
-  reflections, sun shafts) as fallbacks for devices without ray tracing, particles, terrain, decals, quality presets. GPU timing per pass exists only on the
+- Not in this stage, listed in the roadmap: Ashfall's other screen-space effects (bounce light, reflections, sun
+  shafts) as fallbacks for devices without ray tracing (GTAO is there since 2026-11-07), particles, terrain, decals, quality presets. GPU timing per pass exists only on the
   native Metal backend (SDL GPU has no timestamps inside a command buffer).

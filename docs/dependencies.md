@@ -235,6 +235,20 @@ The paper's reference is in the header comments of both files, in `THIRD_PARTY_L
 grazing angles their elements go down to 1e-10, below half precision. Neither game uses them, so no game pin is
 affected.
 
+## Added for stage 9 and 11's remaining work
+
+Screen-space ambient occlusion ([Render](render.md#screen-space-ambient-occlusion)), 2026-11-07. No library: shader
+code adapted from XeGTAO, checked into the repository with its notice, listed with its licence in
+`THIRD_PARTY_LICENSES` (shipped).
+
+| Source | Commit | Licence | In | Purpose |
+|---|---|---|---|---|
+| GameTechDev/XeGTAO (`Source/Rendering/Shaders/XeGTAO.hlsli`: `XeGTAO_MainPass`, `XeGTAO_FastACos`) | `a5b1686c7ea37788eeb3576b5be47f7c03db532c`; `XeGTAO.hlsli` SHA256 `30faf4f5013916c14694db20fe9ec7f0c786f2edac7610968f9391987115064e` | MIT (Copyright (C) 2016-2021, Intel Corporation; the repository's `LICENSE` and the file's SPDX line, read at that commit) | `quench_render`: `src/render/shaders/screenspace.hlsl` (`ss_gtao_fs`; the changes are listed in its header) | GTAO's horizon search, the fallback of the traced occlusion |
+
+The half-resolution layout (the top-left pixel of every 2 x 2 block) follows Ashfall's screen-space effects
+(`shaders/scene.hlsl` at Ashfall `2d5db57`, the same author); no Ashfall code was copied for GTAO. Neither game uses
+it, so no game pin is affected.
+
 ## Added for stage 6's remaining work
 
 ASTC 4x4 textures for iOS ([Assets](assets.md#cooked-formats)), 2026-11-07. One library, in
