@@ -15,6 +15,7 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 - Navigation
 - Jobs
 - Heat
+- Profiling
 - Scenario checks, captures and golden images
 - iOS
 
@@ -419,6 +420,42 @@ m_renderer->setSettings(s);
 
 Checks without a hot device: `--thermal-state serious`, or in a scenario `thermal_state serious` (`thermal_state
 system` gives it back), then `expect thermal_reaction == 2` and `expect frame_rate_limit == 60`.
+
+## Profiling
+
+Configure the game with the engine's Tracy client (a preset of its own, as the engine's `profile`: Release with
+`"QUENCH_TRACY": "ON"`); the build also gets `tracy-capture` and `tracy-csvexport` in its build directory. Zones in
+the game's code:
+
+```cpp
+#include <quench/core/Profile.h>
+
+void MyGame::fixedStep(quench::app::App& app, double dt) {
+    QUENCH_PROFILE_ZONE("game.fixed_step");                // to the end of the scope; a literal name
+    {
+        QUENCH_PROFILE_ZONE("game.ai");
+        updateEnemies(dt);
+    }
+    QUENCH_PROFILE_PLOT("game.enemies", m_enemies.size()); // a value over time
+}
+// A name made at run time, text on the zone, a named job:
+QUENCH_PROFILE_ZONE_DYNAMIC(level.name);
+QUENCH_PROFILE_ZONE_TEXT(path);
+m_bake = app.jobs().run("game.bake", [this] { bakeNavigation(); }, JobPriority::Low);
+```
+
+Without `QUENCH_TRACY` the macros are nothing and their arguments are not evaluated: no work for the profile alone
+inside them. Record an offscreen scenario and get the zones per perf region (the script is in the engine's
+checkout: the local override's path, or `build/<preset>/_deps/quench-src`):
+
+```sh
+python3 <engine>/tools/tracy_capture.py --build-dir build/profile --output build/profile/tracy/run -- \
+    build/profile/my_game --script scenarios/perf.txt --audio-device null
+```
+
+It writes `run.tracy` and `run_zones.csv` (count and time per frame, mean, p50, p99 and self time per zone) and
+prints the top zones; `--expect game.ai` fails the run without that zone. The user opens `run.tracy` in Tracy's
+GUI (0.15.0 or newer); agents never start the GUI.
 
 ## Scenario checks, captures and golden images
 

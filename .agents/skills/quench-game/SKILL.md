@@ -4,9 +4,10 @@ description: >-
   Builds, extends and verifies a game on the Quench C++20 engine: tools/new_game.py and templates/game, the pinned
   engine (FetchContent and the local override), the quench::app::Game interface and fixed-step loop,
   quench_add_game, input actions, ImGui, the retained render::Scene, cooked assets (quench_cook_assets,
-  SceneAssets), physics, audio, animation, navigation, jobs, quench::fs, iOS builds, and scripted offscreen checks
-  with captures and golden images. Use when creating a game on Quench, working in a repository whose CMakeLists.txt
-  fetches Quench or calls quench_add_game, or when the user asks how to make a game with the engine.
+  SceneAssets), physics, audio, animation, navigation, jobs, quench::fs, iOS builds, scripted offscreen checks with
+  captures and golden images, and Tracy profiles recorded without its GUI. Use when creating a game on Quench,
+  working in a repository whose CMakeLists.txt fetches Quench or calls quench_add_game, or when the user asks how to
+  make a game with the engine.
 ---
 
 # Building a game on Quench
@@ -153,6 +154,12 @@ Link what the game uses beside `quench_add_game()`:
   The App applies its frame rate limit on top of `setMaxFrameRate` (`frameRateLimit()` is the result); the game
   renders at `thermalGovernor().renderScale(playerScale)` and turns its own effects down while `reduceEffects()`.
   Never overwrite the player's settings with the limits. `docs/app.md`, "Thermal state".
+- **Profiling.** `#include <quench/core/Profile.h>`: `QUENCH_PROFILE_ZONE("game.ai")` (a zone to the end of the
+  scope, a literal name), `QUENCH_PROFILE_ZONE_DYNAMIC`, `QUENCH_PROFILE_ZONE_TEXT`, `QUENCH_PROFILE_PLOT`,
+  `QUENCH_PROFILE_MESSAGE`, `QUENCH_PROFILE_THREAD_NAME`; a job's zone gets its name from
+  `app.jobs().run(name, fn)`. They are nothing unless the engine is configured with `-DQUENCH_TRACY=ON`; the app
+  already marks frames and times its loop, the renderer's passes and the engine's modules.
+  [reference.md](reference.md), "Profiling".
 
 ### 4. Verify
 
@@ -177,6 +184,9 @@ Link what the game uses beside `quench_add_game()`:
   References depend on the GPU backend and the device; change one only on purpose, after looking at both images.
 - **Performance.** `perf_begin LABEL` .. `perf_end` in a scenario (real time; logs a `perf:` line and sets `perf_*`
   values) or `App::beginPerf` / `endPerf`. Measurements need `--onscreen`: ask the user first. `docs/performance.md`.
+  Where the time goes: a Tracy capture of an offscreen scenario with the engine's `tools/tracy_capture.py` (zones per
+  perf region in a CSV, no GUI; never start Tracy's GUI, it opens a window). `docs/performance.md`, "Profiling with
+  Tracy".
 
 ### 5. Gates
 

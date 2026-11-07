@@ -459,6 +459,26 @@ if(NOT QUENCH_HEADLESS)
         add_test(NAME hello_bad_flag_value COMMAND quench_hello --offscreen --quit-after soon)
         set_tests_properties(hello_bad_argument hello_bad_flag_value PROPERTIES WILL_FAIL TRUE)
         set_tests_properties(hello_version hello_bad_argument hello_bad_flag_value PROPERTIES LABELS hello)
+        # QUENCH_TRACY with its tools: an offscreen run of hello recorded by tracy-capture and exported
+        # (tools/tracy_capture.py, docs/performance.md): its frame and pass zones, a plot and, on the native Metal
+        # backend, the GPU zones of its timed ranges.
+        if(TARGET quench_tracy_capture)
+            find_package(Python3 COMPONENTS Interpreter)
+            if(Python3_Interpreter_FOUND)
+                set(tracy_args --expect app.frame --expect app.render --expect pass.game --expect app.frame_ms)
+                set(tracy_backend "")
+                if(APPLE)
+                    list(APPEND tracy_args --expect-gpu game)
+                    set(tracy_backend --gpu-backend metal)
+                endif()
+                add_test(NAME hello_tracy_capture
+                         COMMAND ${Python3_EXECUTABLE} ${Quench_SOURCE_DIR}/tools/tracy_capture.py
+                                 --build-dir ${CMAKE_BINARY_DIR} --output ${capture_dir}/hello_tracy ${tracy_args} --
+                                 $<TARGET_FILE:quench_hello> ${tracy_backend} --frame-size 640x360 --quit-after 3
+                                 --audio-device null)
+                set_tests_properties(hello_tracy_capture PROPERTIES LABELS hello COST ${app_run_cost})
+            endif()
+        endif()
 
         if(TARGET quench_demo)
             # The engine demo (docs/demo.md, "Checks"): batch.txt (ending in cycle.txt) on SDL GPU's Metal driver and on

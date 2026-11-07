@@ -1,0 +1,28 @@
+# The ray tracing section for a Tracy capture or a comparison of frame sizes (docs/performance.md, "Profiling with
+# Tracy"), on the native Metal backend:
+#   python3 tools/tracy_capture.py --output build/profile/tracy/raytracing -- \
+#       build/profile/examples/demo/quench-demo --gpu-backend metal --frame-size 1920x1080 --audio-device null \
+#       --script examples/demo/scenarios/raytracing_profile.txt
+# Two regions of 5 s with the sun turning and the character walking: "defaults", the section's defaults for the
+# device, and "heavy": render scale 1, 8 shadow rays, 4 occlusion rays and per-pixel indirect light, with traced
+# reflections, the temporal denoiser and MetalFX's temporal upscaler (the settings of a 57 ms frame on the Mac).
+
+section raytracing
+until rt_ready == 1 5
+wait 1
+perf_begin defaults
+wait 5
+perf_end
+
+set scale 1
+set shadow_rays 8
+set ao_rays 4
+set indirect rt
+set reflections rt
+set denoiser temporal
+set upscaling temporal
+wait 1
+perf_begin heavy
+wait 5
+perf_end
+quit
