@@ -10,9 +10,23 @@
 #include <iterator>
 #include <map>
 
+#include <simdjson.h>
+
 namespace quench::cook {
 
 namespace {
+
+void readExtras(simdjson::dom::object* object, std::size_t index, fastgltf::Category category, void* user) {
+    if (category != fastgltf::Category::Meshes || !object || !user) return;
+    auto& names = static_cast<GltfExtras*>(user)->targetNames;
+    if (names.size() <= index) names.resize(index + 1);
+    simdjson::dom::array array;
+    if ((*object)["targetNames"].get_array().get(array) != simdjson::SUCCESS) return;
+    for (simdjson::dom::element element : array) {
+        std::string_view name;
+        names[index].emplace_back(element.get_string().get(name) == simdjson::SUCCESS ? name : std::string_view());
+    }
+}
 
 Result<std::vector<std::uint8_t>> readFile(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
@@ -32,7 +46,7 @@ glm::mat4 toGlm(const fastgltf::math::fmat4x4& m) {
 }
 
 Result<fastgltf::Asset> loadGltf(const std::filesystem::path& source, fastgltf::Options options,
-                                 std::vector<std::filesystem::path>& inputs) {
+                                 std::vector<std::filesystem::path>& inputs, GltfExtras* extras) {
     fastgltf::Expected<fastgltf::GltfDataBuffer> data = fastgltf::GltfDataBuffer::FromPath(source);
     if (data.error() != fastgltf::Error::None)
         return Error{std::format("{}: {}", source.string(), gltfError(data.error()))};
@@ -40,6 +54,11 @@ Result<fastgltf::Asset> loadGltf(const std::filesystem::path& source, fastgltf::
     fastgltf::Parser parser(fastgltf::Extensions::KHR_mesh_quantization | fastgltf::Extensions::KHR_texture_transform |
                             fastgltf::Extensions::KHR_materials_emissive_strength |
                             fastgltf::Extensions::KHR_materials_unlit);
+    if (extras) {
+        *extras = {};
+        parser.setExtrasParseCallback(readExtras);
+        parser.setUserPointer(extras);
+    }
     const std::filesystem::path directory = source.parent_path();
     fastgltf::Expected<fastgltf::Asset> asset = parser.loadGltf(data.get(), directory, options);
     if (asset.error() != fastgltf::Error::None)
@@ -63,6 +82,15 @@ Result<fastgltf::Asset> loadGltf(const std::filesystem::path& source, fastgltf::
     if (const fastgltf::Error error = fastgltf::validate(asset.get()); error != fastgltf::Error::None)
         return Error{std::format("{}: {}", source.string(), gltfError(error))};
     return std::move(asset.get());
+}
+
+std::string morphTargetName(const fastgltf::Asset& asset, const GltfExtras& extras, std::size_t mesh,
+                            std::size_t target) {
+    if (mesh < extras.targetNames.size() && target < extras.targetNames[mesh].size() &&
+        !extras.targetNames[mesh][target].empty())
+        return extras.targetNames[mesh][target];
+    const std::string_view name = mesh < asset.meshes.size() ? std::string_view(asset.meshes[mesh].name) : "";
+    return name.empty() ? std::format("mesh{}.target{}", mesh, target) : std::format("{}.target{}", name, target);
 }
 
 std::vector<std::string> jointNames(const fastgltf::Asset& asset) {

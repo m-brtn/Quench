@@ -17,10 +17,21 @@
 
 namespace quench::cook {
 
+// What the cook reads from glTF extras: per mesh, its extras.targetNames (the names of its morph targets, as Blender
+// and three.js write them; empty where not given).
+struct GltfExtras {
+    std::vector<std::vector<std::string>> targetNames;
+};
+
 // Reads a glTF or GLB file and its external buffers (read here, not by fastgltf, so that every file read is added to
 // `inputs` for the depfile) and validates it.
 Result<fastgltf::Asset> loadGltf(const std::filesystem::path& source, fastgltf::Options options,
-                                 std::vector<std::filesystem::path>& inputs);
+                                 std::vector<std::filesystem::path>& inputs, GltfExtras* extras = nullptr);
+
+// A morph target's name: the mesh's extras.targetNames entry, else "<mesh>.target<index>" with the mesh's name (or
+// "mesh<index>"). The model and the animation cook name them alike: clips' weight tracks bind to them by name.
+std::string morphTargetName(const fastgltf::Asset& asset, const GltfExtras& extras, std::size_t mesh,
+                            std::size_t target);
 
 std::string_view gltfError(fastgltf::Error error);
 glm::mat4 toGlm(const fastgltf::math::fmat4x4& m);

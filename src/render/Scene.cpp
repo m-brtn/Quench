@@ -25,6 +25,7 @@ using detail::MeshEntry;
 namespace {
 
 constexpr std::uint32_t kMaxJoints = 65536; // SkinVertex::joints are 16 bits
+constexpr std::uint32_t kMaxMorphTargets = 256;
 
 // Stale or null handles are programming errors: asserted, then ignored in release builds.
 template <class Map, class Id>
@@ -62,6 +63,11 @@ Result<MeshId> Scene::addMesh(const MeshDesc& desc) {
         return Error{std::format("mesh '{}': {} skin entries for {} vertices", name, desc.skin.size(), vertexCount)};
     if (skinned && (desc.jointCount == 0 || desc.jointCount > kMaxJoints))
         return Error{std::format("mesh '{}': {} joints (1..{})", name, desc.jointCount, kMaxJoints)};
+    if (desc.morphTargetCount > kMaxMorphTargets ||
+        desc.morphs.size() != std::size_t(desc.morphTargetCount) * desc.vertices.size())
+        return Error{std::format("mesh '{}': {} morph offsets for {} targets of {} vertices (at most {} targets)", name,
+                                 desc.morphs.size(), desc.morphTargetCount, vertexCount, kMaxMorphTargets)};
+    const bool morphed = desc.morphTargetCount > 0;
 
     MeshEntry mesh;
     glm::vec3 lo(desc.vertices[0].position), hi(lo);
@@ -103,10 +109,31 @@ Result<MeshId> Scene::addMesh(const MeshDesc& desc) {
     mesh.vertexCount = vertexCount;
 
     gpu::Device& device = *m_impl->device;
+    if (morphed) {
+        std::vector<glm::vec4> rows;
+        rows.reserve(desc.morphs.size() * 3);
+        mesh.morphReach.assign(desc.morphTargetCount, 0.0f);
+        for (std::size_t i = 0; i < desc.morphs.size(); ++i) {
+            const MorphVertex& m = desc.morphs[i];
+            rows.push_back(glm::vec4(m.position, m.normal.x));
+            rows.push_back(glm::vec4(m.normal.y, m.normal.z, m.tangent.x, m.tangent.y));
+            rows.push_back(glm::vec4(m.tangent.z, 0.0f, 0.0f, 0.0f));
+            float& reach = mesh.morphReach[i / vertexCount];
+            reach = std::max(reach, glm::length(m.position));
+        }
+        const std::span<const std::byte> morphBytes = std::as_bytes(std::span(rows));
+        Result<gpu::Buffer> mb = device.createBuffer(
+            {.usage = gpu::BufferUsage::ComputeStorageRead, .size = std::uint32_t(morphBytes.size()), .name = name});
+        if (!mb) return Error{std::format("mesh '{}': {}", name, mb.error())};
+        if (Result<void> r = device.upload(*mb, 0, morphBytes); !r)
+            return Error{std::format("mesh '{}': {}", name, r.error())};
+        mesh.morphs = std::move(*mb);
+        mesh.morphTargetCount = desc.morphTargetCount;
+    }
     const std::span<const std::byte> vertexBytes = std::as_bytes(desc.vertices);
     const std::span<const std::byte> indexBytes = std::as_bytes(desc.indices);
     const gpu::BufferUsage vertexUsage =
-        skinned ? gpu::BufferUsage::Vertex | gpu::BufferUsage::ComputeStorageRead : gpu::BufferUsage::Vertex;
+        skinned || morphed ? gpu::BufferUsage::Vertex | gpu::BufferUsage::ComputeStorageRead : gpu::BufferUsage::Vertex;
     Result<gpu::Buffer> vb =
         device.createBuffer({.usage = vertexUsage, .size = std::uint32_t(vertexBytes.size()), .name = name});
     if (!vb) return Error{std::format("mesh '{}': {}", name, vb.error())};
@@ -289,26 +316,37 @@ namespace {
 // With linear skinning every vertex is a weighted mean of its joints' images of it, so it lies in the hull of the
 // joints' transformed bind-pose spheres. Dual quaternion skinning moves a vertex by a blend of rigid motions, which can
 // swing it out of that hull along an arc around the joint: a margin of the largest sphere covers it for vertices
-// blended near their joints, as in a skeleton (not a proof for any palette).
+// blended near their joints, as in a skeleton (not a proof for any palette). Blend shapes move a vertex before
+// skinning by at most the weighted sum of their largest offsets, which the joints scale by at most their largest
+// axis.
 void updatePoseBounds(InstanceEntry& entry, const MeshEntry& mesh) {
+    entry.center = mesh.center;
+    entry.radius = mesh.radius;
     glm::vec3 lo(1e30f), hi(-1e30f);
-    float largest = 0.0f;
+    float largest = 0.0f, scale = entry.palette.empty() ? 1.0f : 0.0f;
     for (std::size_t j = 0; j < entry.palette.size(); ++j) {
         const glm::vec4& b = mesh.jointBounds[j];
         if (b.w < 0.0f) continue;
         const glm::mat4& m = entry.palette[j];
         const glm::vec3 c(m * glm::vec4(glm::vec3(b), 1.0f));
-        const float r = b.w * std::sqrt(std::max({glm::dot(glm::vec3(m[0]), glm::vec3(m[0])),
-                                                  glm::dot(glm::vec3(m[1]), glm::vec3(m[1])),
-                                                  glm::dot(glm::vec3(m[2]), glm::vec3(m[2]))}));
+        const float s =
+            std::sqrt(std::max({glm::dot(glm::vec3(m[0]), glm::vec3(m[0])), glm::dot(glm::vec3(m[1]), glm::vec3(m[1])),
+                                glm::dot(glm::vec3(m[2]), glm::vec3(m[2]))}));
+        const float r = b.w * s;
         lo = glm::min(lo, c - r);
         hi = glm::max(hi, c + r);
         largest = std::max(largest, r);
+        scale = std::max(scale, s);
     }
-    if (lo.x > hi.x) return;
-    entry.center = (lo + hi) * 0.5f;
-    entry.radius = glm::length(hi - lo) * 0.5f;
-    if (entry.desc.skinning == Skinning::DualQuaternion) entry.radius += largest;
+    if (lo.x <= hi.x) {
+        entry.center = (lo + hi) * 0.5f;
+        entry.radius = glm::length(hi - lo) * 0.5f;
+        if (entry.desc.skinning == Skinning::DualQuaternion) entry.radius += largest;
+    }
+    float reach = 0.0f;
+    for (std::size_t k = 0; k < entry.morphWeights.size() && k < mesh.morphReach.size(); ++k)
+        reach += std::abs(entry.morphWeights[k]) * mesh.morphReach[k];
+    entry.radius += reach * scale;
 }
 
 } // namespace
@@ -348,6 +386,24 @@ void Scene::setSkinning(InstanceId instance, Skinning skinning) {
     entry->skinnedFrame = ~0ull; // skinned again, not copied from the last frame
     if (const MeshEntry* mesh = m_impl->meshes.get(entry->desc.mesh); mesh && !entry->palette.empty())
         updatePoseBounds(*entry, *mesh);
+}
+
+void Scene::setMorphWeights(InstanceId instance, std::span<const float> weights) {
+    InstanceEntry* entry = lookup(m_impl->instances, instance, "setMorphWeights: stale or null instance");
+    if (!entry) return;
+    const MeshEntry* mesh = m_impl->meshes.get(entry->desc.mesh);
+    if (!mesh || mesh->morphTargetCount == 0) return;
+    QUENCH_ASSERT(weights.size() <= mesh->morphTargetCount, "setMorphWeights: more weights than the mesh's targets");
+    std::vector<float> w(mesh->morphTargetCount, 0.0f);
+    std::copy_n(weights.begin(), std::min<std::size_t>(weights.size(), w.size()), w.begin());
+    const bool zero = std::ranges::all_of(w, [](float v) { return v == 0.0f; });
+    if (zero ? entry->morphWeights.empty() : w == entry->morphWeights) return;
+    if (zero)
+        entry->morphWeights.clear();
+    else
+        entry->morphWeights = std::move(w);
+    entry->posed = true;
+    updatePoseBounds(*entry, *mesh);
 }
 
 void Scene::setTransform(InstanceId instance, const glm::mat4& transform, bool teleport) {
@@ -557,6 +613,11 @@ std::uint32_t Scene::materialUsers(MaterialId material) const {
 std::uint32_t Scene::jointCount(MeshId mesh) const {
     const MeshEntry* entry = m_impl->meshes.get(mesh);
     return entry ? entry->jointCount : 0;
+}
+
+std::uint32_t Scene::morphTargetCount(MeshId mesh) const {
+    const MeshEntry* entry = m_impl->meshes.get(mesh);
+    return entry ? entry->morphTargetCount : 0;
 }
 std::uint32_t Scene::meshCount() const { return m_impl->meshes.size() - m_impl->ownMeshes; }
 std::uint32_t Scene::textureCount() const { return m_impl->textures.size(); }

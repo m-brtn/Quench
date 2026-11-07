@@ -18,6 +18,8 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <tuple>
+#include <unordered_map>
 #include <utility>
 
 namespace quench::cook {
@@ -25,6 +27,8 @@ namespace {
 
 using assets::ModelMaterial;
 using assets::ModelMesh;
+using assets::ModelMorphTarget;
+using assets::ModelMorphVertex;
 using assets::ModelSkinVertex;
 using assets::ModelVertex;
 
@@ -34,12 +38,16 @@ Result<std::vector<std::uint8_t>> readFile(const std::filesystem::path& path) {
     return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
-// Triangles of one material and skin, in model space (skinned: the bind pose).
+// Triangles of one material and skin, in model space (skinned: the bind pose); with blend shapes those of one node.
 struct Batch {
     std::vector<ModelVertex> vertices;
     std::vector<ModelSkinVertex> skinning; // skinned batches: one per vertex
     std::vector<std::uint32_t> indices;
+    std::vector<ModelMorphTarget> morphTargets; // offsets: one per vertex
 };
+
+// The batches of meshes with blend shapes are their node's (its weights are its own): (skin, material, node or -1).
+using BatchKey = std::tuple<int, std::uint32_t, int>;
 
 // Four weights in 1/65535 that sum to 65535 exactly.
 ModelSkinVertex quantizeWeights(const float joints[4], const float weights[4]) {
@@ -63,10 +71,10 @@ ModelSkinVertex quantizeWeights(const float joints[4], const float weights[4]) {
 
 class ModelCooker {
 public:
-    ModelCooker(fastgltf::Asset& asset, std::filesystem::path directory, std::string_view texturePrefix,
-                const ModelOptions& options, JobSystem& jobs, CookedModel& out)
-        : m_asset(asset), m_directory(std::move(directory)), m_texturePrefix(texturePrefix), m_options(options),
-          m_jobs(jobs), m_out(out) {}
+    ModelCooker(fastgltf::Asset& asset, const GltfExtras& extras, std::filesystem::path directory,
+                std::string_view texturePrefix, const ModelOptions& options, JobSystem& jobs, CookedModel& out)
+        : m_asset(asset), m_extras(extras), m_directory(std::move(directory)), m_texturePrefix(texturePrefix),
+          m_options(options), m_jobs(jobs), m_out(out) {}
 
     Result<void> run() {
         for (const fastgltf::Material& m : m_asset.materials) m_out.model.materials.push_back(material(m));
@@ -78,8 +86,9 @@ public:
         fastgltf::iterateSceneNodes(m_asset, scene, fastgltf::math::fmat4x4(),
                                     [&](fastgltf::Node& node, const fastgltf::math::fmat4x4& matrix) {
                                         if (!status || !node.meshIndex) return;
+                                        const int nodeIndex = int(&node - m_asset.nodes.data());
                                         if (!node.skinIndex) {
-                                            status = addMesh(m_asset.meshes[*node.meshIndex], toGlm(matrix), -1);
+                                            status = addMesh(*node.meshIndex, node, nodeIndex, toGlm(matrix), -1);
                                             return;
                                         }
                                         // glTF ignores the transform of a skinned mesh's node.
@@ -87,7 +96,7 @@ public:
                                         if (!skin)
                                             status = Error{skin.error()};
                                         else
-                                            status = addMesh(m_asset.meshes[*node.meshIndex], glm::mat4(1.0f), *skin);
+                                            status = addMesh(*node.meshIndex, node, nodeIndex, glm::mat4(1.0f), *skin);
                                     });
         if (!status) return status;
         if (m_batches.empty()) return Error{"the scene has no triangles"};
@@ -95,7 +104,7 @@ public:
             return Error{"--scale is not supported for skinned models: scale the source"};
 
         for (auto& [key, batch] : m_batches) {
-            Result<ModelMesh> mesh = optimize(std::move(batch), key.second, key.first);
+            Result<ModelMesh> mesh = optimize(std::move(batch), std::get<1>(key), std::get<0>(key));
             if (!mesh) return Error{mesh.error()};
             m_out.model.meshes.push_back(std::move(*mesh));
         }
@@ -201,7 +210,9 @@ private:
         return {};
     }
 
-    Result<void> addMesh(const fastgltf::Mesh& mesh, const glm::mat4& transform, int skin) {
+    Result<void> addMesh(std::size_t meshIndex, const fastgltf::Node& node, int nodeIndex, const glm::mat4& transform,
+                         int skin) {
+        const fastgltf::Mesh& mesh = m_asset.meshes[meshIndex];
         glm::mat4 scale(m_options.scale);
         scale[3][3] = 1.0f;
         const glm::mat4 toModel = scale * transform;
@@ -229,6 +240,8 @@ private:
                                             });
             if (!r) return r;
             bool hasNormals = false;
+            // 1 / the length of each transformed normal and tangent before normalizing: their morph offsets scale so.
+            std::vector<float> normalScale(vertexCount, 0.0f), tangentScale(vertexCount, 0.0f);
             if (const auto normal = prim.findAttribute("NORMAL"); normal != prim.attributes.end()) {
                 hasNormals = true;
                 r = read<fastgltf::math::fvec3>(normal->accessorIndex, fastgltf::AccessorType::Vec3, vertexCount,
@@ -237,6 +250,7 @@ private:
                                                     const float length = glm::length(n);
                                                     vertices[i].normal =
                                                         length > 1e-12f ? n / length : glm::vec3(0, 1, 0);
+                                                    normalScale[i] = length > 1e-12f ? 1.0f / length : 0.0f;
                                                 });
                 if (!r) return r;
             }
@@ -254,6 +268,7 @@ private:
                                                     vertices[i].tangent = length > 1e-12f
                                                                               ? glm::vec4(t / length, sign)
                                                                               : glm::vec4(0.0f, 0.0f, 0.0f, sign);
+                                                    tangentScale[i] = length > 1e-12f ? 1.0f / length : 0.0f;
                                                 });
                 if (!r) return r;
             }
@@ -299,9 +314,19 @@ private:
             if (flip)
                 for (std::size_t i = 0; i < indices.size(); i += 3) std::swap(indices[i + 1], indices[i + 2]);
             if (!hasNormals) smoothNormals(vertices, indices);
+            Result<std::vector<ModelMorphTarget>> targets =
+                morphTargets(prim, meshIndex, node, what, vertices, indices, toModel, normalMatrix, hasNormals,
+                             hasTangents, normalScale, tangentScale);
+            if (!targets) return Error{targets.error()};
             // MikkTSpace may split vertices at mirrored uv seams: `from` maps the new vertices to the file's.
             std::vector<std::uint32_t> from;
             if (!hasTangents) from = assets::generateTangents(vertices, indices);
+            if (!from.empty())
+                for (ModelMorphTarget& target : *targets) {
+                    std::vector<ModelMorphVertex> split(from.size());
+                    for (std::size_t i = 0; i < from.size(); ++i) split[i] = target.offsets[from[i]];
+                    target.offsets = std::move(split);
+                }
 
             std::vector<ModelSkinVertex> skinning;
             if (skin >= 0) {
@@ -344,13 +369,101 @@ private:
                 m_defaultMaterial = true;
                 materialIndex = std::uint32_t(m_asset.materials.size());
             }
-            Batch& batch = m_batches[{skin, materialIndex}];
+            Batch& batch = m_batches[{skin, materialIndex, targets->empty() ? -1 : nodeIndex}];
             const std::uint32_t base = std::uint32_t(batch.vertices.size());
+            if (batch.morphTargets.empty())
+                batch.morphTargets = std::move(*targets);
+            else if (batch.morphTargets.size() != targets->size())
+                return Error{std::format("{}: {} morph targets, the mesh's other primitives {}", what, targets->size(),
+                                         batch.morphTargets.size())};
+            else
+                for (std::size_t k = 0; k < targets->size(); ++k)
+                    batch.morphTargets[k].offsets.insert(batch.morphTargets[k].offsets.end(),
+                                                         (*targets)[k].offsets.begin(), (*targets)[k].offsets.end());
             batch.vertices.insert(batch.vertices.end(), vertices.begin(), vertices.end());
             batch.skinning.insert(batch.skinning.end(), skinning.begin(), skinning.end());
             for (const std::uint32_t index : indices) batch.indices.push_back(base + index);
         }
         return {};
+    }
+
+    // A primitive's morph targets in model space (positions by the transform's linear part, normals and tangents as
+    // offsets of the normalized vectors). Without the file's normals the targets' normals are made like the base's,
+    // from their moved positions; without the file's tangents (MikkTSpace) their tangent offsets are 0.
+    Result<std::vector<ModelMorphTarget>>
+    morphTargets(const fastgltf::Primitive& prim, std::size_t meshIndex, const fastgltf::Node& node,
+                 const std::string& what, const std::vector<ModelVertex>& vertices,
+                 const std::vector<std::uint32_t>& indices, const glm::mat4& toModel, const glm::mat3& normalMatrix,
+                 bool hasNormals, bool hasTangents, const std::vector<float>& normalScale,
+                 const std::vector<float>& tangentScale) {
+        std::vector<ModelMorphTarget> out(prim.targets.size());
+        if (out.size() > 256) return Error{std::format("{}: {} morph targets (at most 256)", what, out.size())};
+        const fastgltf::Mesh& mesh = m_asset.meshes[meshIndex];
+        const std::size_t vertexCount = vertices.size();
+        const glm::mat3 linear(toModel);
+        for (std::size_t k = 0; k < out.size(); ++k) {
+            ModelMorphTarget& target = out[k];
+            target.name = morphTargetName(m_asset, m_extras, meshIndex, k);
+            const auto& weights = node.weights.empty() ? mesh.weights : node.weights;
+            target.weight = k < weights.size() ? float(weights[k]) : 0.0f;
+            target.offsets.assign(vertexCount, {});
+            const std::string label = std::format("{} target {}", what, k);
+            if (const auto a = prim.findTargetAttribute(k, "POSITION"); a != prim.targets[k].end()) {
+                Result<void> r = read<fastgltf::math::fvec3>(
+                    a->accessorIndex, fastgltf::AccessorType::Vec3, vertexCount, label + " POSITION",
+                    [&](const fastgltf::math::fvec3& v, std::size_t i) {
+                        target.offsets[i].position = linear * glm::vec3(v[0], v[1], v[2]);
+                    });
+                if (!r) return Error{r.error()};
+            }
+            if (const auto a = prim.findTargetAttribute(k, "NORMAL"); hasNormals && a != prim.targets[k].end()) {
+                Result<void> r =
+                    read<fastgltf::math::fvec3>(a->accessorIndex, fastgltf::AccessorType::Vec3, vertexCount,
+                                                label + " NORMAL", [&](const fastgltf::math::fvec3& v, std::size_t i) {
+                                                    target.offsets[i].normal =
+                                                        normalMatrix * glm::vec3(v[0], v[1], v[2]) * normalScale[i];
+                                                });
+                if (!r) return Error{r.error()};
+            }
+            if (const auto a = prim.findTargetAttribute(k, "TANGENT"); hasTangents && a != prim.targets[k].end()) {
+                Result<void> r =
+                    read<fastgltf::math::fvec3>(a->accessorIndex, fastgltf::AccessorType::Vec3, vertexCount,
+                                                label + " TANGENT", [&](const fastgltf::math::fvec3& v, std::size_t i) {
+                                                    target.offsets[i].tangent =
+                                                        linear * glm::vec3(v[0], v[1], v[2]) * tangentScale[i];
+                                                });
+                if (!r) return Error{r.error()};
+            }
+            if (!hasNormals) {
+                std::vector<ModelVertex> moved(vertices);
+                for (std::size_t i = 0; i < vertexCount; ++i) moved[i].position += target.offsets[i].position;
+                smoothNormals(moved, indices);
+                for (std::size_t i = 0; i < vertexCount; ++i)
+                    target.offsets[i].normal = moved[i].normal - vertices[i].normal;
+            }
+        }
+        return out;
+    }
+
+    // meshopt_generateVertexRemapMulti takes at most 16 streams of at most 256 bytes: with blend shapes the vertices
+    // are welded here by all their bytes, numbered in the order the indices first use them, as meshoptimizer does.
+    static std::size_t weldMorphed(const Batch& batch, std::vector<std::uint32_t>& remap) {
+        const bool skinned = !batch.skinning.empty();
+        std::unordered_map<std::string, std::uint32_t> seen;
+        std::string key;
+        std::size_t next = 0;
+        std::fill(remap.begin(), remap.end(), ~0u);
+        for (const std::uint32_t index : batch.indices) {
+            if (remap[index] != ~0u) continue;
+            key.assign(reinterpret_cast<const char*>(&batch.vertices[index]), sizeof(ModelVertex));
+            if (skinned) key.append(reinterpret_cast<const char*>(&batch.skinning[index]), sizeof(ModelSkinVertex));
+            for (const ModelMorphTarget& target : batch.morphTargets)
+                key.append(reinterpret_cast<const char*>(&target.offsets[index]), sizeof(ModelMorphVertex));
+            const auto [it, added] = seen.try_emplace(key, std::uint32_t(next));
+            if (added) ++next;
+            remap[index] = it->second;
+        }
+        return next;
     }
 
     // Area-weighted vertex normals where the file has none.
@@ -376,8 +489,11 @@ private:
         std::vector<std::uint32_t> remap(batch.vertices.size());
         const meshopt_Stream streams[2] = {{batch.vertices.data(), sizeof(ModelVertex), sizeof(ModelVertex)},
                                            {batch.skinning.data(), sizeof(ModelSkinVertex), sizeof(ModelSkinVertex)}};
-        const std::size_t unique = meshopt_generateVertexRemapMulti(remap.data(), batch.indices.data(), indexCount,
-                                                                    batch.vertices.size(), streams, skinned ? 2 : 1);
+        const std::size_t unique =
+            batch.morphTargets.empty()
+                ? meshopt_generateVertexRemapMulti(remap.data(), batch.indices.data(), indexCount,
+                                                   batch.vertices.size(), streams, skinned ? 2 : 1)
+                : weldMorphed(batch, remap);
         std::vector<ModelVertex> vertices(unique);
         std::vector<ModelSkinVertex> skinning(skinned ? unique : 0);
         std::vector<std::uint32_t> lod0(indexCount);
@@ -387,6 +503,13 @@ private:
         if (skinned)
             meshopt_remapVertexBuffer(skinning.data(), batch.skinning.data(), batch.skinning.size(),
                                       sizeof(ModelSkinVertex), remap.data());
+        std::vector<ModelMorphTarget> targets = std::move(batch.morphTargets);
+        for (ModelMorphTarget& target : targets) {
+            std::vector<ModelMorphVertex> welded(unique);
+            meshopt_remapVertexBuffer(welded.data(), target.offsets.data(), target.offsets.size(),
+                                      sizeof(ModelMorphVertex), remap.data());
+            target.offsets = std::move(welded);
+        }
         meshopt_optimizeVertexCache(lod0.data(), lod0.data(), indexCount, unique);
 
         std::vector<std::vector<std::uint32_t>> lods{lod0};
@@ -429,6 +552,14 @@ private:
         if (skinned) {
             mesh.skinning.resize(used);
             meshopt_remapVertexBuffer(mesh.skinning.data(), skinning.data(), unique, sizeof(ModelSkinVertex),
+                                      fetch.data());
+        }
+        for (ModelMorphTarget& target : targets) {
+            ModelMorphTarget& fetched = mesh.morphTargets.emplace_back();
+            fetched.name = std::move(target.name);
+            fetched.weight = target.weight;
+            fetched.offsets.resize(used);
+            meshopt_remapVertexBuffer(fetched.offsets.data(), target.offsets.data(), unique, sizeof(ModelMorphVertex),
                                       fetch.data());
         }
         mesh.boundsMin = mesh.boundsMax = mesh.vertices[0].position;
@@ -498,12 +629,13 @@ private:
     }
 
     fastgltf::Asset& m_asset;
+    const GltfExtras& m_extras;
     std::filesystem::path m_directory;
     std::string m_texturePrefix;
     const ModelOptions& m_options;
     JobSystem& m_jobs;
     CookedModel& m_out;
-    std::map<std::pair<int, std::uint32_t>, Batch> m_batches;     // by (skin, material); ordered: deterministic output
+    std::map<BatchKey, Batch> m_batches;                          // ordered: deterministic output
     std::map<std::pair<std::size_t, bool>, std::string> m_images; // (image, sRGB) -> asset path
     std::map<std::size_t, int> m_skins;                           // glTF skin -> model skin
     std::vector<std::string> m_jointNames;
@@ -518,9 +650,10 @@ Result<CookedModel> cookModel(const std::filesystem::path& source, std::string_v
         return Error{"cook: lods must be at least 1, the LOD ratio between 0 and 1, the scale positive"};
     CookedModel out;
     out.inputs.push_back(source);
-    Result<fastgltf::Asset> asset = loadGltf(source, fastgltf::Options::GenerateMeshIndices, out.inputs);
+    GltfExtras extras;
+    Result<fastgltf::Asset> asset = loadGltf(source, fastgltf::Options::GenerateMeshIndices, out.inputs, &extras);
     if (!asset) return Error{asset.error()};
-    ModelCooker cooker(*asset, source.parent_path(), texturePrefix, options, jobs, out);
+    ModelCooker cooker(*asset, extras, source.parent_path(), texturePrefix, options, jobs, out);
     if (Result<void> r = cooker.run(); !r) return Error{std::format("{}: {}", source.string(), r.error())};
     return out;
 }

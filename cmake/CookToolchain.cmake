@@ -72,7 +72,7 @@ target_include_directories(quench_cook_lib PUBLIC ${Quench_SOURCE_DIR}/tools/coo
 target_include_directories(quench_cook_lib SYSTEM PRIVATE ${stb_SOURCE_DIR} ${bc7enc_SOURCE_DIR}
                                                           ${astcenc_SOURCE_DIR}/Source)
 target_link_libraries(quench_cook_lib PUBLIC quench_assets quench_animation quench_core
-                                      PRIVATE fastgltf::fastgltf quench_meshoptimizer quench_glm)
+                                      PRIVATE fastgltf::fastgltf fastgltf_simdjson quench_meshoptimizer quench_glm)
 
 add_executable(quench_cook EXCLUDE_FROM_ALL ${Quench_SOURCE_DIR}/tools/cook/Cook.cpp)
 quench_configure_target(quench_cook)

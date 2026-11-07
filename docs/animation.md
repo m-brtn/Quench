@@ -305,6 +305,12 @@ diagonal, 15.6 expected); one rigid motion (turned and moved) and two translatio
 (0 pixels differ), and a uniform scale of 2 is kept (24 pixels). The cost on the demo's crowd of 256: 0.06
 ms of the frame thread, nothing measurable on the GPU ([Performance](performance.md#dual-quaternion-skinning)).
 
+Blend shapes (morph targets, since 2026-11-07) are applied in the same pass, before the joints: the weighted
+offsets of a mesh's targets are added to the bind-pose position, normal and tangent, then the vertex is skinned
+([Render module](render.md#blend-shapes)). A game sets the weights per instance (`Scene::setMorphWeights`, or
+`SceneAssets::setMorphWeights` by the cooked model's target names); the cook takes them from glTF morph targets
+([Assets](assets.md#quench_cook)).
+
 `RenderStats::skinnedInstances`, `skinnedVertices`, `skinnedReused` and `skinningGpuMs` (GPU time of the skinning
 pass, with the copies, measured through its own command buffer's fence where `Caps::gpuTiming` holds, a few frames
 late; -1 otherwise).
@@ -361,11 +367,14 @@ characters that use the asset and keeps their parameters.
   "2D blend space", a character steered by its velocity through a blend space while it faces one way; in the view
   "Skinning", two characters whose left forearms the section twists by 170 degrees, skinned linearly and by dual
   quaternions; in the view "Retargeting", the mannequin and the strider walking the same clip abreast, the camera
-  following them
+  following them; in the view "Blend shapes", the blob (a swaying jelly body on three joints) reshaped by the
+  sliders of its four blend shapes
   ([Engine demo](demo.md)). Its character is procedural (`tools/assets/make_demo_character.py`, generated and cooked
   at build time; 20 joints, 836 vertices, clips idle, walk, run, jump, wave, lean, walk_back, strafe_l, strafe_r);
   so is the strider (`tools/assets/make_demo_strider.py`: 21 joints, 836 vertices, no clips of its own; the
-  mannequin's are retargeted onto it at build time through its bone map).
+  mannequin's are retargeted onto it at build time through its bone map), and the blob
+  (`tools/assets/make_demo_blob.py`: 3 joints, a sway clip, blend shapes squash, stretch, puff and spikes; 1094
+  vertices, 2176 triangles).
 - **Tests**: `animation.*` (29 cases: sampling at and between keys, blend weights and phase sync, 2D blend space
   weights (on a grid: in 0..1, a sum of 1 within 1.2e-7, at most 0.0018 of change per mm, exact at the points,
   mirror symmetric) and their pose, phases and root motion, graph errors, masked and additive
@@ -386,7 +395,9 @@ characters that use the asset and keeps their parameters.
   the characters sampled and the reused skins from the hero's view and from 45 m, 18 checks, no capture);
   `demo_animation_skinning_<backend>` (the twisted pair, 9 checks and a golden capture);
   `demo_animation_retarget_<backend>` (the retargeting pair abreast, the strider's hips 1.15 times as high, 10
-  checks and a golden capture).
+  checks and a golden capture); `demo_animation_blendshapes_<backend>` (the blob puffed, spiked and squashed while
+  it sways, 9 checks and a golden capture). The blend shape tests are listed in
+  [Render module](render.md#blend-shapes) and [Assets](assets.md#demo-content-and-tests).
 
 ## Platforms
 
@@ -406,8 +417,10 @@ characters that use the asset and keeps their parameters.
 - **No sync markers** beyond normalized time (and a point's `phase`): clips whose foot contacts are not at the same
   phases do not stay in step. No directional blend spaces (polar gradient bands): a space's weights are Cartesian.
 - **Skinning**: four joints per vertex, linear blend or dual quaternions (a joint's non-uniform scale or shear is
-  lost under dual quaternions; their culling bounds have a margin, not a proof), no blend shapes (morph targets).
-  Dual quaternion skinning was checked by numbers and a still capture; nobody has looked at it in motion.
+  lost under dual quaternions; their culling bounds have a margin, not a proof). Dual quaternion skinning was checked
+  by numbers and a still capture; nobody has looked at it in motion.
+- **Blend shapes**: weights are set by the game (clips do not animate them yet); checked by numbers and a still
+  capture, not looked at in motion by a person (the demo's check mode has an item).
 - **Animation LOD** has three rates (1, 2, 4) by screen size only (no visibility: a character outside the view or in
   a shadow only still updates at its size's rate), interpolation still poses every frame, and its look in motion
   was not seen by a person (the demo's check mode has an item).

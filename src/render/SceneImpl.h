@@ -30,11 +30,19 @@ struct MeshEntry {
     gpu::Buffer skin; // SkinVertex per vertex
     std::uint32_t jointCount = 0;
     std::vector<glm::vec4> jointBounds; // per joint: the bind-pose sphere of the vertices it moves (w < 0: none)
+    // Blend shapes: three float4 per offset (position.xyz normal.x | normal.yz tangent.xy | tangent.z), target-major,
+    // read by the skinning pass; per target the length of its largest position offset.
+    gpu::Buffer morphs;
+    std::uint32_t morphTargetCount = 0;
+    std::vector<float> morphReach;
     // Ray tracing (gpu::Caps::rayTracing): the bottom level of a rigid mesh, built when it first casts a ray-traced
     // shadow, then replaced by its compacted copy.
     gpu::AccelerationStructure rayStructure;
     enum class Compaction : std::uint8_t { None, Queried, Done } rayCompaction = Compaction::None;
 };
+
+// Posed by the skinning pass: skinned, with blend shapes, or both.
+inline bool deformed(const MeshEntry& mesh) { return mesh.jointCount > 0 || mesh.morphTargetCount > 0; }
 
 struct TextureEntry {
     gpu::Texture texture;
@@ -55,7 +63,8 @@ struct InstanceEntry {
     std::vector<glm::mat4> palette; // empty: the bind pose
     glm::vec3 center{0.0f};         // object-space bounds of the current pose (the mesh's until a palette is set)
     float radius = 0.0f;
-    bool posed = false;                 // the palette changed since the last render
+    std::vector<float> morphWeights;    // per target of the mesh; empty: all 0
+    bool posed = false;                 // the palette or the morph weights changed since the last render
     std::uint32_t skinnedOffset = 0;    // first vertex in the renderer's skinned vertex buffer of the last render
     std::uint64_t skinnedFrame = ~0ull; // the renderer's frame index of that render; ~0: none
     // Ray tracing of a skinned instance: the bottom level of its pose, refitted every frame it is traced.

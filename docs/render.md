@@ -542,7 +542,8 @@ pose. `Scene::setJointPalette(instance, palette, teleport)` gives an instance on
 matrix times inverse bind matrix, as `animation::AnimationSystem::skinPalette` computes; `SceneAssets` does the same
 for cooked models). Before the first palette an instance shows the bind pose.
 
-Every frame the renderer runs one compute pass (`skin_cs` in `src/render/shaders/skin.hlsl`, 64 vertices per group,
+Every frame the renderer runs one compute pass (`skin_cs` in `src/render/shaders/skin.hlsl`, `skin_morph_cs` for
+blend shapes, 64 vertices per group,
 linear blend or dual quaternion skinning of positions, normals and tangents) over the skinned instances that are drawn in view or in a shadow
 cascade, into each instance's range of a shared vertex buffer; the shadow, main and velocity passes then draw those
 vertices like a rigid mesh, with the surface shaders unchanged (also the cut-out and translucent shadow casters,
@@ -569,6 +570,35 @@ per joint: the rotation, the dual part and the uniform scale, converted on the C
 1 for them. A twisted or bent limb keeps its volume (no "candy wrapper"); a joint's non-uniform scale or shear is
 lost. Its culling bounds grow by the largest joint sphere, since a vertex can move out of the joints' hull on an arc
 ([Animation](animation.md#gpu-skinning)).
+
+### Blend shapes
+
+Blend shapes (morph targets, since 2026-11-07) are a mesh's: `MeshDesc::morphs` (`MorphVertex`: position, normal
+and tangent offsets, one per vertex and target, the first target's first) and `morphTargetCount` (at most 256),
+checked by `Scene::addMesh`. An instance's weights come from `Scene::setMorphWeights(instance, weights)` (one per
+target, fewer: the rest 0; all 0 until set); `SceneAssets::setMorphWeights` sets a cooked model's by its target
+names ([Assets](assets.md#quench_cook)). They are applied in the skinning pass, before the joints: a vertex moves by
+the sum of the weighted position offsets, its normal is the normalized sum of its normal and the weighted normal
+offsets, and its tangent the sum of its tangent and the weighted tangent offsets, made perpendicular to the new
+normal and normalized (w kept); then the vertex is skinned, or written as it is for a mesh without joints, which
+goes through the same pass. Any weight is allowed (negative, above 1). Only the targets whose weight is not 0 are
+read: they are listed per instance as (target, weight) rows in front of its palette rows
+(`SkinUniforms::morph`: their count, the first row, 1 when the mesh has joints), so with every weight 0 the
+vertices are the mesh's own, bit for bit. The blend shapes have an entry of their own, `skin_morph_cs`, for
+instances with weights and meshes without joints; skinned instances without weights keep `skin_cs`, which with
+the blend shapes inside it was 10% slower for them ([Performance](performance.md#blend-shapes)). The culling bounds grow by the sum of each weight's magnitude times its
+target's largest position offset (times the largest joint scale for skinned meshes). A change of weights moves the
+instance like a changed palette (TAA motion vectors), unchanged weights are copied from the frame before, and ray
+tracing builds and refits the instance's bottom level from the deformed vertices.
+
+Checked by `render.renderer_blend_shapes` (a rigid box through a normal map: no weights and weights back at 0
+bit for bit the image of the mesh without blend shapes; three sets of weights, also negative and above 1, the image
+of the mesh morphed on the CPU by the formula above: 0 pixels more than 2 levels apart, while 892 to 1138 of the
+4096 pixels differ from the unmorphed box; a shape that moves the box into view counts for culling),
+`renderer_blend_shapes_before_skinning` (linear and dual quaternion: 0 pixels apart from the mesh morphed on the
+CPU and then skinned, 169 differ from the unmorphed bars), `renderer_blend_shape_motion_vectors` and
+`renderer_ray_traced_blend_shape_shadows` (the shadow follows the weight; native Metal backend), on Metal, Vulkan
+through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
 
 ## Limitations
 
@@ -607,8 +637,9 @@ lost. Its culling bounds grow by the largest joint sphere, since a vertex can mo
   frame's depth is its own (within 0.1% of the distance), so its holes keep the motion of what is behind them; a
   surface less than 0.1% of the distance behind a hole takes the object's motion. A moving alpha-blended object's
   motion covers what is seen through it.
-- Skinning: four joints per vertex, linear blend or dual quaternions (without non-uniform scale or shear), no blend
-  shapes; every drawn skinned
+- Skinning: four joints per vertex, linear blend or dual quaternions (without non-uniform scale or shear); blend
+  shapes with dense offsets (every target read in full for every vertex, no sparse or compressed targets, no
+  per-target bounds); every drawn skinned
   instance whose palette changed is skinned every frame (an unchanged one is copied from the frame before; no
   skinning LOD); the output buffers grow with the skinned vertices drawn (two copies).
 - No MSAA, no image-based lighting from a cubemap (the sky model is the environment), shadows of local and area

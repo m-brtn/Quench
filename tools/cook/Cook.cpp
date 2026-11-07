@@ -244,11 +244,14 @@ int cookModel(const Options& o, JobSystem& jobs) {
     if (!o.depfile.empty())
         if (Result<void> r = writeDepfile(o, cooked->inputs); !r) return fail(r.error());
     if (o.verbose) {
-        std::size_t triangles = 0;
-        for (const assets::ModelMesh& mesh : cooked->model.meshes) triangles += mesh.lods[0].indexCount / 3;
-        std::fprintf(stderr, "quench_cook: %s: %zu meshes, %zu triangles, %zu materials, %zu bytes\n",
+        std::size_t triangles = 0, morphTargets = 0;
+        for (const assets::ModelMesh& mesh : cooked->model.meshes) {
+            triangles += mesh.lods[0].indexCount / 3;
+            morphTargets += mesh.morphTargets.size();
+        }
+        std::fprintf(stderr, "quench_cook: %s: %zu meshes, %zu triangles, %zu materials, %zu blend shapes, %zu bytes\n",
                      o.output.string().c_str(), cooked->model.meshes.size(), triangles, cooked->model.materials.size(),
-                     file->size());
+                     morphTargets, file->size());
     }
     return 0;
 }

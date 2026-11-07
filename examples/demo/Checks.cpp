@@ -111,6 +111,12 @@ constexpr std::array kItems{
               "plant and lift without sliding or sinking into the floor, its knees bend forward, its arms hang and "
               "swing like the mannequin's without twisting, and its body stays upright.",
               "set view retarget"},
+    CheckItem{"animation.blendshapes", "animation", "Blend shapes",
+              "View Blend shapes: each slider reshapes the swaying blob smoothly from 0 to 1 (squash flatter and "
+              "wider, stretch taller, puff a bulging middle, spikes bumps); its shading and its shadow follow the "
+              "new shape, the eyes stay on the body, and the shape sways with the body (no part left behind, no "
+              "flicker or holes). Reset shapes brings it back without a pop.",
+              "set view blendshapes"},
     CheckItem{"raytracing.noise", "raytracing", "Ray-traced noise",
               "Native Metal backend: with Shadow rays 1 and then 2 the soft shadows stay calm while the sun turns "
               "(little crawling noise).",

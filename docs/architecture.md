@@ -540,7 +540,9 @@ The engine adds:
 
 Since 2026-11-07 (after 0.9.0): 2D blend spaces, animation LOD, dual quaternion skinning, and retargeting between
 skeletons at cook time (not in ozz: a bone map by name, rest pose and bone direction correction, scaled root and
-hips translations; [Animation](animation.md#retargeting)). Not done: blend shapes.
+hips translations; [Animation](animation.md#retargeting)), and blend shapes, applied in the skinning compute pass
+before the joints (weights per instance; [Render module](render.md#blend-shapes)). Not done: blend shape weights
+from clips.
 
 ## Coordinate system and units
 

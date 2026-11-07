@@ -72,13 +72,19 @@ public:
         MeshId mesh;
         MaterialId material;
         std::uint32_t triangles = 0;
-        int skin = -1; // index into skins(); -1: rigid
+        int skin = -1;                     // index into skins(); -1: rigid
+        std::vector<std::uint32_t> morphs; // per blend shape of the mesh: its index in morphTargets()
+        std::vector<float> morphDefaults;  // per blend shape of the mesh: its default weight (the file's)
     };
 
     // Empty while loading and after a failure; replaced by a reload (version() changes).
     std::span<const Part> parts() const { return m_parts; }
     // The skins of skinned parts: joint names and inverse bind matrices, for animation::AnimationSystem::addSkin.
     std::span<const assets::ModelSkin> skins() const { return m_skins; }
+    // The blend shapes of its parts by name (a name the parts share is one), in the order the parts first have them,
+    // and their default weights (of the first part that has each); for SceneAssets::setMorphWeights.
+    std::span<const std::string> morphTargets() const { return m_morphTargets; }
+    std::span<const float> morphDefaults() const { return m_morphDefaults; }
     glm::vec3 boundsMin() const { return m_boundsMin; }
     glm::vec3 boundsMax() const { return m_boundsMax; }
     std::uint32_t triangles() const;
@@ -105,9 +111,14 @@ private:
         std::vector<std::uint32_t> indices; // of the chosen LOD
         int skin = -1;
         std::vector<SkinVertex> skinning;
+        std::vector<MorphVertex> morphs;         // target-major
+        std::vector<std::uint32_t> morphTargets; // per target of the mesh: its index in Pending::morphTargets
+        std::vector<float> morphDefaults;
     };
     struct Pending {
         std::vector<PendingMesh> meshes;
+        std::vector<std::string> morphTargets;
+        std::vector<float> morphDefaults;
         std::vector<assets::ModelMaterial> materials;
         std::vector<assets::ModelSkin> skins;
         glm::vec3 boundsMin{0.0f}, boundsMax{0.0f};
@@ -119,6 +130,8 @@ private:
     std::optional<Pending> m_pending; // decoded on a job, uploaded by finish()
     std::vector<Part> m_parts;
     std::vector<assets::ModelSkin> m_skins;
+    std::vector<std::string> m_morphTargets;
+    std::vector<float> m_morphDefaults;
     std::vector<MaterialId> m_materials;
     std::vector<assets::AssetRef<TextureAsset>> m_textures;
     glm::vec3 m_boundsMin{0.0f}, m_boundsMax{0.0f};
@@ -152,6 +165,11 @@ public:
     void setJointPalette(ModelInstanceId instance, int skin, std::span<const glm::mat4> palette, bool teleport = false);
     // The skinning of the parts that use one of the model's skins (Linear until set); kept like the palette.
     void setSkinning(ModelInstanceId instance, int skin, Skinning skinning);
+    // The weights of the model's blend shapes, one per ModelAsset::morphTargets() (fewer: the rest at 0), for every
+    // part that has them (Scene::setMorphWeights). Until the first call the parts show the file's default weights.
+    // Kept by name and applied again when the parts are rebuilt (a reload); ignored while the model has no blend
+    // shapes (also while it loads).
+    void setMorphWeights(ModelInstanceId instance, std::span<const float> weights);
     void removeModel(ModelInstanceId instance);
     const assets::AssetRef<ModelAsset>& model(ModelInstanceId instance) const;
     std::uint32_t modelInstanceCount() const;

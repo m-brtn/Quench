@@ -223,6 +223,27 @@ the same code apart from one branch per instance. Dual quaternions cost 0.06 ms 
 (about 11 ns each: the palette's matrices become dual quaternions on the CPU; 0.11 ms before the conversion skipped
 the scale of unscaled joints) and nothing measurable on the GPU. Not measured on the screen or on the iPhone.
 
+### Blend shapes
+
+2026-11-07 05:20-05:30, Release, Mac (Apple M4 Pro), the demo's Animation section with a crowd of 256 (265
+characters with the blob, which is not drawn in the hero's view; 264 skinned instances in both builds), **offscreen**
+as above, perf regions of 3 s after a second each, the hero's view; the commit before blend shapes (`cc8e263`) built
+in a second tree and run alternating with this change. CPU p50 of the frame, the skinning pass's GPU time (mean over
+240 frames), in milliseconds:
+
+| Build | CPU p50 | CPU p99 | Skinning GPU |
+|---|---|---|---|
+| `cc8e263`, 8 regions | 1.054 to 1.080 (mean 1.065) | 1.36 to 1.77 | 2.32 to 2.40 (mean 2.35) |
+| blend shapes in `skin_cs` itself, 6 regions | 1.140 to 1.180 | 1.50 to 1.63 | 2.55 to 2.59 |
+| this change (`skin_cs` and `skin_morph_cs`), 8 regions | 1.067 to 1.120 (mean 1.087) | 1.38 to 1.78 | 2.37 to 2.47 (mean 2.41) |
+
+With the blend shapes inside the one skinning entry, the skinned meshes without them were 10% slower on the GPU
+(the morph code and its buffer, though no weight was set), so the shader has two entries: `skin_cs` for skinned
+meshes without weights (the code it had before) and `skin_morph_cs` for instances with weights and for meshes
+without joints. What is left, +2% of CPU and +2.5% of skinning GPU time, is within a few hundredths of a millisecond
+of the spread of one binary's regions. The cost of the blend shapes themselves (one dispatch of 1094 vertices with
+four targets in the demo) was not measured. Not measured on the screen or on the iPhone.
+
 ### On the screen after the bug packages
 
 2026-11-07 00:00-00:06, Release, Mac (Mac mini, Apple M4 Pro), its one display (the LG UltraFine 5K at 60 Hz; no

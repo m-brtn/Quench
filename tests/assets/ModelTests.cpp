@@ -47,6 +47,16 @@ ModelData sampleModel() {
     grid.lods.push_back({96, 6, 0.05f});
     grid.boundsMin = {0.0f, 0.0f, 0.0f};
     grid.boundsMax = {4.0f, 1.6f, 4.0f};
+    // Two blend shapes: the middle lifted (positions and normals), the tangents turned.
+    ModelMorphTarget lift{"lift", 0.25f, std::vector<ModelMorphVertex>(grid.vertices.size())};
+    ModelMorphTarget turn{"grid.target1", 0.0f, std::vector<ModelMorphVertex>(grid.vertices.size())};
+    for (std::size_t v = 0; v < grid.vertices.size(); ++v) {
+        const float x = grid.vertices[v].position.x, z = grid.vertices[v].position.z;
+        lift.offsets[v].position = {0.0f, 0.5f * x * (4.0f - x) * z * (4.0f - z) / 16.0f, 0.0f};
+        lift.offsets[v].normal = {0.1f * (2.0f - x), -0.01f, 0.1f * (2.0f - z)};
+        turn.offsets[v].tangent = {-1.0f, 0.0f, 1.0f};
+    }
+    grid.morphTargets = {lift, turn};
 
     ModelMesh tri;
     tri.name = "triangle";
@@ -90,6 +100,15 @@ bool sameVertices(const std::vector<ModelVertex>& a, const std::vector<ModelVert
     return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(ModelVertex)) == 0;
 }
 
+bool sameTargets(const std::vector<ModelMorphTarget>& a, const std::vector<ModelMorphTarget>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t k = 0; k < a.size(); ++k)
+        if (a[k].name != b[k].name || a[k].weight != b[k].weight || a[k].offsets.size() != b[k].offsets.size() ||
+            std::memcmp(a[k].offsets.data(), b[k].offsets.data(), a[k].offsets.size() * sizeof(ModelMorphVertex)) != 0)
+            return false;
+    return true;
+}
+
 } // namespace
 
 QUENCH_TEST(model_round_trip) {
@@ -107,6 +126,8 @@ QUENCH_TEST(model_round_trip) {
         CHECK(a.name == b.name && a.material == b.material && sameTriangles(a.indices, b.indices),
               "mesh %zu header or triangles", i);
         CHECK(sameVertices(a.vertices, b.vertices), "mesh %zu vertices", i);
+        CHECK(sameTargets(a.morphTargets, b.morphTargets), "mesh %zu morph targets (%zu read)", i,
+              b.morphTargets.size());
         CHECK(a.lods.size() == b.lods.size() && a.boundsMax == b.boundsMax, "mesh %zu LODs or bounds", i);
         for (std::size_t l = 0; l < a.lods.size() && l < b.lods.size(); ++l)
             CHECK(a.lods[l].firstIndex == b.lods[l].firstIndex && a.lods[l].indexCount == b.lods[l].indexCount &&
@@ -142,14 +163,29 @@ QUENCH_TEST(model_rejects_versions_without_tangents) {
     }
 }
 
+// Version 3 is version 4 without the morph target count: a one-mesh model without blend shapes ends with it.
+QUENCH_TEST(model_reads_version_3) {
+    ModelData model = sampleModel();
+    model.meshes.erase(model.meshes.begin());
+    std::vector<std::uint8_t> file = writeModel(model).value();
+    file.resize(file.size() - 4);
+    file[4] = 3;
+    const Result<ModelData> read = readModel(file);
+    REQUIRE(read, "version 3: %s", read ? "" : read.error().c_str());
+    REQUIRE(read->meshes.size() == 1, "%zu meshes", read->meshes.size());
+    CHECK(sameVertices(read->meshes[0].vertices, model.meshes[0].vertices) && read->meshes[0].morphTargets.empty() &&
+              read->meshes[0].skinning.size() == 3,
+          "the mesh, its skin and no blend shapes");
+}
+
 QUENCH_TEST(model_rejects_corrupt) {
     const std::vector<std::uint8_t> file = writeModel(sampleModel()).value();
     for (std::size_t size = 0; size < file.size(); ++size)
         CHECK(!readModel(std::span(file).first(size)), "prefix of %zu of %zu bytes accepted", size, file.size());
     std::vector<std::uint8_t> bad = file;
-    bad[4] = 4;
+    bad[4] = 5;
     const Result<ModelData> version = readModel(bad);
-    CHECK(!version && version.error().find("version 4") != std::string::npos, "version: %s",
+    CHECK(!version && version.error().find("version 5") != std::string::npos, "version: %s",
           version ? "accepted" : version.error().c_str());
     // Every byte flip is rejected or gives a model whose indices are in range (asan checks the reads).
     for (std::size_t i = 0; i < file.size(); ++i) {
@@ -161,6 +197,9 @@ QUENCH_TEST(model_rejects_corrupt) {
             for (std::uint32_t index : mesh.indices)
                 CHECK(index < mesh.vertices.size(), "flip at %zu: index %u of %zu vertices", i, index,
                       mesh.vertices.size());
+            for (const ModelMorphTarget& target : mesh.morphTargets)
+                CHECK(target.offsets.size() == mesh.vertices.size(), "flip at %zu: %zu morph offsets", i,
+                      target.offsets.size());
             if (mesh.skin < 0) continue;
             CHECK(std::size_t(mesh.skin) < model->skins.size() && mesh.skinning.size() == mesh.vertices.size(),
                   "flip at %zu: skin %d", i, mesh.skin);
@@ -190,4 +229,10 @@ QUENCH_TEST(model_write_checks) {
     model = sampleModel();
     model.skins[0].inverseBindMatrices.pop_back();
     CHECK(!writeModel(model), "an inverse bind matrix missing");
+    model = sampleModel();
+    model.meshes[0].morphTargets[1].offsets.pop_back();
+    CHECK(!writeModel(model), "a morph offset missing");
+    model = sampleModel();
+    model.meshes[0].morphTargets.resize(257, model.meshes[0].morphTargets[0]);
+    CHECK(!writeModel(model), "257 morph targets written");
 }

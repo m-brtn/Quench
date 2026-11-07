@@ -24,8 +24,11 @@ struct QUENCH_ALIGN16 VelocityInstance {
 
 // Uniform slot 0 of skin_cs: one skinned instance (whole numbers, exact as floats below 2^24).
 struct QUENCH_ALIGN16 SkinUniforms {
-    float4 counts; // x: vertices, y: the instance's first joint in the palette buffer, z: its first output vertex,
-                   // w: 1 for dual quaternion skinning (the palette's rows are dual quaternions), 0 for linear
+    float4 counts; // x: vertices, y: the instance's first joint row in the palette buffer (three per joint), z: its
+                   // first output vertex, w: 1 for dual quaternion skinning (the palette's rows are dual
+                   // quaternions), 0 for linear
+    float4 morph;  // x: blend shapes with a weight other than 0, y: the row of the first (target, weight) in the
+                   // palette buffer, z: 1 when the mesh is skinned (0: the morphed vertices are written as they are)
 };
 
 QUENCH_SHARED_END

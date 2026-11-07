@@ -112,6 +112,17 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   0.46 mm per frame (the mannequin's 0.44 mm). The demo's Animation section has a view "Retargeting" (the two walking
   abreast, the camera following them), a scripted check with golden captures (`animation_retarget.txt`) and a check
   mode item. Nobody has looked at it in motion.
+- Blend shapes (stage 8 remaining work): glTF morph targets (position, normal and tangent offsets, names from
+  `extras.targetNames`, default weights from the node or mesh) are cooked into `.qmodel` version 4 and applied by
+  the renderer's skinning pass before the joints, also for meshes without joints
+  ([Render module](../render.md#blend-shapes), [Assets](../assets.md#cooked-formats)). A game sets the weights per
+  instance (`Scene::setMorphWeights`) or by name for a cooked model (`SceneAssets::setMorphWeights`). With every
+  weight 0 the image is the one of the mesh without blend shapes, bit for bit; with weights (also negative and above
+  1) the one of the mesh morphed on the CPU, 0 pixels more than 2 levels apart, on Metal, Vulkan through MoltenVK
+  and the native backend, also before linear and dual quaternion skinning; motion vectors, culling bounds and
+  ray-traced shadows follow the weights. The demo's Animation section has a view "Blend shapes" (a swaying blob
+  with four shapes on sliders), a scripted check with golden captures (`animation_blendshapes.txt`) and a check
+  mode item. Nobody has looked at it in motion.
 
 ## Fixes
 
@@ -255,3 +266,26 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
 - **`quench_cook_assets`** takes `RETARGET` (needs `SKELETON`); calls without it cook as before. In the cook library
   (`tools/cook/Cook.h`), **`cook::AnimationOptions`** has `retarget` at its end, and `RetargetMap`,
   `parseRetargetMap` and `retargetClips` are new.
+- **`.qmodel` version 4:** the cook writes version 4 (blend shapes); this engine still reads version 3 files (as
+  models without blend shapes), but an engine before this release cannot read the new files: a game that ships
+  cooked models cooks them with the engine it runs. **`assets::ModelMesh::morphTargets`**,
+  **`assets::ModelMorphTarget`** and **`assets::ModelMorphVertex`** are new; `writeModel` refuses more than 256
+  targets per mesh or a target with an offset count other than the vertex count.
+- **Meshes with glTF morph targets cook differently:** such a mesh becomes a part of its own per node (before, its
+  primitives were merged with the others of the same material and skin, and the targets were ignored), with its
+  vertices welded with their offsets. Models without morph targets cook to the same meshes as before.
+- **`render::MeshDesc`** has `morphs` and `morphTargetCount` at its end, **`render::MorphVertex`**,
+  **`Scene::setMorphWeights`** and **`Scene::morphTargetCount`** are new: designated initializers compile
+  unchanged. A mesh with blend shapes goes through the skinning pass even without joints
+  (`RenderStats::skinnedInstances` counts it).
+- **`render::ModelAsset::Part`** has `morphs` and `morphDefaults` at its end; **`ModelAsset::morphTargets()`**,
+  **`morphDefaults()`** and **`SceneAssets::setMorphWeights`** are new. A model's parts show the file's default
+  weights until the game sets them.
+- **The skinning pass's buffers** (for a game's own compute shader that reads them): the palette buffer holds an
+  instance's (target, weight) rows in front of its joint rows (`SkinUniforms::counts.y` is still its first joint
+  row), `SkinUniforms::morph` is new (the count of those rows, the first of them, 1 when the mesh has joints), and
+  instances with weights are posed by a second entry, `skin_morph_cs`, which reads a fourth storage buffer, the
+  mesh's morph offsets. Skinned meshes without weights cost what they did (within 2.5% on the demo's crowd).
+- **The cook library** links fastgltf's simdjson (for glTF extras); `cook::loadGltf` takes an optional
+  `GltfExtras*`, and `cook::morphTargetName` is new. `quench_cook model --verbose` prints the blend shape count
+  before the byte count.

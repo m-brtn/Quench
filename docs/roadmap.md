@@ -229,7 +229,11 @@ the user"). Described in [Animation](animation.md).
   RETARGET ...)`: a JSON bone map by name, rest pose and bone direction correction, root and hips translations
   scaled) with the demo's second character (the strider: other names, proportions and a T-pose) walking beside the
   mannequin, its scripted check and golden captures.
-- Not done, remaining: blend shapes; the look in motion of animation LOD and of the retargeted walk; the check in motion by the user (foot sliding, blend pops, IK) and on
+- Done after 0.9.0 (not released): blend shapes (glTF morph targets cooked into `.qmodel` version 4, applied by the
+  skinning pass before the joints, weights set per instance or by name for a cooked model) with the demo's blob, its
+  scripted check and golden captures.
+- Not done, remaining: blend shape weights from clips; the look in motion of animation LOD, of the retargeted walk
+  and of the blend shapes; the check in motion by the user (foot sliding, blend pops, IK) and on
   the iPhone. The release went ahead before those checks (decided without the user, 2026-11-06, as recommended);
   the release notes list them as not verified.
 - Done: version 0.6.0 (with the cut-out and translucent shadows), release notes in
@@ -464,7 +468,7 @@ BRDF; own procedural content only. No release (the version stays 0.9.0); "Change
 The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, stage 11 with 0.9.0, and stage
 12 (area lights, anisotropy, the tunnel) after it, not yet released. What stays open, in the order it is useful (nothing of it is scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (33 items:
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (40 items:
    the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
    input devices, loading and streaming, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
    and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
@@ -481,8 +485,8 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); retargeting
-   and blend shapes (stage 8); normal maps
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); blend shape
+   weights from clips (stage 8); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray
    tracing, normal maps in ray hits (stage 12).

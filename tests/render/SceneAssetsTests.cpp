@@ -349,3 +349,100 @@ QUENCH_TEST(scene_assets_model_states) {
     }
     fs::setBackend(nullptr);
 }
+
+namespace {
+
+// A cooked model of two boxes (half extents 0.5, base at y = 0), green at x -2 and red at x 2. The green one's blend
+// shape "slide" (+1.5 m in x) is at weight 1 by default; the red one has "hop" (-2 m in z) and its own "slide" (+2 m
+// in z), both at 0.
+std::vector<std::uint8_t> morphingBoxes() {
+    const MeshData box = boxMesh(glm::vec3(0.5f));
+    assets::ModelData model;
+    for (int part = 0; part < 2; ++part) {
+        assets::ModelMesh mesh;
+        mesh.name = part == 0 ? "green box" : "red box";
+        mesh.material = std::uint32_t(part);
+        const glm::vec3 at(part == 0 ? -2.0f : 2.0f, 0.5f, 0.0f);
+        for (const Vertex& v : box.vertices) mesh.vertices.push_back({v.position + at, v.normal, v.uv, v.color});
+        mesh.indices = box.indices;
+        mesh.lods.push_back({0, std::uint32_t(box.indices.size()), 0.0f});
+        mesh.boundsMin = at - glm::vec3(0.5f);
+        mesh.boundsMax = at + glm::vec3(0.5f);
+        const auto target = [&](const char* name, float weight, glm::vec3 offset) {
+            assets::ModelMorphTarget t{.name = name, .weight = weight};
+            t.offsets.assign(mesh.vertices.size(), assets::ModelMorphVertex{.position = offset});
+            mesh.morphTargets.push_back(std::move(t));
+        };
+        if (part == 0)
+            target("slide", 1.0f, {1.5f, 0.0f, 0.0f});
+        else {
+            target("hop", 0.0f, {0.0f, 0.0f, -2.0f});
+            target("slide", 0.0f, {0.0f, 0.0f, 2.0f});
+        }
+        model.meshes.push_back(std::move(mesh));
+    }
+    model.materials.push_back(
+        {.name = "green", .baseColor = glm::vec4(0.05f, 0.7f, 0.05f, 1.0f), .roughness = 1.0f, .metallic = 0.0f});
+    model.materials.push_back(
+        {.name = "red", .baseColor = glm::vec4(0.7f, 0.05f, 0.05f, 1.0f), .roughness = 1.0f, .metallic = 0.0f});
+    model.boundsMin = glm::vec3(-2.5f, 0.0f, -0.5f);
+    model.boundsMax = glm::vec3(2.5f, 1.0f, 0.5f);
+    Result<std::vector<std::uint8_t>> file = assets::writeModel(model);
+    CHECK(file, "writeModel: %s", file ? "" : file.error().c_str());
+    return file ? *file : std::vector<std::uint8_t>{};
+}
+
+} // namespace
+
+// Blend shapes of a model: by name across its parts, the file's defaults until set, kept across a reload.
+QUENCH_TEST(scene_assets_blend_shapes) {
+    QUENCH_GPU_DEVICE(device);
+    useDir("scene_assets_blend_shapes");
+    writeFile("models/boxes.qmodel", morphingBoxes());
+    {
+        Result<Renderer> renderer = Renderer::create(device, plainSettings());
+        REQUIRE(renderer, "%s", renderer.error().c_str());
+        Result<gpu::Texture> target = device.createTexture({.format = gpu::TextureFormat::Rgba8Unorm,
+                                                            .usage = gpu::TextureUsage::ColorTarget,
+                                                            .width = kSize,
+                                                            .height = kSize,
+                                                            .name = "scene assets target"});
+        REQUIRE(target, "%s", target.error().c_str());
+        Fixture f{device, std::move(*renderer), Scene(device), std::move(*target)};
+        f.scene.addLight({.type = LightType::Directional, .color = glm::vec3(3.0f), .direction = {0.0f, -1.0f, -0.2f}});
+        JobSystem jobs(JobSystemDesc{.workerThreads = 1});
+        assets::AssetManager manager(jobs);
+        SceneAssets sceneAssets(f.scene, manager);
+        const assets::AssetRef<ModelAsset> model = sceneAssets.loadModel("models/boxes.qmodel");
+        const ModelInstanceId placed = sceneAssets.addModel(model, glm::mat4(1.0f));
+        sceneAssets.setMorphWeights(placed, std::array{0.0f}); // while loading: ignored
+        REQUIRE(settle(manager, sceneAssets), "the load did not finish");
+        REQUIRE(model.ready() && model->parts().size() == 2, "%s, %zu parts", stateName(model.state()),
+                model->parts().size());
+        CHECK(model->morphTargets().size() == 2 && model->morphTargets()[0] == "slide" &&
+                  model->morphTargets()[1] == "hop" && model->morphDefaults()[0] == 1.0f &&
+                  model->morphDefaults()[1] == 0.0f,
+              "%zu blend shapes by name, the first part's defaults", model->morphTargets().size());
+        CHECK(model->parts()[1].morphs == (std::vector<std::uint32_t>{1, 0}), "the red box's shapes by name");
+
+        const auto top = [&](float x, float z) { return pixelOf(f.view, glm::vec3(x, 1.0f, z)); };
+        const auto check = [&](const char* what, glm::vec2 greenAt, glm::vec2 redAt) {
+            const Frame frame = f.render();
+            const int g = frame.count(top(greenAt.x, greenAt.y), 1, green);
+            const int r = frame.count(top(redAt.x, redAt.y), 1, red);
+            CHECK(g == 9 && r == 9, "%s: green at %.1f %.1f (%d of 9 pixels), red at %.1f %.1f (%d of 9)", what,
+                  double(greenAt.x), double(greenAt.y), g, double(redAt.x), double(redAt.y), r);
+        };
+        check("the file's defaults", {-0.5f, 0.0f}, {2.0f, 0.0f});
+        sceneAssets.setMorphWeights(placed, std::array{0.0f, 1.0f});
+        check("slide 0, hop 1", {-2.0f, 0.0f}, {2.0f, -2.0f});
+        sceneAssets.setMorphWeights(placed, std::array{1.0f});
+        check("slide 1 in both parts, hop 0", {-0.5f, 0.0f}, {2.0f, 2.0f});
+
+        manager.reload(model->id());
+        REQUIRE(settle(manager, sceneAssets), "the reload did not finish");
+        CHECK(model->version() >= 2, "reloaded: version %u", model->version());
+        check("after a reload, the weights kept", {-0.5f, 0.0f}, {2.0f, 2.0f});
+    }
+    fs::setBackend(nullptr);
+}

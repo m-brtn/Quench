@@ -418,7 +418,7 @@ if(NOT QUENCH_HEADLESS)
                 hdr_on:demo_hdr_on physics:demo_physics input:demo_input assets:demo_assets audio:demo_audio
                 animation:demo_animation animation_blend2d:demo_animation_blend2d animation_lod
                 animation_skinning:demo_animation_skinning
-                animation_retarget:demo_animation_retarget
+                animation_retarget:demo_animation_retarget animation_blendshapes:demo_animation_blendshapes
                 ui:demo_ui compact_portrait:demo_compact_portrait
                 compact_landscape:demo_compact_landscape menu audio_tone audio_flyby audio_music audio_reverb
                 audio_hrtf)

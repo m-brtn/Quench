@@ -1,0 +1,5 @@
+{
+  "layers": [
+    {"name": "base", "states": [{"name": "sway", "clip": "sway", "loop": true}]}
+  ]
+}

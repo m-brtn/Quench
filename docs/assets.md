@@ -157,9 +157,14 @@ synchronous loads.
   names and inverse bind matrices, per skinned part a skin index and per vertex four 16-bit joint indices and
   weights (`ModelSkinVertex`, weights summing to 65535). Skinned parts keep their vertices in the skin's bind space
   (no node transform applied). Version 3 (stage 11) adds the tangent: xyz along +u, w the sign of the bitangent
-  (`w * cross(normal, tangent)` points toward -v, the normal map's +y), as glTF's `TANGENT`. Versions 1 and 2 are
+  (`w * cross(normal, tangent)` points toward -v, the normal map's +y), as glTF's `TANGENT`. Version 4 (stage 8's
+  blend shapes, 2026-11-07) adds per mesh its morph targets: per target a name, a default weight and one offset per
+  vertex (`ModelMorphVertex`: position, normal and tangent offsets, 36 bytes, compressed with the vertex codec).
+  The cook writes version 4; version 3 files are still read (as models without blend shapes), so files cooked by
+  an earlier engine keep loading, but an engine before version 4 cannot read the new files. Versions 1 and 2 are
   rejected with an error that says to cook the source again (they have no tangents; a cooked file is rebuilt from
-  its source by `quench_cook_assets()` whenever the cook changes, so only files cooked by hand need it).
+  its source by `quench_cook_assets()` whenever the cook changes, so only files cooked by hand need it). At most
+  256 targets per mesh.
 - **Tangents**: the cook keeps a glTF's `TANGENT` (turned with the node transform, w flipped under a mirroring
   transform) and otherwise generates MikkTSpace tangents (`assets::generateTangents`, `include/quench/assets/
   Tangents.h`), the frame normal map bakers use; vertices that need two tangents (mirrored uv seams) are split.
@@ -205,6 +210,16 @@ quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skele
   Skinned meshes (stage 8) keep their skin: joint names, inverse bind matrices, four joints and weights per vertex
   (`JOINTS_0` and `WEIGHTS_0`, renormalized; a `JOINTS_1` set is dropped with a note); `--scale` is refused for
   them (scale the source).
+- **Blend shapes** (morph targets, 2026-11-07): a primitive's `targets` (`POSITION`, `NORMAL` and `TANGENT`
+  offsets) become the mesh's morph targets, named by the glTF mesh's `extras.targetNames` (as Blender and three.js
+  write them; otherwise `<mesh>.target<index>`) with the node's `weights` (else the mesh's) as their defaults. The
+  offsets are turned like the vertices: positions by the node transform's linear part, normal and tangent offsets so
+  that the renderer's normalized sum is the transformed morphed vector (an offset is scaled by 1 over the length of
+  its transformed base vector). Without the file's normals the cook computes the targets' normals as it does the
+  base's, from the moved positions; without the file's tangents (MikkTSpace) the tangent offsets are 0. A mesh with
+  blend shapes is a part of its own per node (its weights are the node's); its vertices are welded with their
+  offsets, so two vertices alike except in a target stay apart. Weight animations (`weights` channels) are not
+  cooked yet. `quench_cook model --verbose` counts the blend shapes.
 - **Skeletons** (stage 8): the joints of the file's skins with their ancestors and the non-mesh nodes below joints
   (attachment points such as a hand socket), or the animated nodes of a file without skins; rest transforms from
   the nodes.
@@ -274,16 +289,20 @@ library, procedural, CC0) writes five WAV files into the build tree at build tim
 SOUNDS ...)` checks and copies them ([Audio](audio.md#demo-and-tests)). Its animated character is not in git either:
 `tools/assets/make_demo_character.py` (procedural, CC0) writes a mannequin with its clips as glTF and its clip
 settings at build time, and `quench_cook_assets(... MODELS ... SKELETONS ... ANIMATIONS ...)` cooks it
-([Animation](animation.md#demo-and-tests)).
+([Animation](animation.md#demo-and-tests)); `tools/assets/make_demo_blob.py` writes the blend shape creature the same
+way (four targets, no normals in the file).
 
 Tests: `core.jobs_*` (also without workers and under stress), `physics.*` (Jolt on the job system, single-threaded,
 two worlds on one pool, worker priority), `assets.*` (the manager with a test asset type, KTX2,
-BC7 decoding, `.qmodel`, the streaming grid), `audio.sound_assets` (the sound type: loading, plays of a loading
+BC7 decoding, `.qmodel` with blend shapes and the version 3 reader, the streaming grid), `audio.sound_assets` (the
+sound type: loading, plays of a loading
 sound, missing and broken files, a late one-shot dropped), `animation.missing_and_corrupt_assets_hold_the_rest_pose`
 and `animation.reload_rebinds_and_keeps_parameters`, `cook.*` and `cook_cli` (sounds, skeletons, clips and skinned
-models included),
+models included; `cook.cook_model_morph_targets`: names, default weights, offsets under a non-uniform node scale,
+welding, computed normals),
 `render.scene_assets_*` and `render_vulkan.scene_assets_*` (pixels of placeholders, loaded textures and models,
-failures; Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_assets_vulkan`.
+failures; `scene_assets_blend_shapes`: weights by name across parts, the file's defaults, kept across a reload;
+Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_assets_vulkan`.
 
 ## Limitations
 
@@ -298,8 +317,11 @@ failures; Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_a
   at 4x4 only (8 bits per texel, as BC7), LDR only; HDR images and larger blocks are not offered.
 - **Materials**: normal and emissive textures are cooked, named in the model and read by the standard surface
   (`SceneAssets` puts them into a material's textures 2 and 3; [Render module](render.md)); ray hits do not read
-  normal maps. Occlusion textures, `KHR_texture_transform` and unlit materials are dropped with a note; morph
-  targets, cameras and lights of glTF files are not cooked.
+  normal maps. Occlusion textures, `KHR_texture_transform` and unlit materials are dropped with a note; cameras and
+  lights of glTF files are not cooked.
+- **Blend shapes**: the offsets are dense (one per vertex and target, also where a target moves nothing: 36 bytes
+  per vertex and target in the file, 48 on the GPU). Sparse target accessors go through fastgltf's accessor reading
+  like every other, but no test file has one. The levels of detail are simplified from the base shape only.
 - **One scene per manager**: `SceneAssets` registers its asset types on its manager, so a second scene needs a
   second `AssetManager` (with its own cache: a file used by both scenes loads twice).
 - **Streaming** loads and unloads by distance; there is no memory budget across cells beyond the manager's per-type

@@ -1,0 +1,34 @@
+# Animation, blend shapes (ctest: demo_animation_blendshapes_<backend>, a part of batch.txt): the blob, a jelly body
+# with two eyes on three joints, sways by its clip while four blend shapes reshape it before its skinning. The capture
+# shows it puffed out and spiked (puff 0.7, spikes 1, squash 0.3) 1 s after the restart, its normals following the
+# spikes. The waits end half a frame away from a step of the fixed clock (see animation_retarget.txt).
+section animation
+
+set dither 0
+until anim_ready == 1 3
+expect anim_failed == 0
+set crowd 0
+set view blendshapes
+set restart 1
+wait 0.054
+expect anim_characters == 9
+until anim_bound == 9 1
+until anim_ready == 1 3
+expect blob_shapes == 4
+set blob_puff 0.7
+set blob_spikes 1
+set blob_squash 0.3
+expect blob_weight_spikes == 1
+wait 1.004
+windows off
+capture demo_animation_blendshapes.png
+windows on
+
+set blob_puff 0
+set blob_spikes 0
+set blob_squash 0
+expect blob_weight_puff == 0
+set view hero
+set crowd 48
+until anim_ready == 1 3
+quit

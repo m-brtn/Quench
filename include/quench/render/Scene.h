@@ -60,6 +60,14 @@ struct SkinVertex {
 };
 static_assert(sizeof(SkinVertex) == 16);
 
+// One vertex's offsets in a blend shape (morph target; the layout of assets::ModelMorphVertex).
+struct MorphVertex {
+    glm::vec3 position{0.0f};
+    glm::vec3 normal{0.0f};
+    glm::vec3 tangent{0.0f};
+};
+static_assert(sizeof(MorphVertex) == 36);
+
 struct MeshDesc {
     std::span<const Vertex> vertices;
     std::span<const std::uint32_t> indices; // triangle list, counter-clockwise front faces
@@ -68,6 +76,11 @@ struct MeshDesc {
     // matrices for (Scene::setJointPalette). Empty: a rigid mesh.
     std::span<const SkinVertex> skin{};
     std::uint32_t jointCount = 0;
+    // Blend shapes: morphTargetCount targets of one offset per vertex each, the first target's first
+    // (morphs.size() == morphTargetCount * vertices.size()). Their instances get weights (Scene::setMorphWeights);
+    // the renderer adds the weighted offsets to the vertices on the GPU before skinning, in the same pass.
+    std::span<const MorphVertex> morphs{};
+    std::uint32_t morphTargetCount = 0;
 };
 
 // RGBA8 pixel data, rows tightly packed, top row first.
@@ -236,6 +249,12 @@ public:
     // the previous palette, as setTransform does for the transform; teleport: no motion from the old pose.
     void setJointPalette(InstanceId instance, std::span<const glm::mat4> palette, bool teleport = false);
     void setSkinning(InstanceId instance, Skinning skinning);
+    // The weights of the mesh's blend shapes, one per target (fewer: the rest 0); all 0 until the first call. A vertex
+    // moves by the sum of its targets' offsets times their weights (any value, also negative or above 1); its normal
+    // and tangent are the sums of theirs, normalized, the tangent made perpendicular to the normal. Targets at weight 0
+    // are skipped: with every weight 0 the vertices are the mesh's own, bit for bit. The culling bounds grow by the
+    // largest offsets times the weights; motion vectors follow the change from the previous weights.
+    void setMorphWeights(InstanceId instance, std::span<const float> weights);
     void removeInstance(InstanceId instance);
 
     LightId addLight(const LightDesc& desc);
@@ -253,7 +272,8 @@ public:
     // Instances that use a mesh or a material (0 for a stale handle).
     std::uint32_t meshUsers(MeshId mesh) const;
     std::uint32_t materialUsers(MaterialId material) const;
-    std::uint32_t jointCount(MeshId mesh) const; // MeshDesc::jointCount; 0: rigid (or a stale handle)
+    std::uint32_t jointCount(MeshId mesh) const;       // MeshDesc::jointCount; 0: rigid (or a stale handle)
+    std::uint32_t morphTargetCount(MeshId mesh) const; // MeshDesc::morphTargetCount (0 for a stale handle)
     std::uint32_t meshCount() const;
     std::uint32_t textureCount() const;
     std::uint32_t materialCount() const;

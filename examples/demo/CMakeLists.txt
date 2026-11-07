@@ -57,6 +57,21 @@ quench_cook_assets(quench_demo_retargeted SOURCE_DIR ${demo_character_dir}
     ANIMATIONS characters/mannequin.gltf
     SKELETON characters/strider.gltf
     RETARGET characters/strider.retarget.json)
+# The blend shape creature (tools/assets/make_demo_blob.py): a skinned model with four blend shapes, its skeleton and
+# its clip.
+set(demo_blob_files blob.gltf blob.bin blob.anim.json)
+list(TRANSFORM demo_blob_files PREPEND ${demo_character_dir}/characters/)
+add_custom_command(
+    OUTPUT ${demo_blob_files}
+    COMMAND ${Python3_EXECUTABLE} ${Quench_SOURCE_DIR}/tools/assets/make_demo_blob.py ${demo_character_dir}/characters
+    DEPENDS ${Quench_SOURCE_DIR}/tools/assets/make_demo_blob.py
+            ${Quench_SOURCE_DIR}/tools/assets/make_demo_character.py
+    COMMENT "Writing the demo's blend shape creature"
+    VERBATIM)
+quench_cook_assets(quench_demo_blob SOURCE_DIR ${demo_character_dir}
+    MODELS characters/blob.gltf
+    SKELETONS characters/blob.gltf
+    ANIMATIONS characters/blob.gltf)
 
 # The Tunnel section's textures: procedural PNG files written at build time (tools/assets/make_demo_tunnel.py) and
 # cooked into KTX2: colors in sRGB, normal and metallic-roughness maps linear.
@@ -98,7 +113,7 @@ quench_add_game(quench_demo
     ORIENTATIONS all
     ASSETS assets
     COOKED_ASSETS quench_demo_cooked quench_demo_sounds quench_demo_character quench_demo_strider
-                  quench_demo_retargeted quench_demo_tunnel quench_demo_licences
+                  quench_demo_retargeted quench_demo_blob quench_demo_tunnel quench_demo_licences
     SOURCES
         Camera.cpp
         Checks.cpp

@@ -1112,6 +1112,248 @@ QUENCH_TEST(renderer_rejects_bad_skins) {
     CHECK(scene.meshCount() == 1, "%u meshes", scene.meshCount());
 }
 
+namespace {
+
+// The renderer's blend shapes on the CPU, as Scene::setMorphWeights documents them: the weighted offsets added, the
+// normal normalized, the tangent made perpendicular to it and normalized.
+std::vector<Vertex> morphOnCpu(std::span<const Vertex> base, std::span<const MorphVertex> morphs,
+                               std::span<const float> weights) {
+    std::vector<Vertex> out(base.begin(), base.end());
+    for (std::size_t v = 0; v < out.size(); ++v) {
+        glm::vec3 dp(0.0f), dn(0.0f), dt(0.0f);
+        for (std::size_t k = 0; k < weights.size(); ++k) {
+            const MorphVertex& m = morphs[k * base.size() + v];
+            dp += weights[k] * m.position;
+            dn += weights[k] * m.normal;
+            dt += weights[k] * m.tangent;
+        }
+        out[v].position += dp;
+        out[v].normal = glm::normalize(out[v].normal + dn);
+        glm::vec3 t = glm::vec3(out[v].tangent) + dt;
+        t = glm::normalize(t - out[v].normal * glm::dot(out[v].normal, t));
+        out[v].tangent = glm::vec4(t, out[v].tangent.w);
+    }
+    return out;
+}
+
+// Two blend shapes of a mesh: "stretch" (its top 0.6 m up and 0.2 m out in x, its normals tilted up, its tangents
+// turned toward +z) and "shift" (all of it 3.5 m along +x).
+std::vector<MorphVertex> stretchAndShift(std::span<const Vertex> vertices, float top) {
+    std::vector<MorphVertex> out(vertices.size() * 2);
+    for (std::size_t v = 0; v < vertices.size(); ++v) {
+        const glm::vec3 p = vertices[v].position;
+        if (p.y > top - 1e-4f) out[v].position = {p.x > 0.0f ? 0.2f : -0.2f, 0.6f, 0.0f};
+        out[v].normal = {0.0f, 0.3f, 0.0f};
+        out[v].tangent = {0.0f, 0.0f, 0.4f};
+        out[vertices.size() + v].position = {3.5f, 0.0f, 0.0f};
+    }
+    return out;
+}
+
+struct PixelDiff {
+    int differing = 0; // pixels with a channel more than 2 apart
+    int largest = 0;
+};
+PixelDiff pixelDiff(const std::vector<Rgba8>& a, const std::vector<Rgba8>& b) {
+    PixelDiff d;
+    for (std::size_t i = 0; i < a.size() && i < b.size(); ++i) {
+        const int m = std::max({std::abs(a[i].r - b[i].r), std::abs(a[i].g - b[i].g), std::abs(a[i].b - b[i].b)});
+        d.largest = std::max(d.largest, m);
+        d.differing += m > 2 ? 1 : 0;
+    }
+    return d;
+}
+
+bool sameImage(const std::vector<Rgba8>& a, const std::vector<Rgba8>& b) {
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+                      [](Rgba8 x, Rgba8 y) { return std::memcmp(&x, &y, sizeof(Rgba8)) == 0; });
+}
+
+} // namespace
+
+// Blend shapes on a rigid box, lit through a normal map (so the tangents matter): at weight 0 the image is the one of
+// the mesh without blend shapes, bit for bit; at other weights the one of a mesh built from the morphed vertices on
+// the CPU. A shape that moves the box into view counts for culling, and a change of weights moves it.
+QUENCH_TEST(renderer_blend_shapes) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, plainSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const MeshData box = boxMesh(glm::vec3(0.5f));
+    const std::vector<MorphVertex> morphs = stretchAndShift(box.vertices, 0.5f);
+    MeshDesc desc = box.desc();
+    desc.morphs = morphs;
+    desc.morphTargetCount = 2;
+    Result<MeshId> morphMesh = scene.addMesh(desc);
+    REQUIRE(morphMesh, "%s", morphMesh.error().c_str());
+    CHECK(scene.morphTargetCount(*morphMesh) == 2 && scene.jointCount(*morphMesh) == 0, "%u targets",
+          scene.morphTargetCount(*morphMesh));
+    const MeshId plainMesh = addMesh(scene, box);
+    std::vector<std::byte> pixels(4 * 4 * 4, std::byte{255});
+    for (std::size_t i = 0; i < 16; ++i) pixels[i * 4 + 0] = std::byte{60}; // the normal map's normals toward -u
+    Result<TextureId> normals = scene.addTexture({.width = 4, .height = 4, .pixels = pixels, .srgb = false});
+    REQUIRE(normals, "%s", normals.error().c_str());
+    MaterialDesc material{.baseColor = glm::vec4(0.8f, 0.3f, 0.1f, 1.0f), .roughness = 0.5f};
+    material.textures[2] = *normals;
+    const MaterialId orange = scene.addMaterial(material);
+    const glm::mat4 place = glm::rotate(glm::mat4(1.0f), 0.5f, {0.0f, 1.0f, 0.0f});
+    const InstanceId morphed = scene.addInstance({.mesh = *morphMesh, .material = orange, .transform = place});
+    const InstanceId plain = scene.addInstance({.mesh = plainMesh, .material = orange, .transform = place});
+    addSun(scene, glm::normalize(glm::vec3(-0.4f, -1.0f, -0.6f)));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0.0f, 1.2f, 3.5f), glm::vec3(0.0f, 0.4f, 0.0f));
+    InstanceId cpu{};
+    const auto show = [&](InstanceId instance) {
+        for (const InstanceId i : {morphed, plain, cpu})
+            if (i) scene.setVisible(i, i == instance);
+        return renderOnce(device, *renderer, scene, view, *target);
+    };
+
+    const std::vector<Rgba8> reference = show(plain);
+    const std::vector<Rgba8> rest = show(morphed);
+    CHECK(sameImage(rest, reference), "no weights: the mesh's own vertices, bit for bit (%d pixels differ)",
+          pixelDiff(rest, reference).differing);
+    CHECK(renderer->stats().skinnedInstances == 1, "a rigid mesh with blend shapes is deformed: %u",
+          renderer->stats().skinnedInstances);
+
+    for (const std::array<float, 2> weights :
+         {std::array{1.0f, 0.0f}, std::array{0.6f, -0.15f}, std::array{1.4f, 0.1f}}) {
+        scene.setMorphWeights(morphed, weights);
+        const std::vector<Rgba8> gpu = show(morphed);
+        const std::vector<Vertex> vertices = morphOnCpu(box.vertices, morphs, weights);
+        Result<MeshId> built = scene.addMesh({vertices, box.indices, "morphed on the CPU"});
+        REQUIRE(built, "%s", built.error().c_str());
+        cpu = scene.addInstance({.mesh = *built, .material = orange, .transform = place});
+        const std::vector<Rgba8> expected = show(cpu);
+        const PixelDiff d = pixelDiff(gpu, expected);
+        CHECK(d.differing <= 2 && !sameImage(gpu, reference),
+              "weights %.2f %.2f: as the mesh morphed on the CPU (%d pixels more than 2 apart, at most %d)",
+              double(weights[0]), double(weights[1]), d.differing, d.largest);
+        scene.removeInstance(cpu);
+        scene.removeMesh(*built);
+        cpu = {};
+    }
+    scene.setMorphWeights(morphed, std::array{0.0f, 0.0f});
+    CHECK(sameImage(show(morphed), reference), "weights back to 0: bit for bit again");
+    show(morphed);
+    CHECK(renderer->stats().skinnedReused == 1, "unchanged weights: the vertices reused (%u)",
+          renderer->stats().skinnedReused);
+
+    // Placed 3.5 m to its left, out of view; the shift brings it back, and the culling bounds follow.
+    scene.setTransform(morphed, place * glm::translate(glm::mat4(1.0f), {-3.5f, 0.0f, 0.0f}), true);
+    show(morphed);
+    CHECK(renderer->stats().culled == 1, "out of view: %u culled", renderer->stats().culled);
+    scene.setMorphWeights(morphed, std::array{0.0f, 1.0f});
+    const std::vector<Rgba8> shifted = show(morphed);
+    CHECK(renderer->stats().culled == 0 && pixelDiff(shifted, reference).differing <= 2,
+          "shifted back into view: %u culled, %d pixels differ", renderer->stats().culled,
+          pixelDiff(shifted, reference).differing);
+
+    std::vector<MorphVertex> fewer(morphs.begin(), morphs.end() - 1);
+    desc.morphs = fewer;
+    Result<MeshId> bad = scene.addMesh(desc);
+    CHECK(!bad && bad.error().find("morph offsets") != std::string::npos, "an offset per target and vertex: %s",
+          bad ? "accepted" : bad.error().c_str());
+}
+
+// A skinned mesh: the blend shapes before the joints (in the bind pose, then turned and moved with the bar), and
+// weight 0 bit for bit the skinned mesh without blend shapes, in both skinning methods.
+QUENCH_TEST(renderer_blend_shapes_before_skinning) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, plainSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const SkinnedBars bars = skinnedBars();
+    const std::vector<MorphVertex> morphs = stretchAndShift(bars.mesh.vertices, 2.0f);
+    MeshDesc desc = bars.desc();
+    desc.morphs = morphs;
+    desc.morphTargetCount = 2;
+    Result<MeshId> morphMesh = scene.addMesh(desc);
+    REQUIRE(morphMesh, "%s", morphMesh.error().c_str());
+    Result<MeshId> plainMesh = scene.addMesh(bars.desc());
+    REQUIRE(plainMesh, "%s", plainMesh.error().c_str());
+    const MaterialId red = scene.addMaterial({.baseColor = glm::vec4(0.8f, 0.05f, 0.05f, 1.0f)});
+    const InstanceId morphed = scene.addInstance({.mesh = *morphMesh, .material = red});
+    const InstanceId plain = scene.addInstance({.mesh = *plainMesh, .material = red});
+    addSun(scene, glm::vec3(-0.3f, -1.0f, -0.5f));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0.75f, 1.0f, 6.0f), glm::vec3(0.75f, 1.0f, 0.0f));
+    // Joint 1 turns the upper bar by 90 degrees about z and moves it right.
+    const std::array<glm::mat4, 2> palette{glm::mat4(1.0f),
+                                           glm::rotate(glm::translate(glm::mat4(1.0f), {2.5f, 1.0f, 0.0f}),
+                                                       glm::radians(-90.0f), glm::vec3(0.0f, 0.0f, 1.0f)) *
+                                               glm::translate(glm::mat4(1.0f), {0.0f, -1.0f, 0.0f})};
+    scene.setJointPalette(morphed, palette);
+    scene.setJointPalette(plain, palette);
+    InstanceId cpu{};
+    const auto show = [&](InstanceId instance) {
+        for (const InstanceId i : {morphed, plain, cpu})
+            if (i) scene.setVisible(i, i == instance);
+        return renderOnce(device, *renderer, scene, view, *target);
+    };
+    for (const Skinning skinning : {Skinning::Linear, Skinning::DualQuaternion}) {
+        const char* name = skinning == Skinning::Linear ? "linear" : "dual quaternion";
+        scene.setSkinning(morphed, skinning);
+        scene.setSkinning(plain, skinning);
+        scene.setMorphWeights(morphed, {});
+        const std::vector<Rgba8> reference = show(plain);
+        CHECK(sameImage(show(morphed), reference), "%s, no weights: the skinned mesh's image, bit for bit", name);
+        const std::array weights{1.0f, 0.0f};
+        scene.setMorphWeights(morphed, weights);
+        const std::vector<Rgba8> gpu = show(morphed);
+        const std::vector<Vertex> vertices = morphOnCpu(bars.mesh.vertices, morphs, weights);
+        Result<MeshId> built = scene.addMesh({vertices, bars.mesh.indices, "morphed on the CPU", bars.skin, 2});
+        REQUIRE(built, "%s", built.error().c_str());
+        cpu = scene.addInstance({.mesh = *built, .material = red});
+        scene.setSkinning(cpu, skinning);
+        scene.setJointPalette(cpu, palette);
+        const std::vector<Rgba8> expected = show(cpu);
+        const PixelDiff d = pixelDiff(gpu, expected);
+        CHECK(d.differing <= 2 && !sameImage(gpu, reference),
+              "%s: morphed in the bind pose, then skinned (%d pixels more than 2 apart, at most %d)", name, d.differing,
+              d.largest);
+        scene.removeInstance(cpu);
+        scene.removeMesh(*built);
+        cpu = {};
+    }
+}
+
+// Motion vectors (TAA) follow the weights as they follow a palette: a change has motion, unchanged weights none.
+QUENCH_TEST(renderer_blend_shape_motion_vectors) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.antiAliasing = AntiAliasing::Taa;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().antiAliasing != AntiAliasing::Taa) QUENCH_SKIP("no TAA on this device");
+    Scene scene(device);
+    const MeshData box = boxMesh(glm::vec3(0.5f));
+    const std::vector<MorphVertex> morphs = stretchAndShift(box.vertices, 0.5f);
+    MeshDesc desc = box.desc();
+    desc.morphs = morphs;
+    desc.morphTargetCount = 2;
+    Result<MeshId> mesh = scene.addMesh(desc);
+    REQUIRE(mesh, "%s", mesh.error().c_str());
+    const InstanceId instance = scene.addInstance({.mesh = *mesh, .material = scene.addMaterial({})});
+    addSun(scene, glm::vec3(-0.3f, -1.0f, -0.5f));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0.0f, 1.2f, 3.5f), glm::vec3(0.0f, 0.4f, 0.0f));
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().movedInstances == 0, "no weights: no motion");
+    for (int frame = 0; frame < 3; ++frame) {
+        scene.setMorphWeights(instance, std::array{std::array{0.3f, 0.6f, 0.9f}[std::size_t(frame)]});
+        renderOnce(device, *renderer, scene, view, *target);
+        CHECK(renderer->stats().movedInstances == 1, "frame %d: %u in the motion vectors", frame,
+              renderer->stats().movedInstances);
+    }
+    scene.setMorphWeights(instance, std::array{0.9f, 0.0f});
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().movedInstances == 0, "unchanged weights (the second given as 0) have no motion");
+}
+
 // ---------------------------------------------------------------- ray tracing and upscaling (native Metal backend)
 
 namespace {
@@ -1337,6 +1579,51 @@ QUENCH_TEST(renderer_ray_traced_skinned_shadows) {
               sum(at(pixels, hole)), l);
         CHECK(std::abs(sum(at(pixels, bindPlace)) - l) * 20 < l, "no shadow at the bind place: %d vs lit %d",
               sum(at(pixels, bindPlace)), l);
+    }
+}
+
+// A rigid panel 2 m up whose blend shape moves it 2.5 m toward -z: the ray-traced shadow follows the weight (the
+// panel's bottom level is built from the deformed vertices and refitted after).
+QUENCH_TEST(renderer_ray_traced_blend_shape_shadows) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.sky = false;
+    Result<Renderer> renderer = Renderer::create(device, rayTraced(settings));
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!rayTracingActive(device, *renderer)) QUENCH_SKIP("no ray tracing: shadow maps");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.5f), .roughness = 0.9f})});
+    const MeshData plane = planeMesh(glm::vec2(1.0f));
+    const std::vector<MorphVertex> away(plane.vertices.size(), MorphVertex{.position = {0.0f, 0.0f, -2.5f}});
+    Result<MeshId> panel = scene.addMesh({.vertices = plane.vertices,
+                                          .indices = plane.indices,
+                                          .name = "panel with a blend shape",
+                                          .morphs = away,
+                                          .morphTargetCount = 1});
+    REQUIRE(panel, "%s", panel.error().c_str());
+    const InstanceId caster =
+        scene.addInstance({.mesh = *panel, .material = scene.addMaterial({}), .transform = kPanelPlace});
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const glm::ivec2 moved = pixelOf(kTopView, {2.0f, 0, -2.5f}), rest = pixelOf(kTopView, {2.0f, 0, 0.3f}),
+                     lit = pixelOf(kTopView, {-3.0f, 0, -2.5f});
+    for (int frame = 0; frame < 2; ++frame) {
+        if (frame == 1) scene.setMorphWeights(caster, std::array{1.0f});
+        const std::vector<Rgba8> pixels = renderOnce(device, *renderer, scene, kTopView, *target);
+        REQUIRE(pixels.size() == kSize * kSize, "%zu pixels", pixels.size());
+        const RenderStats& stats = renderer->stats();
+        CHECK(frame == 0 ? stats.rayBuilds == 2 && stats.rayRefits == 0 : stats.rayBuilds == 0 && stats.rayRefits == 1,
+              "frame %d: %u built, %u refitted", frame, stats.rayBuilds, stats.rayRefits);
+        const int l = sum(at(pixels, lit)), shadowed = sum(at(pixels, frame == 0 ? rest : moved)),
+                  free = sum(at(pixels, frame == 0 ? moved : rest));
+        std::printf("  weight %d: shadow %d, the other place %d, lit %d\n", frame, shadowed, free, l);
+        CHECK(shadowed * 10 < l * 7 && std::abs(free - l) * 20 < l,
+              "weight %d: the shadow where the panel is (%d), none where it is not (%d), lit %d", frame, shadowed, free,
+              l);
     }
 }
 

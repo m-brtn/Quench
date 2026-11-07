@@ -157,13 +157,17 @@ struct Batch {
     bool depthMaterial = false;                   // the prepass pipeline reads the material (cut-outs)
 };
 
+// The pose of one deformed instance (skinned, with blend shapes, or both) in the skinning pass.
 struct SkinJob {
     const MeshEntry* mesh = nullptr;
-    std::uint32_t firstJoint = 0;
-    std::uint32_t offset = 0; // first vertex in the skinned vertex buffer
-    // The palette has not changed since the instance was skinned last frame at this offset: copied from there.
+    std::uint32_t firstRow = 0; // of its joints (three rows each) in the palette buffer
+    std::uint32_t offset = 0;   // first vertex in the skinned vertex buffer
+    // The palette and weights have not changed since the instance was skinned last frame at this offset: copied
+    // from there.
     std::uint32_t reuseFrom = kNotSkinned;
-    bool dualQuaternion = false; // the palette's rows are dual quaternions (dualQuaternionRows)
+    bool dualQuaternion = false;   // the palette's rows are dual quaternions (dualQuaternionRows)
+    std::uint32_t weightRow = 0;   // its blend shapes' weights in the palette buffer: (target, weight) per row
+    std::uint32_t weightCount = 0; // targets with a weight other than 0
 };
 
 // A palette matrix as three rows for Skinning::DualQuaternion: its rotation as a quaternion, the dual part (half the
@@ -282,7 +286,8 @@ struct RendererImpl {
         velocityCutoutPipeline, velocitySkinCutoutPipeline, taaPipeline, bloomDownPipeline, bloomUpPipeline;
     std::array<gpu::GraphicsPipeline, 2> depthPipelines; // the ray tracing prepass of plain surfaces: [doubleSided]
     std::array<bool, 2> depthFailed{};
-    gpu::ComputePipeline skinPipeline; // empty: skinned instances are drawn in their bind pose (logged at init)
+    gpu::ComputePipeline skinPipeline;      // empty: skinned instances are drawn in their bind pose (logged at init)
+    gpu::ComputePipeline skinMorphPipeline; // blend shapes, then skinning
     std::map<TextureFormat, gpu::GraphicsPipeline> tonemapPipelines, fxaaPipelines;
 
     gpu::Sampler shadowSampler, linearClamp, pointClamp, materialSampler;
@@ -324,8 +329,8 @@ struct RendererImpl {
     bool skinnedReset = false;         // recreated this frame: no previous vertices
     gpu::Buffer paletteBuffer;
     gpu::TransferBuffer paletteTransfer;
-    std::uint32_t paletteCapacity = 0;  // joints
-    std::vector<glm::vec4> paletteData; // three rows per joint
+    std::uint32_t paletteCapacity = 0;  // rows (float4)
+    std::vector<glm::vec4> paletteData; // per job: its blend shape weights, then three rows per joint
     std::vector<SkinJob> skinJobs;
     std::vector<std::uint32_t> skinnedOffsets; // per instance slot; kNotSkinned
     std::uint32_t skinnedVertices = 0;
@@ -622,12 +627,17 @@ Result<void> RendererImpl::init() {
         !r)
         return r;
 
-    if (Result<gpu::ComputePipeline> p =
-            device->createComputePipeline({.shader = shaders::render_skin.find("skin_cs"), .name = "render skin"});
-        p)
-        skinPipeline = std::move(*p);
-    else
-        log::error("render", "skinning pipeline: {}; skinned meshes are drawn in their bind pose", p.error());
+    Result<gpu::ComputePipeline> skinning =
+        device->createComputePipeline({.shader = shaders::render_skin.find("skin_cs"), .name = "render skin"});
+    Result<gpu::ComputePipeline> morphing = device->createComputePipeline(
+        {.shader = shaders::render_skin.find("skin_morph_cs"), .name = "render skin blend shapes"});
+    if (skinning && morphing) {
+        skinPipeline = std::move(*skinning);
+        skinMorphPipeline = std::move(*morphing);
+    } else {
+        log::error("render", "skinning pipeline: {}; skinned meshes are drawn in their bind pose",
+                   skinning ? morphing.error() : skinning.error());
+    }
 
     standard.vertex = shaders::render_standard.find("surface_vs");
     standard.fragment = shaders::render_standard.find("surface_fs");
@@ -1127,9 +1137,9 @@ bool RendererImpl::ensureBuffers(gpu::CommandBuffer& commands) {
 }
 
 // The instance's range of this frame's skinned vertices, given out when it is first drawn; kNotSkinned for rigid
-// meshes and without the skinning pipeline.
+// meshes without blend shapes and without the skinning pipeline.
 std::uint32_t RendererImpl::skinnedOffset(const InstanceEntry& inst, std::uint32_t slot, const MeshEntry& mesh) {
-    if (mesh.jointCount == 0 || !skinPipeline) return kNotSkinned;
+    if (!deformed(mesh) || !skinPipeline) return kNotSkinned;
     std::uint32_t& offset = skinnedOffsets[slot];
     if (offset != kNotSkinned) return offset;
     offset = skinnedVertices;
@@ -1137,8 +1147,14 @@ std::uint32_t RendererImpl::skinnedOffset(const InstanceEntry& inst, std::uint32
     const bool unchanged = !inst.posed && inst.skinnedFrame != ~0ull && inst.skinnedFrame + 1 == frameIndex &&
                            inst.palette.size() == mesh.jointCount;
     const bool dualQuaternion = inst.desc.skinning == Skinning::DualQuaternion;
-    skinJobs.push_back({&mesh, std::uint32_t(paletteData.size() / 3), offset,
-                        unchanged ? inst.skinnedOffset : kNotSkinned, dualQuaternion});
+    SkinJob& job = skinJobs.emplace_back(SkinJob{&mesh, std::uint32_t(paletteData.size()), offset,
+                                                 unchanged ? inst.skinnedOffset : kNotSkinned, dualQuaternion});
+    for (std::size_t k = 0; k < inst.morphWeights.size(); ++k)
+        if (inst.morphWeights[k] != 0.0f) {
+            if (job.weightCount++ == 0) job.weightRow = std::uint32_t(paletteData.size());
+            paletteData.push_back(glm::vec4(float(k), inst.morphWeights[k], 0.0f, 0.0f));
+        }
+    job.firstRow = std::uint32_t(paletteData.size());
     const auto row = [](const glm::mat4& m, int r) { return glm::vec4(m[0][r], m[1][r], m[2][r], m[3][r]); };
     if (inst.palette.size() != mesh.jointCount) {
         const glm::mat4 identity(1.0f);
@@ -1201,15 +1217,15 @@ bool RendererImpl::skin(gpu::CommandBuffer& commands) {
         skinnedCapacity = vertices;
         skinnedReset = true;
     }
-    const auto joints = std::uint32_t(paletteData.size() / 3);
-    if (const std::uint32_t capacity = grow(paletteCapacity, joints); capacity != paletteCapacity || !paletteBuffer) {
+    const auto rows = std::uint32_t(paletteData.size());
+    if (const std::uint32_t capacity = grow(paletteCapacity, rows); capacity != paletteCapacity || !paletteBuffer) {
         Result<gpu::Buffer> b = device->createBuffer({.usage = gpu::BufferUsage::ComputeStorageRead,
-                                                      .size = capacity * 3 * std::uint32_t(sizeof(glm::vec4)),
+                                                      .size = capacity * std::uint32_t(sizeof(glm::vec4)),
                                                       .name = "render joint palettes"});
         Result<gpu::TransferBuffer> t = device->createTransferBuffer(
-            {.size = capacity * 3 * std::uint32_t(sizeof(glm::vec4)), .name = "render joint palettes"});
+            {.size = capacity * std::uint32_t(sizeof(glm::vec4)), .name = "render joint palettes"});
         if (!b || !t) {
-            log::error("render", "palette buffer ({} joints): {}", capacity, b ? t.error() : b.error());
+            log::error("render", "palette buffer ({} rows): {}", capacity, b ? t.error() : b.error());
             paletteCapacity = 0;
             return false;
         }
@@ -1220,12 +1236,12 @@ bool RendererImpl::skin(gpu::CommandBuffer& commands) {
     gpu::CommandBuffer own;
     if (timed) own = device->acquireCommandBuffer();
     gpu::CommandBuffer& target = own ? own : commands;
-    const auto bytes = std::uint32_t(paletteData.size() * sizeof(glm::vec4));
-    std::span<std::byte> mapped = paletteTransfer.map(true);
-    if (mapped.size() < bytes) return false;
-    std::memcpy(mapped.data(), paletteData.data(), bytes);
-    paletteTransfer.unmap();
-    {
+    // Empty when every job is a mesh without joints whose blend shapes are all at weight 0.
+    if (const auto bytes = std::uint32_t(paletteData.size() * sizeof(glm::vec4)); bytes > 0) {
+        std::span<std::byte> mapped = paletteTransfer.map(true);
+        if (mapped.size() < bytes) return false;
+        std::memcpy(mapped.data(), paletteData.data(), bytes);
+        paletteTransfer.unmap();
         gpu::CopyPass copy = target.beginCopyPass();
         copy.upload(paletteTransfer, 0, paletteBuffer, 0, bytes, true);
     }
@@ -1236,20 +1252,34 @@ bool RendererImpl::skin(gpu::CommandBuffer& commands) {
         const gpu::StorageBufferWrite write{.buffer = skinned[frameIndex & 1], .cycle = true};
         gpu::ComputePass pass = target.beginComputePass({&write, 1});
         if (!pass) return false;
-        pass.bindPipeline(skinPipeline);
+        const gpu::ComputePipeline* boundPipeline = nullptr;
         const MeshEntry* bound = nullptr;
         for (const SkinJob& job : skinJobs) {
             if (reused(job)) {
                 ++skinnedReusedCount;
                 continue;
             }
+            // Skinned meshes without weights take the plain entry; blend shapes (and meshes without joints, which
+            // are written as they are) the other.
+            const bool morph = job.weightCount > 0 || job.mesh->jointCount == 0;
+            const gpu::ComputePipeline& pipeline = morph ? skinMorphPipeline : skinPipeline;
+            if (&pipeline != boundPipeline) {
+                pass.bindPipeline(pipeline);
+                boundPipeline = &pipeline;
+                bound = nullptr;
+            }
             if (job.mesh != bound) {
-                const std::array<gpu::BufferRef, 3> inputs{job.mesh->vertices, job.mesh->skin, paletteBuffer};
-                pass.bindStorageBuffers(0, inputs);
+                // A mesh without joints binds its morph offsets in the skin's slot (not read).
+                const gpu::Buffer& skinBuffer = job.mesh->jointCount > 0 ? job.mesh->skin : job.mesh->morphs;
+                const std::array<gpu::BufferRef, 4> inputs{job.mesh->vertices, skinBuffer, paletteBuffer,
+                                                           job.mesh->morphs};
+                pass.bindStorageBuffers(0, std::span(inputs).first(morph ? 4 : 3));
                 bound = job.mesh;
             }
-            pass.pushUniforms(0, shader::SkinUniforms{glm::vec4(float(job.mesh->vertexCount), float(job.firstJoint),
-                                                                float(job.offset), job.dualQuaternion ? 1.0f : 0.0f)});
+            pass.pushUniforms(0, shader::SkinUniforms{glm::vec4(float(job.mesh->vertexCount), float(job.firstRow),
+                                                                float(job.offset), job.dualQuaternion ? 1.0f : 0.0f),
+                                                      glm::vec4(float(job.weightCount), float(job.weightRow),
+                                                                job.mesh->jointCount > 0 ? 1.0f : 0.0f, 0.0f)});
             pass.dispatch((job.mesh->vertexCount + kSkinGroup - 1) / kSkinGroup);
         }
     }
@@ -1651,7 +1681,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (rayTraced && (caster || seen)) {
             // Every caster is in the top level (and with hit shading every surface rays can see); skinned ones only
             // near the camera (they are posed for it).
-            const bool skinnedMesh = mesh->jointCount > 0 && skinPipeline;
+            const bool skinnedMesh = deformed(*mesh) && skinPipeline;
             if (!skinnedMesh || glm::length(center - cameraPos) - radius < settings.shadowDistance) {
                 if (skinnedMesh) skinnedOffset(*inst, i, *mesh);
                 const bool translucent =

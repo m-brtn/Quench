@@ -917,3 +917,149 @@ QUENCH_TEST(cook_model_tangents) {
     CHECK(all(tangentsOf(write("mirrored", true, R"(, "scale": [-1, 1, 1])")), {0, 0, 1, 1}),
           "a mirroring node turns w around");
 }
+
+// Blend shapes: a 3 x 3 grid on the xz plane, its center vertex doubled (the copy used by one quad, its "bump" offset
+// different, so welding must keep it), two targets ("bump" from extras.targetNames: the center up, normal and
+// tangent offsets; the second unnamed: a shear in x, positions only), on two nodes (the second scaled by 2 in x, its
+// own weights).
+QUENCH_TEST(cook_model_morph_targets) {
+    JobSystem jobs(JobSystemDesc{.workerThreads = 0});
+    const std::filesystem::path dir = tmpPath("cook_morph_targets");
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::vector<glm::vec3> grid;
+    for (int j = 0; j < 3; ++j)
+        for (int i = 0; i < 3; ++i) grid.push_back({0.5f * float(i), 0.0f, 0.5f * float(j)});
+    grid.push_back(grid[4]);
+    const auto bumpNormal = [](const glm::vec3& p) { return 0.6f * glm::vec3(p.x - 0.5f, 0.0f, p.z - 0.5f); };
+    const auto write = [&](const char* name, bool given) {
+        GltfWriter w;
+        std::vector<float> positions, normals, uvs, tangents, bump, bumpNormals, bumpTangents, shear;
+        for (std::size_t v = 0; v < grid.size(); ++v) {
+            const glm::vec3 p = grid[v];
+            positions.insert(positions.end(), {p.x, p.y, p.z});
+            normals.insert(normals.end(), {0, 1, 0});
+            uvs.insert(uvs.end(), {p.x, p.z});
+            tangents.insert(tangents.end(), {1, 0, 0, 1});
+            bump.insert(bump.end(), {0, v == 4 ? 0.5f : v == 9 ? 0.25f : 0.0f, 0});
+            const glm::vec3 n = bumpNormal(p);
+            bumpNormals.insert(bumpNormals.end(), {n.x, n.y, n.z});
+            bumpTangents.insert(bumpTangents.end(), {0, 0, 0.5f});
+            shear.insert(shear.end(), {0.1f * p.z, 0, 0});
+        }
+        std::vector<std::uint16_t> indices;
+        for (int j = 0; j < 2; ++j)
+            for (int i = 0; i < 2; ++i) {
+                const auto at = [&](int x, int z) {
+                    const int v = z * 3 + x;
+                    return std::uint16_t(v == 4 && i == 1 && j == 1 ? 9 : v);
+                };
+                indices.insert(indices.end(),
+                               {at(i, j), at(i, j + 1), at(i + 1, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1)});
+            }
+        const int count = int(grid.size());
+        const std::string bounds = R"(, "min": [0, 0, 0], "max": [1, 0, 1])";
+        const int p = w.add(positions, count, "VEC3", kFloat, bounds);
+        const int n = w.add(normals, count, "VEC3", kFloat);
+        const int uv = w.add(uvs, count, "VEC2", kFloat);
+        const int t = w.add(tangents, count, "VEC4", kFloat);
+        const int b = w.add(bump, count, "VEC3", kFloat, R"(, "min": [0, 0, 0], "max": [0, 0.5, 0])");
+        const int bn = w.add(bumpNormals, count, "VEC3", kFloat);
+        const int bt = w.add(bumpTangents, count, "VEC3", kFloat);
+        const int s = w.add(shear, count, "VEC3", kFloat, R"(, "min": [0, 0, 0], "max": [0.1, 0, 0])");
+        const int i = w.add(indices, int(indices.size()), "SCALAR", kUnsignedShort);
+        const std::string attributes =
+            given ? std::format(R"("POSITION": {}, "NORMAL": {}, "TEXCOORD_0": {}, "TANGENT": {})", p, n, uv, t)
+                  : std::format(R"("POSITION": {}, "TEXCOORD_0": {})", p, uv);
+        const std::string bumpTarget =
+            given ? std::format(R"({{"POSITION": {}, "NORMAL": {}, "TANGENT": {}}})", b, bn, bt)
+                  : std::format(R"({{"POSITION": {}}})", b);
+        const std::string json = std::format(
+            R"({{"asset": {{"version": "2.0"}}, "scene": 0, "scenes": [{{"nodes": [0, 1]}}],
+"nodes": [{{"mesh": 0}}, {{"mesh": 0, "translation": [3, 0, 0], "scale": [2, 1, 1], "weights": [0, 1]}}],
+"meshes": [{{"name": "sheet", "weights": [0.25, 0], "extras": {{"targetNames": ["bump"]}},
+  "primitives": [{{"attributes": {{{}}}, "indices": {}, "targets": [{}, {{"POSITION": {}}}]}}]}}],
+"buffers": [{{"uri": "{}.bin", "byteLength": {}}}], "bufferViews": [{}], "accessors": [{}]}})",
+            attributes, i, bumpTarget, s, name, w.bin.size(), join(w.views), join(w.accessors));
+        std::ofstream(dir / std::format("{}.gltf", name), std::ios::binary) << json;
+        std::ofstream(dir / std::format("{}.bin", name), std::ios::binary)
+            .write(reinterpret_cast<const char*>(w.bin.data()), std::streamsize(w.bin.size()));
+        return dir / std::format("{}.gltf", name);
+    };
+
+    Result<CookedModel> cooked = cookModel(write("given", true), "m", {}, jobs);
+    REQUIRE(cooked, "%s", cooked ? "" : cooked.error().c_str());
+    REQUIRE(cooked->model.meshes.size() == 2, "%zu meshes (one per node)", cooked->model.meshes.size());
+    for (std::size_t node = 0; node < 2; ++node) {
+        const assets::ModelMesh& mesh = cooked->model.meshes[node];
+        REQUIRE(mesh.vertices.size() == 10 && mesh.morphTargets.size() == 2, "node %zu: %zu vertices, %zu targets",
+                node, mesh.vertices.size(), mesh.morphTargets.size());
+        const assets::ModelMorphTarget& bump = mesh.morphTargets[0];
+        const assets::ModelMorphTarget& shear = mesh.morphTargets[1];
+        CHECK(bump.name == "bump" && shear.name == "sheet.target1", "node %zu: target names '%s', '%s'", node,
+              bump.name.c_str(), shear.name.c_str());
+        const float scaleX = node == 0 ? 1.0f : 2.0f;
+        CHECK(bump.weight == (node == 0 ? 0.25f : 0.0f) && shear.weight == (node == 0 ? 0.0f : 1.0f),
+              "node %zu: default weights %.2f, %.2f (the mesh's, the node's own)", node, bump.weight, shear.weight);
+        bool offsets = bump.offsets.size() == 10 && shear.offsets.size() == 10, centers = true;
+        int up = 0, half = 0;
+        float normalError = 0.0f, tangentError = 0.0f;
+        for (std::size_t v = 0; offsets && v < 10; ++v) {
+            const assets::ModelVertex& vertex = mesh.vertices[v];
+            const glm::vec3 source((vertex.position.x - (node == 0 ? 0.0f : 3.0f)) / scaleX, 0.0f, vertex.position.z);
+            const bool center = glm::length(source - grid[4]) < 1e-5f;
+            const float dy = bump.offsets[v].position.y;
+            if (center) {
+                up += dy == 0.5f;
+                half += dy == 0.25f;
+            } else
+                centers = centers && dy == 0.0f;
+            offsets = offsets && bump.offsets[v].position.x == 0.0f &&
+                      glm::length(shear.offsets[v].position - glm::vec3(scaleX * 0.1f * source.z, 0, 0)) < 1e-6f &&
+                      shear.offsets[v].normal == glm::vec3(0.0f) && shear.offsets[v].tangent == glm::vec3(0.0f);
+            // The renderer's normalize(n + dn) and normalize(t + dt) are the file's morphed vectors, transformed.
+            const glm::vec3 inverseTranspose(1.0f / scaleX, 1.0f, 1.0f), linear(scaleX, 1.0f, 1.0f);
+            const glm::vec3 normal = glm::normalize(inverseTranspose * (glm::vec3(0, 1, 0) + bumpNormal(source)));
+            const glm::vec3 tangent = glm::normalize(linear * glm::vec3(1, 0, 0.5f));
+            normalError =
+                std::max(normalError, glm::length(glm::normalize(vertex.normal + bump.offsets[v].normal) - normal));
+            tangentError =
+                std::max(tangentError,
+                         glm::length(glm::normalize(glm::vec3(vertex.tangent) + bump.offsets[v].tangent) - tangent));
+        }
+        CHECK(offsets && centers && up == 1 && half == 1,
+              "node %zu: position offsets (the doubled center kept apart: %d at 0.5, %d at 0.25)", node, up, half);
+        CHECK(normalError < 1e-5f && tangentError < 1e-5f, "node %zu: morphed normals off by %.2e, tangents by %.2e",
+              node, normalError, tangentError);
+    }
+    Result<assets::ModelData> read = assets::readModel(modelBytes(cooked->model));
+    CHECK(read && read->meshes.size() == 2 && read->meshes[1].morphTargets.size() == 2 &&
+              read->meshes[1].morphTargets[1].offsets[3].position ==
+                  cooked->model.meshes[1].morphTargets[1].offsets[3].position,
+          "the cooked blend shapes read back");
+
+    // Without the file's normals the targets' normals are computed like the base's, from the moved positions (the
+    // shear keeps the plane flat); without its tangents (MikkTSpace) the tangent offsets are 0.
+    Result<CookedModel> computed = cookModel(write("computed", false), "m", {.lods = 1}, jobs);
+    REQUIRE(computed && computed->model.meshes.size() == 2, "%s",
+            computed ? "not two meshes" : computed.error().c_str());
+    const assets::ModelMesh& mesh = computed->model.meshes[0];
+    REQUIRE(mesh.morphTargets.size() == 2 && mesh.morphTargets[0].offsets.size() == mesh.vertices.size(), "%zu targets",
+            mesh.morphTargets.size());
+    bool unit = true, flat = true, tangents = true, tilted = false;
+    for (std::size_t v = 0; v < mesh.vertices.size(); ++v) {
+        const glm::vec3 n = mesh.vertices[v].normal + mesh.morphTargets[0].offsets[v].normal;
+        unit = unit && std::abs(glm::length(n) - 1.0f) < 1e-4f;
+        flat = flat && glm::length(mesh.morphTargets[1].offsets[v].normal) < 1e-6f;
+        tangents = tangents && mesh.morphTargets[0].offsets[v].tangent == glm::vec3(0.0f);
+        // The edge's middle vertex at z = 0 faces away from the raised center.
+        if (glm::length(mesh.vertices[v].position - glm::vec3(0.5f, 0.0f, 0.0f)) < 1e-5f) tilted = n.z < -0.1f;
+    }
+    CHECK(unit && flat && tangents && tilted, "computed: unit %d, the shear flat %d, tangent offsets 0 %d, tilted %d",
+          unit, flat, tangents, tilted);
+
+    // The rest of the cook is unchanged: a mesh without targets has none.
+    Result<CookedModel> crate = cookModel(kDemoSources / "models/crate.gltf", "models/crate", {}, jobs);
+    CHECK(crate && crate->model.meshes.size() == 1 && crate->model.meshes[0].morphTargets.empty(),
+          "a model without blend shapes");
+}

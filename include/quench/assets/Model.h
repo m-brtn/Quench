@@ -16,7 +16,8 @@
 // level-of-detail index ranges quench_cook made with meshoptimizer. Vertex and index streams are compressed with
 // meshoptimizer's codecs. Materials name their textures by asset path (cooked KTX2 files). Skinned meshes keep their
 // bind-pose vertices (glTF ignores the transform of a skinned mesh's node) with four joints and weights per vertex,
-// and name their skin's joints, which bind to an animation skeleton by name at run time.
+// and name their skin's joints, which bind to an animation skeleton by name at run time. Meshes can have blend shapes
+// (morph targets): per-vertex offsets of the position, normal and tangent, applied before skinning.
 namespace quench::assets {
 
 // The engine's 64-byte vertex (render::Vertex has the same layout).
@@ -64,6 +65,22 @@ struct ModelSkinVertex {
 };
 static_assert(sizeof(ModelSkinVertex) == 16);
 
+// One vertex's offsets in a blend shape (glTF's morph target attributes), added to the base vertex times the target's
+// weight. The normal and tangent offsets are those of the unit vectors: the renderer normalizes the sums.
+struct ModelMorphVertex {
+    glm::vec3 position{0.0f};
+    glm::vec3 normal{0.0f};
+    glm::vec3 tangent{0.0f};
+};
+static_assert(sizeof(ModelMorphVertex) == 36);
+
+// A blend shape (glTF morph target) of one mesh.
+struct ModelMorphTarget {
+    std::string name;                      // the glTF mesh's extras.targetNames, else "<mesh>.target<index>"
+    float weight = 0.0f;                   // its default (the glTF mesh's weights)
+    std::vector<ModelMorphVertex> offsets; // one per vertex of the mesh
+};
+
 // A glTF skin: its joints by name and their inverse bind matrices (model space at bind time to joint space).
 struct ModelSkin {
     std::string name;
@@ -81,6 +98,7 @@ struct ModelMesh {
     glm::vec3 boundsMax{0.0f};
     int skin = -1;                         // index into ModelData::skins; -1: not skinned
     std::vector<ModelSkinVertex> skinning; // one per vertex when skinned
+    std::vector<ModelMorphTarget> morphTargets;
 };
 
 struct ModelData {
@@ -91,11 +109,11 @@ struct ModelData {
     glm::vec3 boundsMax{0.0f};
 };
 
-// Checks the header, the counts and every stream. Reads version 3; versions 1 and 2 (no tangents) are an error that
-// says to cook the source again.
+// Checks the header, the counts and every stream. Reads versions 4 and 3 (without blend shapes); versions 1 and 2 (no
+// tangents) are an error that says to cook the source again.
 Result<ModelData> readModel(std::span<const std::uint8_t> file);
-// The output depends only on the model. The index codec keeps the order and winding of triangles but may rotate the
-// indices within one.
+// Writes version 4. The output depends only on the model. The index codec keeps the order and winding of triangles but
+// may rotate the indices within one.
 Result<std::vector<std::uint8_t>> writeModel(const ModelData& model);
 
 } // namespace quench::assets

@@ -44,6 +44,9 @@ struct SceneAssets::Impl {
         std::vector<std::uint32_t> instanceJoints;    // per instance: its mesh's joints
         std::vector<std::vector<glm::mat4>> palettes; // per skin: the last setJointPalette
         std::vector<Skinning> skinnings;              // per skin: the last setSkinning
+        std::vector<std::string> morphNames;          // the model's blend shapes at the last setMorphWeights
+        std::vector<float> morphWeights;              // their weights then
+        bool morphSet = false;                        // setMorphWeights was called
         bool placeholder = false;
         bool built = false;
         assets::AssetState builtState = assets::AssetState::Loading;
@@ -155,10 +158,12 @@ Result<void> ModelAsset::decode(fs::Bytes bytes) {
         out.material = mesh.material;
         out.skin = mesh.skin;
         out.indices.reserve(range.indexCount);
+        std::vector<std::uint32_t> source;
         for (std::uint32_t i = range.firstIndex; i < range.firstIndex + range.indexCount; ++i) {
             std::uint32_t& mapped = remap[mesh.indices[i]];
             if (mapped == ~0u) {
                 mapped = std::uint32_t(out.vertices.size());
+                source.push_back(mesh.indices[i]);
                 const assets::ModelVertex& v = mesh.vertices[mesh.indices[i]];
                 out.vertices.push_back({v.position, v.normal, v.uv, v.color, v.tangent});
                 if (mesh.skin >= 0) {
@@ -170,6 +175,20 @@ Result<void> ModelAsset::decode(fs::Bytes bytes) {
             out.indices.push_back(mapped);
         }
         if (out.indices.empty()) continue;
+        out.morphs.reserve(mesh.morphTargets.size() * source.size());
+        for (const assets::ModelMorphTarget& target : mesh.morphTargets) {
+            for (const std::uint32_t v : source) {
+                const assets::ModelMorphVertex& m = target.offsets[v];
+                out.morphs.push_back({m.position, m.normal, m.tangent});
+            }
+            const auto known = std::ranges::find(pending.morphTargets, target.name);
+            out.morphTargets.push_back(std::uint32_t(known - pending.morphTargets.begin()));
+            out.morphDefaults.push_back(target.weight);
+            if (known == pending.morphTargets.end()) {
+                pending.morphTargets.push_back(target.name);
+                pending.morphDefaults.push_back(target.weight);
+            }
+        }
         pending.meshes.push_back(std::move(out));
     }
     if (pending.meshes.empty()) return Error{"the model's level of detail has no triangles"};
@@ -182,7 +201,7 @@ std::uint64_t ModelAsset::uploadBytes() const {
     std::uint64_t bytes = 0;
     for (const PendingMesh& mesh : m_pending->meshes)
         bytes += mesh.vertices.size() * sizeof(Vertex) + mesh.indices.size() * sizeof(std::uint32_t) +
-                 mesh.skinning.size() * sizeof(SkinVertex);
+                 mesh.skinning.size() * sizeof(SkinVertex) + mesh.morphs.size() * 3 * sizeof(glm::vec4);
     return bytes;
 }
 
@@ -223,21 +242,29 @@ Result<void> ModelAsset::finish() {
     for (const PendingMesh& mesh : pending.meshes) {
         const auto joints =
             mesh.skin >= 0 ? std::uint32_t(pending.skins[std::size_t(mesh.skin)].joints.size()) : std::uint32_t(0);
-        Result<MeshId> id =
-            scene.addMesh({mesh.vertices, mesh.indices, mesh.name.empty() ? path() : mesh.name, mesh.skinning, joints});
+        Result<MeshId> id = scene.addMesh({.vertices = mesh.vertices,
+                                           .indices = mesh.indices,
+                                           .name = mesh.name.empty() ? path() : mesh.name,
+                                           .skin = mesh.skinning,
+                                           .jointCount = joints,
+                                           .morphs = mesh.morphs,
+                                           .morphTargetCount = std::uint32_t(mesh.morphTargets.size())});
         if (!id) {
             for (const Part& part : parts) scene.removeMesh(part.mesh);
             for (MaterialId material : materials) scene.removeMaterial(material);
             return Error{id.error()};
         }
-        parts.push_back({*id, materials[mesh.material], std::uint32_t(mesh.indices.size() / 3), mesh.skin});
+        parts.push_back({*id, materials[mesh.material], std::uint32_t(mesh.indices.size() / 3), mesh.skin,
+                         mesh.morphTargets, mesh.morphDefaults});
         gpuBytes += mesh.vertices.size() * sizeof(Vertex) + mesh.indices.size() * sizeof(std::uint32_t) +
-                    mesh.skinning.size() * sizeof(SkinVertex);
+                    mesh.skinning.size() * sizeof(SkinVertex) + mesh.morphs.size() * 3 * sizeof(glm::vec4);
     }
 
     retireParts();
     m_parts = std::move(parts);
     m_skins = std::move(pending.skins);
+    m_morphTargets = std::move(pending.morphTargets);
+    m_morphDefaults = std::move(pending.morphDefaults);
     m_materials = std::move(materials);
     m_textures = std::move(textures);
     m_boundsMin = pending.boundsMin;
@@ -253,6 +280,8 @@ void ModelAsset::retireParts() {
     for (MaterialId material : m_materials) m_owner.retire({}, material);
     m_parts.clear();
     m_skins.clear();
+    m_morphTargets.clear();
+    m_morphDefaults.clear();
     m_materials.clear();
 }
 
@@ -321,6 +350,19 @@ glm::mat4 placeholderTransform(const glm::mat4& transform) {
     return transform * glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.5f, 0.0f));
 }
 
+// A part's blend shape weights: what setMorphWeights gave for their names, else the file's defaults.
+std::vector<float> partWeights(const ModelAsset& model, const ModelAsset::Part& part,
+                               std::span<const std::string> names, std::span<const float> weights, bool set) {
+    if (!set) return part.morphDefaults;
+    std::vector<float> out;
+    out.reserve(part.morphs.size());
+    for (const std::uint32_t m : part.morphs) {
+        const auto i = std::size_t(std::ranges::find(names, model.morphTargets()[m]) - names.begin());
+        out.push_back(i < weights.size() ? weights[i] : 0.0f);
+    }
+    return out;
+}
+
 } // namespace
 
 ModelInstanceId SceneAssets::addModel(assets::AssetRef<ModelAsset> model, const glm::mat4& transform, bool visible) {
@@ -371,6 +413,23 @@ void SceneAssets::setSkinning(ModelInstanceId instance, int skin, Skinning skinn
     placed->skinnings[std::size_t(skin)] = skinning;
     for (std::size_t i = 0; i < placed->instances.size(); ++i)
         if (placed->instanceSkins[i] == skin) m_scene.setSkinning(placed->instances[i], skinning);
+}
+
+void SceneAssets::setMorphWeights(ModelInstanceId instance, std::span<const float> weights) {
+    Impl::Placed* placed = m_impl->placed.get(instance);
+    QUENCH_ASSERT(placed, "setMorphWeights: stale or null model instance");
+    if (!placed) return;
+    const ModelAsset& model = *placed->model;
+    if (model.morphTargets().empty()) return;
+    placed->morphNames.assign(model.morphTargets().begin(), model.morphTargets().end());
+    placed->morphWeights.assign(weights.begin(),
+                                weights.begin() + std::ptrdiff_t(std::min(weights.size(), placed->morphNames.size())));
+    placed->morphSet = true;
+    if (placed->placeholder) return;
+    for (std::size_t i = 0; i < placed->instances.size() && i < model.parts().size(); ++i)
+        if (const ModelAsset::Part& part = model.parts()[i]; !part.morphs.empty())
+            m_scene.setMorphWeights(placed->instances[i],
+                                    partWeights(model, part, placed->morphNames, placed->morphWeights, true));
 }
 
 void SceneAssets::removeModel(ModelInstanceId instance) {
@@ -432,6 +491,9 @@ void SceneAssets::update() {
                     const std::vector<glm::mat4>& palette = placed->palettes[std::size_t(part.skin)];
                     if (!palette.empty() && palette.size() == joints) m_scene.setJointPalette(id, palette, true);
                 }
+                if (!part.morphs.empty())
+                    m_scene.setMorphWeights(
+                        id, partWeights(model, part, placed->morphNames, placed->morphWeights, placed->morphSet));
             }
         }
         placed->built = true;

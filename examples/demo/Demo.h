@@ -195,4 +195,12 @@ constexpr const char* kSkeleton = "characters/strider.qskel";
 constexpr const char* kClips = "characters/mannequin.strider.qanim";
 } // namespace strider
 
+// The blend shape creature (tools/assets/make_demo_blob.py).
+namespace blob {
+constexpr const char* kModel = "characters/blob.qmodel";
+constexpr const char* kSkeleton = "characters/blob.qskel";
+constexpr const char* kClips = "characters/blob.qanim";
+constexpr const char* kGraph = "characters/blob.graph.json";
+} // namespace blob
+
 } // namespace demo

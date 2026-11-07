@@ -11,7 +11,9 @@
 // has two standing characters whose left forearms the section turns by 170 degrees, skinned linearly (the elbow
 // collapses) and by dual quaternions (it keeps its volume); the other characters' skinning is a choice. Behind the
 // hero's camera the mannequin walks beside a second character of other joint names, proportions and rest pose
-// (tools/assets/make_demo_strider.py), which plays the same walk retargeted onto it at cook time.
+// (tools/assets/make_demo_strider.py), which plays the same walk retargeted onto it at cook time. In its own view a
+// swaying jelly creature (tools/assets/make_demo_blob.py) is reshaped by four blend shapes, applied before its
+// skinning; it is drawn in that view only.
 
 #include "Demo.h"
 
@@ -95,6 +97,9 @@ const glm::vec2 kPairCenter(0.0f, 18.0f);
 constexpr float kPairRadius = 5.0f;    // m: the mannequin's circle
 constexpr float kStriderScale = 1.15f; // make_demo_strider.py's LEG
 constexpr float kPairStart = kPi;      // radians: the circles' points nearest the hero's stage
+// The blend shape creature, behind the skinning showcase (and hidden outside its view), and its shapes' names.
+const glm::vec3 kBlobAt(18.0f, 0.0f, -7.0f);
+constexpr std::array<std::string_view, 4> kBlobShapes{"squash", "stretch", "puff", "spikes"};
 
 // The camera's places: the hero's stage and the showcase's spots (`set view ID`). In the retargeting view the camera
 // follows the pair and turns with it.
@@ -109,6 +114,7 @@ const std::array kViews{
     View{"blend2d", "2D blend space", {-18.0f, 0.6f, 0.0f}, 18.0f, 26.0f, 7.5f},
     View{"skinning", "Skinning", {18.0f, 1.1f, 0.0f}, 0.0f, 6.0f, 2.1f},
     View{"retarget", "Retargeting", {0.0f, 1.0f, 18.0f - 1.075f * kPairRadius}, -120.0f, 10.0f, 4.6f},
+    View{"blendshapes", "Blend shapes", {18.0f, 0.45f, -7.0f}, 20.0f, 12.0f, 2.2f},
 };
 
 glm::mat4 yawed(const glm::vec3& position, float yaw) {
@@ -152,7 +158,8 @@ public:
                "layer, an additive lean, root motion, footstep events with sound, look-at, foot placement on a slope "
                "and a step (ray queries into Jolt), a held torch; a crowd updated on jobs and skinned on the GPU; a "
                "character steered through a 2D blend space, a forearm twisted under linear and dual quaternion "
-               "skinning, and a walk retargeted at cook time onto a character of other proportions (View).";
+               "skinning, a walk retargeted at cook time onto a character of other proportions, and a creature "
+               "reshaped by blend shapes before its skinning (View).";
     }
 
     Result<void> init(Context& c) override {
@@ -227,6 +234,10 @@ public:
         m_striderModel = m_assets->loadModel(strider::kModel);
         m_striderSkeleton = m_anim->loadSkeleton(strider::kSkeleton);
         m_striderClips = m_anim->loadClips(strider::kClips);
+        m_blobModel = m_assets->loadModel(blob::kModel);
+        m_blobSkeleton = m_anim->loadSkeleton(blob::kSkeleton);
+        m_blobClips = m_anim->loadClips(blob::kClips);
+        m_blobGraph = m_anim->loadGraph(blob::kGraph);
         m_step = c.app.audio().load(kStep);
 
         app::Input& input = c.app.input();
@@ -274,6 +285,7 @@ public:
             walk(w);
         });
         if (std::string_view(kViews[std::size_t(m_view)].id) == "retarget") followPair(pairAngle);
+        updateBlob();
         moveStrafer(dt);
         m_teleport = false;
         const glm::mat4 hand = m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, "hand_l"));
@@ -332,6 +344,12 @@ public:
         ImGui::SliderFloat("To the left", &m_steerVelocity.x, kSteerMin.x, kSteerMax.x, "%.2f m/s");
         ImGui::SliderFloat("Ahead", &m_steerVelocity.y, kSteerMin.y, kSteerMax.y, "%.2f m/s");
         ImGui::EndDisabled();
+        ImGui::SeparatorText("Blend shapes");
+        for (std::size_t k = 0; k < kBlobShapes.size(); ++k) {
+            const std::string label = std::format("{}##blob", kBlobShapes[k]);
+            ImGui::SliderFloat(label.c_str(), &m_blobWeights[k], 0.0f, 1.0f, "%.2f");
+        }
+        if (ImGui::Button("Reset shapes")) m_blobWeights.fill(0.0f);
     }
 
     void stats(Context& c) override {
@@ -384,8 +402,8 @@ public:
         const animation::AnimationStats& stats = m_anim->stats();
         const animation::CharacterState hero = m_anim->state(m_hero.id);
         if (name == "anim_ready")
-            return m_model.ready() && m_striderModel.ready() && m_step.ready() && stats.bound == stats.characters &&
-                           allSkinned()
+            return m_model.ready() && m_striderModel.ready() && m_blobModel.ready() && m_step.ready() &&
+                           stats.bound == stats.characters && allSkinned() && m_blob.skin >= 0
                        ? 1.0
                        : 0.0;
         if (name == "anim_failed") return double(failedAssets());
@@ -426,6 +444,13 @@ public:
             return double(glm::length(glm::vec3(m_stickTransform[3]) - glm::vec3(hand[3])));
         }
         if (name == "view") return double(m_view);
+        // The blend shape creature: its model's blend shapes and the weight of one by name (blob_weight_squash).
+        if (name == "blob_shapes") return m_blobModel.ready() ? double(m_blobModel->morphTargets().size()) : 0.0;
+        if (name.starts_with("blob_weight_")) {
+            const auto it = std::ranges::find(kBlobShapes, name.substr(12));
+            if (it == kBlobShapes.end()) return std::nullopt;
+            return double(m_blobWeights[std::size_t(it - kBlobShapes.begin())]);
+        }
         // The steered character: the velocity asked for (after the circle's edge), the one its clips move it by
         // (smoothed over 0.2 s), the angle between the two (degrees) and its distance from the circle's center.
         if (name == "steer_vx") return double(m_steerInput.x);
@@ -492,6 +517,11 @@ public:
             m_steerVelocity.x = std::clamp(*number, kSteerMin.x, kSteerMax.x);
         } else if (name == "steer_vz" && number) {
             m_steerVelocity.y = std::clamp(*number, kSteerMin.y, kSteerMax.y);
+        } else if (name.starts_with("blob_") && number) {
+            // blob_squash 0.8: a blend shape's weight (any value, also outside 0..1).
+            const auto it = std::ranges::find(kBlobShapes, name.substr(5));
+            if (it == kBlobShapes.end()) return false;
+            m_blobWeights[std::size_t(it - kBlobShapes.begin())] = *number;
         } else {
             return false;
         }
@@ -507,6 +537,8 @@ public:
     void shutdown(Context& c) override {
         (void)c;
         forEachWalker([&](Walker& w) { m_assets->removeModel(w.model); });
+        if (m_blob.model) m_assets->removeModel(m_blob.model);
+        m_blob = {};
         m_crowd.clear();
         m_model = {};
         m_skeleton = {};
@@ -517,6 +549,10 @@ public:
         m_striderModel = {};
         m_striderSkeleton = {};
         m_striderClips = {};
+        m_blobModel = {};
+        m_blobSkeleton = {};
+        m_blobClips = {};
+        m_blobGraph = {};
         m_step = {};
         m_anim.reset();
         m_assets.reset();
@@ -599,9 +635,10 @@ private:
 
     int failedAssets() const {
         int n = 0;
-        for (const assets::AssetState s : {m_model.state(), m_skeleton.state(), m_clips.state(), m_graph.state(),
-                                           m_graph2d.state(), m_walkGraph.state(), m_striderModel.state(),
-                                           m_striderSkeleton.state(), m_striderClips.state(), m_step.state()})
+        for (const assets::AssetState s :
+             {m_model.state(), m_skeleton.state(), m_clips.state(), m_graph.state(), m_graph2d.state(),
+              m_walkGraph.state(), m_striderModel.state(), m_striderSkeleton.state(), m_striderClips.state(),
+              m_blobModel.state(), m_blobSkeleton.state(), m_blobClips.state(), m_blobGraph.state(), m_step.state()})
             n += s == assets::AssetState::Failed ? 1 : 0;
         return n;
     }
@@ -742,6 +779,17 @@ private:
         m_twistDual = makeTwisted(kTwistAt + glm::vec3(0.5f * kTwistApart, 0.0f, 0.0f), Skinning::DualQuaternion);
         m_pairMannequin = makePairWalker(false);
         m_pairStrider = makePairWalker(true);
+        removeWalker(m_blob);
+        animation::CharacterDesc blob;
+        blob.skeleton = m_blobSkeleton;
+        blob.clips.push_back(m_blobClips);
+        blob.graph = m_blobGraph;
+        blob.transform = placed(kBlobAt);
+        blob.events = false;
+        blob.height = 1.0f;
+        m_blob.id = m_anim->addCharacter(std::move(blob));
+        m_blob.transform = placed(kBlobAt);
+        m_blob.model = m_assets->addModel(m_blobModel, m_blob.transform, false);
         if (std::string_view(kViews[std::size_t(m_view)].id) == "retarget") setView(m_view);
         setCrowd(m_crowdSize);
         m_footsteps = 0;
@@ -787,6 +835,24 @@ private:
             const assets::ModelSkin* skin = w.strider ? striderSkin : mannequinSkin;
             if (w.skin < 0 && w.id && skin) w.skin = m_anim->addSkin(w.id, skin->joints, skin->inverseBindMatrices);
         });
+        if (const assets::ModelSkin* skin = skinOf(m_blobModel); skin && m_blob.skin < 0 && m_blob.id)
+            m_blob.skin = m_anim->addSkin(m_blob.id, skin->joints, skin->inverseBindMatrices);
+    }
+
+    // The blob: drawn in its view only, posed by its clip, its blend shapes' weights from the sliders (by name, in
+    // its model's order).
+    void updateBlob() {
+        if (!m_blob.model) return;
+        m_assets->setVisible(m_blob.model, std::string_view(kViews[std::size_t(m_view)].id) == "blendshapes");
+        if (m_blob.skin >= 0) m_assets->setJointPalette(m_blob.model, 0, m_anim->skinPalette(m_blob.id, m_blob.skin));
+        if (!m_blobModel.ready()) return;
+        m_blobModelWeights.clear();
+        for (const std::string& name : m_blobModel->morphTargets()) {
+            const auto it = std::ranges::find(kBlobShapes, name);
+            m_blobModelWeights.push_back(
+                it == kBlobShapes.end() ? 0.0f : m_blobWeights[std::size_t(it - kBlobShapes.begin())]);
+        }
+        m_assets->setMorphWeights(m_blob.model, m_blobModelWeights);
     }
 
     // Moves a walker on by the root motion of the last update.
@@ -881,9 +947,16 @@ private:
     assets::AssetRef<ModelAsset> m_striderModel;
     assets::AssetRef<animation::SkeletonAsset> m_striderSkeleton;
     assets::AssetRef<animation::ClipSetAsset> m_striderClips;
+    assets::AssetRef<ModelAsset> m_blobModel;
+    assets::AssetRef<animation::SkeletonAsset> m_blobSkeleton;
+    assets::AssetRef<animation::ClipSetAsset> m_blobClips;
+    assets::AssetRef<animation::GraphAsset> m_blobGraph;
     assets::AssetRef<audio::SoundAsset> m_step;
     Walker m_hero, m_slopeStand, m_stepStand, m_strafer, m_twistLinear, m_twistDual, m_pairMannequin, m_pairStrider;
     std::vector<Walker> m_crowd;
+    Walker m_blob;
+    std::array<float, kBlobShapes.size()> m_blobWeights{};
+    std::vector<float> m_blobModelWeights;
     std::vector<std::size_t> m_forearmJoints; // in the model's skin
     std::vector<glm::mat4> m_twisted;
     app::ActionId m_jumpAction = 0, m_waveAction = 0;

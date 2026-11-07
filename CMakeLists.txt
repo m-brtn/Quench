@@ -233,7 +233,7 @@ if(NOT QUENCH_HEADLESS)
     quench_add_shaders(quench_render NAME render_standard SOURCE src/render/shaders/standard.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment surface_gbuffer_fs:fragment)
-    quench_add_shaders(quench_render NAME render_skin SOURCE src/render/shaders/skin.hlsl ENTRIES skin_cs:compute)
+    quench_add_shaders(quench_render NAME render_skin SOURCE src/render/shaders/skin.hlsl ENTRIES skin_cs:compute skin_morph_cs:compute)
     # Ray tracing (gpu::Caps::rayTracing): the rayquery entries need DXC (cmake/QuenchDxc.cmake); without it the sets
     # have the other entries only and the renderer uses the shadow maps and the sky's light.
     quench_add_shaders(quench_render NAME render_raytrace SOURCE src/render/shaders/raytrace.hlsl

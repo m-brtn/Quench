@@ -7,7 +7,7 @@
 #include <cstring>
 #include <format>
 
-// Layout (little endian, every field 4-byte aligned), version 3:
+// Layout (little endian, every field 4-byte aligned), version 4:
 //   u32 magic "QMDL", u32 version, u32 mesh count, u32 material count, u32 skin count, f32 bounds min[3], max[3]
 //   materials: string name, f32 base color[4], emissive[3], roughness, metallic, alpha cutoff,
 //              u8 alpha mode, u8 double sided, u16 0, string textures[4] (base color, metallic-roughness, normal,
@@ -16,15 +16,19 @@
 //   meshes: string name, u32 material, u32 vertex count, u32 index count, u32 LOD count, f32 bounds min[3], max[3],
 //           u32 skin (0xffffffff: none), LODs (u32 first index, u32 index count, f32 error),
 //           u32 size + meshopt stream of the 64-byte vertices (padded), u32 size + meshopt index stream (padded),
-//           [skinned: u32 size + meshopt stream of the skin vertices (padded)]
+//           [skinned: u32 size + meshopt stream of the skin vertices (padded)],
+//           u32 morph target count, per target: string name, f32 default weight, u32 size + meshopt stream of its
+//           36-byte offsets (padded)
 //   string: u32 length + bytes (padded)
-// Versions 1 (no skins) and 2 had 48-byte vertices without tangents; they are not read (cook the source again).
+// Version 3 is version 4 without the morph targets (no count); it is read. Versions 1 (no skins) and 2 had 48-byte
+// vertices without tangents; they are not read (cook the source again).
 namespace quench::assets {
 namespace {
 
 constexpr std::uint32_t kMagic = 0x4C444D51; // "QMDL"
-constexpr std::uint32_t kVersion = 3;
+constexpr std::uint32_t kVersion = 4;
 constexpr std::uint32_t kMaxCount = 1u << 24;
+constexpr std::uint32_t kMaxMorphTargets = 256;
 constexpr std::uint32_t kMaxSkinJoints = 65536;
 constexpr std::uint32_t kNoSkin = 0xffffffffu;
 
@@ -147,6 +151,13 @@ Result<std::vector<std::uint8_t>> writeModel(const ModelData& model) {
             (mesh.skin >= 0 && mesh.skinning.size() != mesh.vertices.size()))
             return Error{std::format("mesh '{}': skin {} of {} with {} skin vertices for {} vertices", mesh.name,
                                      mesh.skin, model.skins.size(), mesh.skinning.size(), mesh.vertices.size())};
+        if (mesh.morphTargets.size() > kMaxMorphTargets)
+            return Error{std::format("mesh '{}': {} morph targets (at most {})", mesh.name, mesh.morphTargets.size(),
+                                     kMaxMorphTargets)};
+        for (const ModelMorphTarget& target : mesh.morphTargets)
+            if (target.offsets.size() != mesh.vertices.size())
+                return Error{std::format("mesh '{}': morph target '{}' has {} offsets for {} vertices", mesh.name,
+                                         target.name, target.offsets.size(), mesh.vertices.size())};
         if (mesh.skin >= 0) {
             const std::size_t joints = model.skins[std::size_t(mesh.skin)].joints.size();
             for (const ModelSkinVertex& v : mesh.skinning)
@@ -185,6 +196,15 @@ Result<std::vector<std::uint8_t>> writeModel(const ModelData& model) {
                                                           mesh.skinning.size(), sizeof(ModelSkinVertex), 2, 1));
             w.blob(stream);
         }
+        w.u32(std::uint32_t(mesh.morphTargets.size()));
+        for (const ModelMorphTarget& target : mesh.morphTargets) {
+            w.string(target.name);
+            w.f32(target.weight);
+            stream.assign(meshopt_encodeVertexBufferBound(target.offsets.size(), sizeof(ModelMorphVertex)), 0);
+            stream.resize(meshopt_encodeVertexBufferLevel(stream.data(), stream.size(), target.offsets.data(),
+                                                          target.offsets.size(), sizeof(ModelMorphVertex), 2, 1));
+            w.blob(stream);
+        }
     }
     return std::move(w.out);
 }
@@ -198,8 +218,8 @@ Result<ModelData> readModel(std::span<const std::uint8_t> file) {
         return Error{std::format("cooked model version {} has no tangents (this engine reads version {}): cook its "
                                  "source again with this engine's quench_cook",
                                  version, kVersion)};
-    if (version != kVersion)
-        return Error{std::format("cooked model version {} (this engine reads version {})", version, kVersion)};
+    if (version != kVersion && version != 3)
+        return Error{std::format("cooked model version {} (this engine reads versions 3 and {})", version, kVersion)};
     ModelData model;
     if (!r.u32(meshCount) || !r.u32(materialCount) || !r.u32(skinCount) || meshCount > kMaxCount ||
         materialCount > kMaxCount || skinCount > kMaxCount || !r.vec(&model.boundsMin.x, 3) ||
@@ -294,6 +314,24 @@ Result<ModelData> readModel(std::span<const std::uint8_t> file) {
                 for (const std::uint16_t j : v.joints)
                     if (j >= joints)
                         return Error{std::format("corrupt model: mesh {} names joint {} of {}", i, j, joints)};
+        }
+        std::uint32_t targets = 0;
+        if (version >= 4 && !r.u32(targets)) return truncated("mesh", i);
+        // A target takes at least 12 bytes.
+        if (targets > kMaxMorphTargets || std::uint64_t(targets) * 12 > r.remaining())
+            return Error{std::format("corrupt model: mesh {} has {} morph targets", i, targets)};
+        mesh.morphTargets.resize(targets);
+        for (std::uint32_t k = 0; k < targets; ++k) {
+            ModelMorphTarget& target = mesh.morphTargets[k];
+            std::span<const std::uint8_t> offsetStream;
+            if (!r.string(target.name) || !r.f32(target.weight) || !r.blob(offsetStream)) return truncated("mesh", i);
+            if (vertexCount > 64 * offsetStream.size())
+                return Error{std::format("corrupt model: mesh {} has {} morph offsets in {} bytes", i, vertexCount,
+                                         offsetStream.size())};
+            target.offsets.resize(vertexCount);
+            if (meshopt_decodeVertexBuffer(target.offsets.data(), vertexCount, sizeof(ModelMorphVertex),
+                                           offsetStream.data(), offsetStream.size()) != 0)
+                return Error{std::format("corrupt model: morph target {} of mesh {}", k, i)};
         }
     }
     if (r.remaining() != 0) return Error{std::format("corrupt model: {} bytes after the last mesh", r.remaining())};
