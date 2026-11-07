@@ -39,6 +39,8 @@ add_custom_command(
     VERBATIM)
 list(TRANSFORM demo_sounds PREPEND sounds/)
 quench_cook_assets(quench_demo_sounds SOURCE_DIR ${demo_sounds_dir} SOUNDS ${demo_sounds})
+# The Weather section's rain sound: the engine's default weather sounds (audio::WeatherAudio).
+quench_weather_sounds(quench_demo_weather_sounds)
 
 # The Animation section's character: a procedural glTF with its clips and their settings, written at build time
 # (tools/assets/make_demo_character.py) and cooked into a skinned model, a skeleton and a clip set.
@@ -134,7 +136,7 @@ quench_add_game(quench_demo
     ASSETS assets
     COOKED_ASSETS quench_demo_cooked quench_demo_basis_etc1s quench_demo_basis_uastc quench_demo_sounds
                   quench_demo_character quench_demo_strider quench_demo_retargeted quench_demo_blob
-                  quench_demo_tunnel quench_demo_licences
+                  quench_demo_tunnel quench_demo_weather_sounds quench_demo_licences
     SOURCES
         Camera.cpp
         Checks.cpp

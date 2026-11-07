@@ -1,0 +1,75 @@
+# The cost of the rain per quality setting (docs/performance.md, "Rain"): the weather section's Rain here preset from
+# the ground (the drops, splashes, puddles and the rain map) and from the sky view (the shafts and the rainbow of
+# distant showers), half-size clouds, 3 s per setting after 1 s to settle; the GPU busy time per range comes from the
+# line after each perf line (rain_map: the occlusion map and the weather maps' rain regions; rain: the streaks and
+# splashes; rain_shafts: the shafts and the rainbow; hdr: the main pass, where the surfaces wet). Offscreen, at any
+# size, for example on the native Metal backend:
+#   quench-demo --gpu-backend metal --window 1920x1080 --audio-device null --script rain_cost.txt
+section weather
+set dither 0
+set quality reduced
+set rain_shafts 1
+set rainbow 1
+set view ground
+set preset rain_here
+
+set rain off
+wait 1
+perf_begin rain_off
+wait 3
+perf_end
+
+set rain low
+wait 1
+perf_begin rain_low
+wait 3
+perf_end
+
+set rain medium
+wait 1
+perf_begin rain_medium
+wait 3
+perf_end
+
+set rain high
+wait 1
+perf_begin rain_high
+wait 3
+perf_end
+
+# The phone defaults: low, without the shafts.
+set rain low
+set rain_shafts 0
+wait 1
+perf_begin rain_phone
+wait 3
+perf_end
+set rain_shafts 1
+
+# Distant showers from the sky view: the shafts' march.
+set view sky
+set preset storm
+set rain off
+wait 1
+perf_begin rain_sky_off
+wait 3
+perf_end
+
+set rain low
+wait 1
+perf_begin rain_sky_low
+wait 3
+perf_end
+
+set rain medium
+wait 1
+perf_begin rain_sky_medium
+wait 3
+perf_end
+
+set rain high
+wait 1
+perf_begin rain_sky_high
+wait 3
+perf_end
+quit

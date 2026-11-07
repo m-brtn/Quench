@@ -1,0 +1,106 @@
+# Rain (ctest: demo_rain_<backend>, a part of batch.txt and batch_native.txt): the Weather section's place on the
+# ground. The weather's clock is stopped (time scale 0) and set, so the wetness is the one the last hours of that
+# weather leave and every capture shows the same rain: a sun shower from one raining cumulonimbus behind the camera,
+# the low sun ahead lighting the streaks against the dark block, puddles with rings on the paving and the pool, the
+# floor under the shelter dry (demo_rain.png); turned toward the cloud, the rainbow in its rain (demo_rain_rainbow.png);
+# under the roof, the dry floor and the rain beyond its edge (demo_rain_shelter.png). Then by numbers: the cover, the
+# rain sound's layers by the rain at the camera, the roof and the distance to the nearest rain (audio_measure on the
+# offline mix), the ground drying after the cloud is gone, and the rain off.
+section weather
+reset_section
+
+set dither 0
+set quality reduced
+set rain medium
+set rain_shafts 1
+set rainbow 1
+set sound 1
+set time_scale 0
+set view ground
+set preset rain_here
+set weather_time 4000
+# The sounds load in a frame that varies between runs; the rest is on the fixed frame clock, from the part's start
+# (the streaks and the rings run on the section's time).
+until sound_playing >= 1 3
+until time >= 1.5 3
+expect rain == 2
+expect rain_at_camera > 0.3
+expect rain_streaks == 24576
+expect rain_splashes == 1024
+expect rain_occluders > 8
+expect rain_cover < 0.1
+expect rain_shafts == 1
+expect rainbow == 1
+expect wetness > 0.9
+expect standing_water > 0.9
+expect sound_cover < 0.05
+expect sound_far < 0.05
+# The open-air layers at precipitation p = rain_at_camera: light and heavy crossfade, both audible near 0.5.
+expect sound_light > 0.2
+expect sound_heavy > 0.2
+audio_measure 1.0
+expect audio_rms > 0.03
+expect audio_peak < 1
+windows off
+capture demo_rain.png
+windows on
+
+set view cloud
+wait 1.5
+windows off
+capture demo_rain_rainbow.png
+windows on
+
+# Under the roof: the renderer's cover, the roof's layer instead of the open-air ones.
+set view shelter
+wait 1.5
+expect rain_cover > 0.8
+expect sound_cover > 0.4
+expect sound_light < 0.1
+expect sound_heavy < 0.1
+audio_measure 1.0
+expect audio_rms > 0.01
+windows off
+capture demo_rain_shelter.png
+windows on
+
+# The cloud gone: no rain at the camera, the sound fades out, the ground dries (240 s of weather in 4 s).
+set view ground
+set shower 0
+wait 1.5
+expect rain_at_camera == 0
+expect sound_light < 0.01
+expect sound_heavy < 0.01
+set time_scale 60
+wait 4
+set time_scale 0
+expect wetness < 0.85
+expect wetness > 0.5
+expect standing_water < 1
+expect standing_water > 0.5
+
+# A shower 2.7 km ahead (the passing preset, frozen): only the distant layer.
+set preset passing
+wait 1.5
+expect rain_at_camera == 0
+expect rain_distance > 800
+expect rain_distance < 2500
+expect sound_far > 0.2
+expect sound_light < 0.01
+audio_measure 1.0
+expect audio_rms > 0.003
+
+# The rain's drawing off: nothing drawn, the weather and its sound go on.
+set preset rain_here
+set rain off
+wait 0.5
+expect rain == 0
+expect rain_streaks == 0
+expect rain_shafts == 0
+expect rain_at_camera == 0
+expect rain_here > 0.3
+expect sound_light > 0.1
+set rain medium
+expect audio_underruns == 0
+expect audio_clipped == 0
+quit

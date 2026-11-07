@@ -527,7 +527,8 @@ if(NOT QUENCH_HEADLESS)
                 ui:demo_ui compact_portrait:demo_compact_portrait
                 compact_landscape:demo_compact_landscape menu audio_tone audio_flyby audio_music audio_reverb
                 audio_hrtf heat assets_basis navigation:demo_navigation
-                weather:demo_weather:demo_weather_sunset:demo_weather_layer)
+                weather:demo_weather:demo_weather_sunset:demo_weather_layer
+                rain:demo_rain:demo_rain_rainbow:demo_rain_shelter)
             set(demo_args --window 960x540 --gpu-debug --hdr-headroom 4)
             if(QUENCH_TEST_CAPTURES)
                 quench_add_batch(demo metal APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND metal

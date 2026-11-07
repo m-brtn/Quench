@@ -2,11 +2,16 @@
 // hundred metres up: fair-weather cumulus to towering cumulus, cumulonimbus and an overcast stratus deck, high cirrus,
 // one raining cumulonimbus placed as a cell in a blue sky, all drifting with the wind and changing shape; their
 // shadows on the ground, the sun dimming and the sky's light greying as the cover closes, the sky cube with the clouds
-// in the lake's reflection, sunsets from the sky's own light. Quality: volumetric clouds at the render size or at half
-// of it with accumulation over frames, or the 2D cloud layer (the fallback).
+// in the lake's reflection, sunsets from the sky's own light, rain shafts under raining clouds. Quality: volumetric
+// clouds at the render size or at half of it with accumulation over frames, or the 2D cloud layer (the fallback).
+// The rain (stage 13 part 2) at a place on the ground behind the sky view's camera: a paved square with a shelter, a
+// pond and a dark block behind them, wet where the rain reaches, puddles and rings on the water, the rain's streaks
+// and splashes, a rainbow in a sun shower, and the engine's rain sound (audio::WeatherAudio) by the rain at the camera,
+// the distance to the nearest rain and the roof over it.
 
 #include "Demo.h"
 
+#include <quench/audio/WeatherAudio.h>
 #include <quench/render/Daylight.h>
 #include <quench/weather/Weather.h>
 
@@ -18,6 +23,7 @@
 #include <array>
 #include <cmath>
 #include <format>
+#include <optional>
 
 namespace demo {
 namespace {
@@ -31,27 +37,37 @@ enum class Quality : int { Full, Reduced, Layer, Off };
 constexpr std::array<const char*, 4> kQualityNames{"Volumetric, full size", "Volumetric, half size", "2D layer", "Off"};
 constexpr std::array<const char*, 4> kQualityIds{"full", "reduced", "layer", "off"};
 constexpr std::array<const char*, 4> kTypeNames{"Stratus", "Cumulus", "Towering cumulus", "Cumulonimbus"};
-constexpr std::array<const char*, 6> kPresets{"fair", "shower", "towering", "storm", "overcast", "cirrus"};
-constexpr std::array<const char*, 6> kPresetNames{"Fair weather", "Sun shower", "Towering",
-                                                  "Storm",        "Overcast",   "Cirrus"};
+constexpr std::array<const char*, 9> kPresets{"fair",   "shower",    "towering", "storm",  "overcast",
+                                              "cirrus", "rain_here", "downpour", "passing"};
+constexpr std::array<const char*, 9> kPresetNames{"Fair weather", "Sun shower", "Towering", "Storm",         "Overcast",
+                                                  "Cirrus",       "Rain here",  "Downpour", "Passing shower"};
+enum class View : int { Sky, Ground, Cloud, Shelter };
+constexpr std::array<const char*, 4> kViewNames{"From the air", "On the ground", "Toward the cloud", "Under the roof"};
+constexpr std::array<const char*, 4> kViewIds{"sky", "ground", "cloud", "shelter"};
+constexpr std::array<const char*, 4> kRainNames{"Off", "Low", "Medium", "High"};
+constexpr std::array<const char*, 4> kRainIds{"off", "low", "medium", "high"};
 // The weather's clock at the start: the field after 20 minutes, so the clouds are not at their seed's first shape.
 constexpr double kStartTime = 1200.0;
 // The single raining cloud: ahead of the camera, right of the view's centre; its shadow falls ahead on the left.
 constexpr glm::vec2 kShowerAt{2600.0f, -10500.0f};
+// The place on the ground for the rain: behind the sky view's camera, out of its picture.
+constexpr glm::vec3 kPlace{0.0f, 0.0f, 300.0f};
+constexpr glm::vec3 kShelter = kPlace + glm::vec3(5.0f, 0.0f, -12.0f);
+// Rain here: one raining cumulonimbus standing behind the place, the camera in the rain at its edge; ahead a blue sky
+// and the low sun shining under the cloud onto the rain (a sun shower; toward the cloud, a rainbow in its rain).
+constexpr glm::vec2 kRainHereAt{-150.0f, 600.0f};
+// Passing shower: a cell three kilometres ahead that the wind brings over the place and on.
+constexpr glm::vec2 kPassingAt{0.0f, -2700.0f};
+// The rain sound's layers as scenario values (sound_light, ...), in audio::WeatherLayer order.
+constexpr std::array<std::string_view, 4> kSoundValues{"light", "heavy", "far", "cover"};
 
 class WeatherSection final : public Section {
 public:
     WeatherSection() {
-        // A few hundred metres up, looking a little above the horizon: the clouds, their shadows on the plain, the
-        // lake.
-        camera.target = glm::vec3(0.0f, 320.0f, -600.0f);
-        camera.distance = 600.0f;
-        camera.yaw = 0.0f;
-        camera.pitch = glm::radians(-10.0f);
-        camera.minDistance = 30.0f;
-        camera.maxDistance = 3000.0f;
-        settings.shadowDistance = 2500.0f;
         settings.clearColor = glm::vec3(0.25f, 0.3f, 0.36f);
+        settings.rain = Rain::Medium;
+        settings.rainbow = true;
+        setView(View::Sky);
         applyQuality();
     }
 
@@ -61,17 +77,20 @@ public:
         return "Clouds from a weather map that the wind moves and that changes shape: cumulus to cumulonimbus, an "
                "overcast deck, cirrus, a single raining cloud in a blue sky. Their shadows cross the plain, the sun "
                "dims and the light greys as the cover closes, the lake reflects them, and the sky's own light tints "
-               "them at sunset. Volumetric clouds, or the 2D cloud layer as the cheap setting and fallback.";
+               "them at sunset. On the ground: rain only where a cloud rains, none under the roof, wet paving, "
+               "puddles and rings on the pond that dry after the shower, a rainbow, and the rain's sound.";
     }
 
     Result<void> init(Context& c) override {
         // Phones start at half size with accumulation, fewer steps and one sky cube face per frame, at 60 frames per
-        // second (docs/performance.md, "Clouds").
+        // second (docs/performance.md, "Clouds"), and with the rain's low quality without the shafts ("Rain").
         if (c.app.mobile()) {
             m_quality = Quality::Reduced;
             m_steps = 48;
             m_cubeFaces = 1;
             m_limit60 = true;
+            settings.rain = Rain::Low;
+            settings.rainShafts = false;
             applyQuality();
         }
         m_scene.emplace(c.app.device());
@@ -80,13 +99,26 @@ public:
         const Result<MeshId> lake = addMesh(s, planeMesh(glm::vec2(320.0f, 200.0f)));
         const Result<MeshId> hill = addMesh(s, sphereMesh(1.0f, 24, 48));
         const Result<MeshId> tower = addMesh(s, boxMesh(glm::vec3(8.0f, 60.0f, 8.0f)));
-        for (const Result<MeshId>* m : {&ground, &lake, &hill, &tower})
+        const Result<MeshId> paving = addMesh(s, boxMesh(glm::vec3(12.0f, 0.05f, 20.0f)));
+        const Result<MeshId> pond = addMesh(s, planeMesh(glm::vec2(3.5f, 4.5f)));
+        const Result<MeshId> post = addMesh(s, boxMesh(glm::vec3(0.06f, 1.3f, 0.06f)));
+        const Result<MeshId> roof = addMesh(s, boxMesh(glm::vec3(2.6f, 0.06f, 2.0f)));
+        const Result<MeshId> crate = addMesh(s, boxMesh(glm::vec3(0.4f)));
+        const Result<MeshId> block = addMesh(s, boxMesh(glm::vec3(14.0f, 6.0f, 5.0f)));
+        for (const Result<MeshId>* m : {&ground, &lake, &hill, &tower, &paving, &pond, &post, &roof, &crate, &block})
             if (!*m) return Error{m->error()};
-        s.addInstance({.mesh = *ground,
-                       .material = addCheckerMaterial(c, s, glm::vec3(0.30f, 0.38f, 0.20f),
-                                                      glm::vec3(0.26f, 0.33f, 0.17f), 40.0f, 0.95f)});
-        const MaterialId water =
-            s.addMaterial({.baseColor = glm::vec4(0.02f, 0.04f, 0.05f, 1.0f), .roughness = 0.04f, .name = "lake"});
+        // Grass: half as wet as bare ground (the rain darkens it, its blades do not turn glossy).
+        MaterialDesc turf{.surface = c.checker,
+                          .baseColor = glm::vec4(0.28f, 0.355f, 0.185f, 1.0f),
+                          .roughness = 0.95f,
+                          .name = "checker",
+                          .wetness = 0.5f};
+        turf.params[0] = glm::vec4(0.30f, 0.38f, 0.20f, 0.95f);
+        turf.params[1] = glm::vec4(0.26f, 0.33f, 0.17f, 0.95f * 0.9f);
+        turf.params[2] = glm::vec4(40.0f, 0.0f, 0.0f, 0.0f);
+        s.addInstance({.mesh = *ground, .material = s.addMaterial(turf)});
+        const MaterialId water = s.addMaterial(
+            {.baseColor = glm::vec4(0.02f, 0.04f, 0.05f, 1.0f), .roughness = 0.04f, .name = "lake", .water = true});
         s.addInstance({.mesh = *lake, .material = water, .transform = placed({-150.0f, 0.4f, -1100.0f})});
         const MaterialId grass = s.addMaterial({.baseColor = glm::vec4(0.25f, 0.32f, 0.17f, 1.0f), .roughness = 0.95f});
         const MaterialId rock = s.addMaterial({.baseColor = glm::vec4(0.42f, 0.4f, 0.36f, 1.0f), .roughness = 0.9f});
@@ -106,26 +138,63 @@ public:
             s.addInstance({.mesh = *tower,
                            .material = concrete,
                            .transform = placed({-420.0f + 170.0f * float(i), 60.0f, -760.0f - 90.0f * float(i % 2)})});
+
+        // The rain's place: paving whose hollows fill with puddles, a pool, a shelter with a crate under its roof
+        // (dry) and the same crate in the open (wet), and a dark block behind them to see the streaks against.
+        const MaterialId stone = s.addMaterial(
+            {.baseColor = glm::vec4(0.42f, 0.41f, 0.39f, 1.0f), .roughness = 0.75f, .name = "paving", .puddles = 1.0f});
+        s.addInstance(
+            {.mesh = *paving, .material = stone, .transform = placed(kPlace + glm::vec3(0.0f, 0.05f, -12.0f))});
+        const MaterialId pondWater = s.addMaterial(
+            {.baseColor = glm::vec4(0.02f, 0.035f, 0.04f, 1.0f), .roughness = 0.03f, .name = "pond", .water = true});
+        s.addInstance(
+            {.mesh = *pond, .material = pondWater, .transform = placed(kPlace + glm::vec3(-8.0f, 0.12f, -22.0f))});
+        const MaterialId metal = s.addMaterial(
+            {.baseColor = glm::vec4(0.3f, 0.32f, 0.34f, 1.0f), .roughness = 0.45f, .metallic = 1.0f, .name = "metal"});
+        for (const glm::vec2 corner :
+             {glm::vec2(-2.4f, -1.8f), glm::vec2(2.4f, -1.8f), glm::vec2(-2.4f, 1.8f), glm::vec2(2.4f, 1.8f)})
+            s.addInstance({.mesh = *post,
+                           .material = metal,
+                           .transform = placed(kShelter + glm::vec3(corner.x, 1.4f, corner.y))});
+        s.addInstance({.mesh = *roof, .material = metal, .transform = placed(kShelter + glm::vec3(0.0f, 2.76f, 0.0f))});
+        const MaterialId wood =
+            s.addMaterial({.baseColor = glm::vec4(0.55f, 0.38f, 0.22f, 1.0f), .roughness = 0.7f, .name = "crate"});
+        s.addInstance({.mesh = *crate,
+                       .material = wood,
+                       .transform = placed(kShelter + glm::vec3(-1.2f, 0.5f, 0.4f), glm::vec3(1.0f), 0.3f)});
+        s.addInstance({.mesh = *crate,
+                       .material = wood,
+                       .transform = placed(kPlace + glm::vec3(-4.0f, 0.5f, -9.0f), glm::vec3(1.0f), 0.5f)});
+        const MaterialId brick =
+            s.addMaterial({.baseColor = glm::vec4(0.2f, 0.17f, 0.15f, 1.0f), .roughness = 0.85f, .name = "block"});
+        s.addInstance({.mesh = *block, .material = brick, .transform = placed(kPlace + glm::vec3(4.0f, 6.0f, -50.0f))});
+
         m_sun = s.addLight({.type = LightType::Directional});
         preset("fair");
         m_weather.setTime(kStartTime);
+        m_weather.setWetnessFocus(cameraGround());
         applySun();
         s.setWeather(m_weather);
+        m_sound.emplace(c.app.audio());
+        m_sound->setEnabled(false);
         return {};
     }
 
     void enter(Context& c) override {
         m_outsideRate = c.app.maxFrameRate();
         applyFrameLimit(c);
+        if (m_sound) m_sound->setEnabled(m_soundOn);
     }
 
     void leave(Context& c) override {
         if (c.app.maxFrameRate() != m_outsideRate) c.app.setMaxFrameRate(m_outsideRate);
+        if (m_sound) m_sound->setEnabled(false);
     }
 
     void update(Context& c, double frameDt) override {
         m_stats = c.renderer.stats();
         const double dt = std::min(frameDt, 0.1);
+        m_weather.setWetnessFocus(cameraGround());
         m_weather.update(dt * double(m_timeScale));
         if (m_runDay) {
             m_elevation += float(dt) * 3.0f;
@@ -133,10 +202,13 @@ public:
         }
         applySun();
         m_scene->setWeather(m_weather);
+        updateSound(frameDt);
     }
 
     void controls(Context& c) override {
-        (void)c;
+        ImGui::SetNextItemWidth(itemWidth());
+        int view = int(m_view);
+        if (ImGui::Combo("View", &view, kViewNames.data(), int(kViewNames.size()))) setView(View(view));
         ImGui::TextUnformatted("Weather");
         for (std::size_t i = 0; i < kPresets.size(); ++i) {
             if (i % 3 != 0) ImGui::SameLine();
@@ -186,6 +258,16 @@ public:
         if (ImGui::Checkbox("Sky cube (reflections)", &cube)) settings.skyCubeSize = cube ? 64u : 0u;
         if (ImGui::SliderInt("Cube faces per frame", &m_cubeFaces, 1, 6)) applyQuality();
         if (ImGui::Checkbox("60 Hz (less heat)", &m_limit60)) applyFrameLimit(c);
+        ImGui::Separator();
+        int rain = int(settings.rain);
+        ImGui::SetNextItemWidth(itemWidth());
+        if (ImGui::Combo("Rain", &rain, kRainNames.data(), int(kRainNames.size()))) settings.rain = Rain(rain);
+        ImGui::Checkbox("Rain shafts", &settings.rainShafts);
+        ImGui::SameLine();
+        ImGui::Checkbox("Rainbow", &settings.rainbow);
+        if (ImGui::Checkbox("Rain sound", &m_soundOn) && m_sound) m_sound->setEnabled(m_soundOn);
+        if (ImGui::SliderFloat("Sound volume", &m_soundVolume, 0.0f, 1.0f) && m_sound)
+            m_sound->setVolume(m_soundVolume);
     }
 
     void stats(Context& c) override {
@@ -199,10 +281,21 @@ public:
                                : "");
         ImGui::TextWrapped("Overcast %.0f %% around the camera, sky cube faces %u", double(m_stats.cloudCover) * 100.0,
                            m_stats.skyCubeFaces);
-        const glm::vec2 here = cameraGround();
-        ImGui::TextWrapped("Precipitation below the camera %.2f, nearest %.1f km away",
-                           double(m_weather.precipitation(glm::vec3(here.x, 0.0f, here.y))),
-                           double(m_weather.distanceToPrecipitation(here)) / 1000.0);
+        ImGui::TextWrapped("Precipitation at the camera %.2f, nearest rain %.1f km away", double(rainHere()),
+                           double(m_rainDistance) / 1000.0);
+        const wx::Wetness wet = m_weather.wetness(cameraGround());
+        ImGui::TextWrapped("Ground wetness %.2f, standing water %.2f", double(wet.ground), double(wet.water));
+        if (m_stats.rain != Rain::Off)
+            ImGui::TextWrapped("Rain %s: %u streaks, %u splashes, %u objects in the rain map, cover %.2f%s%s",
+                               kRainNames[std::size_t(m_stats.rain)], m_stats.rainStreaks, m_stats.rainSplashes,
+                               m_stats.rainOccluders, double(std::max(m_stats.rainCover, 0.0f)),
+                               m_stats.rainShafts ? ", shafts" : "", m_stats.rainbow ? ", rainbow" : "");
+        if (m_sound && m_sound->enabled())
+            ImGui::TextWrapped("Rain sound: light %.2f, heavy %.2f, far %.2f, on the roof %.2f",
+                               double(m_sound->gain(audio::WeatherLayer::RainLight)),
+                               double(m_sound->gain(audio::WeatherLayer::RainHeavy)),
+                               double(m_sound->gain(audio::WeatherLayer::RainFar)),
+                               double(m_sound->gain(audio::WeatherLayer::RainCover)));
         ImGui::TextWrapped("Weather time %.0f s", m_weather.time());
     }
 
@@ -228,6 +321,27 @@ public:
         if (name == "shower_rain") {
             const std::optional<wx::Cell> cell = m_weather.cell(m_shower);
             return cell ? double(m_weather.sample(cell->position).precipitation) : 0.0;
+        }
+        if (name == "view") return double(int(m_view));
+        if (name == "rain") return double(int(m_stats.rain));
+        if (name == "rain_at_camera") return double(m_stats.rainAtCamera);
+        if (name == "rain_cover") return double(m_stats.rainCover);
+        if (name == "rain_streaks") return double(m_stats.rainStreaks);
+        if (name == "rain_splashes") return double(m_stats.rainSplashes);
+        if (name == "rain_occluders") return double(m_stats.rainOccluders);
+        if (name == "rain_shafts") return m_stats.rainShafts ? 1.0 : 0.0;
+        if (name == "rainbow") return m_stats.rainbow ? 1.0 : 0.0;
+        if (name == "wetness") return double(m_weather.wetness(cameraGround()).ground);
+        if (name == "standing_water") return double(m_weather.wetness(cameraGround()).water);
+        if (name.starts_with("sound_") && m_sound) {
+            for (std::size_t i = 0; i < audio::kWeatherLayers; ++i)
+                if (name.substr(6) == kSoundValues[i]) return double(m_sound->gain(audio::WeatherLayer(i)));
+            if (name == "sound_playing") {
+                int playing = 0;
+                for (std::size_t i = 0; i < audio::kWeatherLayers; ++i)
+                    playing += m_sound->sound(audio::WeatherLayer(i)).valid() ? 1 : 0;
+                return double(playing);
+            }
         }
         return std::nullopt;
     }
@@ -302,6 +416,26 @@ public:
             m_limit60 = *flag;
             applyFrameLimit(c);
             return true;
+        } else if (name == "view") {
+            const auto it = std::find(kViewIds.begin(), kViewIds.end(), value);
+            if (it == kViewIds.end()) return false;
+            setView(View(it - kViewIds.begin()));
+            return true;
+        } else if (name == "rain") {
+            const auto it = std::find(kRainIds.begin(), kRainIds.end(), value);
+            if (it == kRainIds.end()) return false;
+            settings.rain = Rain(it - kRainIds.begin());
+            return true;
+        } else if (name == "rain_shafts" && flag) {
+            settings.rainShafts = *flag;
+            return true;
+        } else if (name == "rainbow" && flag) {
+            settings.rainbow = *flag;
+            return true;
+        } else if (name == "sound" && flag) {
+            m_soundOn = *flag;
+            if (m_sound) m_sound->setEnabled(m_soundOn);
+            return true;
         } else {
             return false;
         }
@@ -310,12 +444,15 @@ public:
     }
 
     std::string perfDetails() const override {
-        return std::format("clouds={} steps={} cube_faces={} limit_60hz={}", kQualityIds[std::size_t(m_quality)],
-                           m_steps, m_cubeFaces, m_limit60 ? 1 : 0);
+        return std::format("clouds={} steps={} cube_faces={} limit_60hz={} view={} rain={} shafts={} rainbow={}",
+                           kQualityIds[std::size_t(m_quality)], m_steps, m_cubeFaces, m_limit60 ? 1 : 0,
+                           kViewIds[std::size_t(m_view)], kRainIds[std::size_t(settings.rain)],
+                           settings.rainShafts ? 1 : 0, settings.rainbow ? 1 : 0);
     }
 
     void shutdown(Context& c) override {
         (void)c;
+        m_sound.reset();
         m_scene.reset();
     }
 
@@ -325,15 +462,49 @@ private:
         w.typeVariation = 0.15f;
         w.precipitation = 0.0f;
         w.cirrus = 0.15f;
-        bool shower = false;
+        std::optional<wx::Cell> shower;
+        const wx::Cell showerCell{.position = kShowerAt,
+                                  .radius = 3200.0f,
+                                  .type = wx::CloudType::Cumulonimbus,
+                                  .coverage = 1.0f,
+                                  .precipitation = 1.0f};
         if (name == "fair") {
             w.coverage = 0.32f;
             w.type = wx::CloudType::Cumulus;
-            shower = true;
+            shower = showerCell;
         } else if (name == "shower") {
             w.coverage = 0.05f;
             w.type = wx::CloudType::Cumulus;
-            shower = true;
+            shower = showerCell;
+        } else if (name == "rain_here") {
+            w.coverage = 0.03f;
+            w.type = wx::CloudType::Cumulus;
+            w.cirrus = 0.1f;
+            shower = wx::Cell{.position = glm::vec2(kPlace.x, kPlace.z) + kRainHereAt,
+                              .radius = 2000.0f,
+                              .type = wx::CloudType::Cumulonimbus,
+                              .coverage = 1.0f,
+                              .precipitation = 1.0f,
+                              .drifts = false};
+            m_elevation = 12.0f;
+            m_azimuth = 335.0f;
+        } else if (name == "downpour") {
+            w.coverage = 0.9f;
+            w.type = wx::CloudType::Cumulonimbus;
+            w.typeVariation = 0.2f;
+            w.precipitation = 1.0f;
+            w.cirrus = 0.0f;
+        } else if (name == "passing") {
+            w.coverage = 0.03f;
+            w.type = wx::CloudType::Cumulus;
+            w.cirrus = 0.1f;
+            shower = wx::Cell{.position = glm::vec2(kPlace.x, kPlace.z) + kPassingAt,
+                              .radius = 2400.0f,
+                              .type = wx::CloudType::Cumulonimbus,
+                              .coverage = 1.0f,
+                              .precipitation = 1.0f};
+            m_elevation = 30.0f;
+            m_azimuth = 150.0f;
         } else if (name == "towering") {
             w.coverage = 0.42f;
             w.type = wx::CloudType::Towering;
@@ -360,20 +531,84 @@ private:
             return false;
         }
         m_weather.setSettings(w);
-        setShower(shower);
+        if (shower) m_showerCell = *shower;
+        setShower(shower.has_value());
+        applySun();
         return true;
     }
 
-    // The single raining cloud, placed ahead of the camera's start (drifting with the wind from there).
+    // The single raining cloud of the last preset that had one (drifting with the wind from where it is placed,
+    // unless it stays).
     void setShower(bool on) {
         if (m_shower != wx::kNoCell) m_weather.removeCell(m_shower);
         m_shower = wx::kNoCell;
-        if (on)
-            m_shower = m_weather.addCell({.position = kShowerAt,
-                                          .radius = 3200.0f,
-                                          .type = wx::CloudType::Cumulonimbus,
-                                          .coverage = 1.0f,
-                                          .precipitation = 1.0f});
+        if (on) m_shower = m_weather.addCell(m_showerCell);
+    }
+
+    void setView(View view) {
+        m_view = view;
+        switch (view) {
+        case View::Sky:
+            // A few hundred metres up, looking a little above the horizon: the clouds, their shadows on the plain,
+            // the lake.
+            camera.target = glm::vec3(0.0f, 320.0f, -600.0f);
+            camera.distance = 600.0f;
+            camera.yaw = 0.0f;
+            camera.pitch = glm::radians(-10.0f);
+            camera.minDistance = 30.0f;
+            camera.maxDistance = 3000.0f;
+            settings.shadowDistance = 2500.0f;
+            break;
+        case View::Ground:
+            // At eye height on the paving: the shelter on the right, the pond on the left, the block behind.
+            camera.target = kPlace + glm::vec3(-1.0f, 1.6f, -14.0f);
+            camera.distance = 10.0f;
+            camera.yaw = glm::radians(-6.0f);
+            camera.pitch = glm::radians(4.0f);
+            camera.minDistance = 1.5f;
+            camera.maxDistance = 400.0f;
+            settings.shadowDistance = 120.0f;
+            break;
+        case View::Cloud:
+            // Turned around toward the raining cloud, the sun behind: its rain shafts and the rainbow in them.
+            camera.target = kPlace + glm::vec3(2.0f, 3.0f, -8.0f);
+            camera.distance = 10.0f;
+            camera.yaw = glm::radians(186.0f);
+            camera.pitch = glm::radians(-8.0f);
+            camera.minDistance = 1.5f;
+            camera.maxDistance = 400.0f;
+            settings.shadowDistance = 120.0f;
+            break;
+        case View::Shelter:
+            // Under the roof, looking out over the paving toward the pond.
+            camera.target = kShelter + glm::vec3(-3.0f, 0.4f, -0.8f);
+            camera.distance = 3.0f;
+            camera.yaw = glm::radians(75.0f);
+            camera.pitch = glm::radians(20.0f);
+            camera.minDistance = 1.0f;
+            camera.maxDistance = 400.0f;
+            settings.shadowDistance = 120.0f;
+            break;
+        }
+        cameraCut = true;
+    }
+
+    // Precipitation at the camera (none above the cloud base).
+    float rainHere() const { return m_weather.precipitation(camera.eye()); }
+
+    // The rain sound from the weather at the camera: the distance to the nearest rain is searched four times a
+    // second (a search costs up to a few tenths of a millisecond), the cover is the renderer's.
+    void updateSound(double frameDt) {
+        m_rainSearch -= frameDt;
+        if (m_rainSearch <= 0.0) {
+            m_rainDistance = m_weather.distanceToPrecipitation(cameraGround(), 0.1f, 8000.0f);
+            m_rainSearch = 0.25;
+        }
+        if (!m_sound) return;
+        m_sound->update({.precipitation = rainHere(),
+                         .distanceToRain = m_rainDistance,
+                         .cover = m_stats.rain != Rain::Off ? std::max(m_stats.rainCover, 0.0f) : 0.0f},
+                        frameDt);
     }
 
     static glm::vec2 windDirection(float fromDegrees) {
@@ -434,6 +669,13 @@ private:
     wx::Weather m_weather{
         wx::Settings{.seed = 7, .wind = {.direction = {0.0f, 1.0f}, .speed = 12.0f}, .evolution = 1.0f}};
     wx::CellId m_shower = wx::kNoCell;
+    wx::Cell m_showerCell{};
+    View m_view = View::Sky;
+    std::optional<audio::WeatherAudio> m_sound;
+    bool m_soundOn = true;
+    float m_soundVolume = 1.0f;
+    double m_rainSearch = 0.0;
+    float m_rainDistance = 1e9f;
     RenderStats m_stats{};
     Quality m_quality = Quality::Reduced;
     int m_steps = 64;

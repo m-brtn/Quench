@@ -220,6 +220,21 @@ constexpr std::array kItems{
               "turn orange and pink, their bases darker; then Overcast: the sun fades, the light turns grey and the "
               "frame rate holds.",
               "set preset fair\nset time_scale 10"},
+    CheckItem{"weather.rain", "weather", "Rain in motion",
+              "Rain here, from the ground: the streaks fall at a slant with the wind, bright where the sun is behind "
+              "them and visible against the dark block, without flicker or popping at the edge of the box around the "
+              "camera; small splashes on the paving; rings spread on the puddles and the pond, and the puddles "
+              "mirror the sky. View Shelter: its floor and the crate under it stay dry while the rain falls past the "
+              "roof's edge. View Cloud: a faint rainbow opposite the sun and grey shafts below the cloud. Passing "
+              "shower at Time scale 60: the rain stops as the cell drifts away, the paving lightens as it dries and "
+              "the puddles last longer.",
+              "set preset rain_here\nset view ground\nset rain medium\nset rain_shafts 1\nset rainbow 1"},
+    CheckItem{"weather.rain_sound", "weather", "Rain sound",
+              "Headphones or speakers: Rain here is a steady hiss of rain with heavier drops as it grows (Downpour), "
+              "without clicks, gaps or a loop you can hear. View Shelter: the rain drums on the roof and the open "
+              "hiss is softer. Passing shower: as the cell drifts away the near rain fades into a distant rumble "
+              "without a jump. Rain sound off: silence within a second.",
+              "set preset rain_here\nset view ground\nset sound 1"},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",

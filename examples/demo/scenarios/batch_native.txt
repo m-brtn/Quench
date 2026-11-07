@@ -40,4 +40,5 @@ include raytracing_probes.txt
 include assets_basis.txt
 include navigation.txt
 include weather.txt
+include rain.txt
 quit
