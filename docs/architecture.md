@@ -8,8 +8,8 @@ system, `quench_assets`, `quench_cook` and shader hot reload (see "Threads and j
 [Jobs, assets and the cook](assets.md) and [App shell](app.md#shader-hot-reload)), and stage 7: `quench_audio` and `quench_audio_device` (see "Audio" and
 [Audio](audio.md)), and stage 9: the native Metal backend, GPU timestamps per pass, acceleration structures,
 ray-traced sun shadows and ambient occlusion, MetalFX upscaling (see "Native Metal backend" and "Ray tracing"), and
-stage 11: ray-traced local light shadows, reflections and indirect light, a probe grid (also traced in turns, after
-0.9.0), the engine's temporal
+stage 11: ray-traced local light shadows, reflections and indirect light, a probe grid (also traced in turns since
+0.10.0), the engine's temporal
 denoiser, MetalFX's denoising upscaler and a reference path tracer (see "Ray tracing"), and stage 12: area lights
 and anisotropic GGX (see "Rendering");
 everything else here
@@ -548,7 +548,7 @@ The engine adds:
   posed vertices. It needed compute in `quench::gpu` and the shader build (above);
 - cooking of glTF skins, skeletons and animations in `quench_cook`.
 
-Since 2026-11-07 (after 0.9.0): 2D blend spaces, animation LOD, dual quaternion skinning, and retargeting between
+Since 2026-11-07 (0.10.0): 2D blend spaces, animation LOD, dual quaternion skinning, and retargeting between
 skeletons at cook time (not in ozz: a bone map by name, rest pose and bone direction correction, scaled root and
 hips translations; [Animation](animation.md#retargeting)), and blend shapes, applied in the skinning compute pass
 before the joints (weights per instance; [Render module](render.md#blend-shapes)), their weights from the clips'

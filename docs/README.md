@@ -1,20 +1,22 @@
 # Quench documentation
 
-Stages 1 to 3, 5, 6, 7, 9, 10 and 11 of the [Roadmap](roadmap.md) are implemented (stage 11 except the iPhone runs;
-stage 6's shader hot reload since 2026-11-07, after 0.9.0), stage 4 (games on the engine) for one game and stage 8
-(retargeting, blend shapes and their weights from clips since 2026-11-07, after 0.9.0)
-(version 0.9.0): the core and physics modules, the job system, the asset system and the asset
-cooker, the GPU layer over SDL GPU (and a native Metal backend with GPU timestamps per pass, acceleration structures
-and MetalFX; not the default yet), the app shell with HDR display output, the render module (a retained scene and
-the standard frame with cut-out and translucent shadows, normal and emissive maps, GPU skinning, and on the native
-backend ray-traced shadows of the sun and local lights, ambient occlusion, reflections, indirect light with a probe
-grid, the engine's temporal denoiser, MetalFX upscaling and denoising and a reference path tracer, with shadow maps,
-the sky's light and bilinear scaling as the fallbacks; the stage 11 effects not yet run on the iPhone), audio (the mixer, 3D sound, device output, offline captures; not yet run on the iPhone or
-listened to), animation (skeletons and clips, state machines, blending, events, root motion, IK and foot placement;
-not yet run on the iPhone or looked at in motion by the user), the sample, the engine demo (finished in stage 10,
-with a tour, a check mode and a benchmark of every section; its compact layout not yet on the iPhone) and the game
-template. Where a document describes something planned, it says so. [Migration](migration.md) describes the engine code in the two
-games, what has moved and what is not moved yet.
+Stages 1 to 3 and 5 to 12 of the [Roadmap](roadmap.md) are implemented (stages 11 and 12 except their runs on the
+iPhone 18 Pro Max and the checks by eye; Basis Universal textures and browser audio still open), stage 4 (games on the
+engine) for one game (version 0.10.0): the core and physics modules, the job system, the asset system and the asset
+cooker (BC7, ASTC in iOS builds; asset hot reload on the Mac and on a device), the GPU layer over SDL GPU (and a native
+Metal backend with GPU timestamps per pass, acceleration structures and MetalFX; not the default yet; shader hot
+reload on desktops), the app shell with HDR display output, the render module (a retained scene and the standard
+frame with cut-out and translucent shadows, normal and emissive maps, area lights, anisotropic GGX, GPU skinning with
+blend shapes, and on the native backend ray-traced shadows of the sun, local and area lights, ambient occlusion,
+reflections, indirect light with a probe grid, the engine's temporal denoiser, MetalFX upscaling and denoising and a
+reference path tracer, with shadow maps, screen-space occlusion and reflections, the sky's light and bilinear scaling
+as the fallbacks; ray tracing and the area lights run on the iPhone 17 only), audio (the mixer, 3D sound with an
+optional HRTF, reverb buses, Ogg Vorbis, device output, offline captures; not yet run on the iPhone or listened to),
+animation (skeletons and clips, state machines, 1D and 2D blending, events, root motion, IK and foot placement, LOD,
+retargeting, blend shape weights from clips; not yet run on the iPhone or looked at in motion by the user), the
+sample, the engine demo (finished in stage 10, with a tour, a check mode and a benchmark of every section) and the
+game template. Where a document describes something planned, it says so. [Migration](migration.md) describes the
+engine code in the two games, what has moved and what is not moved yet.
 
 | Document | Contents |
 |---|---|

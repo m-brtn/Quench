@@ -283,7 +283,7 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   rays, and the probe grid or the sky's ambient light. A surface shader's own shading is not run for rays. The
   normal map (texture 2) is read in the raster's frame (`quenchNormalFromMap`: the vertex tangent made perpendicular
   to the interpolated normal of the side the ray hit, the bitangent's sign turned by a mirroring transform); a mapped
-  normal that faces away from the ray's origin is dropped for the interpolated one. Since 2026-11-07 (after 0.9.0)
+  normal that faces away from the ray's origin is dropped for the interpolated one. Since 2026-11-07 (0.10.0)
   the tracing passes (reflections, indirect light, probe rays, the path tracer) have a variant whose hits read
   normal maps (`raylight.hlsl`'s `_maps` entries, `QUENCH_RT_NORMAL_MAPS`), used in frames where an instance in the
   top level has one: the tangent frame cost the path tracer 0.2 to 0.5 ms (2 to 4 %) on the M4 Pro even in a scene
@@ -294,7 +294,7 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   `castsShadows` get one shadow ray per pixel each toward a random point of their sphere (`LightDesc::sourceRadius`,
   0: hard), cut-out and translucent casters as for the sun; the result is one channel per light of a second mask,
   filtered like the sun's (fragment sampler 9, `options.w` bit 4). Without ray tracing they are unshadowed, or since
-  2026-11-07 (after 0.9.0) the point and spot lights among them take shadow maps where `localShadowMapSize` is set
+  2026-11-07 (0.10.0) the point and spot lights among them take shadow maps where `localShadowMapSize` is set
   (below, "Local light shadow maps"). The channels go to the lights in order of distance each frame: a light that
   takes a channel another light (or none) had starts from that channel's history, counted in
   `RenderStats::localShadowChanges` (in the demo's moving tunnel 4 to 10 times in 34 s, without a visible trace:
@@ -316,7 +316,7 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   probes that stay keep their history, new ones start from their first frame. Surfaces read it with trilinear
   weights, visibility and a normal bias (`quench/Probes.hlsli`, samplers 10 and 11, bit 32) in place of
   `Environment::skyAmbient` and `groundAmbient`; beyond the grid they fade to them.
-- **Probe updates in turns** (`RenderSettings::probeUpdatePeriod`, 1, 2, 4 or 8, default 1; after 0.9.0): the grid
+- **Probe updates in turns** (`RenderSettings::probeUpdatePeriod`, 1, 2, 4 or 8, default 1; 0.10.0): the grid
   traces 1 / n of its probes per frame, each probe once in n frames, for phones where the grid's 2048 probes cost
   about 3 ms at any render scale. A probe's turn is a sub-lattice of the grid (2 turns a 3D checkerboard, 8 every
   other probe along each axis), so every frame's probes are spread evenly; the probe ray target's rows are ordered by
@@ -349,7 +349,7 @@ passes' GPU costs at 1080p are in [Performance](performance.md#measurements).
 
 ### Local light shadow maps
 
-Since 2026-11-07 (after 0.9.0, not released). Where `localLightShadows` cannot be ray traced (SDL GPU, so the
+Since 2026-11-07 (0.10.0). Where `localLightShadows` cannot be ray traced (SDL GPU, so the
 default backend everywhere, and the native backend without `gpu::Caps::rayTracing`), `RenderSettings::
 localShadowMapSize` (0, the default: off; else 64..4096 texels per side) gives the same lights shadow maps: the
 nearest `localLightShadows` (at most 4) point and spot lights with `castsShadows`, chosen as for the rays.
@@ -392,7 +392,7 @@ nearest `localLightShadows` (at most 4) point and spot lights with `castsShadows
 
 ### Screen-space ambient occlusion
 
-Since 2026-11-07 (after 0.9.0, not released). `AmbientOcclusion::ScreenSpace`, or `AmbientOcclusion::RayTraced`
+Since 2026-11-07 (0.10.0). `AmbientOcclusion::ScreenSpace`, or `AmbientOcclusion::RayTraced`
 with `RenderSettings::screenSpaceFallbacks` (off by default) where the rays are not available (SDL GPU, so the
 default backend everywhere, and the native backend without `gpu::Caps::rayTracing`): GTAO from the depth of the
 opaque surfaces. It needs a sampleable depth and `Rg16Float` targets; else none, with a line in `fallbacks()`.
@@ -431,7 +431,7 @@ Where the device traces, `RayTraced` stays traced; `ScreenSpace` set by the game
 
 ### Screen-space reflections
 
-Since 2026-11-07 (after 0.9.0, not released). `Reflections::ScreenSpace`, or `Reflections::RayTraced` with
+Since 2026-11-07 (0.10.0). `Reflections::ScreenSpace`, or `Reflections::RayTraced` with
 `RenderSettings::screenSpaceFallbacks` (off by default; the same flag as GTAO's) where the rays are not available
 (SDL GPU, so the default backend everywhere, and the native backend without `gpu::Caps::rayTracing`): reflections of
 what the previous frame showed. They need a sampleable depth and `Rgba16Float` targets; else the sky's reflection,
@@ -691,7 +691,7 @@ and (stage 11) the bottom levels compacted this frame (`rayCompactions`), whethe
 (`rayTopRefit`), the GPU memory of the acceleration structures, tables, hit texture arrays and probe atlases
 (`rayMemoryBytes`), the material textures in the hit arrays (`hitTextures`), the probes traced (`probes`) and the
 path tracer's samples (`pathSamples`), and (stage 12) the area lights among the frame's lights (`areaLights`) and
-the lights that took another light's shadow channel (`localShadowChanges`), and (2026-11-07, after 0.9.0) the
+the lights that took another light's shadow channel (`localShadowChanges`), and (2026-11-07, 0.10.0) the
 lights with shadow maps, their maps, the instances and draws in them (`localShadowLights`, `localShadowMaps`,
 `localShadowInstances`, `localShadowDraws`), whether GTAO ran and the draws of its prepass (`screenOcclusion`,
 `screenPrepassDraws`), whether SSR ran (`screenReflections`).

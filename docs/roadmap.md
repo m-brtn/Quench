@@ -136,17 +136,17 @@ the engine's tests and the demo's new "Assets" section. Described in [Jobs, asse
   directory reloads in place), checked by replacing files while the demo ran and by rebuilding `quench_demo_assets`.
 - Done: streaming by distance (`StreamingGrid`, generalized from TrailForge's `TerrainTiles`): cells load and unload
   around a focus point with hysteresis, nearest first.
-- Done (2026-11-07, after 0.9.0): ASTC 4x4 textures for iOS. The cook encodes them through astc-encoder
+- Done (2026-11-07, 0.10.0): ASTC 4x4 textures for iOS. The cook encodes them through astc-encoder
   (`--format astc`), `quench_cook_assets(TEXTURE_FORMAT auto)` cooks ASTC in iOS builds and BC7 elsewhere, and the
   runtime samples them where `gpu::Caps::astcTextures` is set (otherwise an error and the placeholder). Checked by
   PSNR in the cook's tests, `render.scene_assets_texture_states` on the Mac's three backends and the Simulator's
   two, and the demo's Assets section in the Simulator and on the iPhone 17 on both backends.
-- Done (2026-11-07, after 0.9.0): asset hot reload on a device, without an asset server. Development builds read
+- Done (2026-11-07, 0.10.0): asset hot reload on a device, without an asset server. Development builds read
   assets from an overlay in the user directory first (`fs::makeOverlayBackend`, CMake option
   `QUENCH_ASSET_OVERLAY`), and `tools/push_assets.sh` copies files whose content changed into it with `devicectl`.
   Checked on the iPhone 17 with the demo's Assets section (`scenarios/hot_reload_device.txt`: one texture pushed,
   reloaded about a second later). Normal and emissive textures in the standard surface came with stage 11.
-- Done (2026-11-07, after 0.9.0): shader hot reload on desktops. `quench_add_shaders()` writes a manifest per set
+- Done (2026-11-07, 0.10.0): shader hot reload on desktops. `quench_add_shaders()` writes a manifest per set
   (the source, the included files, the build's compile commands); with `--hot-reload` the app watches the sets of
   live pipelines, compiles a changed set again through `SDL_CreateProcess` without waiting for it and creates its
   pipelines again behind the same handles; after a compile error the old code stays. Checked by
@@ -177,14 +177,14 @@ the user was away: the decisions are in the devlog of 2026-11-06 ("decided witho
   strongest frequency) and the `audio_*` values; `quench_cook sound` and `quench_cook_assets(... SOUNDS ...)`.
 - Done: the demo's "Audio" section with its scripted check (39 checks on the measured mix) and golden captures for
   Metal and Vulkan through MoltenVK.
-- Done after 0.9.0 (2026-11-07, not released): Ogg Vorbis sounds and streams through miniaudio's stb_vorbis (no new
+- Done (2026-11-07, 0.10.0): Ogg Vorbis sounds and streams through miniaudio's stb_vorbis (no new
   archive), in the cook too; streamed Vorbis loops and crossfades without a length (checked by measurement, also
   under Node.js).
-- Done after 0.9.0 (2026-11-07, not released): reverb buses with per-sound sends (Freeverb through miniaudio's
+- Done (2026-11-07, 0.10.0): reverb buses with per-sound sends (Freeverb through miniaudio's
   verblib, no new archive), on the audio thread without allocation; the demo's reverb switch and room size, a mix
   check and a check mode item (checked by measurement: decay times by room size, bit-exact when unused, also under
   Node.js and ThreadSanitizer; not listened to).
-- Done after 0.9.0 (2026-11-07, not released): HRTF for headphones from the SADIE KU100 set (Apache-2.0, as
+- Done (2026-11-07, 0.10.0): HRTF for headphones from the SADIE KU100 set (Apache-2.0, as
   Resonance Audio distributes it, reduced to a 198 KB table in the repository), interpolated between directions with
   per-ear delays, direct convolution per voice for at most `hrtfVoices` sounds (the others panned), off by default
   and switched with a crossfade; the demo's HRTF switch, a mix check and a check mode item (checked by measurement:
@@ -197,7 +197,7 @@ the user was away: the decisions are in the devlog of 2026-11-06 ("decided witho
   2026-11-06, as recommended); they are listed as not verified in the release notes.
 - Done: version 0.5.0, release notes in [docs/releases/v0.5.0.md](releases/v0.5.0.md).
 
-## Stage 8: animation (done 2026-11-06, version 0.6.0; its remaining work on 2026-11-07, after 0.9.0; except the checks in motion and on the iPhone)
+## Stage 8: animation (done 2026-11-06, version 0.6.0; its remaining work on 2026-11-07, version 0.10.0; except the checks in motion and on the iPhone)
 
 Requested as P0 (skinning, state machines, blending, events) and P1 (partial and additive blending, IK and foot
 placement, retargeting, attachments) by the user (2026-11-05). Written for the engine: neither game has skeletal
@@ -218,22 +218,22 @@ the user"). Described in [Animation](animation.md).
 - Done: the demo's "Animation" section (speed blend, jump and wave, additive lean, look-at, a held torch, footstep
   sounds, foot placement on a ramp and a step, a crowd of up to 512 with its update and skinning times) with its
   scripted check and golden captures for Metal and Vulkan through MoltenVK; a benchmark region with 256 characters.
-- Done after 0.9.0 (not released): 2D blend spaces (`blend2d` states, gradient band weights, per-point phases) with
+- Done (2026-11-07, 0.10.0): 2D blend spaces (`blend2d` states, gradient band weights, per-point phases) with
   the demo's steered character (walk back and strafe clips added to the mannequin) and its scripted check and golden
   captures.
-- Done after 0.9.0 (not released): animation LOD (`AnimationLod`: every frame, 2nd or 4th by screen size with
+- Done (2026-11-07, 0.10.0): animation LOD (`AnimationLod`: every frame, 2nd or 4th by screen size with
   hysteresis, interpolated or held, IK off when small, root motion spread over the frames) and the renderer's reuse
   of unchanged skinned vertices; the demo's option and its scripted check (no capture), measured on the crowd of 256.
-- Done after 0.9.0 (not released): dual quaternion skinning (per instance or per skin of a cooked model, linear the
+- Done (2026-11-07, 0.10.0): dual quaternion skinning (per instance or per skin of a cooked model, linear the
   default) with the demo's twisted pair, its scripted check and golden captures.
-- Done after 0.9.0 (not released): retargeting at cook time (`quench_cook animation --retarget`, `quench_cook_assets(...
+- Done (2026-11-07, 0.10.0): retargeting at cook time (`quench_cook animation --retarget`, `quench_cook_assets(...
   RETARGET ...)`: a JSON bone map by name, rest pose and bone direction correction, root and hips translations
   scaled) with the demo's second character (the strider: other names, proportions and a T-pose) walking beside the
   mannequin, its scripted check and golden captures.
-- Done after 0.9.0 (not released): blend shapes (glTF morph targets cooked into `.qmodel` version 4, applied by the
+- Done (2026-11-07, 0.10.0): blend shapes (glTF morph targets cooked into `.qmodel` version 4, applied by the
   skinning pass before the joints, weights set per instance or by name for a cooked model) with the demo's blob, its
   scripted check and golden captures.
-- Done after 0.9.0 (not released): blend shape weights from clips (float channels in clips, cooked from glTF
+- Done (2026-11-07, 0.10.0): blend shape weights from clips (float channels in clips, cooked from glTF
   `weights` animations, blended like the pose, `AnimationSystem::addChannels`), the demo's blob squashed and
   stretched by its clip.
 - Not done, remaining: the look in motion of animation LOD, of the retargeted walk and of the blend shapes; the check in motion by the user (foot sliding, blend pops, IK) and on
@@ -390,13 +390,13 @@ scaler.
   the default) on every traced signal ([Render module](render.md#denoising)).
 - [x] Ray-traced shadows for up to 4 local lights (`localLightShadows`, `LightDesc::sourceRadius`); fallback
   unshadowed.
-- [x] Shadow maps for spot and point lights as that fallback (after 0.9.0, 2026-11-07, on the Mac):
+- [x] Shadow maps for spot and point lights as that fallback (0.10.0, 2026-11-07, on the Mac):
   `RenderSettings::localShadowMapSize` (off by default) gives the same lights one map per narrow spot light and six
   (a cube) per point or wide spot light, filtered 4 x 4, through their own surface variant so frames without them
   pay nothing; 7 maps cost 0.3 to 0.4 ms of the M4 Pro's 1080p frame on SDL GPU
   ([Render module](render.md#local-light-shadow-maps), [Performance](performance.md#local-light-shadow-maps)).
   Area lights stay unshadowed without ray tracing. Open: the cost on a phone.
-- [x] GTAO as the screen-space fallback of the traced occlusion (after 0.9.0, 2026-11-07, on the Mac):
+- [x] GTAO as the screen-space fallback of the traced occlusion (0.10.0, 2026-11-07, on the Mac):
   `AmbientOcclusion::ScreenSpace`, and `RenderSettings::screenSpaceFallbacks` (off by default) for `RayTraced` where
   the device cannot trace; adapted from XeGTAO (MIT), at half resolution with a depth-aware 4 x 4 blur, after a
   depth prepass of its own where nothing is traced; 0.17 to 0.41 ms of the M4 Pro's 1080p frame on the native
@@ -404,7 +404,7 @@ scaler.
   [Performance](performance.md#screen-space-ambient-occlusion)). Open: the cost on a phone
   (`scenarios/gtao_phone.txt`), a look in motion.
 - [x] Ray-traced reflections with hit lighting and a roughness cut-off; sky fallback (no SSR this stage).
-- [x] SSR as the screen-space fallback of the traced reflections (after 0.9.0, 2026-11-07, on the Mac):
+- [x] SSR as the screen-space fallback of the traced reflections (0.10.0, 2026-11-07, on the Mac):
   `Reflections::ScreenSpace`, and `RenderSettings::screenSpaceFallbacks` (the same flag as GTAO's) for `RayTraced`
   where the device cannot trace; Ashfall's march generalized (a GGX ray per 2 x 2 pixels, steps relative to the view
   depth), the hit's color from the previous frame's image, a depth-aware resolve; after a prepass with the G-buffer
@@ -415,7 +415,7 @@ scaler.
   look in motion.
 - [x] Indirect light: DDGI-like probes (16 x 8 x 16, 64 rays each per frame), then per-pixel rays; sky ambient
   fallback; furnace test against the sky's light.
-- [x] The probe grid in turns for phones (after 0.9.0, 2026-11-07, on the Mac): `RenderSettings::probeUpdatePeriod`
+- [x] The probe grid in turns for phones (0.10.0, 2026-11-07, on the Mac): `RenderSettings::probeUpdatePeriod`
   traces 1/2, 1/4 or 1/8 of the probes per frame (a fixed round-robin over sub-lattices), probes that come into a
   scrolling grid left out until traced, a jump traces all; on the M4 Pro the probes cost 1.16 ms every frame and
   0.68, 0.43, 0.32 ms in turns, and light settles to within 10 % in 70, 166, 276, 629 frames
@@ -452,13 +452,12 @@ scaler.
 - [x] Full test tier, `tools/package_demo.sh` (macOS), release notes [docs/releases/v0.9.0.md](releases/v0.9.0.md);
   after the iPhone 17 runs again with `--ios` (2026-11-06 19:07, the macOS zip and the development-signed `.ipa`).
 
-## Stage 12: area lights and anisotropic GGX (done 2026-11-06 except the checks by eye, no version yet)
+## Stage 12: area lights and anisotropic GGX (done 2026-11-06 except the checks by eye, version 0.10.0)
 
 Requested by the user on 2026-11-06 (19:20): a futuristic tunnel with lamps of different colors and shapes (strips
 in the floor, squares in the ceiling, panels, tubes, spots), metal and wet materials, rubber, embossed plastic and
 brushed aluminium. User decisions: real area lights (not emissive geometry with point lights) and an anisotropic
-BRDF; own procedural content only. No release (the version stays 0.9.0); "Changes for games" in
-[docs/releases/next.md](releases/next.md).
+BRDF; own procedural content only. Released with 0.10.0 ([docs/releases/v0.10.0.md](releases/v0.10.0.md)).
 
 - [x] Area lights in `quench_render`: `LightType::Rect`, `Disk` and `Tube` (`LightDesc::size`, `tangent`,
   `twoSided`), at most 8 of a frame's 16 lights; their shapes drawn in the scene with the light's radiance on their
@@ -502,15 +501,16 @@ BRDF; own procedural content only. No release (the version stays 0.9.0); "Change
 ## What is next
 
 The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, stage 11 with 0.9.0, and stage
-12 (area lights, anisotropy, the tunnel) after it, not yet released. What stays open, in the order it is useful (nothing of it is scheduled; the user decides):
+12 (area lights, anisotropy, the tunnel) with most of the earlier stages' remaining work with 0.10.0. What stays
+open, in the order it is useful (nothing of it is scheduled; the user decides):
 
 1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (40 items:
    the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
    input devices, loading and streaming, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
    and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
    the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, the frame rate and the layout on the phone;
-   [Engine demo](demo.md#check-mode-on-the-iphone)), on the iPhone 18
-   Pro Max the device test app on both backends with the 0.9.0 code and the stage 11 ray tracing runs (done on the
+   [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.10.0 code (on
+   the iPhone 17 last with the stage 11 code), on the iPhone 18 Pro Max the stage 11 and 12 runs (done on the
    iPhone 17), Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes,
    background).
 2. **Defaults from those runs:** the ray tracing section's phone defaults are chosen (stage 11, on the iPhone 17);

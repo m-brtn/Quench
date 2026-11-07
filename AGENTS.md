@@ -20,13 +20,11 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-07, version 0.9.0): stages 1 to 3, 5 to 7, 9 and 10 of `docs/roadmap.md` are in place
-(stage 6's shader hot reload, ASTC and asset hot reload on a device, stage 7's Vorbis, reverb and HRTF after 0.9.0, not released), stage
-4 for TrailForge only, stage 8 (its retargeting, blend shapes and their weights from clips after 0.9.0, not released), stage 11 (full ray tracing)
-except its runs on the iPhone 18 Pro Max, stage 12 (area lights and anisotropic GGX, after 0.9.0, not released) except
-its checks by eye; the plan the user left (stages 6 to 10) and stages 11 and 12 have been worked through, apart from
-the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the iPhone 18 Pro Max and the
-checks by eye and ear:
+**Current state (2026-11-07, version 0.10.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
+the iPhone 18 Pro Max and the checks by eye; the plan the user left (stages 6 to 10) and stages 11 and 12 have been
+worked through, apart from the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the
+iPhone 18 Pro Max and the checks by eye and ear:
 the CMake
 skeleton and presets,
 `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
@@ -34,10 +32,10 @@ library backend, worker thread priority, the job system `quench::JobSystem` on e
 (`PhysicsWorld` on Jolt, its jobs on the engine's job system), `quench_assets` (asset IDs, the `AssetManager` cache
 with reference counts, placeholders, budgets, loads on jobs, a per-frame upload budget, hot reload on the Mac and,
 in development builds, on a device through an asset overlay in the user directory filled by `tools/push_assets.sh`
-(checked on the iPhone 17), streaming by distance; KTX2 textures and cooked `.qmodel` models, version 4 with skins, blend shapes (after 0.9.0, not released) and MikkTSpace tangents in a
+(checked on the iPhone 17), streaming by distance; KTX2 textures and cooked `.qmodel` models, version 4 with skins, blend shapes and MikkTSpace tangents in a
 64-byte vertex), `quench_cook` (the host
 tool: glTF, GLB, PNG, JPEG, KTX2 to BC7, ASTC 4x4 (iOS builds, through astc-encoder) or RGBA8 KTX2 with mips and meshoptimizer models with tangents and blend shapes; sounds; skeletons and clips
-(with morph target weights) from glTF, clips retargeted onto another skeleton by a bone map (after 0.9.0, not released); `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
+(with morph target weights) from glTF, clips retargeted onto another skeleton by a bone map; `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
 ray query entries through DXC built from source, a manifest per set for shader hot reload) and the engine shader
 library in `shaders/quench/` (uniform structs
 shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain compositions for HDR and compute;
@@ -58,25 +56,23 @@ shadows (cut-out shadows with holes, translucent tinted shadows through a transm
 pass with reversed depth, sky and atmosphere, height fog, normal and emissive maps, bloom, ACES or AgX tone mapping
 and TAA or FXAA, with fallbacks by device capability; where `gpu::Caps` allow it, ray-traced sun shadows and ambient
 occlusion and MetalFX upscaling, and since stage 11 ray-traced shadows of up to 4 local lights, reflections,
-indirect light by a probe grid (DDGI-like; traced in turns on request, after 0.9.0, not released) or per-pixel rays, the engine's temporal denoiser (the default; a spatial
+indirect light by a probe grid (DDGI-like; traced in turns on request) or per-pixel rays, the engine's temporal denoiser (the default; a spatial
 one), MetalFX's denoising upscaler and a reference path tracer, falling back to shadow maps, no occlusion (or, as an
-option, screen-space GTAO, after 0.9.0, not released),
-unshadowed local lights (or, as an option, shadow maps for point and spot lights, after 0.9.0, not released), the sky's reflection (or, as an option, screen-space reflections, after 0.9.0, not released) and ambient light and bilinear scaling; since stage 12 area lights
+option, screen-space GTAO),
+unshadowed local lights (or, as an option, shadow maps for point and spot lights), the sky's reflection (or, as an option, screen-space reflections) and ambient light and bilinear scaling; since stage 12 area lights
 (rect, disk, tube: LTC shading, soft traced shadows, in the path tracer; unshadowed as the fallback) and anisotropic
 GGX; game passes and surface
 shaders (with a G-buffer entry for the rays); GPU skinning by compute (linear or dual quaternion; blend shapes before it; unchanged poses copied); `SceneAssets` puts asset textures and models
 into the scene),
 `quench_audio` (headless: a float stereo 48 kHz mixer, buses with volume, mute, pause and meters, reverb buses with
-per-sound sends (after 0.9.0, not released), sounds as an asset
+per-sound sends, sounds as an asset
 type (WAV, FLAC, MP3, Ogg Vorbis), streamed music with crossfades, game-generated sources, 3D sound with Doppler and voice stealing,
-panned or through an HRTF for headphones (off by default, after 0.9.0, not released), WAV writing
+panned or through an HRTF for headphones (off by default), WAV writing
 and signal analysis), `quench_audio_device` (output through miniaudio, the iOS audio session; `App::audio()`,
 `--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`), `quench_animation`
-(headless, on ozz-animation: skeletons, clips and graphs as assets, blend trees, 2D blend spaces (after 0.9.0, not
-released), JSON state machines with
-cross-fades, events, root motion, masked and additive layers, float channels in clips for blend shape weights
-(after 0.9.0, not released), two-bone and aim IK, look-at, foot placement, bone
-attachments, the update in parallel on the job system, animation LOD by screen size (after 0.9.0, not released))
+(headless, on ozz-animation: skeletons, clips and graphs as assets, blend trees, 2D blend spaces, JSON state machines with
+cross-fades, events, root motion, masked and additive layers, float channels in clips for blend shape weights, two-bone and aim IK, look-at, foot placement, bone
+attachments, the update in parallel on the job system, animation LOD by screen size)
 and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons and clips).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (finished in stage 10: a section per feature,
@@ -93,19 +89,20 @@ run only on miniaudio's null backend and offline (mix checks by measurement); no
 Animation is checked by numbers and still captures; nobody has looked at it in motion yet. The native Metal backend,
 ray tracing and MetalFX ran on the Mac and on both iPhones (2026-11-06: the device tests, the demo's benchmarks at
 120 Hz; ray-traced shadows with occlusion 8.0 ms GPU p50 on the iPhone 18 Pro Max, over the phone's 7.5 ms budget,
-about 100 frames per second on the iPhone 17; numbers only, nobody has looked at them on a phone yet), the native
+about 100 frames per second on the iPhone 17), the native
 backend also in the iOS Simulator (without ray tracing or MetalFX); builds of the Xcode generator compiled its
 Objective-C++ without ARC until 2026-11-06, so the 0.8.0 iOS package crashes on the native backend (the default SDL
 GPU backend works there). The stage 11 effects (0.9.0) ran on the Mac and on the iPhone 17 (2026-11-06: the device
 tests on both backends, 0 failed; the cost of each effect, about 3 times the M4 Pro's; the demo's ray tracing
 section defaults on phones chosen from them: half size with MetalFX spatial, no probe grid, 60 Hz), not on the
-iPhone 18 Pro Max, and nobody has looked at the new effects in motion. The default stays SDL GPU and shadow maps,
+iPhone 18 Pro Max; the user played with that section at its phone defaults on the iPhone 17 (2026-11-06: "it's
+fine"), nobody has looked at the other effects in motion. The default stays SDL GPU and shadow maps,
 every stage 11 effect off, until the user has looked at them on the iPhone. The stage 12 area lights (the demo's
 tunnel, whose lamps move and whose camera drives a loop since the same day) ran on the Mac and on the iPhone 17
 (2026-11-06: costs and captures, still and in motion; the tunnel's phone defaults at 60 Hz; ten minutes of the ray
 tracing section's and the tunnel's phone defaults, where the tunnel missed a few intervals after about 8 minutes),
 not on the iPhone 18 Pro Max, and nobody has looked at them in motion or on a phone's screen. The demo's compact layout and touch controls were
-looked at in the iOS Simulator only. The checks waiting for a person (on the iPhone, by ear, in motion) are the demo's check mode
+looked at in the iOS Simulator and, in the ray tracing section, used by the user on the iPhone 17. The checks waiting for a person (on the iPhone, by ear, in motion) are the demo's check mode
 (`docs/demo.md`, "Check mode on the iPhone"). TrailForge builds on the engine's
 `quench_core` (`FixedStepClock`, JSON), `quench_physics` and shader build, renders its own passes through
 `quench_gpu` (not through `quench_render`),
@@ -116,7 +113,7 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
 work), the native backend as the default, custom
-surface shading in ray hits (normal maps are read there since 2026-11-07, after 0.9.0; stage 11 remaining work) or
+surface shading in ray hits (normal maps are read there since 0.10.0; stage 11 remaining work) or
 shadows of area lights without ray tracing (stage 12 remaining work)
 yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
