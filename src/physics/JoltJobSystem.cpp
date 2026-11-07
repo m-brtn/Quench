@@ -64,6 +64,7 @@ void JoltJobSystem::startDrainer() {
         if (m_drainers.compare_exchange_weak(active, active + 1, std::memory_order_seq_cst)) {
             m_running.fetch_add(1, std::memory_order_acq_rel);
             m_jobs.run(
+                "physics.jobs",
                 [this] {
                     drain();
                     m_running.fetch_sub(1, std::memory_order_acq_rel);

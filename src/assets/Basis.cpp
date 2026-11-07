@@ -2,6 +2,8 @@
 // ktx2_transcoder, cmake/QuenchBasisu.cmake), and prepareTexture for plain and Basis Universal files alike.
 #include <quench/assets/Texture.h>
 
+#include <quench/core/Profile.h>
+
 #include "Ktx2Layout.h"
 
 #include <basisu_transcoder.h>
@@ -126,6 +128,7 @@ PixelFormat basisTarget(const BasisInfo& info, const TextureSupport& support) {
 }
 
 Result<TextureImage> transcodeBasis(std::span<const std::uint8_t> file, PixelFormat target, std::uint32_t skipLevels) {
+    QUENCH_PROFILE_ZONE("assets.transcode_basis");
     basist::ktx2_transcoder transcoder;
     Result<BasisInfo> info = open(transcoder, file);
     if (!info) return Error{info.error()};

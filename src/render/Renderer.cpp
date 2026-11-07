@@ -8,6 +8,7 @@
 #include "shaders/PostUniforms.h"
 
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 #include <quench/render/Cascades.h>
 #include <quench/render/Projection.h>
 
@@ -2779,6 +2780,7 @@ void Renderer::removePass(PassId pass) {
 
 void Renderer::render(Scene& scene, const View& view, gpu::CommandBuffer& commands, const gpu::TextureRef& target,
                       const gpu::DisplayOutput& output) {
+    QUENCH_PROFILE_ZONE("render.frame");
     m_impl->render(*scene.m_impl, view, commands, target, output);
 }
 

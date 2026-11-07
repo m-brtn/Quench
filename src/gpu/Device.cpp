@@ -6,6 +6,7 @@
 
 #include <quench/core/Assert.h>
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
 #include <algorithm>
 #include <atomic>
@@ -314,6 +315,7 @@ Result<Upscaler> Device::createUpscaler(const UpscalerDesc& desc) {
 // ------------------------------------------------------------------ convenience transfers
 
 Result<void> Device::upload(const BufferRef& destination, std::uint32_t offset, std::span<const std::byte> data) {
+    QUENCH_PROFILE_ZONE("gpu.upload_buffer");
     QUENCH_ASSERT(destination, "upload to an empty buffer");
     QUENCH_ASSERT(offset + data.size() <= destination.desc.size, "upload past the end of the buffer");
     if (data.empty()) return {};
@@ -334,6 +336,7 @@ Result<void> Device::upload(const BufferRef& destination, std::uint32_t offset, 
 }
 
 Result<void> Device::upload(const TextureRegion& destination, std::span<const std::byte> data) {
+    QUENCH_PROFILE_ZONE("gpu.upload_texture");
     QUENCH_ASSERT(destination.texture, "upload to an empty texture");
     const std::uint64_t size = levelByteSize(destination.texture.desc.format, detail::regionWidth(destination),
                                              detail::regionHeight(destination), destination.depth);

@@ -4,12 +4,53 @@
 
 #include <quench/core/Assert.h>
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
+#include <algorithm>
+#include <cstdio>
 #include <utility>
+#include <vector>
 
 namespace quench::gpu {
 
 using detail::Access;
+
+namespace {
+
+#if QUENCH_TRACY
+// The CPU side of the timing ranges: a zone "pass.<name>" per range while it is recorded, on any backend. The ranges
+// of the command buffers a thread records, innermost last.
+struct PassZone {
+    void* commands;
+    profile::Zone zone;
+};
+thread_local std::vector<PassZone> g_passZones;
+#endif
+
+void beginPassZone([[maybe_unused]] void* commands, [[maybe_unused]] const char* name) {
+#if QUENCH_TRACY
+    profile::Zone zone;
+    if (profile::connected()) {
+        char buffer[64];
+        const int length = std::snprintf(buffer, sizeof(buffer), "pass.%s", name);
+        zone = profile::beginZone({buffer, std::size_t(std::clamp(length, 0, int(sizeof(buffer)) - 1))});
+    }
+    g_passZones.push_back({commands, zone});
+#endif
+}
+
+// The innermost range of `commands`, or all of them (a command buffer submitted or cancelled inside its ranges).
+void endPassZones([[maybe_unused]] void* commands, [[maybe_unused]] bool all) {
+#if QUENCH_TRACY
+    while (!g_passZones.empty() && g_passZones.back().commands == commands) {
+        profile::endZone(g_passZones.back().zone);
+        g_passZones.pop_back();
+        if (!all) break;
+    }
+#endif
+}
+
+} // namespace
 
 // ------------------------------------------------------------------ CommandBuffer
 
@@ -26,6 +67,7 @@ CommandBuffer Device::acquireCommandBuffer() {
 CommandBuffer::~CommandBuffer() {
     if (!m_native) return;
     QUENCH_ASSERT(!m_passOpen, "command buffer destroyed with an open pass");
+    endPassZones(m_native, true);
     if (m_swapchainAcquired) {
         // A command buffer that acquired a swapchain texture cannot be cancelled (SDL); presenting is the lesser harm.
         QUENCH_ASSERT(false, "a command buffer that acquired a swapchain texture must be submitted");
@@ -181,11 +223,13 @@ void CommandBuffer::insertDebugLabel(const char* text) { m_device->insertDebugLa
 
 void CommandBuffer::beginTiming(const char* name) {
     QUENCH_ASSERT(m_native && !m_passOpen, "beginTiming needs a command buffer outside passes");
+    beginPassZone(m_native, name);
     if (m_timed) m_device->beginTiming(m_native, name);
 }
 
 void CommandBuffer::endTiming() {
     QUENCH_ASSERT(m_native && !m_passOpen, "endTiming needs a command buffer outside passes");
+    endPassZones(m_native, false);
     if (m_timed) m_device->endTiming(m_native);
 }
 
@@ -193,6 +237,7 @@ Result<void> CommandBuffer::submit() {
     QUENCH_ASSERT(m_native, "submit on an empty command buffer");
     QUENCH_ASSERT(!m_passOpen, "submit with an open pass");
     void* native = std::exchange(m_native, nullptr);
+    endPassZones(native, true);
     m_swapchainAcquired = false;
     return m_device->submit(native);
 }
@@ -201,6 +246,7 @@ Result<Fence> CommandBuffer::submitWithFence() {
     QUENCH_ASSERT(m_native, "submit on an empty command buffer");
     QUENCH_ASSERT(!m_passOpen, "submit with an open pass");
     void* native = std::exchange(m_native, nullptr);
+    endPassZones(native, true);
     m_swapchainAcquired = false;
     Result<void*> fence = m_device->submitWithFence(native);
     if (!fence) return Error{fence.error()};
@@ -214,6 +260,7 @@ void CommandBuffer::cancel() {
     QUENCH_ASSERT(m_native, "cancel on an empty command buffer");
     QUENCH_ASSERT(!m_passOpen, "cancel with an open pass");
     QUENCH_ASSERT(!m_swapchainAcquired, "a command buffer that acquired a swapchain texture must be submitted");
+    endPassZones(m_native, true);
     m_device->cancel(std::exchange(m_native, nullptr));
 }
 

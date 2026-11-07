@@ -2,6 +2,7 @@
 
 #include <quench/core/Assert.h>
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
 #include <algorithm>
 #include <chrono>
@@ -221,6 +222,7 @@ void AssetManager::evictUnreferenced() {
 }
 
 void AssetManager::update() {
+    QUENCH_PROFILE_ZONE("assets.update");
     Impl& s = *m_impl;
     ++s.updates;
     if (m_jobs.workerCount() == 0) m_jobs.runFor(m_settings.mainThreadJobSeconds);
@@ -265,6 +267,8 @@ void AssetManager::update() {
         Asset* asset = s.decoded[taken];
         const std::uint64_t bytes = asset->uploadBytes();
         if (s.finishedLastUpdate > 0 && s.uploadedLastUpdate + bytes > m_settings.uploadBytesPerFrame) break;
+        QUENCH_PROFILE_ZONE("assets.finish");
+        QUENCH_PROFILE_ZONE_TEXT(asset->m_path);
         s.uploadedLastUpdate += bytes;
         s.finishedLastUpdate++;
         const bool reloading = asset->m_reloadPending;
@@ -320,13 +324,22 @@ void AssetManager::update() {
         s.running.push_back(asset);
         s.loadsStarted++;
         asset->m_job = m_jobs.run(
+            "assets.load",
             [this, asset] {
                 std::string error;
-                Result<fs::Bytes> bytes = fs::readAsset(asset->m_path);
-                if (!bytes)
+                Result<fs::Bytes> bytes = [asset] {
+                    QUENCH_PROFILE_ZONE("assets.read");
+                    QUENCH_PROFILE_ZONE_TEXT(asset->m_path);
+                    return fs::readAsset(asset->m_path);
+                }();
+                if (!bytes) {
                     error = bytes.error();
-                else if (Result<void> decoded = asset->decode(std::move(*bytes)); !decoded)
-                    error = decoded.error().empty() ? std::string("decode failed") : decoded.error();
+                } else {
+                    QUENCH_PROFILE_ZONE("assets.decode");
+                    QUENCH_PROFILE_ZONE_TEXT(asset->m_path);
+                    if (Result<void> decoded = asset->decode(std::move(*bytes)); !decoded)
+                        error = decoded.error().empty() ? std::string("decode failed") : decoded.error();
+                }
                 asset->m_decodeError = std::move(error);
                 std::lock_guard lock(m_impl->doneMutex);
                 m_impl->done.push_back(asset);

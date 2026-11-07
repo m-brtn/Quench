@@ -8,6 +8,7 @@
 #include <quench/audio/Wav.h>
 #include <quench/core/FileSystem.h>
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
 #include <SDL3/SDL_process.h>
 #include <imgui.h>
@@ -308,6 +309,7 @@ void addGpuSample(PerfRegion& perf, double gpuMs, const std::vector<gpu::GpuTimi
 void readGpuTime(AppState& s, std::size_t index) {
     gpu::Fence& fence = s.fences[index];
     if (const auto ms = s.device->gpuMilliseconds(fence)) {
+        QUENCH_PROFILE_PLOT("gpu.frame_ms", *ms);
         s.stats.gpuMs = *ms;
         s.stats.gpuPasses = s.device->gpuTimings(fence);
         if (s.perf && s.fencePerf[index] == s.perf->serial) addGpuSample(*s.perf, *ms, s.stats.gpuPasses);
@@ -316,6 +318,7 @@ void readGpuTime(AppState& s, std::size_t index) {
 }
 
 void updateGpuTime(AppState& s) {
+    QUENCH_PROFILE_ZONE("app.gpu_time");
     for (std::size_t k = 0; k < s.fences.size(); ++k) {
         const std::size_t index = (s.nextFence + k) % s.fences.size(); // the oldest first
         if (s.fences[index] && s.device->isSignaled(s.fences[index])) readGpuTime(s, index);
@@ -324,6 +327,7 @@ void updateGpuTime(AppState& s) {
 
 void runScenario(AppState& s) {
     if (!s.scenario || s.scenarioDone) return;
+    QUENCH_PROFILE_ZONE("app.scenario");
     const bool running = s.scenario->update(
         s.time, [&] { return s.inputPushedFrame == s.frame; },
         [&](std::string_view name) { return scenarioValue(s, name); },
@@ -337,7 +341,9 @@ void runScenario(AppState& s) {
 // Renders the frame. Returns false when the frame could not be recorded (logged). waitMs: the wait for a swapchain
 // texture; submitCounter: when recording ended (presenting may block in the submit, on Vulkan for example).
 bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
-    s.device->setPassTiming(s.options.gpuPassTiming || s.perf || s.passTimingRequested);
+    QUENCH_PROFILE_ZONE("app.render");
+    // While Tracy records, the timed ranges are its GPU zones (the native Metal backend).
+    s.device->setPassTiming(s.options.gpuPassTiming || s.perf || s.passTimingRequested || profile::connected());
     s.passTimingRequested = false;
     gpu::CommandBuffer commands = s.device->acquireCommandBuffer();
     if (!commands) return false;
@@ -350,10 +356,12 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
     if (s.offscreen) {
         // Read here: this frame's fence takes its place, and a GPU-bound run would never time a frame otherwise.
         if (s.fences[s.nextFence]) {
+            QUENCH_PROFILE_ZONE("app.wait_gpu");
             s.device->wait(s.fences[s.nextFence]);
             readGpuTime(s, s.nextFence);
         }
     } else {
+        QUENCH_PROFILE_ZONE("app.acquire_swapchain");
         swapchain = commands.acquireSwapchainTexture(s.window.get());
     }
     waitMs = double(SDL_GetPerformanceCounter() - waitStart) * 1000.0 / double(SDL_GetPerformanceFrequency());
@@ -435,7 +443,10 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
     }
 
     submitCounter = SDL_GetPerformanceCounter();
-    Result<gpu::Fence> fence = commands.submitWithFence();
+    Result<gpu::Fence> fence = [&] {
+        QUENCH_PROFILE_ZONE("app.submit");
+        return commands.submitWithFence();
+    }();
     if (!fence) {
         log::error("app", "submit: {}", fence.error());
         return false;
@@ -446,6 +457,7 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
     s.nextFence = (s.nextFence + 1) % s.fences.size();
 
     if (!capturePath.empty()) {
+        QUENCH_PROFILE_ZONE("app.capture");
         gpu::TextureRef source = target;
         Result<std::vector<std::byte>> pixels = s.device->download({.texture = source});
         Result<double> written = pixels ? writePng(capturePath, *pixels, source.desc.width, source.desc.height,
@@ -681,6 +693,9 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     log::info("app", "{} {} (Quench {}), SDL {}.{}.{}", s.desc.name, s.desc.version, QUENCH_VERSION,
               SDL_VERSIONNUM_MAJOR(SDL_GetVersion()), SDL_VERSIONNUM_MINOR(SDL_GetVersion()),
               SDL_VERSIONNUM_MICRO(SDL_GetVersion()));
+    QUENCH_PROFILE_THREAD_NAME("main");
+    if constexpr (profile::kEnabled)
+        log::info("app", "Tracy profiling: on demand (tracy-capture or the Tracy GUI; TRACY_PORT sets the port)");
     s.thermalOverride = s.options.thermalState;
     s.stats.thermal = s.thermalOverride ? *s.thermalOverride : queryThermalState();
     log::info("app", "thermal state {}{}", thermalStateName(s.stats.thermal),
@@ -804,6 +819,7 @@ SDL_AppResult iterate(AppState& s) {
     // display link: App::setMaxFrameRate). Three quarters of the interval, so that a refresh a little early by jitter
     // still renders: 60 Hz on a 120 Hz display renders every second refresh.
     if (s.frameRateLimit > 0.0 && !s.offscreen && realDt < 0.75 / s.frameRateLimit) return SDL_APP_CONTINUE;
+    QUENCH_PROFILE_ZONE("app.frame");
     s.lastCounter = now;
     // The last frame's time, counted in its own region: the time before a region's first frame (a capture's encoding
     // just before perf_begin, for example) stays out of it, and its last frame is in.
@@ -839,6 +855,7 @@ SDL_AppResult iterate(AppState& s) {
     const double frameDt = fixedFrame ? step : realDt;
     const int ticks = s.clock.advance(frameDt);
     for (int i = 0; i < ticks; ++i) {
+        QUENCH_PROFILE_ZONE("app.fixed_step");
         s.game->fixedStep(s.app, step);
         ++s.ticks;
     }
@@ -847,27 +864,36 @@ SDL_AppResult iterate(AppState& s) {
     applyFrameRateLimit(s);
     s.assets->update();
     s.device->pollShaderHotReload();
-    s.game->update(s.app, frameDt);
+    {
+        QUENCH_PROFILE_ZONE("app.update");
+        s.game->update(s.app, frameDt);
+    }
     updateAudio(s, frameDt);
 
-    ImGui_ImplSDL3_NewFrame();
-    ImGuiIO& imguiIo = ImGui::GetIO();
-    imguiIo.DeltaTime = float(std::max(frameDt, 1e-4));
-    if (s.offscreen && imguiIo.DisplaySize.x > 0.0f && imguiIo.DisplaySize.y > 0.0f)
-        imguiIo.DisplayFramebufferScale =
-            ImVec2(float(s.pixelWidth) / imguiIo.DisplaySize.x, float(s.pixelHeight) / imguiIo.DisplaySize.y);
-    else if (s.options.frameWidth > 0 && imguiIo.DisplaySize.x > 0.0f && imguiIo.DisplaySize.y > 0.0f)
-        imguiIo.DisplayFramebufferScale = ImVec2(float(s.options.frameWidth) / imguiIo.DisplaySize.x,
-                                                 float(s.options.frameHeight) / imguiIo.DisplaySize.y);
-    ImGui::NewFrame();
-    s.game->ui(s.app);
-    ImGui::Render();
+    {
+        QUENCH_PROFILE_ZONE("app.ui");
+        ImGui_ImplSDL3_NewFrame();
+        ImGuiIO& imguiIo = ImGui::GetIO();
+        imguiIo.DeltaTime = float(std::max(frameDt, 1e-4));
+        if (s.offscreen && imguiIo.DisplaySize.x > 0.0f && imguiIo.DisplaySize.y > 0.0f)
+            imguiIo.DisplayFramebufferScale =
+                ImVec2(float(s.pixelWidth) / imguiIo.DisplaySize.x, float(s.pixelHeight) / imguiIo.DisplaySize.y);
+        else if (s.options.frameWidth > 0 && imguiIo.DisplaySize.x > 0.0f && imguiIo.DisplaySize.y > 0.0f)
+            imguiIo.DisplayFramebufferScale = ImVec2(float(s.options.frameWidth) / imguiIo.DisplaySize.x,
+                                                     float(s.options.frameHeight) / imguiIo.DisplaySize.y);
+        ImGui::NewFrame();
+        s.game->ui(s.app);
+        ImGui::Render();
+    }
 
     double waitMs = 0.0;
     Uint64 submitCounter = now;
     if (!render(s, waitMs, submitCounter)) return SDL_APP_FAILURE;
+    QUENCH_PROFILE_FRAME();
 
     const double cpuMs = double(submitCounter - now) * 1000.0 / frequency - waitMs;
+    QUENCH_PROFILE_PLOT("app.frame_ms", realDt * 1000.0);
+    QUENCH_PROFILE_PLOT("app.cpu_ms", cpuMs);
     updateStats(s, realDt, cpuMs, waitMs, ticks);
     // Deterministic frames are held to real time on the screen. Offscreen they run as fast as they render, except
     // while loads are in flight or delayed by a simulated latency: loads take real time, and scripts wait for them

@@ -2,6 +2,8 @@
 // and ETC2, errors as values instead of exceptions). Basis Universal files: Basis.cpp.
 #include <quench/assets/Texture.h>
 
+#include <quench/core/Profile.h>
+
 #include "Ktx2Layout.h"
 
 #include <bc7decomp.h>
@@ -246,6 +248,7 @@ Result<std::vector<std::uint8_t>> writeKtx2(const TextureImage& image, std::stri
 }
 
 Result<TextureImage> decodeBc7(const TextureImage& image) {
+    QUENCH_PROFILE_ZONE("assets.decode_bc7");
     if (image.format != PixelFormat::Bc7 && image.format != PixelFormat::Bc7Srgb)
         return Error{std::format("decodeBc7: the image is {}", pixelFormatInfo(image.format).name)};
     TextureImage out;

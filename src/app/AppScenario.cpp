@@ -8,6 +8,7 @@
 #include <quench/audio/Analysis.h>
 #include <quench/core/Log.h>
 #include <quench/core/Parse.h>
+#include <quench/core/Profile.h>
 
 #include <imgui_impl_sdl3.h>
 
@@ -250,6 +251,8 @@ double average(const std::vector<double>& values) {
 } // namespace
 
 void startPerf(AppState& s, std::string label) {
+    // tools/tracy_capture.py finds the region by these messages.
+    QUENCH_PROFILE_MESSAGE(std::format("perf_begin {}", label));
     s.perf = PerfRegion{.label = std::move(label),
                         .serial = ++s.perfSerial,
                         .thermalStart = s.stats.thermal,
@@ -261,6 +264,7 @@ void startPerf(AppState& s, std::string label) {
 
 PerfReport finishPerf(AppState& s) {
     const PerfRegion& r = *s.perf;
+    QUENCH_PROFILE_MESSAGE(std::format("perf_end {}", r.label));
     const ThermalState thermalEnd = s.stats.thermal;
     const ThermalState thermalMax = std::max(r.thermalMax, thermalEnd);
     auto& v = s.perfValues;

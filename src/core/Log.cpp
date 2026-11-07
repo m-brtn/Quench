@@ -1,5 +1,7 @@
 #include <quench/core/Log.h>
 
+#include <quench/core/Profile.h>
+
 #include <chrono>
 #include <cstdio>
 #include <mutex>
@@ -65,6 +67,7 @@ const char* levelName(Level level) {
 }
 
 void write(Level level, std::string_view category, std::string_view message) {
+    if (profile::connected()) profile::message(std::format("[{}] {}: {}", levelName(level), category, message));
     State& s = state();
     std::lock_guard lock(s.mutex);
     if (s.stderrEnabled) {

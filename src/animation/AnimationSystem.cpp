@@ -4,6 +4,7 @@
 
 #include <quench/core/Assert.h>
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
 #include <algorithm>
 #include <chrono>
@@ -496,6 +497,7 @@ int AnimationSystem::addChannels(CharacterId id, std::span<const std::string> na
 // ---- update
 
 void AnimationSystem::update(float dt) {
+    QUENCH_PROFILE_ZONE("animation.update");
     const auto start = std::chrono::steady_clock::now();
     m_active.clear();
     for (Slot& slot : m_slots) {
@@ -541,7 +543,8 @@ void AnimationSystem::update(float dt) {
         }
     }
     if (!m_active.empty()) {
-        const Job job = m_jobs.parallelFor(std::uint32_t(m_active.size()), std::max(1u, m_settings.charactersPerJob),
+        const Job job = m_jobs.parallelFor("animation.characters", std::uint32_t(m_active.size()),
+                                           std::max(1u, m_settings.charactersPerJob),
                                            [this](std::uint32_t begin, std::uint32_t end) {
                                                for (std::uint32_t i = begin; i < end; ++i)
                                                    detail::update(*m_active[i], m_settings, m_ground);

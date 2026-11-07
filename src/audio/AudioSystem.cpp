@@ -5,6 +5,7 @@
 
 #include <quench/core/Assert.h>
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
 #include <algorithm>
 #include <cmath>
@@ -52,6 +53,8 @@ struct Stream {
     // Decodes until the ring is full or the file ends (and, looping, starts over from the beginning).
     void fill() {
         if (!feed || feed->ended.load(std::memory_order_relaxed)) return;
+        QUENCH_PROFILE_ZONE("audio.decode");
+        QUENCH_PROFILE_ZONE_TEXT(path);
         detail::SampleRing& ring = feed->ring;
         while (ring.writable() > 0) {
             std::uint32_t granted = 0;
@@ -675,8 +678,9 @@ void AudioSystem::startPending() {
                 if (m_offline) {
                     stream.open(m_settings.sampleRate);
                 } else {
-                    stream.job = m_jobs.run([st = slot.stream, rate = m_settings.sampleRate] { st->open(rate); },
-                                            JobPriority::High);
+                    stream.job = m_jobs.run(
+                        "audio.stream_open", [st = slot.stream, rate = m_settings.sampleRate] { st->open(rate); },
+                        JobPriority::High);
                 }
             }
             if (stream.failed.load(std::memory_order_acquire) && (!stream.job.valid() || stream.job.done())) {
@@ -731,12 +735,13 @@ void AudioSystem::refillStreams() {
         if (m_offline)
             stream->fill();
         else
-            stream->job = m_jobs.run([st = stream] { st->fill(); }, JobPriority::High);
+            stream->job = m_jobs.run("audio.stream_fill", [st = stream] { st->fill(); }, JobPriority::High);
     }
     std::erase_if(s.retired, [](const std::shared_ptr<Stream>& stream) { return stream->job.done(); });
 }
 
 void AudioSystem::update() {
+    QUENCH_PROFILE_ZONE("audio.update");
     Impl& s = *m_impl;
     detail::EndEvent event;
     while (s.mixer.events().pop(event)) {
@@ -779,6 +784,9 @@ void AudioSystem::update() {
         s.lastFrames = frames;
         s.lastCalls = calls;
         s.lastBusyNs = busy;
+        // The mix runs on the audio device's real-time thread, which has no zones (docs/performance.md).
+        QUENCH_PROFILE_PLOT("audio.mix_ms", s.mixMs);
+        QUENCH_PROFILE_PLOT("audio.load", s.load);
     }
     for (std::size_t b = 0; b < s.buses.size(); ++b)
         for (int c = 0; c < 2; ++c) s.buses[b].peak[c] = mixed.meters[b][c].load(std::memory_order_relaxed);
@@ -792,6 +800,7 @@ void AudioSystem::update() {
 void AudioSystem::render(float* out, std::uint32_t frames) { m_impl->mixer.render(out, frames); }
 
 std::uint32_t AudioSystem::mixOffline(double seconds, std::vector<float>* out) {
+    QUENCH_PROFILE_ZONE("audio.mix_offline");
     Impl& s = *m_impl;
     s.carry += std::max(seconds, 0.0) * m_settings.sampleRate;
     const auto frames = std::uint32_t(s.carry);

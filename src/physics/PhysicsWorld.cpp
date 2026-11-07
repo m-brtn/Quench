@@ -1,6 +1,7 @@
 #include <quench/physics/PhysicsWorld.h>
 
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
 #include "physics/JoltJobSystem.h"
 
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 
 namespace quench {
@@ -110,7 +112,30 @@ PhysicsWorld::PhysicsWorld(JobSystem* jobs, const Settings& settings)
 PhysicsWorld::~PhysicsWorld() = default;
 
 JPH::EPhysicsUpdateError PhysicsWorld::step(float dt, int collisionSteps) {
+    QUENCH_PROFILE_ZONE("physics.step");
     return m_system->Update(dt, collisionSteps, m_tempAllocator.get(), m_jobSystem.get());
 }
 
 } // namespace quench
+
+#ifdef JPH_EXTERNAL_PROFILE
+// QUENCH_TRACY builds Jolt with its external profiler (cmake/Dependencies.cmake): its profile scopes and jobs become
+// Tracy zones named "jolt.<scope>". Here, in the object every program with physics links, so the symbols Jolt's
+// library needs are there whatever the linker's archive order.
+JPH::ExternalProfileMeasurement::ExternalProfileMeasurement(const char* name, JPH::uint32) {
+    static_assert(sizeof(quench::profile::Zone) <= sizeof(mUserData));
+    quench::profile::Zone zone;
+    if (quench::profile::connected()) {
+        char buffer[128];
+        const int length = std::snprintf(buffer, sizeof(buffer), "jolt.%s", name ? name : "?");
+        zone = quench::profile::beginZone({buffer, std::size_t(std::clamp(length, 0, int(sizeof(buffer)) - 1))});
+    }
+    std::memcpy(mUserData, &zone, sizeof(zone));
+}
+
+JPH::ExternalProfileMeasurement::~ExternalProfileMeasurement() {
+    quench::profile::Zone zone;
+    std::memcpy(&zone, mUserData, sizeof(zone));
+    quench::profile::endZone(zone);
+}
+#endif

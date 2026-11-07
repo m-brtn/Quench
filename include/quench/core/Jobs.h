@@ -65,6 +65,13 @@ public:
     // Calls fn(begin, end) over [0, count) in ranges of at least `minRange` items, spread over the threads.
     Job parallelFor(std::uint32_t count, std::uint32_t minRange, std::function<void(std::uint32_t, std::uint32_t)> fn,
                     JobPriority priority = JobPriority::Normal, std::span<const Job> after = {});
+    // The same with a name for profiles (quench/core/Profile.h): each run of the job, or each range, is a zone with
+    // it. A string that outlives the job (a literal); jobs without one are "job".
+    Job run(const char* name, std::function<void()> fn, JobPriority priority = JobPriority::Normal,
+            std::span<const Job> after = {});
+    Job parallelFor(const char* name, std::uint32_t count, std::uint32_t minRange,
+                    std::function<void(std::uint32_t, std::uint32_t)> fn, JobPriority priority = JobPriority::Normal,
+                    std::span<const Job> after = {});
 
     // Returns when `job` is done, running queued jobs on the calling thread meanwhile.
     void wait(const Job& job);

@@ -80,6 +80,19 @@ QUENCH_TEST(jobs_parallel_for) {
     });
 }
 
+// Named jobs (zones in a profile) run like the others.
+QUENCH_TEST(jobs_named) {
+    forEachMode([](JobSystem& jobs) {
+        std::atomic<int> count{0};
+        Job first = jobs.run("test.first", [&] { count.fetch_add(1); });
+        Job ranges = jobs.parallelFor(
+            "test.ranges", 1000, 16, [&](std::uint32_t begin, std::uint32_t end) { count.fetch_add(int(end - begin)); },
+            JobPriority::High, std::span(&first, 1));
+        jobs.wait(ranges);
+        CHECK(first.done() && count.load() == 1001, "count %d with %d workers", count.load(), jobs.workerCount());
+    });
+}
+
 // Jobs submit jobs; waitAll() returns when the whole tree is done.
 QUENCH_TEST(jobs_nested_and_wait_all) {
     forEachMode([](JobSystem& jobs) {

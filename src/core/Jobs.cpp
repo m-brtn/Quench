@@ -2,6 +2,7 @@
 
 #include <quench/core/Assert.h>
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 #include <quench/core/Thread.h>
 
 #include <TaskScheduler.h>
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -39,15 +41,19 @@ struct JobState final : enki::ITaskSet {
     }
 
     void ExecuteRange(enki::TaskSetPartition range, std::uint32_t) override {
-        if (rangeFn)
-            rangeFn(range.start, range.end);
-        else
-            fn();
+        {
+            QUENCH_PROFILE_ZONE_DYNAMIC(name ? name : "job");
+            if (rangeFn)
+                rangeFn(range.start, range.end);
+            else
+                fn();
+        }
         counters.ranges.fetch_add(1, std::memory_order_relaxed);
     }
 
     enki::TaskScheduler& scheduler;
     JobCounters& counters;
+    const char* name = nullptr;
     std::function<void()> fn;
     std::function<void(std::uint32_t, std::uint32_t)> rangeFn;
 
@@ -136,7 +142,14 @@ JobSystem::JobSystem(const JobSystemDesc& desc) : m_impl(std::make_unique<Impl>(
     enki::TaskSchedulerConfig config;
     config.numTaskThreadsToCreate = std::uint32_t(workers);
     config.numExternalTaskThreads = 0;
-    config.profilerCallbacks.threadStart = [](std::uint32_t) { raiseWorkerThreadPriority(); };
+    config.profilerCallbacks.threadStart = [](std::uint32_t thread) {
+        raiseWorkerThreadPriority();
+        if constexpr (profile::kEnabled) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "jobs.worker %u", unsigned(thread));
+            QUENCH_PROFILE_THREAD_NAME(name);
+        }
+    };
     m_impl->scheduler.Initialize(config);
     log::info("jobs", "job system: {} worker threads", workers);
 }
@@ -153,8 +166,13 @@ int JobSystem::threadIndex() const {
 int JobSystem::pendingCount() const { return m_impl->counters.pending.load(std::memory_order_acquire); }
 
 Job JobSystem::run(std::function<void()> fn, JobPriority priority, std::span<const Job> after) {
+    return run(nullptr, std::move(fn), priority, after);
+}
+
+Job JobSystem::run(const char* name, std::function<void()> fn, JobPriority priority, std::span<const Job> after) {
     QUENCH_ASSERT(threadIndex() >= 0, "JobSystem::run from a thread that is neither the creating thread nor a worker");
     auto state = std::make_shared<detail::JobState>(m_impl->scheduler, m_impl->counters);
+    state->name = name;
     state->fn = std::move(fn);
     state->m_SetSize = 1;
     return m_impl->submit(std::move(state), priority, after);
@@ -163,9 +181,16 @@ Job JobSystem::run(std::function<void()> fn, JobPriority priority, std::span<con
 Job JobSystem::parallelFor(std::uint32_t count, std::uint32_t minRange,
                            std::function<void(std::uint32_t, std::uint32_t)> fn, JobPriority priority,
                            std::span<const Job> after) {
+    return parallelFor(nullptr, count, minRange, std::move(fn), priority, after);
+}
+
+Job JobSystem::parallelFor(const char* name, std::uint32_t count, std::uint32_t minRange,
+                           std::function<void(std::uint32_t, std::uint32_t)> fn, JobPriority priority,
+                           std::span<const Job> after) {
     QUENCH_ASSERT(threadIndex() >= 0,
                   "JobSystem::parallelFor from a thread that is neither the creating thread nor a worker");
     auto state = std::make_shared<detail::JobState>(m_impl->scheduler, m_impl->counters);
+    state->name = name;
     if (count == 0)
         state->rangeFn = [](std::uint32_t, std::uint32_t) {};
     else
