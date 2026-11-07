@@ -121,6 +121,10 @@ add_library(quench_bc7decomp STATIC ${bc7enc_SOURCE_DIR}/bc7decomp.cpp)
 target_include_directories(quench_bc7decomp SYSTEM PUBLIC ${bc7enc_SOURCE_DIR})
 target_compile_features(quench_bc7decomp PUBLIC cxx_std_20)
 
+# ---------------------------------------------------------------- Basis Universal
+# v2.50 (Apache-2.0). Not a FetchContent archive: cmake/QuenchBasisu.cmake keeps its sources once per machine.
+include(${CMAKE_CURRENT_LIST_DIR}/QuenchBasisu.cmake)
+
 # ---------------------------------------------------------------- miniaudio
 # 0.11.25 (TrailForge's pin; public domain or MIT-0). quench_audio decodes WAV, FLAC, MP3 and Ogg Vorbis with it (Vorbis
 # through stb_vorbis 1.22 from the same archive, extras/stb_vorbis.c, MIT or public domain), and quench_audio_device

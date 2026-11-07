@@ -12,27 +12,13 @@
 # With QUENCH_RAY_QUERY_SHADERS off, or when no DXC can be had (logged), the ray query entries are left out of the
 # shader tables and the renderer takes its fallbacks, as on a device without ray tracing.
 
+include(${CMAKE_CURRENT_LIST_DIR}/QuenchToolCache.cmake)
+
 option(QUENCH_RAY_QUERY_SHADERS "Compile the shader entries that use ray queries (needs DXC)" ON)
 set(QUENCH_RAY_QUERY_DXC "" CACHE FILEPATH "dxc executable for ray query entries (empty: the pinned DXC)")
-set(QUENCH_TOOL_CACHE "" CACHE PATH "Per-machine cache of host tools built from source (empty: the user's cache)")
 
 set(_quench_dxc_name dxc-1.9.2609-01b62ad)
 set(_quench_dxc_script ${CMAKE_CURRENT_LIST_DIR}/BuildDxc.cmake)
-
-function(_quench_tool_cache out)
-    if(QUENCH_TOOL_CACHE)
-        set(${out} ${QUENCH_TOOL_CACHE} PARENT_SCOPE)
-    elseif(CMAKE_HOST_APPLE)
-        set(${out} $ENV{HOME}/Library/Caches/Quench PARENT_SCOPE)
-    elseif(CMAKE_HOST_WIN32)
-        file(TO_CMAKE_PATH "$ENV{LOCALAPPDATA}/Quench" cache)
-        set(${out} ${cache} PARENT_SCOPE)
-    elseif(DEFINED ENV{XDG_CACHE_HOME} AND NOT "$ENV{XDG_CACHE_HOME}" STREQUAL "")
-        set(${out} $ENV{XDG_CACHE_HOME}/quench PARENT_SCOPE)
-    else()
-        set(${out} $ENV{HOME}/.cache/quench PARENT_SCOPE)
-    endif()
-endfunction()
 
 # quench_ray_query_dxc(<out>): the dxc for ray query entries, or "" (QUENCH_RAY_QUERY_SHADERS off, or none could be
 # had: logged once). Builds the pinned DXC on the first call of a machine.

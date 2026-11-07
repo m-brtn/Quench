@@ -602,6 +602,64 @@ such warranty or additional liability.
 END OF TERMS AND CONDITIONS
 
 
+Basis Universal v2.50 (https://github.com/BinomialLLC/basis_universal, commit 9bebe16726b3a61c8c213eeee3b7cffb462ef34e)
+-----------------------------------------------------------------------------------------------------------------------
+
+In quench_assets: its KTX2 transcoder (transcoder/basisu_transcoder.cpp, unchanged, built with some output formats
+switched off by its BASISD_SUPPORT_* options; cmake/QuenchBasisu.cmake) and the Zstandard decoder it ships
+(zstd/zstddeclib.c, unchanged, its symbols renamed at build time by src/assets/BasisZstdNames.h). Licensed under the
+Apache License 2.0, whose text is above (under the SADIE HRTF database). Its NOTICE file:
+
+NOTICE
+
+Basis Universal™ Supercompressed GPU Texture Compression Library
+
+Copyright © 2016–2026 Binomial LLC.
+All rights reserved except as granted under the [Apache 2.0 license](https://github.com/BinomialLLC/basis_universal/blob/master/LICENSE).
+"Basis Universal" is a trademark of Binomial LLC.
+
+The documents in the Basis Universal wiki, and the Basis Universal library, example, and tool source code, fall under the Apache 2.0 license, unless otherwise explicitly indicated.
+
+Redistributions or derivative works must include a readable copy of the attribution notices from this NOTICE file (see Apache License 2.0 §4(d)).
+
+If you modify the Basis Universal source code, specifications, or wiki documents and redistribute the files, you must cause any modified files to carry prominent notices stating that you changed the files (see Apache 2.0 §4(b)).
+
+**This software, documentation and specifications are provided "as is", without warranty of any kind (see Apache 2.0 §§7–8).**
+
+The Zstandard decoder (zstd/zstddeclib.c, Zstandard 1.5) is under its BSD licence (zstd/LICENSE):
+
+BSD License
+
+For Zstandard software
+
+Copyright (c) 2016-present, Facebook, Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name Facebook nor the names of its contributors may be used to
+   endorse or promote products derived from this software without specific
+   prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
 XeGTAO (https://github.com/GameTechDev/XeGTAO, commit a5b1686c7ea37788eeb3576b5be47f7c03db532c)
 -----------------------------------------------------------------------------------------------
 
@@ -657,6 +715,11 @@ hash-checks the simdjson and simdutf files it downloads), links:
   (its LICENSE.txt; no NOTICE file). It writes the ASTC 4x4 textures; the programs read them without it.
 - simdjson 5.1.0 and simdutf 9.3.3 (bundled by fastgltf): Apache-2.0 or MIT, at the user's choice
 - stb_image (stb commit 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5): MIT or public domain
+- Basis Universal v2.50 (above; cmake/QuenchBasisu.cmake), its encoder library: Apache-2.0 with the NOTICE above;
+  bundled in it jpgd (public domain or Apache-2.0), pvpngreader (public domain), android_astc_decomp (Apache-2.0, the
+  Android Open Source Project), tinyexr (BSD-3-Clause), qoi and tinydds (MIT), and the full Zstandard (zstd/zstd.c,
+  BSD-3-Clause) for UASTC's supercompression. It writes the Basis Universal textures; the programs read them with the
+  transcoder.
 - bc7enc.cpp of bc7enc_rdo (above): MIT or public domain
 - meshoptimizer (above): MIT
 - miniaudio (above, through quench_audio): public domain or MIT No Attribution
