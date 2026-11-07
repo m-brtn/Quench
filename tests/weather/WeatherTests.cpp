@@ -438,6 +438,104 @@ QUENCH_TEST(weather_wetness_focus_moves) {
     CHECK(w.wetness({100.0f, 50.0f}).ground == 0.0f, "outside the grid the estimate kept the removed shower");
 }
 
+// Rain or snow by the temperature, colder with the height, and a cell's own share whatever the temperature.
+QUENCH_TEST(weather_snow_by_temperature) {
+    Settings s = clearSky();
+    s.wind.speed = 0.0f;
+    Weather w(s);
+    CHECK(w.snowShare({0.0f, s.cloudBase, 0.0f}) == 0.0f, "snow below the default cloud base: %.3f",
+          w.snowShare({0.0f, s.cloudBase, 0.0f}));
+    s.temperature = 10.0f;
+    w.setSettings(s);
+    CHECK(w.snowShare({0.0f, 0.0f, 0.0f}) == 0.0f, "snow at 10 degrees: %.3f", w.snowShare({0.0f, 0.0f, 0.0f}));
+    CHECK(std::abs(w.temperature({0.0f, 1000.0f, 0.0f}) - 3.5f) < 1e-4f, "temperature at 1000 m: %.3f",
+          w.temperature({0.0f, 1000.0f, 0.0f}));
+    const float aloft = w.snowShare({0.0f, 1500.0f, 0.0f});
+    CHECK(std::abs(aloft - 0.9f) < 1e-3f, "snow share %.3f at the cloud base (0.25 degrees)", aloft);
+    s.temperature = 1.25f;
+    w.setSettings(s);
+    CHECK(std::abs(w.snowShare({0.0f, 0.0f, 0.0f}) - 0.5f) < 1e-4f, "sleet at 1.25 degrees: %.3f",
+          w.snowShare({0.0f, 0.0f, 0.0f}));
+    s.temperature = -2.0f;
+    w.setSettings(s);
+    CHECK(w.snowShare({0.0f, 0.0f, 0.0f}) == 1.0f, "rain at -2 degrees");
+    s.temperature = 10.0f;
+    w.setSettings(s);
+    const CellId flurry =
+        w.addCell({.position = {0.0f, 0.0f}, .radius = 2000.0f, .precipitation = 1.0f, .drifts = false, .snow = 1.0f});
+    CHECK(w.snowShare({100.0f, 0.0f, 0.0f}) == 1.0f, "the cell's own snow: %.3f", w.snowShare({100.0f, 0.0f, 0.0f}));
+    CHECK(w.snowShare({5000.0f, 0.0f, 0.0f}) == 0.0f, "snow outside the cell");
+    const float edge = w.snowShare({1400.0f, 0.0f, 0.0f});
+    CHECK(edge > 0.0f && edge < 1.0f, "no mix at the cell's edge: %.3f", edge);
+    CHECK(w.precipitation({100.0f, 0.0f, 0.0f}) == 1.0f, "precipitation %.3f", w.precipitation({100.0f, 0.0f, 0.0f}));
+    w.removeCell(flurry);
+    CHECK(w.snowShare({100.0f, 0.0f, 0.0f}) == 0.0f, "snow after the cell went");
+}
+
+// Snow builds a cover without wetting the ground, lies while it is cold, melts as fast as it is warm and wets the
+// ground with its meltwater; setTime() estimates the cover of a long snowfall.
+QUENCH_TEST(weather_snow_cover_builds_and_melts) {
+    Settings s = clearSky();
+    s.wind.speed = 0.0f;
+    s.temperature = -3.0f;
+    Weather w(s);
+    const CellId snowfall = w.addCell({.position = {0.0f, 0.0f},
+                                       .radius = 3000.0f,
+                                       .type = CloudType::Stratus,
+                                       .precipitation = 1.0f,
+                                       .drifts = false});
+    const auto run = [&](double seconds) {
+        for (int i = 0; i < int(std::lround(seconds * 60.0)); ++i) w.update(1.0 / 60.0);
+    };
+    run(300.0);
+    Wetness at = w.wetness({10.0f, -20.0f});
+    std::printf("  after 300 s of snow: snow %.3f, ground %.3f, water %.3f\n", at.snow, at.ground, at.water);
+    CHECK(std::abs(at.snow - 0.5f) < 0.01f, "snow %.3f after half the snow time", at.snow);
+    CHECK(at.ground == 0.0f && at.water == 0.0f, "snow wet the ground: %.3f %.3f", at.ground, at.water);
+    CHECK(w.wetnessGrid()[std::size_t(8 * Weather::kWetnessGrid + 8)].snowShare == 1.0f, "no snow in the grid");
+    w.removeCell(snowfall);
+    run(600.0);
+    at = w.wetness({10.0f, -20.0f});
+    CHECK(std::abs(at.snow - 0.5f) < 0.01f, "snow %.3f melted below freezing", at.snow);
+    s.temperature = 5.0f;
+    w.setSettings(s);
+    run(225.0);
+    at = w.wetness({10.0f, -20.0f});
+    std::printf("  225 s at 5 degrees: snow %.3f, ground %.3f, water %.3f\n", at.snow, at.ground, at.water);
+    CHECK(std::abs(at.snow - 0.25f) < 0.01f, "snow %.3f after a quarter of the melt time", at.snow);
+    CHECK(std::abs(at.ground - 0.5f) < 0.02f, "ground %.3f wet by the meltwater", at.ground);
+    CHECK(std::abs(at.water - 0.125f) < 0.01f, "water %.3f from the meltwater", at.water);
+    run(300.0);
+    at = w.wetness({10.0f, -20.0f});
+    CHECK(at.snow == 0.0f, "snow %.3f after the melt time", at.snow);
+    CHECK(at.ground > 0.8f, "ground %.3f after the melt", at.ground);
+    s.temperature = -3.0f;
+    Weather e(s);
+    e.addCell({.position = {0.0f, 0.0f}, .radius = 3000.0f, .precipitation = 0.5f, .drifts = false});
+    e.setTime(4000.0);
+    at = e.wetness({10.0f, -20.0f});
+    CHECK(at.snow > 0.999f && at.ground == 0.0f, "estimated snow %.3f, ground %.3f after a long snowfall", at.snow,
+          at.ground);
+}
+
+// Rain and snow side by side: each layer is found on its own, and sleet counts as both by its share.
+QUENCH_TEST(weather_rain_or_snow_search) {
+    Settings s = clearSky();
+    s.wind.speed = 0.0f;
+    Weather w(s);
+    w.addCell({.position = {3000.0f, 0.0f}, .radius = 1000.0f, .precipitation = 1.0f, .drifts = false, .snow = 1.0f});
+    w.addCell({.position = {-6000.0f, 0.0f}, .radius = 1000.0f, .precipitation = 1.0f, .drifts = false});
+    const float any = w.distanceToPrecipitation({0.0f, 0.0f});
+    const float snow = w.distanceToPrecipitation({0.0f, 0.0f}, 0.1f, 20000.0f, Precipitation::Snow);
+    const float rain = w.distanceToPrecipitation({0.0f, 0.0f}, 0.1f, 20000.0f, Precipitation::Rain);
+    std::printf("  any %.0f m, snow %.0f m, rain %.0f m\n", any, snow, rain);
+    CHECK(any <= snow && any > snow - 200.0f, "the nearest precipitation %.0f m is not the snow %.0f m", any, snow);
+    CHECK(snow > 1500.0f && snow < 3000.0f, "snow at %.0f m", snow);
+    CHECK(rain > 4500.0f && rain < 6000.0f, "rain at %.0f m", rain);
+    CHECK(w.distanceToPrecipitation({3000.0f, 0.0f}, 0.1f, 20000.0f, Precipitation::Snow) == 0.0f, "no snow inside");
+    CHECK(w.distanceToPrecipitation({3000.0f, 0.0f}, 0.1f, 20000.0f, Precipitation::Rain) > 4000.0f, "rain in snow");
+}
+
 // What a query costs (printed; the bound only catches a pathological slowdown).
 QUENCH_TEST(weather_sample_cost) {
     Settings s;

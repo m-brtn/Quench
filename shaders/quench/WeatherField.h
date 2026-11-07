@@ -10,11 +10,16 @@
 //
 // A sample is float4(coverage, type, precipitation, cirrus), each 0..1: coverage is the share of the column that holds
 // cloud, type runs from stratus (0) over cumulus (1/3) and towering cumulus (2/3) to cumulonimbus (1), precipitation
-// is the rain or snow that falls from the cloud, cirrus the high ice cloud above.
+// is the rain or snow that falls from the cloud, cirrus the high ice cloud above. Whether it falls as rain or snow is
+// quenchWeatherSnow's: by the temperature at a point, or a cell's own share.
 
 #include "quench/Shared.h"
 
 #define QUENCH_MAX_CLOUD_CELLS 16
+// Precipitation falls as snow at or below this temperature (degrees C), as rain from QUENCH_RAIN_ABOVE, as sleet (a
+// mix of both) between.
+#define QUENCH_SNOW_BELOW 0.0f
+#define QUENCH_RAIN_ABOVE 2.5f
 
 #ifdef __cplusplus
 #include <glm/vec2.hpp>
@@ -57,8 +62,12 @@ struct QUENCH_ALIGN16 WeatherUniforms {
     float4 air;   // xy: how far the air has moved (world xz, m), zw: unit wind direction (world xz)
     float4 layer; // x: cloud base (m), y: top of the tallest clouds (m), z: cirrus height (m), w: number of cells
     // Two per cell: xy its centre now (world xz, m), z radius (m), w coverage; x type, y precipitation, z its phase
-    // in the evolution (a different shape per cell), w unused.
+    // in the evolution (a different shape per cell), w the share of its precipitation that falls as snow (below 0:
+    // by the temperature).
     float4 cells[QUENCH_MAX_CLOUD_CELLS * 2];
+    // x: the temperature at y = 0 (degrees C), y: how much it falls per metre of height (degrees C / m), z: 1 when a
+    // cell has a snow share of its own, w: unused.
+    float4 climate;
 };
 
 // 0..1 from integer lattice coordinates and a seed: a 32-bit integer hash (lowbias32), the top 24 bits as a float.
@@ -161,6 +170,26 @@ QUENCH_WEATHER_FN float4 quenchWeatherSample(QUENCH_WEATHER_UNIFORMS u, float2 x
         rain = max(rain, b.y * (1.0f - smoothstep(0.1f, 0.55f, d)));
     }
     return float4(coverage, type, rain, cirrus);
+}
+
+// The share of the precipitation at a world point (xz, m; `height` m above y = 0) that falls as snow, 0 rain .. 1
+// snow: by the temperature there (falling with the height, so hills and the air aloft are colder), and within a cell
+// that has a share of its own, that share (round, fading out toward its radius like its cloud).
+QUENCH_WEATHER_FN float quenchWeatherSnow(QUENCH_WEATHER_UNIFORMS u, float2 xz, float height) {
+    const float t = u.climate.x - u.climate.y * max(height, 0.0f);
+    float snow = saturate((QUENCH_RAIN_ABOVE - t) / (QUENCH_RAIN_ABOVE - QUENCH_SNOW_BELOW));
+    if (u.climate.z > 0.0f) {
+        const int count = int(u.layer.w);
+        for (int i = 0; i < count; ++i) {
+            const float4 a = u.cells[i * 2];
+            const float own = u.cells[i * 2 + 1].w;
+            if (own < 0.0f) continue;
+            const float dx = (xz.x - a.x) / a.z;
+            const float dz = (xz.y - a.y) / a.z;
+            snow = lerp(snow, own, 1.0f - smoothstep(0.35f, 1.0f, sqrt(dx * dx + dz * dz)));
+        }
+    }
+    return snow;
 }
 
 QUENCH_SHARED_END

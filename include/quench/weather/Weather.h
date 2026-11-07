@@ -6,9 +6,9 @@
 // a game asks it what is above a point (precipitation, how overcast it is, the wind).
 //
 // The weather is a pure function of its settings, its cells and its clock: the same seed, settings, cells and time
-// give the same weather in every run and on every platform. The one thing it remembers is how wet the ground is
-// around a focus (wetness), which follows the rain that actually fell there; the same calls in the same order give
-// the same wetness. The field itself is shared with the GPU
+// give the same weather in every run and on every platform. The one thing it remembers is how wet the ground is and
+// how much snow lies on it around a focus (wetness), which follows the rain and snow that actually fell there; the
+// same calls in the same order give the same wetness. The field itself is shared with the GPU
 // (shaders/quench/WeatherField.h), so a query and the clouds on the screen agree. Not thread-safe: one thread changes
 // it; const queries may run on several threads at once while nothing changes it.
 
@@ -63,11 +63,22 @@ struct Settings {
     float cirrusHeight = 8000.0f;
     // Wetness (Weather::wetness): seconds of precipitation 1 that soak dry ground (twice as long at 0.5) and that fill
     // the hollows with standing water, and seconds without precipitation that dry soaked ground and empty full
-    // puddles.
+    // puddles. Snow does not wet the ground; its meltwater does.
     float wettingTime = 120.0f;
     float dryingTime = 900.0f;
     float puddleFillTime = 900.0f;
     float puddleDryTime = 2400.0f;
+    // Rain or snow: the air's temperature at y = 0 (degrees C) and how much it falls per metre of height (the
+    // standard atmosphere's: 15 degrees at sea level, 6.5 degrees less per km, so no snow falls below the default
+    // cloud base). Precipitation falls as snow at or below 0 degrees, as rain from 2.5 degrees, as sleet between
+    // (Weather::snowShare); a cell can have a share of its own (Cell::snow).
+    float temperature = 15.0f;
+    float lapseRate = 0.0065f;
+    // Snow cover (Wetness::snow): seconds of snowfall 1 that cover bare ground (twice as long at 0.5), and seconds a
+    // full cover takes to melt at 5 degrees above freezing (half as long at 10 degrees; it does not melt at or below
+    // 0 degrees). The meltwater wets the ground and fills the puddles.
+    float snowTime = 600.0f;
+    float meltTime = 900.0f;
     bool operator==(const Settings&) const = default;
 };
 
@@ -79,8 +90,14 @@ struct Cell {
     float coverage = 1.0f;      // at its centre (0..1)
     float precipitation = 0.0f; // under its core (0..1)
     bool drifts = true;         // moves with the wind (false: stays over its position, a cloud on a mountain)
+    // The share of its precipitation that falls as snow (0 rain .. 1 snow) within its cloud, whatever the
+    // temperature; below 0: by the temperature (Settings::temperature).
+    float snow = -1.0f;
     bool operator==(const Cell&) const = default;
 };
+
+// What a precipitation search looks for (Weather::distanceToPrecipitation).
+enum class Precipitation : std::uint8_t { Any, Rain, Snow };
 
 using CellId = std::uint32_t;
 inline constexpr CellId kNoCell = 0;
@@ -93,17 +110,19 @@ struct Sample {
     float cirrus = 0.0f;
 };
 
-// How wet open ground is: each 0..1.
+// How wet open ground is and how much snow lies on it: each 0..1.
 struct Wetness {
     float ground = 0.0f; // 0 dry .. 1 soaked (darker, glossier)
     float water = 0.0f;  // standing water in the hollows: 0 none .. 1 full puddles
+    float snow = 0.0f;   // snow cover: 0 bare .. 1 covered (thin snow lies in patches and on flat ground first)
 };
 
 // A cell of the remembered wetness (Weather::wetnessGrid): the wetness at its centre and the precipitation falling
-// there at its last update.
+// there at its last update, with the share of it that falls as snow.
 struct WetnessCell {
     Wetness wetness{};
     float precipitation = 0.0f;
+    float snowShare = 0.0f;
 };
 
 class Weather {
@@ -150,14 +169,22 @@ public:
 
     // The map at a world point (xz, m), now.
     Sample sample(glm::vec2 xz) const;
-    // The precipitation falling at a point: the map's below the cloud base, 0 above it. No cover (roofs, trees) is
-    // known here: the renderer's precipitation pass handles that (docs/weather.md, part 2).
+    // The precipitation falling at a point, rain and snow together: the map's below the cloud base, 0 above it. No
+    // cover (roofs, trees) is known here: the renderer's rain occlusion map handles that (docs/weather.md, "Rain").
     float precipitation(glm::vec3 point) const;
-    // The distance (m) from a point to the nearest place where the precipitation is at least `threshold` (0 inside
-    // one), or maxDistance when there is none within it. A search on at most 48 rings of 32 directions (steps of
-    // maxDistance / 48, at least 50 m): 0.03 ms on the M4 Pro with rain 3.7 km away, about 0.3 ms when there is none
-    // (1536 samples of about 0.2 us); call it a few times a second, not per frame per object.
-    float distanceToPrecipitation(glm::vec2 xz, float threshold = 0.1f, float maxDistance = 20000.0f) const;
+    // The share of it that falls as snow there, 0 rain .. 1 snow (also where nothing falls: what would): by the
+    // temperature at the point's height, or a cell's own share. Rain is precipitation * (1 - snowShare), snowfall
+    // precipitation * snowShare.
+    float snowShare(glm::vec3 point) const;
+    // The air's temperature at a point (degrees C): Settings::temperature, less with the height above y = 0.
+    float temperature(glm::vec3 point) const;
+    // The distance (m) from a point to the nearest place where the precipitation (of `kind`: rain or snow on the
+    // ground, y = 0, or either) is at least `threshold` (0 inside one), or maxDistance when there is none within it. A
+    // search on at most 48 rings of 32 directions (steps of maxDistance / 48, at least 50 m): 0.03 ms on the M4 Pro
+    // with rain 3.7 km away, about 0.3 ms when there is none (1536 samples of about 0.2 us); call it a few times a
+    // second, not per frame per object.
+    float distanceToPrecipitation(glm::vec2 xz, float threshold = 0.1f, float maxDistance = 20000.0f,
+                                  Precipitation kind = Precipitation::Any) const;
     // The mean coverage within `radius` of a point (19 samples): how overcast it is there.
     float cover(glm::vec2 xz, float radius) const;
     // The wind at a point: the settings' wind at the clouds' height, less near the ground (a logarithmic profile,
@@ -167,6 +194,9 @@ public:
     // occlusion map looks along it; a game's own test for cover (a raycast up against it from a listener) can too.
     static constexpr float kRainFallSpeed = 7.5f;
     glm::vec3 rainVelocity(glm::vec3 point) const;
+    // The same for snow, whose flakes fall at about 1 m/s and drift far with the wind.
+    static constexpr float kSnowFallSpeed = 1.0f;
+    glm::vec3 snowVelocity(glm::vec3 point) const;
     // The height of the cloud tops of a type value (m).
     float cloudTop(float type) const;
     // An upper bound of Sample::type anywhere on the map, the field's and the cells' (what the renderer marches
@@ -177,9 +207,9 @@ public:
     // row by row in +z. `out` holds resolution * resolution samples.
     void fill(glm::vec2 origin, float size, std::uint32_t resolution, std::span<Sample> out) const;
 
-    // How wet open ground is at a point (no roofs or trees are known here; the renderer's rain map adds them). Within
-    // the remembered grid it is the rain that fell there since the grid came there; elsewhere the estimate setTime()
-    // makes (about 0.01 ms: 48 samples of the weather's last hours).
+    // How wet open ground is and how much snow lies on it at a point (no roofs or trees are known here; the
+    // renderer's rain map adds them). Within the remembered grid it is the rain and snow that fell there since the
+    // grid came there; elsewhere the estimate setTime() makes (about 0.01 ms: 48 samples of the weather's last hours).
     Wetness wetness(glm::vec2 xz) const;
     // Where the grid of remembered wetness is centred: a game's camera or player, set every frame (the grid moves in
     // whole cells; the cells it brings in start from the estimate). At the origin until set.
@@ -209,7 +239,7 @@ private:
     // The wetness the last hours of this weather leave at each point (and the precipitation there now).
     void estimateWetness(std::span<const glm::vec2> points, std::span<WetnessCell> out) const;
     void estimateGrid();
-    Wetness wetted(Wetness w, float precipitation, double dt) const;
+    Wetness wetted(Wetness w, float precipitation, float snowShare, double dt) const;
 
     Settings m_settings{};
     double m_time = 0.0;

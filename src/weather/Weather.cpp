@@ -69,9 +69,10 @@ void Weather::update(double dt) {
     for (int z = 0; z < kWetnessGrid; ++z)
         for (int x = 0; x < kWetnessGrid; ++x) {
             WetnessCell& c = m_wetCells[std::size_t(z * kWetnessGrid + x)];
-            c.precipitation =
-                sample(m_wetOrigin + glm::vec2((float(x) + 0.5f) * cell, (float(z) + 0.5f) * cell)).precipitation;
-            c.wetness = wetted(c.wetness, c.precipitation, m_wetPending);
+            const glm::vec2 at = m_wetOrigin + glm::vec2((float(x) + 0.5f) * cell, (float(z) + 0.5f) * cell);
+            c.precipitation = sample(at).precipitation;
+            c.snowShare = shader::quenchWeatherSnow(m_uniforms, at, 0.0f);
+            c.wetness = wetted(c.wetness, c.precipitation, c.snowShare, m_wetPending);
         }
     m_wetPending = 0.0;
     m_wetVersion = nextWetVersion();
@@ -86,15 +87,32 @@ void Weather::setTime(double time) {
     estimateGrid();
 }
 
-Wetness Weather::wetted(Wetness w, float precipitation, double dt) const {
+Wetness Weather::wetted(Wetness w, float precipitation, float snowShare, double dt) const {
     const Settings& s = m_settings;
     const float t = float(dt);
-    if (precipitation > kWettingThreshold) {
-        w.ground = std::min(1.0f, w.ground + t * precipitation / std::max(s.wettingTime, 1.0f));
-        w.water = std::min(1.0f, w.water + t * precipitation / std::max(s.puddleFillTime, 1.0f));
-    } else {
+    const float rain = precipitation * (1.0f - snowShare);
+    const float snow = precipitation * snowShare;
+    if (precipitation > kWettingThreshold && snow > 0.0f)
+        w.snow = std::min(1.0f, w.snow + t * snow / std::max(s.snowTime, 1.0f));
+    // Melting above freezing, as fast as the air is warm; the meltwater soaks the ground twice as fast as it melts and
+    // fills the hollows with half of it.
+    float melted = 0.0f;
+    const float warm = std::max(s.temperature - QUENCH_SNOW_BELOW, 0.0f);
+    if (w.snow > 0.0f && warm > 0.0f) {
+        melted = std::min(w.snow, t * warm / (5.0f * std::max(s.meltTime, 1.0f)));
+        w.snow -= melted;
+    }
+    if (rain > kWettingThreshold) {
+        w.ground = std::min(1.0f, w.ground + t * rain / std::max(s.wettingTime, 1.0f));
+        w.water = std::min(1.0f, w.water + t * rain / std::max(s.puddleFillTime, 1.0f));
+    } else if (melted <= 0.0f && w.snow <= 0.0f) {
+        // Snow that lies keeps the ground under it as it is.
         w.ground = std::max(0.0f, w.ground - t / std::max(s.dryingTime, 1.0f));
         w.water = std::max(0.0f, w.water - t / std::max(s.puddleDryTime, 1.0f));
+    }
+    if (melted > 0.0f) {
+        w.ground = std::min(1.0f, w.ground + melted * 2.0f);
+        w.water = std::min(1.0f, w.water + melted * 0.5f);
     }
     return w;
 }
@@ -116,18 +134,23 @@ shader::WeatherUniforms Weather::pastUniforms(double ago) const {
 void Weather::estimateWetness(std::span<const glm::vec2> points, std::span<WetnessCell> out) const {
     const Settings& s = m_settings;
     const double span =
-        std::min(7200.0, double(std::max(std::max(s.wettingTime, 1.0f) + std::max(s.dryingTime, 1.0f),
-                                         std::max(s.puddleFillTime, 1.0f) + std::max(s.puddleDryTime, 1.0f))));
+        std::min(7200.0, double(std::max({std::max(s.wettingTime, 1.0f) + std::max(s.dryingTime, 1.0f),
+                                          std::max(s.puddleFillTime, 1.0f) + std::max(s.puddleDryTime, 1.0f),
+                                          std::max(s.snowTime, 1.0f) + std::max(s.meltTime, 1.0f)})));
     const double step = span / double(kEstimateSteps);
     for (std::size_t i = 0; i < points.size(); ++i) out[i] = {};
     for (int k = 0; k < kEstimateSteps; ++k) {
         const shader::WeatherUniforms u = pastUniforms(span - (double(k) + 0.5) * step);
         for (std::size_t i = 0; i < points.size(); ++i) {
             const float p = shader::quenchWeatherSample(u, points[i]).z;
-            out[i].wetness = wetted(out[i].wetness, p, step);
+            const float share = p > 0.0f ? shader::quenchWeatherSnow(u, points[i], 0.0f) : 0.0f;
+            out[i].wetness = wetted(out[i].wetness, p, share, step);
         }
     }
-    for (std::size_t i = 0; i < points.size(); ++i) out[i].precipitation = sample(points[i]).precipitation;
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        out[i].precipitation = sample(points[i]).precipitation;
+        out[i].snowShare = shader::quenchWeatherSnow(m_uniforms, points[i], 0.0f);
+    }
 }
 
 void Weather::estimateGrid() {
@@ -182,7 +205,8 @@ Wetness Weather::wetness(glm::vec2 xz) const {
         const auto mix = [&](float va, float vb, float vd, float ve) {
             return (va * (1.0f - f.x) + vb * f.x) * (1.0f - f.y) + (vd * (1.0f - f.x) + ve * f.x) * f.y;
         };
-        return {mix(a.ground, b.ground, d.ground, e.ground), mix(a.water, b.water, d.water, e.water)};
+        return {mix(a.ground, b.ground, d.ground, e.ground), mix(a.water, b.water, d.water, e.water),
+                mix(a.snow, b.snow, d.snow, e.snow)};
     }
     WetnessCell out{};
     estimateWetness({&xz, 1}, {&out, 1});
@@ -247,13 +271,17 @@ void Weather::refresh() {
     u.air = {m_airOffset.x, m_airOffset.y, dir.x, dir.y};
     const float base = std::max(s.cloudBase, 0.0f);
     u.layer = {base, std::max(s.cloudTop, base + 100.0f), s.cirrusHeight, float(m_cells.size())};
+    bool ownSnow = false;
     for (std::size_t i = 0; i < m_cells.size(); ++i) {
         const CellEntry& e = m_cells[i];
         const glm::vec2 p = cellPosition(e);
+        const float snow = e.cell.snow < 0.0f ? -1.0f : std::min(e.cell.snow, 1.0f);
+        ownSnow = ownSnow || snow >= 0.0f;
         u.cells[i * 2] = {p.x, p.y, std::max(e.cell.radius, 1.0f), std::clamp(e.cell.coverage, 0.0f, 1.0f)};
         u.cells[i * 2 + 1] = {typeValue(e.cell.type), std::clamp(e.cell.precipitation, 0.0f, 1.0f), cellPhase(e.id),
-                              0.0f};
+                              snow};
     }
+    u.climate = {s.temperature, std::max(s.lapseRate, 0.0f), ownSnow ? 1.0f : 0.0f, 0.0f};
 }
 
 Sample Weather::sample(glm::vec2 xz) const { return toSample(shader::quenchWeatherSample(m_uniforms, xz)); }
@@ -263,8 +291,21 @@ float Weather::precipitation(glm::vec3 point) const {
     return sample({point.x, point.z}).precipitation;
 }
 
-float Weather::distanceToPrecipitation(glm::vec2 xz, float threshold, float maxDistance) const {
-    const auto raining = [&](glm::vec2 p) { return sample(p).precipitation >= threshold; };
+float Weather::snowShare(glm::vec3 point) const {
+    return shader::quenchWeatherSnow(m_uniforms, {point.x, point.z}, point.y);
+}
+
+float Weather::temperature(glm::vec3 point) const {
+    return m_uniforms.climate.x - m_uniforms.climate.y * std::max(point.y, 0.0f);
+}
+
+float Weather::distanceToPrecipitation(glm::vec2 xz, float threshold, float maxDistance, Precipitation kind) const {
+    const auto raining = [&](glm::vec2 p) {
+        const float amount = sample(p).precipitation;
+        if (kind == Precipitation::Any || amount < threshold) return amount >= threshold;
+        const float snow = shader::quenchWeatherSnow(m_uniforms, p, 0.0f);
+        return amount * (kind == Precipitation::Snow ? snow : 1.0f - snow) >= threshold;
+    };
     if (raining(xz)) return 0.0f;
     if (!(maxDistance > 0.0f)) return 0.0f;
     // Without precipitation in the field or in a cell there is nothing to find.
@@ -327,6 +368,8 @@ glm::vec3 Weather::windAt(glm::vec3 point) const {
 }
 
 glm::vec3 Weather::rainVelocity(glm::vec3 point) const { return windAt(point) - glm::vec3(0.0f, kRainFallSpeed, 0.0f); }
+
+glm::vec3 Weather::snowVelocity(glm::vec3 point) const { return windAt(point) - glm::vec3(0.0f, kSnowFallSpeed, 0.0f); }
 
 float Weather::cloudTop(float type) const {
     const float base = m_uniforms.layer.x;
