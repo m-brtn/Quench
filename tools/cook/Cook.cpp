@@ -39,7 +39,10 @@ constexpr const char* kUsage =
     "a skeleton holds the joints of the file's skins; animation cooks every animation of the file as a clip, with\n"
     "the settings (loop, events, root motion) of <input stem>.anim.json when it exists\n"
     "options:\n"
-    "  --format F           texture format: bc7 (default), astc (ASTC 4x4) or rgba8\n"
+    "  --format F           texture format: bc7 (default), astc (ASTC 4x4), rgba8 or basis (Basis Universal,\n"
+    "                       transcoded at load time to what the device samples)\n"
+    "  --basis-codec C      basis: etc1s (small), uastc (about BC7's quality) or auto (default: uastc for\n"
+    "                       --linear data, etc1s for color)\n"
     "  --linear             texture: linear data, not sRGB color (normals, masks)\n"
     "  --no-mips            texture: level 0 only\n"
     "  --max-size N         halve textures until both sides are at most N\n"
@@ -144,8 +147,20 @@ std::optional<Options> parseArgs(int argc, char** argv, std::string& error) {
                 o.texture.format = o.model.textureFormat = cook::TextureFormat::Astc4x4;
             else if (v == "rgba8")
                 o.texture.format = o.model.textureFormat = cook::TextureFormat::Rgba8;
+            else if (v == "basis")
+                o.texture.format = o.model.textureFormat = cook::TextureFormat::Basis;
             else
-                return bad("--format: bc7, astc or rgba8");
+                return bad("--format: bc7, astc, rgba8 or basis");
+        } else if (arg == "--basis-codec") {
+            const std::optional<std::string_view> v = value();
+            if (v == "auto")
+                o.texture.basis = o.model.textureBasis = cook::BasisMode::Auto;
+            else if (v == "etc1s")
+                o.texture.basis = o.model.textureBasis = cook::BasisMode::Etc1s;
+            else if (v == "uastc")
+                o.texture.basis = o.model.textureBasis = cook::BasisMode::Uastc;
+            else
+                return bad("--basis-codec: auto, etc1s or uastc");
         } else if (arg == "--linear") {
             o.texture.srgb = false;
         } else if (arg == "--no-mips") {
@@ -203,18 +218,15 @@ int cookTexture(const Options& o, JobSystem& jobs) {
     Result<std::vector<std::uint8_t>> source = readFile(o.input);
     if (!source) return fail(source.error());
     std::vector<std::string> notes;
-    Result<assets::TextureImage> image = cook::cookTexture(*source, o.texture, jobs, &notes);
-    if (!image) return fail(std::format("{}: {}", o.input.string(), image.error()));
+    Result<std::vector<std::uint8_t>> file = cook::cookTextureFile(*source, o.texture, jobs, &notes);
+    if (!file) return fail(std::format("{}: {}", o.input.string(), file.error()));
     printNotes(o, notes);
-    Result<std::vector<std::uint8_t>> file = assets::writeKtx2(*image);
-    if (!file) return fail(file.error());
     if (Result<void> r = writeFile(o.output, *file, false); !r) return fail(r.error());
     if (!o.depfile.empty())
         if (Result<void> r = writeDepfile(o, {o.input}); !r) return fail(r.error());
     if (o.verbose)
-        std::fprintf(stderr, "quench_cook: %s: %u x %u, %u levels, %s, %zu bytes\n", o.output.string().c_str(),
-                     image->width, image->height, image->mipLevels, assets::pixelFormatInfo(image->format).name,
-                     file->size());
+        std::fprintf(stderr, "quench_cook: %s: %s, %zu bytes\n", o.output.string().c_str(),
+                     cook::describeTexture(*file).c_str(), file->size());
     return 0;
 }
 
@@ -230,13 +242,10 @@ int cookModel(const Options& o, JobSystem& jobs) {
     if (!cooked) return fail(cooked.error());
     printNotes(o, cooked->notes);
     for (const cook::CookedTexture& texture : cooked->textures) {
-        Result<std::vector<std::uint8_t>> file = assets::writeKtx2(texture.image);
-        if (!file) return fail(file.error());
-        if (Result<void> r = writeFile(root / texture.assetPath, *file, true); !r) return fail(r.error());
+        if (Result<void> r = writeFile(root / texture.assetPath, texture.file, true); !r) return fail(r.error());
         if (o.verbose)
-            std::fprintf(stderr, "quench_cook: %s: %u x %u, %u levels, %s\n", texture.assetPath.c_str(),
-                         texture.image.width, texture.image.height, texture.image.mipLevels,
-                         assets::pixelFormatInfo(texture.image.format).name);
+            std::fprintf(stderr, "quench_cook: %s: %s, %zu bytes\n", texture.assetPath.c_str(),
+                         cook::describeTexture(texture.file).c_str(), texture.file.size());
     }
     Result<std::vector<std::uint8_t>> file = assets::writeModel(cooked->model);
     if (!file) return fail(file.error());

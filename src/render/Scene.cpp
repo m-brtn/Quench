@@ -204,6 +204,10 @@ gpu::TextureFormat gpuFormat(assets::PixelFormat format) {
     case assets::PixelFormat::Bc7Srgb: return gpu::TextureFormat::Bc7RgbaUnormSrgb;
     case assets::PixelFormat::Astc4x4: return gpu::TextureFormat::Astc4x4Unorm;
     case assets::PixelFormat::Astc4x4Srgb: return gpu::TextureFormat::Astc4x4UnormSrgb;
+    case assets::PixelFormat::Etc2Rgb8: return gpu::TextureFormat::Etc2Rgb8Unorm;
+    case assets::PixelFormat::Etc2Rgb8Srgb: return gpu::TextureFormat::Etc2Rgb8UnormSrgb;
+    case assets::PixelFormat::Etc2Rgba8: return gpu::TextureFormat::Etc2Rgba8Unorm;
+    case assets::PixelFormat::Etc2Rgba8Srgb: return gpu::TextureFormat::Etc2Rgba8UnormSrgb;
     }
     return gpu::TextureFormat::Invalid;
 }

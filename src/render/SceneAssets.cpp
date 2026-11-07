@@ -11,6 +11,7 @@
 #include <glm/ext/matrix_transform.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <format>
 
 namespace quench::render {
@@ -67,39 +68,48 @@ struct SceneAssets::Impl {
 
 TextureAsset::TextureAsset(SceneAssets& owner)
     : m_owner(owner), m_texture(owner.m_scene.addEmptyTexture()), m_skipLevels(owner.m_settings.textureSkipLevels),
-      m_bcTextures(owner.m_bcTextures), m_astcTextures(owner.m_astcTextures) {}
+      m_support(owner.m_support) {}
 
 Result<void> TextureAsset::decode(fs::Bytes bytes) {
-    Result<assets::TextureImage> image = assets::readKtx2(bytes, m_skipLevels);
-    if (!image) return Error{image.error()};
-    m_pendingDecoded = false;
-    const assets::PixelFormat format = image->format;
-    if ((format == assets::PixelFormat::Bc7 || format == assets::PixelFormat::Bc7Srgb) && !m_bcTextures) {
-        image = assets::decodeBc7(*image);
-        if (!image) return Error{image.error()};
-        m_pendingDecoded = true;
-    } else if ((format == assets::PixelFormat::Astc4x4 || format == assets::PixelFormat::Astc4x4Srgb) &&
-               !m_astcTextures) {
-        return Error{
-            "the device cannot sample ASTC 4x4 and the runtime has no ASTC decoder (cook BC7 or RGBA8 for it)"};
-    }
-    m_pending = std::move(*image);
+    const auto start = std::chrono::steady_clock::now();
+    Result<assets::PreparedTexture> prepared = assets::prepareTexture(bytes, m_support, m_skipLevels);
+    if (!prepared) return Error{prepared.error()};
+    m_pending = std::move(*prepared);
+    m_pendingMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     return {};
 }
 
-std::uint64_t TextureAsset::uploadBytes() const { return m_pending ? m_pending->data.size() : 0; }
+std::uint64_t TextureAsset::uploadBytes() const { return m_pending ? m_pending->image.data.size() : 0; }
 
 Result<void> TextureAsset::finish() {
     if (!m_pending) return Error{"nothing decoded"};
-    const assets::TextureImage image = std::move(*m_pending);
+    const assets::PreparedTexture prepared = std::move(*m_pending);
     m_pending.reset();
+    const assets::TextureImage& image = prepared.image;
     if (Result<void> set = m_owner.m_scene.setTexture(m_texture, image, path()); !set) return set;
     m_width = image.width;
     m_height = image.height;
     m_mipLevels = image.mipLevels;
     m_format = image.format;
     m_gpuBytes = image.data.size();
-    m_decodedOnCpu = m_pendingDecoded;
+    m_decodedOnCpu = prepared.decodedOnCpu;
+    m_basis = prepared.basis;
+    m_decodeMs = m_pendingMs;
+    if (m_basis && m_decodedOnCpu) {
+        const assets::TextureSupport& support = m_support;
+        if (support.bc7 || support.astc4x4 || support.etc2) {
+            log::info("assets",
+                      "{}: Basis Universal file of {} x {} transcoded to RGBA8 (block formats need sides "
+                      "that are multiples of 4)",
+                      path(), image.width, image.height);
+        } else if (!m_owner.m_loggedBasisRgba8) {
+            m_owner.m_loggedBasisRgba8 = true;
+            log::warning("assets",
+                         "{}: the device samples none of BC7, ASTC 4x4 and ETC2: Basis Universal files are "
+                         "transcoded to RGBA8 (4 times the memory; logged once)",
+                         path());
+        }
+    }
     return {};
 }
 
@@ -299,8 +309,7 @@ assets::AssetMemory ModelAsset::residentMemory() const { return {0, m_gpuBytes};
 SceneAssets::SceneAssets(Scene& scene, assets::AssetManager& manager, const SceneAssetsSettings& settings)
     : m_scene(scene), m_manager(manager), m_settings(settings), m_impl(std::make_unique<Impl>()) {
     const gpu::Caps& caps = scene.device().caps();
-    m_bcTextures = caps.bcTextures;
-    m_astcTextures = caps.astcTextures;
+    m_support = {.bc7 = caps.bcTextures, .astc4x4 = caps.astcTextures, .etc2 = caps.etc2Textures};
     const MeshData box = boxMesh(glm::vec3(0.5f));
     if (Result<MeshId> mesh = scene.addMesh(box.desc("asset placeholder")); mesh)
         m_impl->box = *mesh;
@@ -318,8 +327,13 @@ SceneAssets::SceneAssets(Scene& scene, assets::AssetManager& manager, const Scen
     manager.registerType<ModelAsset>(
         "model", [this](std::string_view) { return std::unique_ptr<ModelAsset>(new ModelAsset(*this)); },
         settings.modelBudget);
-    log::info("assets", "scene assets: BC7 {}, ASTC {}", m_bcTextures ? "sampled" : "decoded to RGBA8 on load",
-              m_astcTextures ? "sampled" : "not supported");
+    const auto basisTarget = [this](assets::BasisCodec codec) {
+        return assets::pixelFormatInfo(assets::basisTarget({.codec = codec, .width = 4, .height = 4}, m_support)).name;
+    };
+    log::info("assets", "scene assets: BC7 {}, ASTC {}, ETC2 {}; Basis Universal UASTC to {}, ETC1S to {}",
+              m_support.bc7 ? "sampled" : "decoded to RGBA8 on load", m_support.astc4x4 ? "sampled" : "not supported",
+              m_support.etc2 ? "sampled" : "not supported", basisTarget(assets::BasisCodec::Uastc),
+              basisTarget(assets::BasisCodec::Etc1s));
 }
 
 SceneAssets::~SceneAssets() {

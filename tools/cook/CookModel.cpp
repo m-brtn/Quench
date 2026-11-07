@@ -618,12 +618,15 @@ private:
             Result<std::vector<std::uint8_t>> bytes = imageBytes(imageIndex);
             if (!bytes) return Error{bytes.error()};
             std::vector<std::string> notes;
-            Result<assets::TextureImage> image = cookTexture(
-                *bytes, {.format = m_options.textureFormat, .srgb = srgb, .maxSize = m_options.textureMaxSize}, m_jobs,
-                &notes);
-            if (!image) return Error{std::format("image {}: {}", imageIndex, image.error())};
+            Result<std::vector<std::uint8_t>> file = cookTextureFile(*bytes,
+                                                                     {.format = m_options.textureFormat,
+                                                                      .srgb = srgb,
+                                                                      .maxSize = m_options.textureMaxSize,
+                                                                      .basis = m_options.textureBasis},
+                                                                     m_jobs, &notes);
+            if (!file) return Error{std::format("image {}: {}", imageIndex, file.error())};
             for (std::string& n : notes) note(std::format("{}: {}", path, n));
-            m_out.textures.push_back({path, std::move(*image)});
+            m_out.textures.push_back({path, std::move(*file)});
         }
         return {};
     }

@@ -1,6 +1,8 @@
-// KTX2 reading and writing generalized from TrailForge's src/core/Ktx2.cpp (BC7 only there; here RGBA8, BC7 and
-// ASTC 4x4, errors as values instead of exceptions).
+// KTX2 reading and writing generalized from TrailForge's src/core/Ktx2.cpp (BC7 only there; here RGBA8, BC7, ASTC 4x4
+// and ETC2, errors as values instead of exceptions). Basis Universal files: Basis.cpp.
 #include <quench/assets/Texture.h>
+
+#include "Ktx2Layout.h"
 
 #include <bc7decomp.h>
 
@@ -11,31 +13,34 @@
 #include <string>
 
 namespace quench::assets {
-namespace {
 
-constexpr std::uint8_t kIdentifier[12] = {0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, '\r', '\n', 0x1A, '\n'};
-constexpr std::size_t kHeaderBytes = 80; // identifier + 9 u32 + index (4 u32 + 2 u64)
-constexpr std::size_t kLevelEntryBytes = 24;
-constexpr std::uint32_t kMaxLevels = 16;
-constexpr std::uint32_t kMaxExtent = 1u << (kMaxLevels - 1); // the full chain of the largest texture has 16 levels
+using namespace detail::ktx2;
+
+namespace {
 
 // Khronos data format descriptor values (khr_df.h).
 constexpr std::uint32_t kModelRgbsda = 1;
 constexpr std::uint32_t kModelBc7 = 136;
+constexpr std::uint32_t kModelEtc2 = 161;
 constexpr std::uint32_t kModelAstc = 162;
 constexpr std::uint32_t kPrimariesBt709 = 1;
 constexpr std::uint32_t kTransferLinear = 1;
 constexpr std::uint32_t kTransferSrgb = 2;
+constexpr std::uint32_t kChannelEtc2Color = 2;
 constexpr std::uint32_t kChannelAlpha = 15;
 constexpr std::uint32_t kQualifierLinear = 1u << 4;
 
-constexpr std::array<PixelFormatInfo, 6> kFormats{{
+constexpr std::array<PixelFormatInfo, 10> kFormats{{
     {"rgba8", 37, 1, 4, false},
     {"rgba8_srgb", 43, 1, 4, true},
     {"bc7", 145, 4, 16, false},
     {"bc7_srgb", 146, 4, 16, true},
     {"astc4x4", 157, 4, 16, false},
     {"astc4x4_srgb", 158, 4, 16, true},
+    {"etc2_rgb8", 147, 4, 8, false},
+    {"etc2_rgb8_srgb", 148, 4, 8, true},
+    {"etc2_rgba8", 151, 4, 16, false},
+    {"etc2_rgba8_srgb", 152, 4, 16, true},
 }};
 
 void put32(std::vector<std::uint8_t>& b, std::uint32_t v) {
@@ -50,10 +55,6 @@ void set32(std::vector<std::uint8_t>& b, std::size_t at, std::uint32_t v) {
 void set64(std::vector<std::uint8_t>& b, std::size_t at, std::uint64_t v) {
     for (int i = 0; i < 8; ++i) b[at + std::size_t(i)] = std::uint8_t(v >> (8 * i));
 }
-std::uint32_t get32(const std::uint8_t* p) {
-    return std::uint32_t(p[0]) | std::uint32_t(p[1]) << 8 | std::uint32_t(p[2]) << 16 | std::uint32_t(p[3]) << 24;
-}
-std::uint64_t get64(const std::uint8_t* p) { return std::uint64_t(get32(p)) | std::uint64_t(get32(p + 4)) << 32; }
 void pad(std::vector<std::uint8_t>& b, std::size_t align) {
     while (b.size() % align != 0) b.push_back(0);
 }
@@ -66,15 +67,17 @@ const PixelFormatInfo* findVkFormat(std::uint32_t vkFormat) {
 
 PixelFormat formatOf(const PixelFormatInfo& info) { return PixelFormat(&info - kFormats.data()); }
 
-// The basic data format descriptor block of `format`: one sample per channel for RGBA8, one 128-bit sample for the
-// block formats.
+// The basic data format descriptor block of `format`: one sample per channel for RGBA8, one 128-bit sample for BC7
+// and ASTC, one 64-bit sample per block half for ETC2 (EAC alpha, then the color block).
 void writeDfd(std::vector<std::uint8_t>& b, PixelFormat format) {
     const PixelFormatInfo& info = pixelFormatInfo(format);
     const bool rgba = info.blockSize == 1;
-    const std::uint32_t samples = rgba ? 4 : 1;
+    const bool etc2 = format >= PixelFormat::Etc2Rgb8;
+    const std::uint32_t samples = rgba ? 4 : etc2 ? info.blockBytes / 8 : 1;
     const std::uint32_t blockSize = 24 + 16 * samples;
     const std::uint32_t model = rgba                                                             ? kModelRgbsda
                                 : (format == PixelFormat::Bc7 || format == PixelFormat::Bc7Srgb) ? kModelBc7
+                                : etc2                                                           ? kModelEtc2
                                                                                                  : kModelAstc;
     put32(b, 4 + blockSize); // dfdTotalSize
     put32(b, 0);             // vendorId 0 (Khronos), descriptorType 0 (basic)
@@ -92,6 +95,15 @@ void writeDfd(std::vector<std::uint8_t>& b, PixelFormat format) {
             put32(b, 0);   // sample position
             put32(b, 0);   // sampleLower
             put32(b, 255); // sampleUpper
+        }
+    } else if (etc2) {
+        for (std::uint32_t s = 0; s < samples; ++s) {
+            std::uint32_t channel = s + 1 < samples ? kChannelAlpha : kChannelEtc2Color;
+            if (channel == kChannelAlpha && info.srgb) channel |= kQualifierLinear;
+            put32(b, (s * 64) | (63u << 16) | (channel << 24));
+            put32(b, 0);
+            put32(b, 0);
+            put32(b, 0xFFFFFFFFu);
         }
     } else {
         put32(b, 0u | (127u << 16)); // bitOffset 0, bitLength 128 - 1, channel 0 (BC7 color, ASTC data)
@@ -139,8 +151,9 @@ Result<TextureImage> readKtx2(std::span<const std::uint8_t> file, std::uint32_t 
     const std::uint32_t depth = get32(p + 28), layers = get32(p + 32), faces = get32(p + 36);
     const std::uint32_t levelCount = std::max(get32(p + 40), 1u);
     const std::uint32_t scheme = get32(p + 44);
+    if (isBasisKtx2(file)) return Error{"a Basis Universal KTX2 file (read it with prepareTexture or transcodeBasis)"};
     const PixelFormatInfo* info = findVkFormat(vkFormat);
-    if (!info) return Error{std::format("KTX2 format {} is not supported (RGBA8, BC7, ASTC 4x4)", vkFormat)};
+    if (!info) return Error{std::format("KTX2 format {} is not supported (RGBA8, BC7, ASTC 4x4, ETC2)", vkFormat)};
     if (depth != 0 || layers > 1 || faces != 1 || scheme != 0 || width == 0 || height == 0 || typeSize != 1)
         return Error{"unsupported KTX2 layout (needs one 2D image, one layer, one face, no supercompression)"};
     if (width > kMaxExtent || height > kMaxExtent)

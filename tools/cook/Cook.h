@@ -1,7 +1,8 @@
 #pragma once
 
 // quench_cook (tools/cook): converts source assets into the formats the engine loads at run time. Textures (PNG, JPEG,
-// KTX2) become KTX2 files with their mip chain in BC7, ASTC 4x4 or RGBA8; glTF and GLB models become .qmodel files
+// KTX2) become KTX2 files with their mip chain in BC7, ASTC 4x4, RGBA8 or Basis Universal (ETC1S or UASTC, transcoded
+// at load time to what the device samples); glTF and GLB models become .qmodel files
 // (include/quench/assets/Model.h) with meshoptimizer-optimized meshes, levels of detail, and their textures cooked
 // next to them; their skins and animations become .qskel skeletons and .qanim clip sets
 // (include/quench/animation/). The output depends only on the input files and the options (no time stamps, no
@@ -24,15 +25,25 @@
 
 namespace quench::cook {
 
-// BC7 for desktops, ASTC 4x4 for phones (both 8 bits per texel), RGBA8 uncompressed.
-enum class TextureFormat : std::uint8_t { Bc7, Rgba8, Astc4x4 };
+// BC7 for desktops, ASTC 4x4 for phones (both 8 bits per texel), RGBA8 uncompressed; Basis Universal for every device
+// (assets::prepareTexture transcodes it at load time).
+enum class TextureFormat : std::uint8_t { Bc7, Rgba8, Astc4x4, Basis };
+
+// Basis Universal's codec: ETC1S (BasisLZ: small files, lower quality, blocky on normal maps), UASTC LDR 4x4 (about
+// BC7's quality, Zstandard supercompressed), or Auto: UASTC for linear data (normals, metallic-roughness), ETC1S for
+// color.
+enum class BasisMode : std::uint8_t { Auto, Etc1s, Uastc };
 
 struct TextureOptions {
     TextureFormat format = TextureFormat::Bc7;
     bool srgb = true;          // color (sRGB transfer); false: linear data (normals, metallic-roughness)
     bool mips = true;          // the full chain down to 1 x 1
     std::uint32_t maxSize = 0; // halves the image until both sides fit; 0: no limit
+    BasisMode basis = BasisMode::Auto;
 };
+
+// The codec TextureFormat::Basis encodes with.
+assets::BasisCodec basisCodec(const TextureOptions& options);
 
 // 8-bit RGBA, rows top to bottom.
 struct Image {
@@ -43,14 +54,25 @@ struct Image {
 
 // PNG or JPEG (stb_image), converted to RGBA8.
 Result<Image> decodeImage(std::span<const std::uint8_t> bytes);
-// Mips (filtered in linear light for sRGB images), then BC7, ASTC 4x4 or RGBA8. The block formats need both sides of
-// level 0 to be multiples of 4 (Metal's rule for block-compressed textures); other sizes are written as RGBA8 with a
-// note in `notes`.
+// Mips (filtered in linear light for sRGB images), then BC7, ASTC 4x4 or RGBA8 (TextureFormat::Basis is
+// cookImageFile's). The block formats need both sides of level 0 to be multiples of 4 (Metal's rule for
+// block-compressed textures); other sizes are written as RGBA8 with a note in `notes`.
 Result<assets::TextureImage> cookImage(const Image& image, const TextureOptions& options, JobSystem& jobs,
                                        std::vector<std::string>* notes = nullptr);
-// A source file: PNG or JPEG, or KTX2 (RGBA8 is cooked like an image, BC7 and ASTC are passed through).
+// A source file: PNG or JPEG, or KTX2 (RGBA8 is cooked like an image, BC7 and ASTC are passed through, Basis
+// Universal is transcoded to the format asked for).
 Result<assets::TextureImage> cookTexture(std::span<const std::uint8_t> source, const TextureOptions& options,
                                          JobSystem& jobs, std::vector<std::string>* notes = nullptr);
+// The KTX2 file of cookImage or cookTexture, in any format. TextureFormat::Basis: the same mips encoded with
+// basisCodec(options); a Basis Universal source is passed through, a BC7 or ASTC one decoded and encoded again (with a
+// note). Basis Universal files of any size are written (devices get RGBA8 where a side is not a multiple of 4, with
+// a note).
+Result<std::vector<std::uint8_t>> cookImageFile(const Image& image, const TextureOptions& options, JobSystem& jobs,
+                                                std::vector<std::string>* notes = nullptr);
+Result<std::vector<std::uint8_t>> cookTextureFile(std::span<const std::uint8_t> source, const TextureOptions& options,
+                                                  JobSystem& jobs, std::vector<std::string>* notes = nullptr);
+// "128 x 64, 8 levels, bc7_srgb" or "128 x 64, 8 levels, basis uastc (zstd), srgb" for a KTX2 file.
+std::string describeTexture(std::span<const std::uint8_t> file);
 // BC7 blocks of one RGBA8 image (bc7enc), block rows spread over the job system. Sides need not be multiples of 4:
 // edge blocks repeat the last row and column.
 std::vector<std::uint8_t> encodeBc7(const Image& image, bool perceptual, JobSystem& jobs);
@@ -59,9 +81,17 @@ std::vector<std::uint8_t> encodeBc7(const Image& image, bool perceptual, JobSyst
 Result<std::vector<std::uint8_t>> encodeAstc(const Image& image, bool srgb, JobSystem& jobs);
 // One level of an ASTC 4x4 texture back to RGBA8 (astc-encoder's decoder: for tests and checks, not the runtime).
 Result<Image> decodeAstc(const assets::TextureImage& texture, std::uint32_t level);
+// A Basis Universal KTX2 file of `levels` (level 0 first, each half the one before; any size) with Basis Universal's
+// encoder (v2.50: ETC1S at quality 128, compression level 2; UASTC at its default pack level, Zstandard level 6). On
+// the calling thread only, so the output depends on the input alone.
+Result<std::vector<std::uint8_t>> encodeBasis(std::span<const Image> levels, bool srgb, assets::BasisCodec codec);
+// One level of an ETC2 RGB8 or RGBA8 texture back to RGBA8 (Basis Universal's block unpacker, which knows the ETC1
+// modes its transcoder writes, not ETC2's T, H and planar modes: for tests and checks, not the runtime).
+Result<Image> decodeEtc2(const assets::TextureImage& texture, std::uint32_t level);
 
 struct ModelOptions {
     TextureFormat textureFormat = TextureFormat::Bc7;
+    BasisMode textureBasis = BasisMode::Auto;
     std::uint32_t textureMaxSize = 0;
     std::uint32_t lods = 3; // levels of detail, LOD 0 included; 1: no simplification
     float lodRatio = 0.5f;  // target index count of each level relative to the one before
@@ -70,8 +100,8 @@ struct ModelOptions {
 };
 
 struct CookedTexture {
-    std::string assetPath; // as the materials name it
-    assets::TextureImage image;
+    std::string assetPath;          // as the materials name it
+    std::vector<std::uint8_t> file; // KTX2 (cookTextureFile)
 };
 
 struct CookedModel {

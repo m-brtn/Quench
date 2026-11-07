@@ -39,8 +39,14 @@ public:
     std::uint32_t height() const { return m_height; }
     std::uint32_t mipLevels() const { return m_mipLevels; }
     assets::PixelFormat format() const { return m_format; }
-    // The file's BC7 was decoded to RGBA8 on the CPU (the device cannot sample BC formats).
+    // The texture is RGBA8 the file did not hold: its BC7 decoded on the CPU (the device cannot sample BC formats),
+    // or its Basis Universal data transcoded to RGBA8 (the device samples none of BC7, ASTC 4x4 and ETC2, or a side
+    // is not a multiple of 4).
     bool decodedOnCpu() const { return m_decodedOnCpu; }
+    // The file's codec when it is a Basis Universal file (format() is what it was transcoded to).
+    std::optional<assets::BasisCodec> basisCodec() const { return m_basis; }
+    // How long reading the file took on its job (with BC7 decoding or Basis Universal transcoding), in milliseconds.
+    double decodeMilliseconds() const { return m_decodeMs; }
 
 private:
     friend class SceneAssets;
@@ -57,13 +63,15 @@ private:
     TextureId m_texture;
     // Fixed at creation: decode() runs on a job.
     std::uint32_t m_skipLevels = 0;
-    bool m_bcTextures = false, m_astcTextures = false;
-    std::optional<assets::TextureImage> m_pending; // decoded on a job, uploaded by finish()
-    bool m_pendingDecoded = false;
+    assets::TextureSupport m_support;
+    std::optional<assets::PreparedTexture> m_pending; // decoded on a job, uploaded by finish()
+    double m_pendingMs = 0.0;
     std::uint32_t m_width = 0, m_height = 0, m_mipLevels = 0;
     assets::PixelFormat m_format = assets::PixelFormat::Rgba8;
     std::uint64_t m_gpuBytes = 0;
     bool m_decodedOnCpu = false;
+    std::optional<assets::BasisCodec> m_basis;
+    double m_decodeMs = 0.0;
 };
 
 class ModelAsset final : public assets::Asset {
@@ -186,8 +194,11 @@ public:
     void setTextureSkipLevels(std::uint32_t levels) { m_settings.textureSkipLevels = levels; }
     void setModelLod(std::uint32_t lod) { m_settings.modelLod = lod; }
     // The device samples BC7 (otherwise cooked BC7 textures are decoded to RGBA8 on load).
-    bool bcTextures() const { return m_bcTextures; }
-    bool astcTextures() const { return m_astcTextures; }
+    bool bcTextures() const { return m_support.bc7; }
+    bool astcTextures() const { return m_support.astc4x4; }
+    bool etc2Textures() const { return m_support.etc2; }
+    // What Basis Universal files are transcoded to (assets::basisTarget) from gpu::Caps.
+    const assets::TextureSupport& textureSupport() const { return m_support; }
 
 private:
     friend class TextureAsset;
@@ -199,8 +210,8 @@ private:
     Scene& m_scene;
     assets::AssetManager& m_manager;
     SceneAssetsSettings m_settings;
-    bool m_bcTextures = false;
-    bool m_astcTextures = false;
+    assets::TextureSupport m_support;
+    bool m_loggedBasisRgba8 = false;
     std::unique_ptr<Impl> m_impl;
 };
 

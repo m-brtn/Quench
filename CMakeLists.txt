@@ -73,17 +73,20 @@ endif()
 
 # ------------------------------------------------------------------ assets
 # Headless: asset IDs, the asset manager (cache, budgets, loads on the job system, hot reload), cooked KTX2 textures
-# and models, streaming by distance. GPU resources for textures and models are quench_render's (SceneAssets).
+# (also Basis Universal, transcoded at load time) and models, streaming by distance. GPU resources for textures and
+# models are quench_render's (SceneAssets).
 add_library(quench_assets STATIC
     src/assets/AssetId.cpp
     src/assets/AssetManager.cpp
+    src/assets/Basis.cpp
     src/assets/Model.cpp
     src/assets/StreamingGrid.cpp
     src/assets/Tangents.cpp
     src/assets/Texture.cpp)
 quench_configure_target(quench_assets)
 target_link_libraries(quench_assets PUBLIC quench_core quench_glm PRIVATE quench_xxhash quench_meshoptimizer
-                                                                          quench_bc7decomp quench_mikktspace)
+                                                                          quench_bc7decomp quench_mikktspace
+                                                                          quench_basisu_transcoder)
 
 # ------------------------------------------------------------------ audio
 # Headless: the mixer (buses, voices, streams, 3D sound), sounds as assets, WAV writing and signal analysis. The device

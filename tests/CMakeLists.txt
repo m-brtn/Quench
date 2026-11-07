@@ -1,19 +1,32 @@
-# The audio tests' decoder files (audio/data), embedded so that the device test app has them too.
+# Test files embedded in the test executables, so that the device test app and the web build have them too: a
+# function quench::test::<function>() per file returns its bytes.
+# quench_embed_test_data(<output .cpp> <directory under tests> <file>:<function>...)
+function(quench_embed_test_data output directory)
+    set(content "#include <cstdint>\n#include <span>\n\nnamespace quench::test {\n")
+    foreach(entry IN LISTS ARGN)
+        string(REPLACE ":" ";" entry "${entry}")
+        list(GET entry 0 file)
+        list(GET entry 1 function)
+        file(READ ${CMAKE_CURRENT_SOURCE_DIR}/${directory}/${file} hex HEX)
+        string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," bytes "${hex}")
+        string(APPEND content "std::span<const std::uint8_t> ${function}();\n"
+               "std::span<const std::uint8_t> ${function}() {\n    static const std::uint8_t bytes[] = {${bytes}};\n"
+               "    return bytes;\n}\n")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                     ${CMAKE_CURRENT_SOURCE_DIR}/${directory}/${file})
+    endforeach()
+    string(APPEND content "} // namespace quench::test\n")
+    file(CONFIGURE OUTPUT ${output} CONTENT "${content}" @ONLY)
+endfunction()
+
+# The audio tests' decoder files and the assets tests' Basis Universal files.
 set(audio_test_data ${CMAKE_CURRENT_BINARY_DIR}/AudioTestData.cpp)
-set(audio_test_data_content "#include <cstdint>\n#include <span>\n\nnamespace quench::test {\n")
-foreach(entry tone.flac:toneFlac tone.mp3:toneMp3 loop.ogg:loopOgg)
-    string(REPLACE ":" ";" entry "${entry}")
-    list(GET entry 0 file)
-    list(GET entry 1 function)
-    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/audio/data/${file} hex HEX)
-    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," bytes "${hex}")
-    string(APPEND audio_test_data_content "std::span<const std::uint8_t> ${function}();\n"
-           "std::span<const std::uint8_t> ${function}() {\n    static const std::uint8_t bytes[] = {${bytes}};\n"
-           "    return bytes;\n}\n")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/audio/data/${file})
-endforeach()
-string(APPEND audio_test_data_content "} // namespace quench::test\n")
-file(CONFIGURE OUTPUT ${audio_test_data} CONTENT "${audio_test_data_content}" @ONLY)
+quench_embed_test_data(${audio_test_data} audio/data tone.flac:toneFlac tone.mp3:toneMp3 loop.ogg:loopOgg)
+set(basis_test_data ${CMAKE_CURRENT_BINARY_DIR}/BasisTestData.cpp)
+quench_embed_test_data(${basis_test_data} assets/data color_etc1s.ktx2:basisColorEtc1s
+    alpha_etc1s.ktx2:basisAlphaEtc1s color_uastc.ktx2:basisColorUastc alpha_uastc.ktx2:basisAlphaUastc
+    normals_uastc.ktx2:basisNormalsUastc odd_uastc.ktx2:basisOddUastc green_etc1s.ktx2:basisGreenEtc1s
+    blue_uastc.ktx2:basisBlueUastc)
 
 # A device build (iOS on an iPhone or iPad) cannot run executables from CTest: the cases that do not need the build
 # tree go into one app, quench_device_tests, installed and launched with devicectl (docs/platforms.md).
@@ -35,6 +48,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             assets/ModelTests.cpp
             assets/StreamingGridTests.cpp
             assets/TextureTests.cpp
+            ${basis_test_data}
             audio/AudioTests.cpp
             audio/DeviceTests.cpp
             ${audio_test_data}
@@ -147,6 +161,7 @@ quench_add_test_executable(quench_assets_tests PREFIX assets LABEL assets
         assets/StreamingGridTests.cpp
         assets/TangentsTests.cpp
         assets/TextureTests.cpp
+        ${basis_test_data}
     LIBS quench_assets)
 
 quench_add_test_executable(quench_audio_tests PREFIX audio LABEL audio
@@ -166,9 +181,23 @@ if(TARGET quench_cook_lib)
     target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_SOURCE_DIR="${Quench_SOURCE_DIR}")
     find_package(Python3 COMPONENTS Interpreter)
     set(_character_args)
-    # The demo's two characters for the retargeting cases, written at build time (the cases skip without Python).
+    # The demo's two characters for the retargeting cases and its tunnel textures for the Basis Universal comparison,
+    # written at build time (without Python the retargeting cases skip and the comparison leaves the tunnel out).
     set(_characters "")
+    set(_tunnel "")
     if(Python3_Interpreter_FOUND)
+        set(_tunnel ${CMAKE_CURRENT_BINARY_DIR}/tunnel)
+        set(_tunnel_files panel_color.png asphalt_color.png puddle.png panel_normal.png panel_mr.png
+            asphalt_normal.png asphalt_mr.png plastic_normal.png rubber_normal.png brushed_mr.png)
+        list(TRANSFORM _tunnel_files PREPEND ${_tunnel}/)
+        add_custom_command(
+            OUTPUT ${_tunnel_files}
+            COMMAND ${Python3_EXECUTABLE} ${Quench_SOURCE_DIR}/tools/assets/make_demo_tunnel.py ${_tunnel}
+            DEPENDS ${Quench_SOURCE_DIR}/tools/assets/make_demo_tunnel.py
+            COMMENT "Writing the demo's tunnel textures for quench_cook_tests"
+            VERBATIM)
+        add_custom_target(quench_cook_test_tunnel DEPENDS ${_tunnel_files})
+        add_dependencies(quench_cook_tests quench_cook_test_tunnel)
         set(_character_args -DPYTHON=${Python3_EXECUTABLE}
             -DCHARACTER=${Quench_SOURCE_DIR}/tools/assets/make_demo_character.py)
         set(_characters ${CMAKE_CURRENT_BINARY_DIR}/characters)
@@ -186,7 +215,8 @@ if(TARGET quench_cook_lib)
         add_custom_target(quench_cook_test_characters DEPENDS ${_character_files})
         add_dependencies(quench_cook_tests quench_cook_test_characters)
     endif()
-    target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_CHARACTER_DIR="${_characters}")
+    target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_CHARACTER_DIR="${_characters}"
+                                                         QUENCH_TEST_TUNNEL_DIR="${_tunnel}")
     add_test(NAME cook_cli COMMAND ${CMAKE_COMMAND} -DCOOK=$<TARGET_FILE:quench_cook>
              -DSOURCES=${Quench_SOURCE_DIR}/examples/demo/assets_src -DSOUNDS=${CMAKE_CURRENT_SOURCE_DIR}/audio/data
              ${_character_args}
@@ -292,6 +322,7 @@ if(NOT QUENCH_HEADLESS)
             render/RenderMathTests.cpp
             render/RendererTests.cpp
             render/SceneAssetsTests.cpp
+            ${basis_test_data}
         LIBS quench_render quench_gpu SDL3::SDL3-static
         ENVIRONMENT ${gpu_environment})
     target_include_directories(quench_render_tests PRIVATE gpu)

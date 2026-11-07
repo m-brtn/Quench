@@ -235,8 +235,10 @@ Result<Image> decodeAstc(const TextureImage& texture, std::uint32_t level) {
     return image;
 }
 
-Result<TextureImage> cookImage(const Image& image, const TextureOptions& options, JobSystem& jobs,
-                               std::vector<std::string>* notes) {
+namespace {
+
+// Level 0 (halved to options.maxSize) and, with options.mips, the chain below it.
+Result<std::vector<Image>> makeLevels(const Image& image, const TextureOptions& options) {
     if (image.width == 0 || image.height == 0 || image.rgba.size() != std::size_t(image.width) * image.height * 4)
         return Error{"cook: empty or inconsistent image"};
     if (image.width > kMaxSide || image.height > kMaxSide)
@@ -255,6 +257,38 @@ Result<TextureImage> cookImage(const Image& image, const TextureOptions& options
             plane = half(plane);
             levels.push_back(toImage(plane, options.srgb));
         }
+    return levels;
+}
+
+// Level 0 of a BC7 or ASTC 4x4 file as RGBA8 (Basis Universal encodes from it again).
+Result<Image> decodeLevel0(const TextureImage& texture) {
+    if (texture.format == PixelFormat::Astc4x4 || texture.format == PixelFormat::Astc4x4Srgb)
+        return decodeAstc(texture, 0);
+    TextureImage first = texture;
+    first.mipLevels = 1;
+    first.data.resize(std::size_t(assets::levelBytes(texture.format, texture.width, texture.height)));
+    Result<TextureImage> rgba = assets::decodeBc7(first);
+    if (!rgba) return Error{rgba.error()};
+    return Image{rgba->width, rgba->height, std::move(rgba->data)};
+}
+
+} // namespace
+
+assets::BasisCodec basisCodec(const TextureOptions& options) {
+    switch (options.basis) {
+    case BasisMode::Etc1s: return assets::BasisCodec::Etc1s;
+    case BasisMode::Uastc: return assets::BasisCodec::Uastc;
+    case BasisMode::Auto: break;
+    }
+    return options.srgb ? assets::BasisCodec::Etc1s : assets::BasisCodec::Uastc;
+}
+
+Result<TextureImage> cookImage(const Image& image, const TextureOptions& options, JobSystem& jobs,
+                               std::vector<std::string>* notes) {
+    if (options.format == TextureFormat::Basis) return Error{"cook: Basis Universal files come from cookImageFile"};
+    Result<std::vector<Image>> made = makeLevels(image, options);
+    if (!made) return Error{made.error()};
+    const std::vector<Image>& levels = *made;
 
     TextureFormat format = options.format;
     if (format != TextureFormat::Rgba8 && (levels[0].width % 4 != 0 || levels[0].height % 4 != 0)) {
@@ -291,10 +325,26 @@ Result<TextureImage> cookImage(const Image& image, const TextureOptions& options
 
 Result<TextureImage> cookTexture(std::span<const std::uint8_t> source, const TextureOptions& options, JobSystem& jobs,
                                  std::vector<std::string>* notes) {
+    if (options.format == TextureFormat::Basis) return Error{"cook: Basis Universal files come from cookTextureFile"};
     if (!isKtx2(source)) {
         Result<Image> image = decodeImage(source);
         if (!image) return Error{image.error()};
         return cookImage(*image, options, jobs, notes);
+    }
+    if (assets::isBasisKtx2(source)) {
+        // Its own levels, transcoded: what the runtime would make of it on a device that samples the format.
+        Result<assets::BasisInfo> info = assets::readBasisInfo(source);
+        if (!info) return Error{info.error()};
+        PixelFormat target = options.format == TextureFormat::Bc7       ? PixelFormat::Bc7
+                             : options.format == TextureFormat::Astc4x4 ? PixelFormat::Astc4x4
+                                                                        : PixelFormat::Rgba8;
+        if (target != PixelFormat::Rgba8 && (info->width % 4 != 0 || info->height % 4 != 0)) {
+            note(notes, std::format("{} x {} is not a multiple of 4: RGBA8 instead of {}", info->width, info->height,
+                                    assets::pixelFormatInfo(target).name));
+            target = PixelFormat::Rgba8;
+        }
+        if (info->srgb != options.srgb) note(notes, "a Basis Universal file keeps its own transfer function");
+        return assets::transcodeBasis(source, target);
     }
     Result<TextureImage> file = assets::readKtx2(source);
     if (!file) return Error{file.error()};
@@ -310,6 +360,72 @@ Result<TextureImage> cookTexture(std::span<const std::uint8_t> source, const Tex
     TextureOptions fileOptions = options;
     fileOptions.srgb = info.srgb;
     return cookImage(image, fileOptions, jobs, notes);
+}
+
+Result<std::vector<std::uint8_t>> cookImageFile(const Image& image, const TextureOptions& options, JobSystem& jobs,
+                                                std::vector<std::string>* notes) {
+    if (options.format != TextureFormat::Basis) {
+        Result<TextureImage> cooked = cookImage(image, options, jobs, notes);
+        if (!cooked) return Error{cooked.error()};
+        return assets::writeKtx2(*cooked);
+    }
+    Result<std::vector<Image>> levels = makeLevels(image, options);
+    if (!levels) return Error{levels.error()};
+    const Image& first = levels->front();
+    if (first.width % 4 != 0 || first.height % 4 != 0)
+        note(notes, std::format("{} x {} is not a multiple of 4: devices get RGBA8 from the Basis Universal file",
+                                first.width, first.height));
+    return encodeBasis(*levels, options.srgb, basisCodec(options));
+}
+
+Result<std::vector<std::uint8_t>> cookTextureFile(std::span<const std::uint8_t> source, const TextureOptions& options,
+                                                  JobSystem& jobs, std::vector<std::string>* notes) {
+    if (options.format != TextureFormat::Basis) {
+        Result<TextureImage> cooked = cookTexture(source, options, jobs, notes);
+        if (!cooked) return Error{cooked.error()};
+        return assets::writeKtx2(*cooked);
+    }
+    if (!isKtx2(source)) {
+        Result<Image> image = decodeImage(source);
+        if (!image) return Error{image.error()};
+        return cookImageFile(*image, options, jobs, notes);
+    }
+    if (assets::isBasisKtx2(source)) {
+        Result<assets::BasisInfo> info = assets::readBasisInfo(source);
+        if (!info) return Error{info.error()};
+        if (info->srgb != options.srgb) note(notes, "a Basis Universal file keeps its own transfer function");
+        return std::vector<std::uint8_t>(source.begin(), source.end());
+    }
+    Result<TextureImage> file = assets::readKtx2(source);
+    if (!file) return Error{file.error()};
+    const assets::PixelFormatInfo& info = assets::pixelFormatInfo(file->format);
+    TextureOptions fileOptions = options;
+    fileOptions.srgb = info.srgb;
+    if (info.blockSize > 1) {
+        if (info.srgb != options.srgb)
+            note(notes, std::format("a {} KTX2 file keeps its own transfer function", info.name));
+        note(notes, std::format("a {} KTX2 file is decoded and encoded again (compressed twice)", info.name));
+        Result<Image> image = decodeLevel0(*file);
+        if (!image) return Error{image.error()};
+        return cookImageFile(*image, fileOptions, jobs, notes);
+    }
+    const std::span<const std::uint8_t> level0 = file->level(0);
+    const Image image{file->width, file->height, std::vector<std::uint8_t>(level0.begin(), level0.end())};
+    return cookImageFile(image, fileOptions, jobs, notes);
+}
+
+std::string describeTexture(std::span<const std::uint8_t> file) {
+    if (assets::isBasisKtx2(file)) {
+        Result<assets::BasisInfo> info = assets::readBasisInfo(file);
+        if (!info) return info.error();
+        return std::format("{} x {}, {} levels, basis {}{}{}{}", info->width, info->height, info->mipLevels,
+                           assets::basisCodecName(info->codec), info->zstd ? " (zstd)" : "", info->srgb ? ", srgb" : "",
+                           info->alpha ? ", alpha" : "");
+    }
+    Result<TextureImage> image = assets::readKtx2(file);
+    if (!image) return image.error();
+    return std::format("{} x {}, {} levels, {}", image->width, image->height, image->mipLevels,
+                       assets::pixelFormatInfo(image->format).name);
 }
 
 } // namespace quench::cook

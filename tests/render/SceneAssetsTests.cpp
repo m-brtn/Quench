@@ -29,6 +29,12 @@ using namespace quench;
 using namespace quench::render;
 using test::Rgba8;
 
+namespace quench::test {
+// BasisTestData.cpp (tests/CMakeLists.txt): Basis Universal files of one color, 16 x 16 with mips, sRGB.
+std::span<const std::uint8_t> basisGreenEtc1s(); // 20, 200, 20
+std::span<const std::uint8_t> basisBlueUastc();  // 20, 20, 200
+} // namespace quench::test
+
 namespace {
 
 constexpr std::uint32_t kSize = 64;
@@ -273,6 +279,78 @@ QUENCH_TEST(scene_assets_texture_states) {
             CHECK(textures[3].state() == assets::AssetState::Failed && frame.count(centers[3], 3, magenta) >= 25,
                   "ASTC texture without ASTC sampling: %s", stateName(textures[3].state()));
         std::printf("ASTC %s: %d %d %d\n", sceneAssets.astcTextures() ? "sampled" : "not supported", a.r, a.g, a.b);
+        textures.clear();
+    }
+    fs::setBackend(nullptr);
+}
+
+// Basis Universal files: transcoded on the loading job to what the device samples, and again on a reload (hot reload
+// and the asset overlay replace a file the same way).
+QUENCH_TEST(scene_assets_basis_textures) {
+    QUENCH_GPU_DEVICE(device);
+    useDir("scene_assets_basis_textures");
+    writeFile("tex/green.ktx2", test::basisGreenEtc1s());
+    writeFile("tex/blue.ktx2", test::basisBlueUastc());
+    {
+        Result<Renderer> renderer = Renderer::create(device, plainSettings());
+        REQUIRE(renderer, "%s", renderer.error().c_str());
+        Result<gpu::Texture> target = device.createTexture({.format = gpu::TextureFormat::Rgba8Unorm,
+                                                            .usage = gpu::TextureUsage::ColorTarget,
+                                                            .width = kSize,
+                                                            .height = kSize,
+                                                            .name = "scene assets target"});
+        REQUIRE(target, "%s", target.error().c_str());
+        Fixture f{device, std::move(*renderer), Scene(device), std::move(*target)};
+        f.scene.addLight({.type = LightType::Directional, .color = glm::vec3(3.0f), .direction = {0.0f, -1.0f, -0.2f}});
+        JobSystem jobs(JobSystemDesc{.workerThreads = 1});
+        assets::AssetManager manager(jobs);
+        SceneAssets sceneAssets(f.scene, manager);
+        Result<MeshId> plane = f.scene.addMesh(planeMesh(glm::vec2(1.0f)).desc("plane"));
+        REQUIRE(plane, "%s", plane.error().c_str());
+        const char* paths[] = {"tex/green.ktx2", "tex/blue.ktx2"};
+        const std::span<const std::uint8_t> files[] = {test::basisGreenEtc1s(), test::basisBlueUastc()};
+        std::vector<assets::AssetRef<TextureAsset>> textures;
+        std::array<glm::ivec2, 2> centers{};
+        for (int i = 0; i < 2; ++i) {
+            textures.push_back(sceneAssets.loadTexture(paths[i]));
+            MaterialDesc material{.baseColor = glm::vec4(0.6f, 0.6f, 0.6f, 1.0f), .roughness = 1.0f};
+            material.textures[0] = textures.back()->texture();
+            const glm::vec3 center(float(i) * 2.5f - 1.25f, 0.0f, 0.0f);
+            f.scene.addInstance({.mesh = *plane,
+                                 .material = f.scene.addMaterial(material),
+                                 .transform = glm::translate(glm::mat4(1.0f), center)});
+            centers[std::size_t(i)] = pixelOf(f.view, center);
+        }
+        REQUIRE(settle(manager, sceneAssets), "the loads did not finish");
+        Frame frame = f.render();
+        const assets::BasisCodec codecs[] = {assets::BasisCodec::Etc1s, assets::BasisCodec::Uastc};
+        for (std::size_t i = 0; i < 2; ++i) {
+            const TextureAsset& texture = *textures[i];
+            const Result<assets::BasisInfo> info = assets::readBasisInfo(files[i]);
+            REQUIRE(info, "%s: %s", paths[i], info ? "" : info.error().c_str());
+            const assets::PixelFormat expected = assets::basisTarget(*info, sceneAssets.textureSupport());
+            const Rgba8 c = frame.at(centers[i]);
+            CHECK(textures[i].ready() && (i == 0 ? green(c) : blue(c)), "%s: %s, %d %d %d", paths[i],
+                  stateName(textures[i].state()), c.r, c.g, c.b);
+            CHECK(texture.basisCodec() == codecs[i] && texture.format() == expected &&
+                      texture.decodedOnCpu() == (assets::pixelFormatInfo(expected).blockSize == 1) &&
+                      texture.width() == 16 && texture.mipLevels() == 5,
+                  "%s: %s, %ux%u, %u levels, not %s", paths[i], assets::pixelFormatInfo(texture.format()).name,
+                  texture.width(), texture.height(), texture.mipLevels(), assets::pixelFormatInfo(expected).name);
+            std::printf("%s: Basis Universal %s transcoded to %s in %.3f ms\n", paths[i],
+                        texture.basisCodec() ? assets::basisCodecName(*texture.basisCodec()) : "-",
+                        assets::pixelFormatInfo(texture.format()).name, texture.decodeMilliseconds());
+        }
+
+        // The green file replaced by the blue UASTC one: transcoded again, for that file's codec.
+        writeFile("tex/green.ktx2", test::basisBlueUastc());
+        manager.reload(textures[0]->id());
+        REQUIRE(settle(manager, sceneAssets), "the reload did not finish");
+        frame = f.render();
+        const Rgba8 c = frame.at(centers[0]);
+        CHECK(textures[0]->version() >= 2 && blue(c) && textures[0]->basisCodec() == assets::BasisCodec::Uastc,
+              "after the reload: version %u, %d %d %d, %s", textures[0]->version(), c.r, c.g, c.b,
+              textures[0]->basisCodec() ? assets::basisCodecName(*textures[0]->basisCodec()) : "-");
         textures.clear();
     }
     fs::setBackend(nullptr);

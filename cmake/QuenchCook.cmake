@@ -1,7 +1,7 @@
 # Build-time asset cooking for the engine and for games: quench_cook_assets().
 #
 # The host tool `quench_cook` (tools/cook, cmake/CookToolchain.cmake) converts source assets into the formats the
-# runtime loads: KTX2 textures with mips (BC7, ASTC 4x4 or RGBA8), .qmodel models (meshes with levels of detail, materials, skins,
+# runtime loads: KTX2 textures with mips (BC7, ASTC 4x4, RGBA8 or Basis Universal), .qmodel models (meshes with levels of detail, materials, skins,
 # their textures cooked next to them), .qskel skeletons and .qanim clip sets. Cross builds (iOS) cannot run a tool
 # built for the target: they take a macOS `quench_cook` through QUENCH_HOST_COOK (the `host-tools` preset builds it).
 # The web build cooks nothing.
@@ -15,10 +15,13 @@ endif()
 #                    [TEXTURES <file>...] [DATA_TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...]
 #                    [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>] [RETARGET <file>]
 #                    [FILES <file>...]
-#                    [TEXTURE_FORMAT auto|bc7|astc|rgba8] [TEXTURE_MAX_SIZE <n>]
-#                    [MODEL_OPTIONS <quench_cook option>...])
+#                    [TEXTURE_FORMAT auto|bc7|astc|rgba8|basis] [BASIS_CODEC auto|etc1s|uastc]
+#                    [TEXTURE_MAX_SIZE <n>] [MODEL_OPTIONS <quench_cook option>...])
 #
-# TEXTURE_FORMAT auto (the default) is ASTC 4x4 for iOS builds and BC7 elsewhere; astc is ASTC 4x4.
+# TEXTURE_FORMAT auto (the default) is ASTC 4x4 for iOS builds and BC7 elsewhere; astc is ASTC 4x4; basis is Basis
+# Universal, one file for every device, transcoded at load time to what the device samples (docs/assets.md, "Basis
+# Universal"). BASIS_CODEC picks its codec: etc1s (small files, lossier), uastc (about BC7's quality) or auto (the
+# default: uastc for DATA_TEXTURES and a model's linear textures, etc1s for color).
 #
 # Files are named relative to SOURCE_DIR and keep that path under OUTPUT_DIR (default
 # ${CMAKE_CURRENT_BINARY_DIR}/quench_cooked/<name>)
@@ -34,7 +37,8 @@ endif()
 # <name>) copies its output into the game's assets. Every file and everything it reads (glTF buffers and images, clip
 # settings) is tracked: a change re-cooks it.
 function(quench_cook_assets name)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "SOURCE_DIR;OUTPUT_DIR;TEXTURE_FORMAT;TEXTURE_MAX_SIZE;SKELETON;RETARGET"
+    cmake_parse_arguments(PARSE_ARGV 1 arg ""
+                          "SOURCE_DIR;OUTPUT_DIR;TEXTURE_FORMAT;BASIS_CODEC;TEXTURE_MAX_SIZE;SKELETON;RETARGET"
                           "TEXTURES;DATA_TEXTURES;MODELS;SOUNDS;SKELETONS;ANIMATIONS;FILES;MODEL_OPTIONS")
     if(NOT arg_SOURCE_DIR)
         message(FATAL_ERROR "quench_cook_assets: SOURCE_DIR is required")
@@ -67,10 +71,19 @@ function(quench_cook_assets name)
             set(arg_TEXTURE_FORMAT bc7)
         endif()
     endif()
-    if(NOT arg_TEXTURE_FORMAT MATCHES "^(bc7|astc|rgba8)$")
-        message(FATAL_ERROR "quench_cook_assets: TEXTURE_FORMAT must be auto, bc7, astc or rgba8")
+    if(NOT arg_TEXTURE_FORMAT MATCHES "^(bc7|astc|rgba8|basis)$")
+        message(FATAL_ERROR "quench_cook_assets: TEXTURE_FORMAT must be auto, bc7, astc, rgba8 or basis")
     endif()
     set(common --format ${arg_TEXTURE_FORMAT})
+    if(arg_BASIS_CODEC)
+        if(NOT arg_BASIS_CODEC MATCHES "^(auto|etc1s|uastc)$")
+            message(FATAL_ERROR "quench_cook_assets: BASIS_CODEC must be auto, etc1s or uastc")
+        endif()
+        if(NOT arg_TEXTURE_FORMAT STREQUAL "basis")
+            message(FATAL_ERROR "quench_cook_assets: BASIS_CODEC needs TEXTURE_FORMAT basis")
+        endif()
+        list(APPEND common --basis-codec ${arg_BASIS_CODEC})
+    endif()
     if(arg_TEXTURE_MAX_SIZE)
         list(APPEND common --max-size ${arg_TEXTURE_MAX_SIZE})
     endif()

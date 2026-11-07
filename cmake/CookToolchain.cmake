@@ -54,9 +54,32 @@ foreach(_name averages_and_directions block_sizes color_quantize color_unquantiz
     list(APPEND _astcenc_sources ${astcenc_SOURCE_DIR}/Source/astcenc_${_name}.cpp)
 endforeach()
 
+# ---------------------------------------------------------------- Basis Universal v2.50 encoder
+# The sources cmake/QuenchBasisu.cmake keeps (upstream's encoder library list, without OpenCL, SSE and its astcenc
+# fork), against the engine's transcoder (quench_basisu_transcoder) and with the full Zstandard (zstd/zstd.c, for the
+# Zstandard supercompression of UASTC files). Its job pool gets one thread (the calling one): the cook runs textures
+# in parallel on its own job system.
+set(_basisu_encoder_sources ${QUENCH_BASISU_SOURCE_DIR}/encoder/jpgd.cpp
+    ${QUENCH_BASISU_SOURCE_DIR}/encoder/pvpngreader.cpp
+    ${QUENCH_BASISU_SOURCE_DIR}/encoder/3rdparty/android_astc_decomp.cpp
+    ${QUENCH_BASISU_SOURCE_DIR}/zstd/zstd.c)
+foreach(_name backend basis_file comp enc etc frontend gpu_texture pvrtc1_4 resampler resample_filters ssim uastc_enc
+              bc7e_scalar dds_export bc7enc kernels_sse bc15_spmd bc15_spmd_sse opencl uastc_hdr_4x4_enc
+              astc_hdr_6x6_enc astc_hdr_common astc_ldr_common astc_ldr_encode astc_ldr_fencode xbc7_encode tinyexr)
+    list(APPEND _basisu_encoder_sources ${QUENCH_BASISU_SOURCE_DIR}/encoder/basisu_${_name}.cpp)
+endforeach()
+add_library(quench_basisu_encoder STATIC EXCLUDE_FROM_ALL ${_basisu_encoder_sources})
+target_include_directories(quench_basisu_encoder SYSTEM PUBLIC ${QUENCH_BASISU_SOURCE_DIR}/encoder)
+target_compile_definitions(quench_basisu_encoder PUBLIC BASISU_SUPPORT_SSE=0 BASISU_SUPPORT_OPENCL=0
+                                                        BASISU_SUPPORT_ASTCENC=0)
+target_compile_options(quench_basisu_encoder PRIVATE -w -fno-strict-aliasing)
+find_package(Threads REQUIRED)
+target_link_libraries(quench_basisu_encoder PUBLIC quench_basisu_transcoder Threads::Threads)
+
 # Built only where something needs it (a quench_cook_assets() call, the cook tests, the host-tools preset).
 add_library(quench_cook_lib STATIC EXCLUDE_FROM_ALL
     ${Quench_SOURCE_DIR}/tools/cook/CookAnimation.cpp
+    ${Quench_SOURCE_DIR}/tools/cook/CookBasis.cpp
     ${Quench_SOURCE_DIR}/tools/cook/CookModel.cpp
     ${Quench_SOURCE_DIR}/tools/cook/Gltf.cpp
     ${Quench_SOURCE_DIR}/tools/cook/CookTexture.cpp
@@ -72,7 +95,8 @@ target_include_directories(quench_cook_lib PUBLIC ${Quench_SOURCE_DIR}/tools/coo
 target_include_directories(quench_cook_lib SYSTEM PRIVATE ${stb_SOURCE_DIR} ${bc7enc_SOURCE_DIR}
                                                           ${astcenc_SOURCE_DIR}/Source)
 target_link_libraries(quench_cook_lib PUBLIC quench_assets quench_animation quench_core
-                                      PRIVATE fastgltf::fastgltf fastgltf_simdjson quench_meshoptimizer quench_glm)
+                                      PRIVATE fastgltf::fastgltf fastgltf_simdjson quench_meshoptimizer quench_glm
+                                              quench_basisu_encoder)
 
 add_executable(quench_cook EXCLUDE_FROM_ALL ${Quench_SOURCE_DIR}/tools/cook/Cook.cpp)
 quench_configure_target(quench_cook)

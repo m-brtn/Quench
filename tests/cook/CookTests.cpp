@@ -5,6 +5,7 @@
 
 #include "Test.h"
 
+#include "../assets/BasisTestImages.h"
 #include "Cook.h"
 
 #include <quench/animation/AnimationSystem.h>
@@ -20,6 +21,8 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -29,6 +32,8 @@
 #include <iterator>
 #include <span>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -224,12 +229,15 @@ QUENCH_TEST(cook_png_and_jpeg) {
     REQUIRE(pillar->textures.size() == 2, "%zu textures", pillar->textures.size());
     const CookedTexture& color = pillar->textures[0];
     const CookedTexture& data = pillar->textures[1];
-    CHECK(color.assetPath == "models/pillar_0.ktx2" && color.image.format == assets::PixelFormat::Bc7Srgb &&
-              color.image.width == 128 && color.image.height == 64,
-          "base color %s: %s %ux%u", color.assetPath.c_str(), assets::pixelFormatInfo(color.image.format).name,
-          color.image.width, color.image.height);
-    CHECK(data.assetPath == "models/pillar_1_linear.ktx2" && data.image.format == assets::PixelFormat::Bc7,
-          "metallic-roughness %s: %s", data.assetPath.c_str(), assets::pixelFormatInfo(data.image.format).name);
+    Result<assets::TextureImage> colorImage = assets::readKtx2(color.file);
+    Result<assets::TextureImage> dataImage = assets::readKtx2(data.file);
+    REQUIRE(colorImage && dataImage, "the cooked textures do not read back");
+    CHECK(color.assetPath == "models/pillar_0.ktx2" && colorImage->format == assets::PixelFormat::Bc7Srgb &&
+              colorImage->width == 128 && colorImage->height == 64,
+          "base color %s: %s %ux%u", color.assetPath.c_str(), assets::pixelFormatInfo(colorImage->format).name,
+          colorImage->width, colorImage->height);
+    CHECK(data.assetPath == "models/pillar_1_linear.ktx2" && dataImage->format == assets::PixelFormat::Bc7,
+          "metallic-roughness %s: %s", data.assetPath.c_str(), assets::pixelFormatInfo(dataImage->format).name);
     REQUIRE(pillar->model.materials.size() == 1, "%zu materials", pillar->model.materials.size());
     const assets::ModelMaterial& material = pillar->model.materials[0];
     CHECK(material.baseColorTexture == color.assetPath && material.metallicRoughnessTexture == data.assetPath,
@@ -306,10 +314,389 @@ QUENCH_TEST(cook_output_independent_of_threads) {
         REQUIRE(x && y, "%s: cook failed", name);
         CHECK(modelBytes(x->model) == modelBytes(y->model), "%s: the models differ", name);
         bool same = x->textures.size() == y->textures.size();
-        for (std::size_t i = 0; same && i < x->textures.size(); ++i)
-            same = x->textures[i].image.data == y->textures[i].image.data;
+        for (std::size_t i = 0; same && i < x->textures.size(); ++i) same = x->textures[i].file == y->textures[i].file;
         CHECK(same, "%s: the textures differ", name);
     }
+
+    // Basis Universal encodes on the calling thread: both codecs, a model's textures in Basis Universal.
+    for (const BasisMode mode : {BasisMode::Etc1s, BasisMode::Uastc}) {
+        const TextureOptions options{.format = TextureFormat::Basis, .basis = mode};
+        Result<std::vector<std::uint8_t>> e = cookImageFile(image, options, one);
+        Result<std::vector<std::uint8_t>> f = cookImageFile(image, options, many);
+        REQUIRE(e && f, "Basis Universal cook failed");
+        CHECK(*e == *f, "Basis Universal %s: %zu and %zu bytes differ", mode == BasisMode::Uastc ? "UASTC" : "ETC1S",
+              e->size(), f->size());
+    }
+    Result<CookedModel> x =
+        cookModel(kDemoSources / "models/pillar.glb", "models/m", {.textureFormat = TextureFormat::Basis}, one);
+    Result<CookedModel> y =
+        cookModel(kDemoSources / "models/pillar.glb", "models/m", {.textureFormat = TextureFormat::Basis}, many);
+    REQUIRE(x && y && x->textures.size() == 2 && y->textures.size() == 2, "pillar.glb in Basis Universal");
+    CHECK(x->textures[0].file == y->textures[0].file && x->textures[1].file == y->textures[1].file,
+          "pillar.glb: the Basis Universal textures differ");
+    Result<assets::BasisInfo> color = assets::readBasisInfo(x->textures[0].file);
+    Result<assets::BasisInfo> data = assets::readBasisInfo(x->textures[1].file);
+    REQUIRE(color && data, "pillar.glb: not Basis Universal files");
+    CHECK(color->codec == assets::BasisCodec::Etc1s && color->srgb && data->codec == assets::BasisCodec::Uastc &&
+              !data->srgb && data->zstd,
+          "pillar.glb: base color %s, metallic-roughness %s", assets::basisCodecName(color->codec),
+          assets::basisCodecName(data->codec));
+}
+
+// ---- Basis Universal
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+double millisecondsSince(Clock::time_point start) {
+    return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+}
+
+Image toImage(const test::BasisTestImage& image) { return {image.width, image.height, image.rgba}; }
+
+// Level `level` of a texture in any of the formats the runtime samples, as RGBA8.
+Result<Image> decodeAny(const assets::TextureImage& texture, std::uint32_t level) {
+    const assets::PixelFormatInfo& info = assets::pixelFormatInfo(texture.format);
+    if (texture.format >= assets::PixelFormat::Etc2Rgb8) return decodeEtc2(texture, level);
+    if (texture.format == assets::PixelFormat::Astc4x4 || texture.format == assets::PixelFormat::Astc4x4Srgb)
+        return decodeAstc(texture, level);
+    if (info.blockSize == 1) {
+        const std::span<const std::uint8_t> bytes = texture.level(level);
+        return Image{texture.levelWidth(level), texture.levelHeight(level), {bytes.begin(), bytes.end()}};
+    }
+    Result<assets::TextureImage> rgba = assets::decodeBc7(texture);
+    if (!rgba) return Error{rgba.error()};
+    const std::span<const std::uint8_t> bytes = rgba->level(level);
+    return Image{rgba->levelWidth(level), rgba->levelHeight(level), {bytes.begin(), bytes.end()}};
+}
+
+// The formats a Basis Universal file is transcoded to, with the ETC2 variant for its alpha.
+std::vector<assets::PixelFormat> basisTargets(bool alpha) {
+    return {assets::PixelFormat::Bc7, assets::PixelFormat::Astc4x4,
+            alpha ? assets::PixelFormat::Etc2Rgba8 : assets::PixelFormat::Etc2Rgb8, assets::PixelFormat::Rgba8};
+}
+
+const char* targetName(assets::PixelFormat format) { return assets::pixelFormatInfo(format).name; }
+
+// The quality of `decoded` against the source: PSNR over RGB (and alpha with `alpha`), or for a normal map the mean
+// angle between the normals (in degrees, as a negative number so that larger is better for both).
+struct Quality {
+    double rgbDb = 0.0, alphaDb = 99.0, normalMean = 0.0, normalMax = 0.0;
+};
+Quality quality(const Image& decoded, const Image& source) {
+    Quality q;
+    q.rgbDb = test::basisPsnr(decoded.rgba, source.rgba, 3);
+    std::vector<std::uint8_t> a, b;
+    for (std::size_t i = 3; i < decoded.rgba.size() && i < source.rgba.size(); i += 4) {
+        a.insert(a.end(), {decoded.rgba[i], 0, 0, 0});
+        b.insert(b.end(), {source.rgba[i], 0, 0, 0});
+    }
+    q.alphaDb = test::basisPsnr(a, b, 1);
+    std::tie(q.normalMean, q.normalMax) = test::basisNormalError(decoded.rgba, source.rgba);
+    return q;
+}
+
+} // namespace
+
+QUENCH_TEST(cook_basis_round_trips) {
+    JobSystem jobs;
+    Result<Image> planks = decodeImage(readFile(kDemoSources / "models/crate_planks.png"));
+    REQUIRE(planks, "%s", planks ? "" : planks.error().c_str());
+    // Floors about 2 dB (or degrees) under the measured quality: RGB PSNR for ETC1S and UASTC, or with `normals` the
+    // largest mean normal error. The procedural images are harder than the demo's textures.
+    struct Case {
+        const char* name;
+        Image image;
+        bool srgb, alpha, normals;
+        double floor[2];
+    };
+    const Case cases[] = {
+        {"planks", *planks, true, false, false, {28.0, 45.0}},
+        {"color", toImage(test::basisColorImage(96, 64)), true, false, false, {19.0, 41.0}},
+        {"alpha", toImage(test::basisAlphaImage(64, 64)), true, true, false, {19.0, 37.0}},
+        {"normals", toImage(test::basisNormalImage(64, 64)), false, false, true, {12.5, 4.0}},
+    };
+    for (const Case& c : cases)
+        for (const BasisMode mode : {BasisMode::Etc1s, BasisMode::Uastc}) {
+            const bool uastc = mode == BasisMode::Uastc;
+            const char* codec = uastc ? "UASTC" : "ETC1S";
+            Result<std::vector<std::uint8_t>> file =
+                cookImageFile(c.image, {.format = TextureFormat::Basis, .srgb = c.srgb, .basis = mode}, jobs);
+            REQUIRE(file, "%s %s: %s", c.name, codec, file ? "" : file.error().c_str());
+            Result<assets::BasisInfo> info = assets::readBasisInfo(*file);
+            REQUIRE(info, "%s %s: %s", c.name, codec, info ? "" : info.error().c_str());
+            const std::uint32_t levels = std::uint32_t(std::bit_width(std::max(c.image.width, c.image.height)));
+            const assets::BasisCodec expected = uastc ? assets::BasisCodec::Uastc : assets::BasisCodec::Etc1s;
+            CHECK(assets::isBasisKtx2(*file) && info->codec == expected && info->width == c.image.width &&
+                      info->height == c.image.height && info->mipLevels == levels && info->srgb == c.srgb &&
+                      info->alpha == c.alpha && info->zstd == uastc,
+                  "%s %s: %s %ux%u, %u levels, sRGB %d, alpha %d, zstd %d", c.name, codec,
+                  assets::basisCodecName(info->codec), info->width, info->height, info->mipLevels, info->srgb,
+                  info->alpha, info->zstd);
+            Result<assets::TextureImage> plain = assets::readKtx2(*file);
+            CHECK(!plain && plain.error().find("Basis Universal") != std::string::npos,
+                  "%s %s: readKtx2 of a Basis Universal file: %s", c.name, codec,
+                  plain ? "read" : plain.error().c_str());
+
+            for (const assets::PixelFormat target : basisTargets(c.alpha)) {
+                const Clock::time_point start = Clock::now();
+                Result<assets::TextureImage> texture = assets::transcodeBasis(*file, target);
+                const double ms = millisecondsSince(start);
+                REQUIRE(texture, "%s %s to %s: %s", c.name, codec, targetName(target),
+                        texture ? "" : texture.error().c_str());
+                const bool srgb = assets::pixelFormatInfo(texture->format).srgb;
+                CHECK(srgb == c.srgb &&
+                          assets::pixelFormatInfo(texture->format).blockBytes ==
+                              assets::pixelFormatInfo(target).blockBytes &&
+                          texture->mipLevels == levels && texture->data.size() == texture->levelOffset(levels),
+                      "%s %s to %s: %s, %u levels, %zu bytes", c.name, codec, targetName(target),
+                      targetName(texture->format), texture->mipLevels, texture->data.size());
+                Result<Image> decoded = decodeAny(*texture, 0);
+                Result<Image> last = decodeAny(*texture, levels - 1);
+                REQUIRE(decoded && last, "%s %s to %s: does not decode", c.name, codec, targetName(target));
+                CHECK(last->width == 1 && last->height == 1, "%s: last level %ux%u", c.name, last->width, last->height);
+                const Quality q = quality(*decoded, c.image);
+                std::printf("%-8s %s to %-10s %6zu bytes, %6.3f ms: RGB %5.2f dB, alpha %5.2f dB, normals %.2f / "
+                            "%.2f deg\n",
+                            c.name, codec, targetName(target), file->size(), ms, q.rgbDb, q.alphaDb, q.normalMean,
+                            q.normalMax);
+                // UASTC to ETC2 (ETC1 color blocks, EAC alpha) is about ETC1S's quality.
+                const double floor = c.floor[uastc && target < assets::PixelFormat::Etc2Rgb8 ? 1 : 0];
+                if (c.normals)
+                    CHECK(q.normalMean < floor, "%s %s to %s: mean normal error %.2f deg", c.name, codec,
+                          targetName(target), q.normalMean);
+                else
+                    CHECK(q.rgbDb > floor, "%s %s to %s: RGB %.2f dB", c.name, codec, targetName(target), q.rgbDb);
+                if (c.alpha)
+                    CHECK(q.alphaDb > 36.0, "%s %s to %s: alpha %.2f dB", c.name, codec, targetName(target), q.alphaDb);
+            }
+
+            // Left-out levels, as readKtx2 drops them.
+            Result<assets::TextureImage> skipped = assets::transcodeBasis(*file, assets::PixelFormat::Rgba8, 2);
+            REQUIRE(skipped, "%s %s: skip 2: %s", c.name, codec, skipped ? "" : skipped.error().c_str());
+            CHECK(skipped->width == c.image.width / 4 && skipped->height == c.image.height / 4 &&
+                      skipped->mipLevels == levels - 2,
+                  "%s %s: skip 2: %ux%u, %u levels", c.name, codec, skipped->width, skipped->height,
+                  skipped->mipLevels);
+        }
+
+    // Not a multiple of 4: a Basis Universal file still, RGBA8 at load time.
+    std::vector<std::string> notes;
+    Result<std::vector<std::uint8_t>> odd =
+        cookImageFile(testImage(6, 5), {.format = TextureFormat::Basis, .basis = BasisMode::Uastc}, jobs, &notes);
+    REQUIRE(odd, "6 x 5: %s", odd ? "" : odd.error().c_str());
+    Result<assets::BasisInfo> oddInfo = assets::readBasisInfo(*odd);
+    REQUIRE(oddInfo, "6 x 5: %s", oddInfo ? "" : oddInfo.error().c_str());
+    const assets::TextureSupport all{.bc7 = true, .astc4x4 = true, .etc2 = true};
+    CHECK(oddInfo->width == 6 && oddInfo->height == 5 && notes.size() == 1 &&
+              assets::basisTarget(*oddInfo, all) == assets::PixelFormat::Rgba8Srgb,
+          "6 x 5: %ux%u, %zu notes, target %s", oddInfo->width, oddInfo->height, notes.size(),
+          targetName(assets::basisTarget(*oddInfo, all)));
+    CHECK(!assets::transcodeBasis(*odd, assets::PixelFormat::Bc7), "6 x 5 transcoded to BC7");
+    Result<assets::TextureImage> oddRgba = assets::transcodeBasis(*odd, assets::PixelFormat::Rgba8);
+    REQUIRE(oddRgba, "6 x 5 to RGBA8: %s", oddRgba ? "" : oddRgba.error().c_str());
+    CHECK(oddRgba->width == 6 && oddRgba->mipLevels == 3 &&
+              test::basisPsnr(oddRgba->level(0), testImage(6, 5).rgba) > 36.0,
+          "6 x 5 to RGBA8: %ux%u, %u levels", oddRgba->width, oddRgba->height, oddRgba->mipLevels);
+
+    // A Basis Universal source: passed through for Basis Universal, transcoded for another format.
+    const Image color = toImage(test::basisColorImage(32, 32));
+    Result<std::vector<std::uint8_t>> basis = cookImageFile(color, {.format = TextureFormat::Basis}, jobs);
+    REQUIRE(basis, "%s", basis ? "" : basis.error().c_str());
+    Result<std::vector<std::uint8_t>> passed = cookTextureFile(*basis, {.format = TextureFormat::Basis}, jobs);
+    CHECK(passed && *passed == *basis, "a Basis Universal source is not passed through");
+    Result<assets::TextureImage> bc7 = cookTexture(*basis, {.format = TextureFormat::Bc7}, jobs);
+    CHECK(bc7 && bc7->format == assets::PixelFormat::Bc7Srgb && bc7->mipLevels == 6, "Basis Universal to BC7: %s",
+          bc7 ? targetName(bc7->format) : bc7.error().c_str());
+    // A BC7 source is decoded and encoded again, with a note.
+    Result<std::vector<std::uint8_t>> bc7File = cookImageFile(color, {}, jobs);
+    REQUIRE(bc7File, "%s", bc7File ? "" : bc7File.error().c_str());
+    notes.clear();
+    Result<std::vector<std::uint8_t>> again =
+        cookTextureFile(*bc7File, {.format = TextureFormat::Basis, .basis = BasisMode::Uastc}, jobs, &notes);
+    Result<assets::BasisInfo> againInfo = again ? assets::readBasisInfo(*again) : Result<assets::BasisInfo>(Error{});
+    CHECK(againInfo && againInfo->codec == assets::BasisCodec::Uastc && againInfo->mipLevels == 6 && notes.size() == 1,
+          "BC7 to Basis Universal: %s, %zu notes", again ? describeTexture(*again).c_str() : again.error().c_str(),
+          notes.size());
+    CHECK(describeTexture(*basis) == "32 x 32, 6 levels, basis etc1s, srgb", "describeTexture: %s",
+          describeTexture(*basis).c_str());
+    CHECK(!encodeBasis({}, true, assets::BasisCodec::Uastc), "no levels encoded");
+}
+
+// The Basis Universal files the assets cases embed (tests/assets/data): the header of a fresh encode and nearly its
+// pixels (other builds may round the encoder's floating point differently). QUENCH_UPDATE_TEST_DATA=1 writes them.
+QUENCH_TEST(cook_basis_test_data) {
+    JobSystem jobs;
+    const std::filesystem::path dir = std::filesystem::path(QUENCH_TEST_SOURCE_DIR) / "tests/assets/data";
+    const char* update = std::getenv("QUENCH_UPDATE_TEST_DATA");
+    for (const test::BasisTestFile& entry : test::basisTestFiles()) {
+        Result<std::vector<std::uint8_t>> fresh =
+            cookImageFile(toImage(entry.image),
+                          {.format = TextureFormat::Basis,
+                           .srgb = entry.srgb,
+                           .basis = entry.uastc ? BasisMode::Uastc : BasisMode::Etc1s},
+                          jobs);
+        REQUIRE(fresh, "%s: %s", entry.name, fresh ? "" : fresh.error().c_str());
+        const std::filesystem::path path = dir / entry.name;
+        if (update && std::string_view(update) == "1") {
+            std::ofstream(path, std::ios::binary)
+                .write(reinterpret_cast<const char*>(fresh->data()), std::streamsize(fresh->size()));
+            std::printf("wrote %s: %s, %zu bytes\n", entry.name, describeTexture(*fresh).c_str(), fresh->size());
+            continue;
+        }
+        const std::vector<std::uint8_t> stored = readFile(path);
+        Result<assets::BasisInfo> info = assets::readBasisInfo(stored);
+        REQUIRE(info, "%s: %s (QUENCH_UPDATE_TEST_DATA=1 writes it)", entry.name, info ? "" : info.error().c_str());
+        CHECK(describeTexture(stored) == describeTexture(*fresh) && info->alpha == entry.alpha &&
+                  info->srgb == entry.srgb && (info->codec == assets::BasisCodec::Uastc) == entry.uastc,
+              "%s: %s, a fresh encode %s", entry.name, describeTexture(stored).c_str(),
+              describeTexture(*fresh).c_str());
+        Result<assets::TextureImage> a = assets::transcodeBasis(stored, assets::PixelFormat::Rgba8);
+        Result<assets::TextureImage> b = assets::transcodeBasis(*fresh, assets::PixelFormat::Rgba8);
+        REQUIRE(a && b, "%s: does not transcode", entry.name);
+        const double db = test::basisPsnr(a->level(0), b->level(0), 4);
+        CHECK(db > 40.0, "%s: %.2f dB from a fresh encode (QUENCH_UPDATE_TEST_DATA=1 writes it again)", entry.name, db);
+        std::printf("%s: %s, %zu bytes, %s\n", entry.name, describeTexture(stored).c_str(), stored.size(),
+                    stored == *fresh ? "the bytes of a fresh encode"
+                                     : std::format("{:.2f} dB from a fresh encode", db).c_str());
+    }
+}
+
+// The size and quality of the demo's textures cooked to BC7, ASTC 4x4 and Basis Universal ETC1S and UASTC, the
+// encode times and the transcode times per target (docs/assets.md, "Basis Universal").
+QUENCH_TEST(cook_basis_compared_on_demo_textures) {
+#ifndef NDEBUG
+    QUENCH_SKIP("times the encoders: Release builds only");
+#endif
+    struct Source {
+        std::filesystem::path path;
+        bool srgb, normals;
+    };
+    std::vector<Source> sources;
+    for (int i = 0; i < 8; ++i) sources.push_back({kDemoSources / std::format("tiles/tile_{}.png", i), true, false});
+    sources.push_back({kDemoSources / "models/crate_planks.png", true, false});
+    const std::filesystem::path tunnel = QUENCH_TEST_TUNNEL_DIR;
+    if (!tunnel.empty()) {
+        for (const char* name : {"panel_color", "asphalt_color", "puddle"})
+            sources.push_back({tunnel / std::format("{}.png", name), true, false});
+        for (const char* name : {"panel_mr", "asphalt_mr", "brushed_mr"})
+            sources.push_back({tunnel / std::format("{}.png", name), false, false});
+        for (const char* name : {"panel_normal", "asphalt_normal", "plastic_normal", "rubber_normal"})
+            sources.push_back({tunnel / std::format("{}.png", name), false, true});
+    }
+    JobSystem jobs;
+    enum Kind { kBc7, kAstc, kEtc1s, kUastc, kKinds };
+    constexpr const char* kNames[kKinds] = {"BC7", "ASTC 4x4", "Basis ETC1S", "Basis UASTC"};
+    // Per group, weighted by level-0 texels: the squared error behind the PSNR, or the mean normal error.
+    enum Group { kColor, kData, kNormals, kGroups };
+    constexpr const char* kGroupNames[kGroups] = {"sRGB color", "linear data", "normal maps"};
+    std::size_t bytes[kGroups][kKinds] = {}, texels[kGroups] = {}, sourceTexels = 0;
+    double encodeMs[kKinds] = {}, error[kGroups][kKinds][4] = {}, transcodeMs[2][4] = {};
+    int count[kGroups] = {};
+    for (const Source& source : sources) {
+        Result<Image> image = decodeImage(readFile(source.path));
+        REQUIRE(image, "%s: %s", source.path.string().c_str(), image ? "" : image.error().c_str());
+        const std::size_t n = std::size_t(image->width) * image->height;
+        const Group group = source.normals ? kNormals : source.srgb ? kColor : kData;
+        sourceTexels += n;
+        texels[group] += n;
+        count[group] += 1;
+        std::printf("%s (%ux%u, %s):\n", source.path.filename().string().c_str(), image->width, image->height,
+                    source.normals ? "normals"
+                    : source.srgb  ? "sRGB"
+                                   : "linear");
+        for (int kind = 0; kind < kKinds; ++kind) {
+            TextureOptions options{.srgb = source.srgb};
+            options.format = kind == kBc7    ? TextureFormat::Bc7
+                             : kind == kAstc ? TextureFormat::Astc4x4
+                                             : TextureFormat::Basis;
+            options.basis = kind == kUastc ? BasisMode::Uastc : BasisMode::Etc1s;
+            const Clock::time_point start = Clock::now();
+            Result<std::vector<std::uint8_t>> file = cookImageFile(*image, options, jobs);
+            encodeMs[kind] += millisecondsSince(start);
+            REQUIRE(file, "%s %s: %s", source.path.filename().string().c_str(), kNames[kind],
+                    file ? "" : file.error().c_str());
+            bytes[group][kind] += file->size();
+            std::vector<std::pair<assets::PixelFormat, Result<assets::TextureImage>>> textures;
+            if (kind < kEtc1s) {
+                textures.emplace_back(assets::PixelFormat::Rgba8, assets::readKtx2(*file));
+            } else {
+                Result<assets::BasisInfo> info = assets::readBasisInfo(*file);
+                REQUIRE(info, "%s", info ? "" : info.error().c_str());
+                const std::vector<assets::PixelFormat> targets = basisTargets(info->alpha);
+                for (std::size_t t = 0; t < targets.size(); ++t) {
+                    const Clock::time_point begin = Clock::now();
+                    textures.emplace_back(targets[t], assets::transcodeBasis(*file, targets[t]));
+                    transcodeMs[kind - kEtc1s][t] += millisecondsSince(begin);
+                }
+            }
+            std::string line;
+            for (std::size_t t = 0; t < textures.size(); ++t) {
+                REQUIRE(textures[t].second, "%s %s: %s", source.path.filename().string().c_str(), kNames[kind],
+                        textures[t].second ? "" : textures[t].second.error().c_str());
+                Result<Image> decoded = decodeAny(*textures[t].second, 0);
+                REQUIRE(decoded, "%s %s: %s", source.path.filename().string().c_str(), kNames[kind],
+                        decoded ? "" : decoded.error().c_str());
+                const Quality q = quality(*decoded, *image);
+                if (source.normals) {
+                    error[group][kind][t] += q.normalMean * double(n);
+                    line += std::format("  {}{} {:.2f} deg", kind < kEtc1s ? "" : "to ",
+                                        kind < kEtc1s ? "" : targetName(textures[t].first), q.normalMean);
+                } else {
+                    error[group][kind][t] += 255.0 * 255.0 / std::pow(10.0, q.rgbDb / 10.0) * double(n);
+                    line += std::format("  {}{} {:.2f} dB", kind < kEtc1s ? "" : "to ",
+                                        kind < kEtc1s ? "" : targetName(textures[t].first), q.rgbDb);
+                }
+            }
+            std::printf("  %-12s %7zu bytes%s\n", kNames[kind], file->size(), line.c_str());
+        }
+    }
+    // The group's quality: PSNR of the summed squared error, or the texel-weighted mean normal error.
+    const auto groupQuality = [&](int group, int kind, int target) {
+        const double mean = error[group][kind][target] / double(std::max<std::size_t>(texels[group], 1));
+        return group == kNormals ? mean : 10.0 * std::log10(255.0 * 255.0 / std::max(mean, 1e-12));
+    };
+    std::size_t total[kKinds] = {};
+    for (int group = 0; group < kGroups; ++group) {
+        std::printf("%s: %d textures, %.2f Mtexels in level 0\n", kGroupNames[group], count[group],
+                    double(texels[group]) / 1e6);
+        for (int kind = 0; kind < kKinds; ++kind) {
+            total[kind] += bytes[group][kind];
+            std::printf("  %-12s %8zu bytes (%5.2f bits per level-0 texel)", kNames[kind], bytes[group][kind],
+                        8.0 * double(bytes[group][kind]) / double(std::max<std::size_t>(texels[group], 1)));
+            for (int t = 0; t < (kind < kEtc1s ? 1 : 4); ++t)
+                std::printf("%s%s %.2f %s",
+                            kind < kEtc1s ? " "
+                            : t           ? ", to "
+                                          : " to ",
+                            kind < kEtc1s ? "" : targetName(basisTargets(false)[std::size_t(t)]),
+                            groupQuality(group, kind, t), group == kNormals ? "deg" : "dB");
+            std::printf("\n");
+        }
+    }
+    std::printf("%zu textures, %.2f Mtexels in level 0:\n", sources.size(), double(sourceTexels) / 1e6);
+    for (int kind = 0; kind < kKinds; ++kind)
+        std::printf("  %-12s %8zu bytes (%5.2f bits per level-0 texel), encode %7.1f ms (%.1f ms per Mtexel)\n",
+                    kNames[kind], total[kind], 8.0 * double(total[kind]) / double(sourceTexels), encodeMs[kind],
+                    encodeMs[kind] / (double(sourceTexels) / 1e6));
+    for (int codec = 0; codec < 2; ++codec) {
+        std::printf("  transcode %s:", codec ? "UASTC" : "ETC1S");
+        for (int t = 0; t < 4; ++t)
+            std::printf(" to %s %.2f ms (%.2f ms per Mtexel)", targetName(basisTargets(false)[std::size_t(t)]),
+                        transcodeMs[codec][t], transcodeMs[codec][t] / (double(sourceTexels) / 1e6));
+        std::printf("\n");
+    }
+    CHECK(total[kEtc1s] < total[kUastc] && total[kUastc] < total[kBc7], "sizes: ETC1S %zu, UASTC %zu, BC7 %zu",
+          total[kEtc1s], total[kUastc], total[kBc7]);
+    // UASTC to BC7 close to BC7 cooked directly; ETC1S is the small, lossier codec.
+    for (const int group : {kColor, kData})
+        CHECK(groupQuality(group, kUastc, 0) > groupQuality(group, kBc7, 0) - 5.0,
+              "%s: UASTC to BC7 %.2f dB, BC7 %.2f dB", kGroupNames[group], groupQuality(group, kUastc, 0),
+              groupQuality(group, kBc7, 0));
+    CHECK(groupQuality(kNormals, kUastc, 0) < groupQuality(kNormals, kBc7, 0) + 0.3,
+          "normal maps: UASTC to BC7 %.2f deg, BC7 %.2f deg", groupQuality(kNormals, kUastc, 0),
+          groupQuality(kNormals, kBc7, 0));
 }
 
 // ---- skins and animations
