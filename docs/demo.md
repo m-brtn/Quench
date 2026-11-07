@@ -305,7 +305,7 @@ checks and copies them into `assets/`; `sounds/step.wav` (a short footstep, stag
 therefore needs Python 3.
 
 The animation section's character is not in git either: `tools/assets/make_demo_character.py` (Python standard
-library, procedural, CC0) writes `characters/mannequin.gltf` and `.bin` (one skin of 20 joints, 836 vertices, clips
+library, procedural, CC0) writes `characters/mannequin.gltf` and `.bin` (one skin of 20 joints, 884 vertices, clips
 idle, walk, run, jump, wave, lean, walk_back, strafe_l and strafe_r, the legs solved by IK from foot paths so
 planted feet stay put) and
 `mannequin.anim.json` (loops, the additive lean, footstep and landing events, root motion on `root`) at build time;

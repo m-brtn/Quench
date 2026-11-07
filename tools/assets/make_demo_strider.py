@@ -124,13 +124,15 @@ def tube(mesh, rings, axis, sides=12):
             mesh.triangle(center, first + r * sides + s, first + r * sides + (s + 1) % sides)
 
 
-def chain(joints, distance, blend_length=0.07):
-    """Influences at `distance` along a straight chain of joints: blended over blend_length around each inner joint."""
+def chain(joints, distance, blend_length=0.07, end_blend=0.0):
+    """Influences at `distance` along a straight chain of joints: blended over blend_length around each inner joint,
+    and with end_blend over that length around the last one."""
     marks = [math.dist(pos(joints[0]), pos(j)) for j in joints]
+    lengths = [blend_length] * (len(joints) - 2) + ([end_blend] if end_blend > 0.0 else [])
     influences = [(joints[0], 1.0)]
-    for k in range(1, len(joints) - 1):
-        if distance >= marks[k] - blend_length:
-            t = smooth((distance - marks[k] + blend_length) / (2.0 * blend_length))
+    for k, length in enumerate(lengths, start=1):
+        if distance >= marks[k] - length:
+            t = smooth((distance - marks[k] + length) / (2.0 * length))
             if t >= 1.0:
                 influences = [(joints[k], 1.0)]
             elif t <= 0.0:
@@ -140,11 +142,11 @@ def chain(joints, distance, blend_length=0.07):
     return influences
 
 
-def limb(mesh, joints, profile):
+def limb(mesh, joints, profile, end_blend=0.0):
     """A tube from the first joint toward the last. profile: (distance from the first joint, radius a, radius b)."""
     start = pos(joints[0])
     axis = normalize(sub(pos(joints[-1]), start))
-    rings = [(add(start, mul(axis, d)), ra, rb, chain(joints, d)) for d, ra, rb in profile]
+    rings = [(add(start, mul(axis, d)), ra, rb, chain(joints, d, end_blend=end_blend)) for d, ra, rb in profile]
     tube(mesh, rings, axis)
 
 
@@ -167,9 +169,12 @@ def build_mesh():
              [(-0.02, 0.09, 0.09), (0.06, 0.1, 0.1), (0.23, 0.088, 0.088), (0.41, 0.068, 0.068),
               (0.5, 0.064, 0.064), (0.6, 0.068, 0.068), (0.71, 0.07, 0.07), (0.87, 0.052, 0.052),
               (0.98, 0.046, 0.046)])
+        # As the mannequin's: the forearm runs through the wrist (0.583) into the hand box, half the hand's at the
+        # wrist, all of it inside the box (radius a vertical, b front to back).
         limb(m, [side + "Arm", side + "ForeArm", side + "Hand"],
              [(-0.03, 0.052, 0.052), (0.04, 0.058, 0.058), (0.2, 0.047, 0.047), (0.31, 0.042, 0.042),
-              (0.44, 0.04, 0.04), (0.57, 0.031, 0.031)])
+              (0.44, 0.04, 0.04), (0.55, 0.032, 0.034), (0.583, 0.024, 0.037), (0.625, 0.021, 0.034)],
+             end_blend=0.02)
         ankle = pos(side + "Foot")
         m.box(add(ankle, (-0.05, -ANKLE_HEIGHT, -0.07)), add(ankle, (0.05, 0.023, 0.138)), [(side + "Foot", 1.0)])
         m.box(add(ankle, (-0.047, -ANKLE_HEIGHT, 0.138)), add(ankle, (0.047, -0.04, 0.22)),

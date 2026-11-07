@@ -394,8 +394,9 @@ characters that use the asset and keeps their parameters.
   following them; in the view "Blend shapes", the blob (a swaying jelly body on three joints) squashed and stretched
   by its clip's weights for its four blend shapes, the sliders added to them (or alone)
   ([Engine demo](demo.md)). Its character is procedural (`tools/assets/make_demo_character.py`, generated and cooked
-  at build time; 20 joints, 836 vertices, clips idle, walk, run, jump, wave, lean, walk_back, strafe_l, strafe_r);
-  so is the strider (`tools/assets/make_demo_strider.py`: 21 joints, 836 vertices, no clips of its own; the
+  at build time; 20 joints, 884 vertices (836 until 2026-11-07, when the forearms were run into the hands),
+  clips idle, walk, run, jump, wave, lean, walk_back, strafe_l, strafe_r);
+  so is the strider (`tools/assets/make_demo_strider.py`: 21 joints, 884 vertices, no clips of its own; the
   mannequin's are retargeted onto it at build time through its bone map), and the blob
   (`tools/assets/make_demo_blob.py`: 3 joints, a sway clip that also animates the weights, blend shapes squash,
   stretch, puff and spikes; 1094 vertices, 2176 triangles).

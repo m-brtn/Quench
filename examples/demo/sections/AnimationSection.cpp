@@ -124,7 +124,7 @@ struct View {
 const std::array kViews{
     View{"hero", "Hero", {0.0f, 0.5f, -0.6f}, 2.0f, 22.0f, 9.0f},
     View{"blend2d", "2D blend space", {-18.0f, 0.6f, 0.0f}, 18.0f, 26.0f, 7.5f},
-    View{"skinning", "Skinning", {18.0f, 1.2f, 0.0f}, 0.0f, 4.0f, 1.6f},
+    View{"skinning", "Skinning", {18.0f, 1.11f, 0.0f}, 0.0f, 4.0f, 1.75f},
     View{"retarget", "Retargeting", {0.0f, 1.0f, 18.0f - 1.075f * kPairRadius}, -120.0f, 10.0f, 4.6f},
     View{"blendshapes", "Blend shapes", {18.0f, 0.45f, -7.0f}, 20.0f, 12.0f, 2.2f},
 };

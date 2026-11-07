@@ -440,19 +440,21 @@ def blend(a, b, t):
     return [(a, 1.0 - t), (b, t)]
 
 
-def limb(mesh, joints, profile, blend_length=0.07):
+def limb(mesh, joints, profile, blend_length=0.07, end_blend=0.0):
     """A tube down a chain of joints (rest positions straight below each other). profile: (distance from the first
-    joint, radius x, radius z); a vertex near a joint is shared by the bones on both sides of it."""
+    joint, radius x, radius z); a vertex near a joint is shared by the bones on both sides of it. With end_blend, the
+    tube also blends into the last joint over that length around it (a forearm running into the hand)."""
     top = REST[joints[0]]
     bounds = [REST[j][1] for j in joints]
+    lengths = [blend_length] * (len(joints) - 2) + ([end_blend] if end_blend > 0.0 else [])
     rings = []
     for distance, rx_, rz_ in profile:
         y = top[1] - distance
         center = (top[0], y, top[2])
         influences = [(joints[0], 1.0)]
-        for k in range(1, len(joints) - 1):
-            if y <= bounds[k] + blend_length:
-                influences = blend(joints[k - 1], joints[k], (bounds[k] + blend_length - y) / (2.0 * blend_length))
+        for k, length in enumerate(lengths, start=1):
+            if y <= bounds[k] + length:
+                influences = blend(joints[k - 1], joints[k], (bounds[k] + length - y) / (2.0 * length))
         rings.append((center, rx_, rz_, influences))
     mesh.tube(rings)
 
@@ -484,9 +486,12 @@ def build_mesh():
              [(-0.02, 0.085, 0.085), (0.05, 0.09, 0.09), (0.2, 0.08, 0.08), (0.36, 0.062, 0.062),
               (0.44, 0.058, 0.058), (0.52, 0.062, 0.062), (0.62, 0.064, 0.064), (0.76, 0.048, 0.048),
               (0.86, 0.042, 0.042)])
+        # The forearm runs through the wrist (0.53) into the hand box, flattened to the hand's width there, so that
+        # no gap opens between them; the ring at the wrist is half the hand's, the one inside the box all of it.
         limb(m, ["upperarm_" + side, "lowerarm_" + side, "hand_" + side],
              [(-0.03, 0.05, 0.05), (0.04, 0.055, 0.055), (0.18, 0.045, 0.045), (0.28, 0.04, 0.04),
-              (0.4, 0.038, 0.038), (0.52, 0.03, 0.03)])
+              (0.4, 0.038, 0.038), (0.5, 0.031, 0.032), (0.53, 0.021, 0.032), (0.57, 0.018, 0.029)],
+             end_blend=0.02)
         ankle = REST["foot_" + side]
         m.box(add(ankle, (-0.045, -ANKLE_HEIGHT, -0.06)), add(ankle, (0.045, 0.02, 0.12)), [("foot_" + side, 1.0)])
         m.box(add(ankle, (-0.042, -ANKLE_HEIGHT, 0.12)), add(ankle, (0.042, -0.035, 0.19)), [("toe_" + side, 1.0)])
