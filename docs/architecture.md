@@ -31,7 +31,7 @@ src/<module>/              sources and internal headers, per module:
   animation/  ozz runtime, state machines, blending, events, IK, attachments
   navigation/ Recast navmesh building (tiles on jobs, obstacles), Detour queries and crowds, debug geometry
   weather/    the weather map (clouds, precipitation, cirrus) drifting with the wind and evolving, cells, queries,
-              the ground's wetness
+              the ground's wetness and snow cover, rain or snow by the temperature
   audio/      mixer, sounds, streams, 3D sound, WAV writer, analysis (headless); the playback device and the
               iOS audio session (miniaudio)
   gpu/        the GPU layer (resources, pipelines, command recording, captures, timing) and its backends:
@@ -64,12 +64,12 @@ docs/releases/        release notes per version
 | `quench_assets` | IDs, manager, cache, cooked formats (KTX2, `.qmodel`), BC7 decoding, streaming grid | core, GLM, xxHash, meshoptimizer, bc7decomp | yes |
 | `quench_animation` | skeletons and clip sets (the `"skeleton"`, `"animation"`, `"animgraph"` asset types), sampling, blending, state machines, events, root motion, IK, foot placement | core, assets, GLM, ozz-animation (`quench_ozz`; `quench_ozz_offline` for the build functions) | yes |
 | `quench_navigation` | navmeshes built on jobs or cooked (the `"navmesh"` asset type, `.qnav`), obstacles, queries, crowds, debug geometry | core, assets, GLM, Recast & Detour (`quench_recast`) | yes |
-| `quench_weather` | the weather map (coverage, cloud type, precipitation, cirrus) with wind and evolution, cells, queries (precipitation, distance to it, cover, wind), the wetness it remembers | core, gpu_shaders (the field's shared header), GLM | yes |
+| `quench_weather` | the weather map (coverage, cloud type, precipitation, cirrus) with wind and evolution, cells, queries (precipitation, its snow share and the temperature, distance to rain or snow, cover, wind), the wetness and snow cover it remembers | core, gpu_shaders (the field's shared header), GLM | yes |
 | `quench_audio` | mixer, buses, sounds (the `"sound"` asset type), streams, generators, 3D sound, WAV writer, signal analysis | core, assets, GLM, miniaudio (decoders) | yes |
 | `quench_audio_device` | playback device, iOS audio session | audio, miniaudio (device API), Core Audio, AVFoundation on iOS | no |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
 | `quench_gpu` | GPU layer and backends (SDL GPU; native Metal on Apple platforms) | core, gpu_shaders, SDL3; GLM (private); Metal, QuartzCore on Apple platforms | no |
-| `quench_render` | retained scene, standard frame, render modules, GPU skinning, the clouds and the rain, `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, weather, GLM | no |
+| `quench_render` | retained scene, standard frame, render modules, GPU skinning, the clouds, the rain and the snow, `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, weather, GLM | no |
 | `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log, the app's job system and asset manager | core, assets, audio, audio_device, gpu, GLM, ImGui, SDL3 | no |
 | `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
 | `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files (also skins, skeletons, clips and navmeshes), sounds checked or converted to WAV; `quench_cook_assets()` | assets, audio, animation, navigation, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
@@ -425,6 +425,10 @@ cloud shadow, the occlusion map and the wetness grid share one texture on surfac
 the surface entries wet any surface without another sampler. The streaks and splashes are procedural instances
 drawn after TAA, not GPU particles, so no compute or indirect draws are needed. The rain's sound is
 `quench_audio`'s (`WeatherAudio`), fed by the game from the same queries and the renderer's cover reading.
+
+Part 3 (snow, 2026-11-08) adds a temperature to the field (rain or snow by the height, or a cell's own share), a
+snow cover to the remembered grid (built by the snowfall, melted above freezing into wet ground), and flakes, a
+cover on up-facing surfaces and denser shafts to the renderer, all on the same occlusion map and weather maps.
 
 ## Shaders
 

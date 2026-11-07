@@ -350,6 +350,38 @@ size with a depth-aware upsample they cost 0.18 to 1.2 ms there; the upsample is
 ratio of about 3 the phone defaults would take about 0.7 ms on the iPhone 17, within the roadmap's 1 ms for the
 rain, and Low with the shafts about 1.5 ms: an estimate, not a measurement. Not run on the screen or on a phone.
 
+Measured again on 2026-11-08 00:57 (another session), with part 3's splashes (1536 and 4096 at Medium and High
+instead of 1024 and 3072) and the snow off: ground 0.38, 0.75 and 1.30 ms at 1080p (the drops 0.086, 0.148, 0.488;
+the shafts 0.191, 0.486, 0.685), the phone defaults 0.20; the storm from the air 0.41, 1.10 and 1.88; at
+1206 x 2622 0.53, 0.98, 1.60, the phone defaults 0.25, from the air 0.58, 1.64, 2.65
+([Weather](weather.md#cost)). The drops cost 0.01 to 0.03 ms more; the shafts and the HDR pass 3 to 8 % more than
+the evening before, not compared in one session. Since then the streaks, splashes and flakes are not drawn where
+none of their kind falls near the camera (the drops' range was 0.04 to 0.46 ms in a clear sky with the rain on).
+
+### Snow
+
+2026-11-08 01:03, the same way (`examples/demo/scenarios/snow_cost.txt`: the Snowfall preset from the ground and the
+Snow showers preset from the sky view, the weather's clock stopped, the rain off but for the phone defaults; GPU
+busy time p50, ms: `rain_map`, `rain_shafts`, `rain` (the copy of the image the flakes are drawn over), `snow` (the
+flakes) and the `hdr` range's growth over snow off).
+
+| Setting | 1920 x 1080: map / shafts / copy / flakes / hdr | added | 1206 x 2622: map / shafts / copy / flakes / hdr | added |
+|---|---|---|---|---|
+| Ground, Low | 0.020 / 0.198 / 0.035 / 0.035 / 0.059 | 0.35 | 0.020 / 0.265 / 0.063 / 0.039 / 0.098 | 0.48 |
+| Ground, Medium | 0.022 / 0.577 / 0.036 / 0.066 / 0.062 | 0.76 | 0.021 / 0.712 / 0.062 / 0.071 / 0.098 | 0.96 |
+| Ground, High | 0.021 / 0.782 / 0.036 / 0.112 / 0.065 | 1.02 | 0.021 / 0.978 / 0.062 / 0.119 / 0.105 | 1.28 |
+| Phone defaults: rain and snow Low without shafts | 0.020 / - / 0.037 / 0.036 / 0.136 | 0.23 | 0.020 / - / 0.066 / 0.040 / 0.215 | 0.34 |
+| Snow showers from the sky view, Low | 0.020 / 0.193 / 0.042 / 0.035 / 0.042 | 0.33 | 0.020 / 0.300 / 0.072 / 0.040 / 0.080 | 0.51 |
+| Snow showers from the sky view, Medium | 0.020 / 0.537 / 0.042 / 0.065 / 0.042 | 0.71 | 0.021 / 0.936 / 0.071 / 0.073 / 0.080 | 1.18 |
+| Snow showers from the sky view, High | 0.020 / 0.758 / 0.041 / 0.111 / 0.043 | 0.97 | 0.021 / 1.360 / 0.071 / 0.123 / 0.081 | 1.66 |
+
+The snow's shafts start where the flakes end (6 m at Medium) instead of 20 m, so under a snowfall they march more of
+the near air than the rain's. Their first version took 2.207 ms (Medium) and 3.714 ms (High) from the ground at
+1080p: the snow share at each step was a function that took the weather field's uniform block (`WeatherUniforms`,
+its 16 cells) by value, and the compiled shaders copied the whole block at every step; reading the block in place
+took the shafts to 0.577 and 0.785 ms with the same image. By the stage 11 ratio of about 3 the phone defaults would
+take about 1 ms on the iPhone 17: an estimate. Not run on the screen or on a phone.
+
 ### Tracy on and off
 
 2026-11-07 18:58-19:19, the Mac (Apple M4 Pro), offscreen, the native backend (the default), `--frame-size 480x270

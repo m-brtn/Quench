@@ -85,8 +85,8 @@ on how many were rendered before it (in a scripted run, the frames spent waiting
    below) and screen-space reflections (SSR, below) where they run, after a prepass of their own when nothing is
    traced (with SSR also the G-buffer); after the HDR pass SSR copies the image for the next frame. Then, with a
    weather on the scene and `clouds` on, the clouds' passes (below): the weather map, the cloud shadow map, the
-   volumetric march and its accumulation, the sky cube's faces; with `rain` on, the rain occlusion map and the weather
-   maps' rain regions (below).
+   volumetric march and its accumulation, the sky cube's faces; with `rain` or `snow` on, the rain occlusion map and
+   the weather maps' rain regions (below).
 1. **Shadow cascades** of the sun (standard depth, `Depth32Float` texture array): the view is split between linear and
    logarithmic distances up to `shadowDistance`, each cascade snapped to its texels; casters are culled per cascade.
    Solid casters write depth with their position only; cut-out ones run their surface and discard where it is cut
@@ -95,13 +95,14 @@ on how many were rendered before it (in a scripted run, the frames spent waiting
 2. **HDR pass** (`Rgba16Float`, reversed depth: near 1, far 0, infinite far plane): opaque surfaces sorted by
    pipeline and material, then game `Opaque` passes, then the sky (atmosphere or gradient, sun disc, fog toward the
    horizon; with clouds, the sky with the clouds over it), then alpha-blended and additive surfaces back to front, then game `Transparent` passes.
-   With rain and clouds, the rain's shafts and the rainbow over the HDR image.
+   With rain or snow and clouds, the shafts of rain and snow and the rainbow over the HDR image.
 3. **Motion vectors and TAA**: camera motion from the depth, moved instances drawn again into an `Rg16Float` target
    (cut-out ones only where the depth is their own, so their holes keep what is behind them);
    TAA with a Halton (2, 3) jitter over 8 frames, the history clipped to the variance box of the 3 x 3 neighbourhood
    (YCoCg), then sharpening. Render scale below 1 renders the 3D part smaller; tone mapping scales it to the target,
    or MetalFX does (below), whose temporal upscaler takes the place of TAA's resolve.
-4. With rain, its streaks and splashes on the anti-aliased (and upscaled) HDR image; then game `PostHdr` passes.
+4. With rain, its streaks and splashes, with snow its flakes, on the anti-aliased (and upscaled) HDR image; then
+   game `PostHdr` passes.
 5. **Bloom**: a threshold with a soft knee, a chain of downsamples and upsamples.
 6. **Tone mapping** into the target (ACES or AgX, exposure, vignette, dither; sRGB and UNORM targets get the same
    display values; HDR output below), FXAA when selected, then game `Overlay` passes. The app draws ImGui after the
@@ -149,8 +150,8 @@ the HDR pass (placeholders without clouds), and `quench/Clouds.hlsli` reads them
 
 Since 2026-11-07 (stage 13, part 2; [Weather](weather.md#rain)): `RenderSettings::rain` (`Off` by default, `Low`,
 `Medium`, `High`) draws the rain of the scene's weather where its precipitation falls. A **rain occlusion map** (the
-shadow casters drawn along the rain into a 512² depth map over 128 m around the camera; timed range `rain_map`)
-keeps the rain and the wetness from under roofs and gives the cover over the camera (`RenderStats::rainCover`, read
+shadow casters drawn along the rain into a 512² depth map over 128 m around the camera, without the cascades' slope
+bias; timed range `rain_map`) keeps the rain and the wetness from under roofs and gives the cover over the camera (`RenderStats::rainCover`, read
 back a few frames late). **Surfaces** get wet where the rain reaches them, by the weather's remembered wetness
 (`quench/Rain.hlsli`, `quenchApplyRain` in the surface entries and the G-buffer entry): darker and glossier,
 standing water in the hollows of materials with `MaterialDesc::puddles`, rings of drops on it and on `water`
@@ -162,6 +163,20 @@ rain under raining clouds at a quarter or half of the render size after the HDR 
 of the clouds' shadow, the rain occlusion map and the wetness grid (`QUENCH_WEATHER_MAPS_*` in
 `quench/SceneUniforms.h`); `FrameUniforms` `rainViewProj`, `rain`, `rainGrid` and `MaterialUniforms::weather`. Tests
 `renderer_rain_wets_the_open_ground` and `renderer_rain_shafts_from_afar` on every backend variant; the costs in
+[Weather](weather.md#cost).
+
+### Snow
+
+Since 2026-11-08 (stage 13, part 3; [Weather](weather.md#snow)): where the weather's temperature makes its
+precipitation snow, `RenderSettings::snow` (`Off` by default, `Low`, `Medium`, `High`) draws **flakes** that flutter
+and drift with the wind (procedural instances around the camera after the rain's streaks; range `snow`), and the
+weather's remembered **snow cover** whitens surfaces that face up where the snow reaches them (`quenchApplySnow` in
+the surface entries and the G-buffer entry, after `quenchApplyRain`; patches that close as it deepens).
+`MaterialDesc::snow` (1 by default) scales it, `QUENCH_SURFACE_NO_SNOW` opts a surface file out. The rain's
+occlusion map, its shafts (denser and whiter where it snows) and the weather maps (the snow cover beside the
+wetness grid) serve both; the rain is not drawn where it snows, nor the flakes where it rains. `FrameUniforms::snow`
+and `MaterialUniforms::weather.w`; `RenderStats::snow`, `snowAtCamera`, `snowShareAtCamera`, `snowFlakes`. Tests
+`renderer_snow_covers_the_open_ground` and `renderer_snow_shafts_from_afar` on every backend variant; the costs in
 [Weather](weather.md#cost).
 
 ### Tone mapping and HDR output
@@ -702,7 +717,8 @@ maps"), so a game can show them (the demo's "Frame and fallbacks" panel); it is 
 | Volumetric clouds | a sampled `Rgba8Unorm` 3D texture, a renderable `Rgba8Unorm` 2D array (its layers copied into the 3D noise), `Rgba16Float` targets | the 2D cloud layer |
 | Sky cube | a renderable, sampleable `Rgba16Float` cube | the sky's reflection without clouds |
 | Rain | renderable, sampleable `Rgba16Float` 2D textures and a sampleable depth format (the cascades'); not in the path tracer's frame | no rain |
-| Rain shafts | the rain and clouds (they read the clouds' weather map) | none |
+| Snow | the same as the rain | no snow |
+| Rain shafts | the rain or the snow, and clouds (they read the clouds' weather map) | none |
 
 Shadow lookups use `Gather` on the depth texture and compare in the shader (1, 4 or 12 Poisson taps, each a bilinear
 2 x 2 comparison) instead of a comparison sampler: MoltenVK reports no `mutableComparisonSamplers`, and SDL GPU's
@@ -764,7 +780,9 @@ scene.addMaterial({.surface = checker, .params = {...}});
   material's `weather` (`MaterialDesc::wetness`, `puddles`, `water`) makes the surface wet where the rain reaches it.
   A file that defines `QUENCH_SURFACE_NO_RAIN` before including `SurfaceEntries.hlsli` keeps its surface dry (a
   surface under glass, a screen, an effect); one that wants other rules calls `quenchApplyRain` itself in its
-  function and defines it.
+  function and defines it. With snow (since 2026-11-08, [Snow](#snow)) they then call `quenchApplySnow(s, i)`: the
+  material's snow (`MaterialDesc::snow`) lays the weather's snow cover on faces looking up where the snow reaches;
+  `QUENCH_SURFACE_NO_SNOW` keeps it bare the same way.
 - `QUENCH_SURFACE_VERTEX` names `void f(inout QuenchVertexIn v, InstanceData instance)`, run before the transform
   (wind, procedural motion). Build `surface_shadow_vs:vertex` too and pass it as `SurfaceDesc::shadowVertexShader`, so
   the shadows move with it. The demo's checker ground (`examples/demo/shaders/checker.hlsl`) and the test shader
@@ -870,7 +888,7 @@ denoiser
 (spatial or temporal), the path tracer with its bounces and samples, anti-aliasing (none, FXAA, TAA) and sharpening,
 bloom (strength, threshold), sky on or off and the clear color, the clouds (off, 2D layer, volumetric) with their
 resolution, accumulation, steps and shadows and the sky cube's size and faces per frame, the rain (off, low, medium,
-high) with its shafts and rainbow, tone curve (ACES, AgX),
+high) with its shafts and rainbow, the snow (off, low, medium, high), tone curve (ACES, AgX),
 vignette, dither.
 `setSettings` can be called every frame; the targets are recreated only when a size, the shadow map size or the set
 of active effects changes.
@@ -893,7 +911,9 @@ lights with shadow maps, their maps, the instances and draws in them (`localShad
 overcast it is around the camera and the sky cube's faces drawn (`clouds`, `cloudWidth`, `cloudHeight`,
 `cloudCover`, `skyCubeFaces`), and the rain drawn, the precipitation at the camera, the streaks, splashes and
 objects in the rain map, whether the shafts and the rainbow were drawn and the cover over the camera (`rain`,
-`rainAtCamera`, `rainStreaks`, `rainSplashes`, `rainOccluders`, `rainShafts`, `rainbow`, `rainCover`).
+`rainAtCamera`, `rainStreaks`, `rainSplashes`, `rainOccluders`, `rainShafts`, `rainbow`, `rainCover`), and the
+snow drawn, the snowfall and the snow's share of the precipitation at the camera and the flakes (`snow`,
+`snowAtCamera`, `snowShareAtCamera`, `snowFlakes`).
 The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`,
 `area_lights`, `local_shadow_changes`, `local_map_lights`, `local_maps`, `local_map_draws`, `moved`,
 `render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`,
@@ -907,8 +927,8 @@ passes in timed ranges of the command buffer it records into, `upload` (the inst
 `raytrace` (ray tracing; `rays`, `denoise`, `probes`, `reflections` and `indirect` inside it), `path` (the path
 tracer), `gtao` (screen-space ambient occlusion, after its own `prepass` where nothing is traced), `ssr` (screen-space
 reflections: the march and the resolve), `cloud_noise` (once), `weather`, `clouds` and `sky_cube` (the clouds),
-`rain_map` (the rain occlusion map and the weather maps' rain regions), `rain_shafts` (after `hdr`) and `rain` (the
-streaks and splashes, after `taa` or `upscale`),
+`rain_map` (the rain occlusion map and the weather maps' rain regions), `rain_shafts` (after `hdr`), `rain` (the
+streaks and splashes, after `taa` or `upscale`) and `snow` (the flakes, after `rain`),
 `shadows` (the
 cascades and their
 transmittance maps), `local_shadows` (the local lights' shadow maps), `local_filter` (their screen pass where an area

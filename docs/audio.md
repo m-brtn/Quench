@@ -248,7 +248,8 @@ settings are ignored.
 
 `audio::WeatherAudio` (`quench/audio/WeatherAudio.h`, in `quench_audio`, headless) plays the weather's sounds from
 numbers a game gives it once per frame (`WeatherSoundState`: the precipitation at the listener, the distance to the
-nearest rain, the cover over the listener; [Weather](weather.md#the-rains-sound)). Stage 13 part 2 has the rain:
+nearest rain, the cover over the listener, the snow's share of the precipitation;
+[Weather](weather.md#the-rains-sound)). Stage 13 part 2 has the rain, part 3 the snow's quiet:
 
 | Layer | Default sound | Gain |
 |---|---|---|
@@ -257,8 +258,10 @@ nearest rain, the cover over the listener; [Weather](weather.md#the-rains-sound)
 | `RainFar` | `rain_far.wav`: a low rumble, most energy below 700 Hz | rises to 1 as the nearest rain comes from `farDistance` (4 km) to 0 m (squared), fades out as rain starts at the listener (gone at precipitation 0.1), halved under cover |
 | `RainCover` | `rain_cover.wav`: drops drumming on a roof, low and ringing | the loudness times the cover |
 
-The loudness is `sqrt((p - 0.02) / 0.98)` above a trace of 0.02; light and heavy crossfade at equal power (their
-squares sum to the loudness's) between precipitation 0.25 and 0.75. `WeatherAudio::targetGains` gives these rules
+The rain `p` is the precipitation times 1 - the snow's share: snow falls without a sound (sleet at share 0.5 and
+precipitation 0.6 plays as rain at 0.3), and falling snow at the listener muffles the distant layer (times
+1 - 0.6 x the snowfall). The loudness is `sqrt((p - 0.02) / 0.98)` above a trace of 0.02; light and heavy crossfade
+at equal power (their squares sum to the loudness's) between rain 0.25 and 0.75. `WeatherAudio::targetGains` gives these rules
 for a game that plays its own sounds. Each layer follows its target over `smoothing` (0.5 s), starts (fading in)
 when it becomes audible and stops after two seconds of silence; the layers play on a bus (`effects` by default) at a
 volume of their own.
@@ -367,7 +370,7 @@ the sines it was encoded from.
   Mac's speakers, headphones and the iPhone is for the user to judge.
 - **3D**: panning or the HRTF; no occlusion, obstruction or distance filters; one listener; no virtual voices (a
   stolen or rejected sound is gone).
-- **Weather sounds**: rain only (wind and thunder come with the weather's part 4), one set of layers for the
+- **Weather sounds**: rain only, snow silent (wind and thunder come with the weather's part 4), one set of layers for the
   listener, not per surface (leaves, puddles, metal), not placed in 3D; the cover is the camera's
   (`RenderStats::rainCover`) unless the game gives its own. The default loops are procedural noise, measured, not
   listened to.

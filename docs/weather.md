@@ -6,11 +6,14 @@ and weather sounds a game can replace. This page is the design of the whole stag
 built. **Part 1, the weather map, the clouds and their light, is built** (2026-11-07): `quench_weather`, a headless
 module, and the clouds in `quench_render`, with the demo's "Weather" section. **Part 2, rain, is built**
 (2026-11-07): the wetness the weather remembers, the rain in `quench_render` (streaks, splashes, shafts, a rainbow,
-the rain occlusion map, wet surfaces, puddles and ripples) and the rain's sound (`audio::WeatherAudio`). Parts 3 and
-4 (snow, wind) are a plan ([Later parts](#later-parts)). Written for the engine, not moved from a game; neither game
-uses it. It ran on the Mac (Metal, the native Metal backend and Vulkan through MoltenVK), in the iOS Simulator (the
-test executables) and as WebAssembly under Node.js (the headless tests); not on an iPhone, and nobody has looked at
-the clouds or the rain in motion or listened to the rain. All documentation: [index](README.md).
+the rain occlusion map, wet surfaces, puddles and ripples) and the rain's sound (`audio::WeatherAudio`). **Part 3,
+snow, is built** (2026-11-08): the weather's temperature and snow share, the snow cover it remembers beside the
+wetness, and in `quench_render` the flakes, the cover on surfaces and the snow's shafts; the rain's sound keeps quiet
+where it snows. Part 4 (wind) is a plan ([Later parts](#later-parts)). Written for the engine, not moved from a game;
+neither game uses it. It ran on the Mac (Metal, the native Metal backend and Vulkan through MoltenVK), in the iOS
+Simulator (the test executables) and as WebAssembly under Node.js (the headless tests); not on an iPhone, and nobody
+has looked at the clouds, the rain or the snow in motion or listened to the rain. All documentation:
+[index](README.md).
 
 ## Use
 
@@ -26,6 +29,7 @@ s.seed = 7;
 s.coverage = 0.32f;                       // the share of the sky the clouds cover, 0 clear .. 1 overcast
 s.type = wx::CloudType::Cumulus;          // Stratus, Cumulus, Towering, Cumulonimbus
 s.wind = {.direction = {0, 1}, .speed = 12};
+s.temperature = 15.0f;                    // degrees C at the ground: rain (below about 1 degree, snow)
 wx::Weather weather(s);
 weather.setTime(1200.0);                  // where the weather's clock starts (s)
 // One raining cumulonimbus in a blue sky, drifting with the wind
@@ -36,6 +40,7 @@ quench::render::RenderSettings rs;        // clouds and rain are off by default
 rs.clouds = quench::render::Clouds::Volumetric;
 rs.cloudResolution = 0.5f;                // half size, accumulated over frames (cloudTemporal)
 rs.rain = quench::render::Rain::Medium;   // streaks, splashes, wet surfaces; shafts with the clouds
+rs.snow = quench::render::Snow::Medium;   // flakes, the snow cover on surfaces; where the weather is cold enough
 renderer.setSettings(rs);
 // What gets wet: every material by default (wetness 1); puddles where a material asks for them
 MaterialId paving = scene.addMaterial({.baseColor = {0.4f, 0.4f, 0.42f, 1}, .roughness = 0.7f, .puddles = 1});
@@ -51,9 +56,12 @@ float rain = weather.precipitation(listenerPosition);           // 0..1 falling 
 float nearest = weather.distanceToPrecipitation({x, z});        // m to the nearest rain
 float overcast = weather.cover({x, z}, 6000.0f);                // mean coverage around a point
 glm::vec3 wind = weather.windAt(position);                      // m/s
-weather::Wetness wet = weather.wetness({x, z});                 // ground 0..1, standing water 0..1
+weather::Wetness wet = weather.wetness({x, z});                 // ground, standing water, snow 0..1
+float snowShare = weather.snowShare(listenerPosition);          // 0 rain .. 1 snow (by the temperature there)
+float rainAway = weather.distanceToPrecipitation({x, z}, 0.1f, 8000.0f, weather::Precipitation::Rain);
 float underRoof = renderer.stats().rainCover;                   // 0 open .. 1 covered (-1: not known yet)
-rainSound.update({.precipitation = rain, .distanceToRain = nearest, .cover = std::max(underRoof, 0.0f)}, dt);
+rainSound.update({.precipitation = rain, .distanceToRain = rainAway, .cover = std::max(underRoof, 0.0f),
+                  .snow = snowShare}, dt);
 ```
 
 `Scene::clearWeather()` removes it (no clouds, no rain). A game links `quench_weather` for the queries alone
@@ -92,7 +100,7 @@ A top-down field over the whole world, `Sample{coverage, type, precipitation, ci
   (5 km), cumulonimbus 1 (up to `cloudTop`, 9 km by default, with an anvil). The setting's type, varied over larger
   patches by `typeVariation`; the thickest parts of a field grow taller. Bases at `cloudBase` (1.5 km).
 - **Precipitation** from the thick parts (coverage above about 0.55), more from taller clouds, times
-  `Settings::precipitation`. Rain or snow is part 2's and 3's choice.
+  `Settings::precipitation`. Whether it falls as rain or snow is the temperature's ([Snow](#snow)).
 - **Cirrus** (`Settings::cirrus`): high ice cloud at `cirrusHeight` (8 km), in patches stretched along the wind.
 - **Wind and evolution:** the field is sampled in the air's coordinates, so it drifts with `Settings::wind` (the
   air's offset integrates the wind, so a new wind moves the air from where it is), and its noise moves through
@@ -104,7 +112,9 @@ A top-down field over the whole world, `Sample{coverage, type, precipitation, ci
   within about half its radius.
 
 Queries: `sample(xz)`; `precipitation(point)` (the map's below the cloud base, 0 above; no roofs: the renderer's
-rain occlusion map handles cover, [Rain](#rain)); `distanceToPrecipitation(xz, threshold, maxDistance)` (rings of 32 directions with a
+rain occlusion map handles cover, [Rain](#rain)); `snowShare(point)` and `temperature(point)` ([Snow](#snow));
+`distanceToPrecipitation(xz, threshold, maxDistance, kind)` (`Precipitation::Any`, `Rain` or `Snow`: the
+precipitation times the share of that kind; rings of 32 directions with a
 bisection, at most 48 rings: 0.03 ms on the M4 Pro with rain 3.7 km away, about 0.3 ms when there is none; a few
 times a second, not per object per frame); `cover(xz, radius)` (19 samples); `windAt(point)` (the setting's wind
 at the cloud base, a logarithmic profile below it: about 0.3 of it at 2 m); `cloudTop(type)`; `highestType()` (an
@@ -211,8 +221,8 @@ single raining cloud rains on its own patch of ground and the sun shines beside 
 | Level | Streaks | Box around the camera | Splashes | Within | Shaft steps | Shafts marched at |
 |---|---|---|---|---|---|---|
 | `Low` | 8192 | 18 m | none | | 12 | a quarter of the render size per side |
-| `Medium` | 24576 | 24 m | 1024 | 10 m | 20 | half |
-| `High` | 49152 | 30 m | 3072 | 15 m | 32 | half |
+| `Medium` | 24576 | 24 m | 1536 | 10 m | 20 | half |
+| `High` | 49152 | 30 m | 4096 | 15 m | 32 | half |
 
 `Renderer::effects().rain` and `.rainShafts` say what runs after the fallbacks; `RenderStats::rain`, `rainAtCamera`,
 `rainStreaks`, `rainSplashes`, `rainOccluders`, `rainShafts`, `rainbow` and `rainCover` what a frame drew.
@@ -224,15 +234,17 @@ off with a line; the path tracer's frame has no rain (a line). Every backend has
 
 1. **The rain occlusion map**, before every pass that runs the surfaces: the shadow casters drawn into a 512² depth
    map over 128 m around the camera, an orthographic view along `Weather::rainVelocity` at the camera (the wind
-   slants it), 200 m deep from 100 m above the camera, on its texel grid. A point is under cover where the highest
-   surface along the rain is more than 0.4 m above it. **The cover over the camera** (`RenderStats::rainCover`,
+   slants it), 200 m deep from 100 m above the camera, on its texel grid, without the cascades' slope bias (which
+   sank its depth by decimetres under slanted rain and hid the splashes under the ground). A point is under cover
+   where the highest surface along the rain is more than 0.4 m above it. **The cover over the camera** (`RenderStats::rainCover`,
    what the rain's sound takes): the texels within 0.75 m of the camera in last frame's map, copied in a command
    buffer of their own and read a few frames later without waiting; the share whose surface is more than 0.5 m
    above the camera.
 2. **The weather maps** (surface sampler 14): one Rgba16Float texture of 512 x 1040 texels in three regions
    (`QUENCH_WEATHER_MAPS_*` in `quench/SceneUniforms.h`): the clouds' shadow (rows 0 to 511), the occlusion map (512
    to 1023) and the weather's wetness grid (the last rows' first 16 x 16 texels: ground wetness, standing water,
-   precipitation), uploaded when `Weather::wetnessVersion()` changes.
+   precipitation, its rain share; the next 16 x 16 the snow cover), uploaded when `Weather::wetnessVersion()`
+   changes.
 3. **Wet surfaces** in the HDR pass and the G-buffer ([Wetness and puddles](#wetness-and-puddles)).
 4. **The shafts** (with clouds), after the HDR pass and before TAA: marched at a quarter or half of the render size
    from 20 m to the scene, the cloud base or 30 km, in steps that grow with the square of their number. Each step
@@ -251,9 +263,11 @@ off with a line; the path tracer's frame has no rain (a line). Every backend has
    it. A streak is the distance its drop falls in 0.04 s, 6 mm wide (at least a pixel; thinner ones fainter), faded
    toward the box's edge and within 0.3 m of the camera; lit by the sky's and the ground's light it refracts (as
    radiance) and the sun's it scatters forward (Henyey-Greenstein, g 0.7): rain against a dark wall and rain toward
-   the sun shine. Splashes: rings of droplets for 0.25 s each at random places within the radius on the highest
-   surface the occlusion map has. One instanced draw of six vertices per streak or splash (every instance runs;
-   culled ones are degenerate).
+   the sun shine. Splashes: crowns 15 cm high (give or take 30 %) for 0.25 s each at random places within the
+   radius on the highest surface the occlusion map has, a rim of droplets rising and spreading and four droplets
+   thrown up and out of it; twice the light the drops refract and 0.1 of the sun's irradiance (they glint where the
+   puddles' mirror of the sky around them does not). One instanced draw of six vertices per streak or splash (every
+   instance runs; culled ones are degenerate).
 
 Where the build differs from the agreed plan: the drops are procedural instances instead of compute particles with
 an indirect draw (the same look without state, on every backend and in the iOS Simulator); the shafts are a pass of
@@ -282,7 +296,9 @@ the clouds, drawn behind it, do not).
   a dark mirror there (roughness 0.02, not metallic, the geometric normal). On standing water and on materials with
   `water` (a lake) the rings of the drops falling now (`quenchRipples`: two offset grids of 0.4 m cells, a drop every
   0.8 s in a share of the cells that grows with the rain, its ring spreading and fading; within 60 m of the camera)
-  bend the normal, so they show in the sky cube's, SSR's and traced reflections.
+  bend the normal, so they show in the sky cube's, SSR's and traced reflections. Each drop has a size of its own
+  (its ring's width, wavelength and reach, 0.6 to 1.4), and drops fall more densely and strike harder in some
+  puddles than in others (value noise at 3 m: 0.55 to 1.45 times the density, 0.7 to 1.3 times the strength).
 - **Opt-out:** a surface file that defines `QUENCH_SURFACE_NO_RAIN` before including `quench/SurfaceEntries.hlsli`
   keeps its surface as its function makes it, or calls `quenchApplyRain` itself and changes what it gets; a material
   with wetness 0, no puddles and not water costs a branch.
@@ -298,8 +314,61 @@ distant rain as the nearest rain comes within 4 km (`distanceToPrecipitation`, a
 drumming on a roof by the cover over the listener (`RenderStats::rainCover`, or a game's own test along
 `rainVelocity`). The engine's defaults are procedural (`tools/assets/make_weather_sounds.py`, cooked by the CMake
 function `quench_weather_sounds()`); a game names its own sound for any layer, or turns the object off and plays its
-own sounds from the same numbers (`WeatherAudio::targetGains` gives the engine's mix rules). Wind and thunder come
-with part 4.
+own sounds from the same numbers (`WeatherAudio::targetGains` gives the engine's mix rules). Snow is quiet
+([Snow](#snow)). Wind and thunder come with part 4.
+
+## Snow
+
+- **Rain or snow** (`quench_weather`): `Settings::temperature` (15 degrees C at the ground by default, the standard
+  atmosphere's) falls by `lapseRate` (0.0065 per metre) with height; precipitation falls as snow at or below 0
+  degrees (`QUENCH_SNOW_BELOW`), as rain from 2.5 (`QUENCH_RAIN_ABOVE`), as sleet, a mix, between. A cell's own
+  `Cell::snow` (0..1; -1, the default: by the temperature) holds within about a third of its radius and blends out
+  to its edge: a snow shower on a mild day. `snowShare(point)` is the share at a point (the shaders'
+  `quenchWeatherSnow`, the same function in `WeatherField.h`), `temperature(point)` the temperature,
+  `snowVelocity(point)` the flakes' velocity (the wind's, falling at `kSnowFallSpeed`, 1 m/s). With the default
+  settings nothing below the default cloud base (1.5 km, 5.25 degrees there) is snow, so a scene that sets no
+  temperature keeps part 2's rain (the snow's terms in the shaders reduce to it exactly).
+- **The snow cover** (`Wetness::snow`, 0..1, in the wetness grid with its focus, estimate and determinism): it builds
+  by the snowfall (the precipitation times its snow share) in `Settings::snowTime` (600 s of snowfall 1 to a full
+  cover) and melts above 0 degrees in `meltTime` x 5 / (degrees above 0) (900 s at 5 degrees), its water wetting
+  the ground (twice the snow melted) and filling the puddles (half of it); the ground does not dry while snow melts
+  on it, and only rain wets it. Measured (`weather_snow_cover_builds_and_melts`): 300 s of snowfall 1 at -3
+  degrees, cover 0.500; then 225 s at 5 degrees, cover 0.250, ground 0.500, standing water 0.125.
+- **On surfaces** (`quenchApplySnow` in `quench/Surface.hlsli`, after `quenchApplyRain`, also for the G-buffer; not
+  in ray hits): the cover (the grid's, sampled as the wetness is) times `MaterialDesc::snow` (1 by default; 0: never
+  covered; water takes none), only where the snow reaches (the occlusion map, read 0.3 m off the surface: none under
+  a roof) and on faces looking up (none on walls, less on slopes: `smoothstep(0.3, 0.8, N.y)`). A thin cover lies
+  as a dusting with patches (value noise at 0.8 and 0.2 m) that close as it deepens; from 20 to 100 m away the
+  patches give way to the share of the ground they cover. Where it lies the albedo turns to snow's (0.82, 0.85,
+  0.9), the roughness to 0.7, the metal and the normal map go, emission and anisotropy fade. **Opt-out:**
+  `QUENCH_SURFACE_NO_SNOW` before including `quench/SurfaceEntries.hlsli` (as `QUENCH_SURFACE_NO_RAIN`), or a
+  material's `snow = 0`.
+- **The flakes** (`RenderSettings::snow`: `Off` by default, `Low`, `Medium`, `High`), drawn after the streaks in the
+  output-size image, are the rain's procedural instances with another motion and shape: each falls at the snow's
+  velocity at the camera (its fall give or take 30 %), flutters on a loop of its own (8 to 30 cm, 1.2 to 2.6
+  radians per second) and is a soft disc 2 cm across (give or take 40 %; at least 1.5 pixels, fainter below that)
+  drawn out along its motion over 12 ms; lit as a white diffuse scatterer (0.85 of the sky's and the ground's
+  light) and by 0.15 of the sun's irradiance through the cloud shadow; drawn where the snowfall there is above its
+  own threshold and the occlusion map lets the snow reach it. `Low` 6144 flakes in a box 9 m across, `Medium`
+  16384 in 12 m, `High` 32768 in 14 m. `RenderStats::snow`, `snowAtCamera`, `snowShareAtCamera` (both 0 while the
+  snow is not drawn) and `snowFlakes`; the timed range `snow`.
+- **The occlusion map under snow** looks along the snow's direction (mixed with the rain's by the share at the
+  camera), at most 0.3 (horizontal over vertical, about 17 degrees) from the vertical: flakes drift almost sideways
+  in a wind, which would leave a bare strip of metres behind every wall.
+- **The snow's shafts** (`rainShafts`, the same pass): where the snow share at a step (by the temperature at its
+  height) is above 0, its precipitation hides 3 to 5 times as much as rain's (in wide, smooth curtains, value noise
+  at 220 m: a heavy snowfall's visibility is about 800 m) and sends 1.5 times as much of the sun's light toward the
+  camera; under a snowfall they begin where the flakes end. With rain off and snow on (or the reverse) the other
+  kind's share is left out.
+- **The sound:** snow is quiet. `WeatherSoundState::snow` (the share at the listener) takes the snowfall out of the
+  light and heavy rain and the roof (sleet at share 0.5 and precipitation 0.6 sounds as rain at 0.3), and a
+  snowfall at the listener muffles the distant rain (down to 0.4 of it); `distanceToRain` should be the distance
+  to rain only (`Precipitation::Rain`). No sound of its own: falling snow is close to silence (the wind comes with
+  part 4).
+
+Where the build differs from the agreed plan: the occlusion direction is clamped (above); the cover melts by the
+temperature at y = 0 (the grid knows no terrain heights); the estimate after `setTime` assumes the present
+temperature held in the past.
 
 ## Phones and fallbacks
 
@@ -309,7 +378,9 @@ stage 11 ratio of about 3 between the iPhone 17 and the M4 Pro: about 4 ms on th
 2 ms the roadmap set for the clouds; the 2D layer (about 1 ms by the same ratio) is the cheap setting. The rain on a
 phone: `Low` without the shafts (so without the rainbow), 0.25 ms on the M4 Pro at the iPhone 17's size, about
 0.7 ms on the phone by the same ratio, within the 1 ms set for the rain; `Low` with the shafts would be about 1.5 ms.
-Not run on a phone yet: the defaults wait for that run.
+The snow on a phone: `Low` flakes beside that rain, without the shafts, 0.34 ms for a snowfall on the M4 Pro at
+the iPhone 17's size, about 1 ms on the phone by the same ratio. Not run on a phone yet: the defaults wait for that
+run.
 
 ## Cost
 
@@ -333,46 +404,81 @@ outside these numbers. Drawing the weather and shadow maps in turns took the wea
 0.36 to 0.22 ms, and the sky cube without detail and with 24 instead of 32 steps from 0.41 to 0.28 ms (two faces per
 frame). Measured offscreen only, never on the screen or on a phone.
 
-**The rain** (`scenarios/rain_cost.txt`, 2026-11-07 23:10, the same way: the Rain here preset from the ground and
-the storm preset from the air, half-size clouds, 3 s per setting): `rain_map`, `rain_shafts` and `rain`, and the HDR
-pass's growth over rain off (the wet surfaces); "added" is their sum, ms.
+**The rain** (`scenarios/rain_cost.txt`, the same way: the Rain here preset from the ground and the storm preset
+from the air, half-size clouds, the snow off, 3 s per setting; 2026-11-08 00:57, with the splashes of part 3's
+polish): `rain_map`, `rain_shafts` and `rain`, and the HDR pass's growth over rain off (the wet surfaces); "added" is
+their sum, ms.
 
 | Setting | 1920 x 1080: map, shafts, drops, HDR | added | 1206 x 2622: map, shafts, drops, HDR | added |
 |---|---|---|---|---|
-| Ground, Low | 0.02, 0.18, 0.08, 0.07 | 0.35 | 0.02, 0.26, 0.12, 0.11 | 0.50 |
-| Ground, Medium | 0.02, 0.44, 0.14, 0.08 | 0.68 | 0.02, 0.59, 0.17, 0.11 | 0.90 |
-| Ground, High | 0.02, 0.60, 0.46, 0.09 | 1.17 | 0.02, 0.81, 0.49, 0.13 | 1.46 |
-| Ground, Low without shafts (phone defaults) | 0.02, -, 0.09, 0.07 | 0.17 | 0.02, -, 0.12, 0.11 | 0.25 |
-| Storm from the air, Low | 0.02, 0.23, 0.09, 0.04 | 0.37 | 0.02, 0.34, 0.13, 0.05 | 0.54 |
-| Storm from the air, Medium | 0.02, 0.83, 0.14, 0.05 | 1.04 | 0.02, 1.23, 0.19, 0.06 | 1.50 |
-| Storm from the air, High | 0.02, 1.20, 0.45, 0.07 | 1.73 | 0.02, 1.84, 0.48, 0.08 | 2.42 |
+| Ground, Low | 0.02, 0.19, 0.09, 0.09 | 0.38 | 0.02, 0.27, 0.12, 0.11 | 0.53 |
+| Ground, Medium | 0.02, 0.49, 0.15, 0.09 | 0.75 | 0.02, 0.66, 0.19, 0.11 | 0.98 |
+| Ground, High | 0.02, 0.69, 0.49, 0.11 | 1.30 | 0.02, 0.92, 0.52, 0.14 | 1.60 |
+| Ground, Low without shafts (phone defaults) | 0.02, -, 0.09, 0.09 | 0.20 | 0.02, -, 0.12, 0.11 | 0.25 |
+| Storm from the air, Low | 0.02, 0.24, 0.09, 0.06 | 0.41 | 0.02, 0.36, 0.13, 0.06 | 0.58 |
+| Storm from the air, Medium | 0.02, 0.87, 0.15, 0.06 | 1.10 | 0.02, 1.36, 0.20, 0.06 | 1.64 |
+| Storm from the air, High | 0.02, 1.30, 0.48, 0.09 | 1.88 | 0.02, 2.04, 0.50, 0.09 | 2.65 |
 
-The shafts cost the most where rain fills the view (a storm seen from the air); at full size they took 1.6, 2.7 and
-4.4 ms there at 1080p (the first runs, the same session), hence the reduced size. Their upsample is most of `Low`'s
-shaft time. The drops cost by their count, not by the rain: every instance runs.
+The first measurement (2026-11-07 23:10, part 2's 1024 and 3072 splashes) gave 0.35, 0.68 and 1.17 ms from the
+ground and 0.37, 1.04 and 1.73 ms from the air at 1080p: the drops cost 0.01 to 0.03 ms more with the splashes'
+counts, and the shafts and the HDR pass 3 to 8 % more in this session (not compared in one session). The shafts cost
+the most where rain fills the view (a storm seen from the air); at full size they took 1.6, 2.7 and 4.4 ms there at
+1080p (part 2's first runs), hence the reduced size. Their upsample is most of `Low`'s shaft time. The drops cost by
+their count where rain falls near the camera (every instance runs) and nothing where none does.
+
+**The snow** (`scenarios/snow_cost.txt`, 2026-11-08 01:03, the same way with the weather's clock stopped: the
+Snowfall preset from the ground and the Snow showers preset from the sky view, one shower over the camera; the
+rain's drawing off but for the phone defaults): `rain_map`, `rain_shafts`, the drops' range (`rain`: with no rain
+near, the copy of the image the flakes are drawn over), `snow` and the HDR pass's growth over snow off (the covered
+surfaces); "added" is their sum, ms. The HDR pass alone 0.69 (ground) and 0.46 ms (sky) at 1920 x 1080, 0.85 and
+0.72 ms at 1206 x 2622.
+
+| Setting | 1920 x 1080: map, shafts, drops, flakes, HDR | added | 1206 x 2622: map, shafts, drops, flakes, HDR | added |
+|---|---|---|---|---|
+| Ground, Low | 0.02, 0.20, 0.04, 0.04, 0.06 | 0.35 | 0.02, 0.27, 0.06, 0.04, 0.10 | 0.48 |
+| Ground, Medium | 0.02, 0.58, 0.04, 0.07, 0.06 | 0.76 | 0.02, 0.71, 0.06, 0.07, 0.10 | 0.96 |
+| Ground, High | 0.02, 0.78, 0.04, 0.11, 0.07 | 1.02 | 0.02, 0.98, 0.06, 0.12, 0.11 | 1.28 |
+| Ground, Low without shafts (phone defaults) | 0.02, -, 0.04, 0.04, 0.14 | 0.23 | 0.02, -, 0.07, 0.04, 0.22 | 0.34 |
+| Snow showers from the sky view, Low | 0.02, 0.19, 0.04, 0.04, 0.04 | 0.33 | 0.02, 0.30, 0.07, 0.04, 0.08 | 0.51 |
+| Snow showers from the sky view, Medium | 0.02, 0.54, 0.04, 0.07, 0.04 | 0.71 | 0.02, 0.94, 0.07, 0.07, 0.08 | 1.18 |
+| Snow showers from the sky view, High | 0.02, 0.76, 0.04, 0.11, 0.04 | 0.97 | 0.02, 1.36, 0.07, 0.12, 0.08 | 1.66 |
+
+The snow's shafts cost more than the rain's under a snowfall (they begin nearer, where the flakes end). Their first
+version took 2.21 ms at `Medium` and 3.71 at `High` from the ground at 1080p: the step's snow share took the
+weather field's uniform block as a function argument, and the shader compilers copied the whole block at every
+step; reading it in place took them to 0.58 ms. The flakes cost by their count (0.04 to 0.12 ms) where snow falls
+near the camera, nothing where none does (nor the copy of the image).
 
 ## Demo and tests
 
 The demo's "Weather" section (14; [Engine demo](demo.md)): a plain 20 km wide with hills, towers and a lake seen
 from a few hundred metres up; presets (fair weather, sun shower, towering, storm, overcast, cirrus, rain here,
-downpour, passing shower), coverage, type, variation, precipitation, cirrus, a raining cumulonimbus as a cell, wind
-speed and direction, change of shape, the weather's speed, the sun, Run day and Sunset, the quality (full size, half
-size, 2D layer, off), steps, cloud shadows, the sky cube and its faces per frame, 60 Hz; the rain's level, shafts,
-rainbow, sound and its volume; views from the air, from the ground, toward the cloud and from the shelter. On the
-ground: wet paving with puddles, a pond, a shelter with a crate under it and one in the open, a dark block that the
-rain shows against. Its batch parts: `weather` checks the cell's rain, the distance to it and the cover, the march's
+downpour, passing shower, snowfall, thaw, snow showers), coverage, type, variation, precipitation, cirrus, a raining
+cumulonimbus as a cell, wind speed and direction, change of shape, the weather's speed, the temperature, the sun,
+Run day and Sunset, the quality (full size, half size, 2D layer, off), steps, cloud shadows, the sky cube and its
+faces per frame, 60 Hz; the rain's and the snow's levels, shafts, rainbow, sound and its volume; views from the air,
+from the ground, toward the cloud, from the shelter and over the shelter. On the ground: wet paving with puddles, a
+pond, a shelter with a crate under it and one in the open, a dark block that the rain shows against. Its batch
+parts: `weather` checks the cell's rain, the distance to it and the cover, the march's
 size and the fallback to the layer, with three golden captures per backend (`demo_weather.png`,
 `demo_weather_sunset.png`, `demo_weather_layer.png`, which show the shafts since part 2); `rain` checks the rain at
 the camera, the streaks and splashes, the cover under the shelter, the wetness, the sound's layers and level, a
 passing shower drying and its distant rain, and the rain off, with three captures (`demo_rain.png`: the streaks,
 puddles and rings, the dry floor under the shelter; `demo_rain_rainbow.png`: toward the cloud with the rainbow;
-`demo_rain_shelter.png`: from under the roof). Check mode items `weather.clouds`, `weather.rain` (in motion) and
+`demo_rain_shelter.png`: from under the roof); `snow` checks the snowfall's share, the flakes, the full cover with
+no wetness, the shelter's cover and the silence, the cover building over the shelter from bare ground (0.26 after
+5 s at 60 times the weather's speed) with the floor under the roof bare, its thaw into wet ground and puddles (cover
+0.18, wetness 0.16, standing water 0.04) and the snow showers' shafts, with four captures (`demo_snow.png`: flakes
+and the white ground, the shelter's floor bare; `demo_snow_building.png`: from over the shelter, the first patches
+on the ground, the roof and the crates; `demo_snow_thaw.png`: patches left on wet paving; `demo_snow_sky.png`:
+the snow showers' white curtains). Check mode items `weather.clouds`, `weather.rain`, `weather.snow` (in motion) and
 `weather.rain_sound` (by ear) wait for a person.
 
-Tests: `weather.*` (15 cases: the coverage's mean by setting, determinism, drift, evolution, seeds, type and
+Tests: `weather.*` (18 cases: the coverage's mean by setting, determinism, drift, evolution, seeds, type and
 precipitation, a cell in a clear sky and the distance to it, cells that drift and stay, wind and cloud tops, the
 grid against single samples, queries on the job system's threads, a sample's cost; the wetness building and drying,
-under a passing shower, and the grid following its focus), also under Node.js and with the sanitizers;
+under a passing shower, and the grid following its focus; rain or snow by the temperature and a cell's own share,
+the snow cover building and melting, the distance to rain or to snow), also under Node.js and with the sanitizers;
 `audio.weather_audio_gains`, `weather_audio_mix` (the layers by the strongest frequency of an offline mix, a game's
 sound, a hot reload, the bus, silence and off) and `weather_default_sounds` (the default loops: levels, seams, where
 their energy is); `gpu_device.texture_3d_from_layers` and `cube_faces` on every backend variant (a 3D texture
@@ -381,19 +487,17 @@ with its mips); on every backend variant `render.renderer_clouds_shadow_the_grou
 nothing; a raining cell's shadow on the ground, 0.073 under it against 0.775 in the sun, in both modes; the sky
 cube's faces; no clouds after `clearWeather`), `renderer_rain_wets_the_open_ground` (open ground 0.521 dry, 0.288
 wet; under a roof 0.521 both; the cover 0 in the open and above 0.9 under the roof; the streaks; the puddles' rings
-moving; no rain with the path tracer or without a weather) and `renderer_rain_shafts_from_afar` (none without
-clouds; with them a shaft over 733 of 4096 pixels).
+moving; no rain with the path tracer or without a weather), `renderer_rain_shafts_from_afar` (none without
+clouds; with them a shaft over 734 of 4096 pixels), `renderer_snow_covers_the_open_ground` (open ground 0.318 bare,
+0.875 under snow; under a roof 0.318 both; a material with `snow = 0` bare; flakes over 451 of 4096 pixels; no
+streaks where it snows) and `renderer_snow_shafts_from_afar` (the mean change by a shaft: rain 6.3, snow 14.4,
+snow with only the rain drawn 0.16).
 
 ## Later parts
 
-The design agreed for the rest of the stage (a plan: nothing below is built). Part 2 is built (above); where it
-differs from its plan is said in [Rain](#rain).
-
-### Part 3: snow
-
-Flakes with flutter and wind (the rain's streaks with another motion and shape); accumulation on upward-facing
-surfaces, none under cover (the same occlusion map), melting by the same clock as drying. Out of scope unless asked:
-footprints.
+The design agreed for the rest of the stage (a plan: nothing below is built). Parts 2 and 3 are built (above); where
+they differ from their plans is said in [Rain](#rain) and [Snow](#snow). Footprints in the snow are out of scope
+unless asked.
 
 ### Part 4: wind
 
@@ -416,14 +520,14 @@ without missed intervals with the thermal reaction on.
 | Mac, native Metal backend | every test, the demo's batch (captures identical to SDL GPU's), the costs above |
 | Mac, Vulkan through MoltenVK | every test with the Khronos validation layer, the demo's batch (captures within a mean of 0.04 of Metal's); needs the engine's SDL patch (`cmake/patches/SdlVulkan3d.cmake`: 3D textures 2D-array compatible only as color targets) |
 | iOS Simulator | the test executables (`ios-sim-tests`) |
-| WebAssembly under Node.js | `weather.*` (the headless module) and `audio.weather_audio_*` |
+| WebAssembly under Node.js | `weather.*` (the headless module, the snow's cases too) and `audio.weather_audio_*` |
 | iPhone | not run |
 
 ## Limitations
 
-- Nobody has looked at the clouds or the rain in motion, on the Mac's screen or on a phone, or listened to the rain
-  (check mode items `weather.clouds`, `weather.rain`, `weather.rain_sound`); the captures were looked at still, the
-  sound measured.
+- Nobody has looked at the clouds, the rain or the snow in motion, on the Mac's screen or on a phone, or listened to
+  the rain (check mode items `weather.clouds`, `weather.rain`, `weather.snow`, `weather.rain_sound`); the captures
+  were looked at still, the sound measured.
 - The traced effects see an overcast amount, not the clouds (above); the probe grid does not pick up single clouds.
 - Cloud shadows are a 24 km map on the plane y = 0: a surface far above or below it reads the shadow of the column
   its sun ray crosses at y = 0, and beyond the map its edge holds.
@@ -436,9 +540,15 @@ without missed intervals with the thermal reaction on.
   nothing above 100 m over the camera counts as a roof; the wetness grid covers 1 km around its focus (beyond it an
   estimate without the rain's history); wetness knows no roofs (`Weather::wetness` is open ground; the renderer
   applies the occlusion map, a game asks its own physics); the cover is the camera's only (`RenderStats::rainCover`),
-  a few frames late. Splashes are faint on bright reflections. The streaks do not refract the scene behind them.
-  The ripples are the same rings on every puddle, not a simulation; no drips from roofs, no runoff, no wet
-  footprints. Ray hits do not apply the rain (traced reflections and the probe grid see dry surfaces), the streaks
+  a few frames late. The streaks do not refract the scene behind them. The ripples are rings of a procedural rain,
+  not a simulation; no drips from roofs, no runoff, no wet footprints. Ray hits do not apply the rain (traced reflections and the probe grid see dry surfaces), the streaks
   are not in any reflection, and the path tracer's frame has no rain.
+- The snow: the cover is the weather's open ground, as the wetness is, a whitening of the surface, not geometry (no
+  depth, no drifts against walls, no footprints); beyond 64 m of the camera floors under roofs whiten too (the
+  occlusion map's reach); the occlusion map looks at most 17 degrees off the vertical, so slanted snow reaches less
+  far under the edges of roofs than it would; the grid melts by the temperature at y = 0 and its estimate after
+  `setTime` assumes the present temperature held. Ray hits and the path tracer see no snow (as with the rain).
+  Sleet is a mix of the rain's and the snow's drawing, not a particle of its own. A sunbeam through a gap in the
+  clouds shows in the snow's shafts as a bright line.
 - The sound: one set of layers for the listener, not per surface (leaves, puddles, metal); the defaults are
   procedural noise, measured but not listened to.

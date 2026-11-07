@@ -300,6 +300,35 @@ quench_add_game(my_game ... COOKED_ASSETS my_game_cooked my_game_weather_sounds)
   `rainCover` what happened. Costs and phone settings: `docs/weather.md`, "Cost"; the demo's Weather section, view
   Ground.
 
+Snow falls where the precipitation meets cold air: the weather's temperature (15 degrees C at the ground by
+default, 6.5 less per km, so no snow) decides rain or snow, the renderer draws flakes and lays the snow cover the
+weather remembers on surfaces that face up:
+
+```cpp
+s.temperature = -4.0f;                      // degrees C at y = 0: snow at or below 0, rain from 2.5, sleet between
+s.wind.speed = 2.0f;                        // flakes drift far in a strong wind
+m_weather.setSettings(s);
+rs.snow = render::Snow::Medium;             // off by default; Low on phones
+m_snowy = m_scene->addMaterial({.baseColor = {0.4f, 0.4f, 0.4f, 1}, .roughness = 0.7f}); // snow = 1 by default
+
+// Game::update, the sound: snow is quiet, so tell it the snow's share and the distance to rain only
+const float share = m_weather.snowShare(listener);
+m_rainSound->update({.precipitation = m_weather.precipitation(listener),
+                     .distanceToRain = m_weather.distanceToPrecipitation({listener.x, listener.z}, 0.1f, 20000.0f,
+                                                                         weather::Precipitation::Rain),
+                     .cover = std::max(m_renderer->stats().rainCover, 0.0f),
+                     .snow = share}, frameDt);
+```
+
+- `weather.wetness(xz).snow` is the cover on open ground (0..1, for footsteps, tyres, a game's own effects);
+  `Settings::snowTime` (600 s of snowfall 1 to a full cover) and `meltTime` (900 s at 5 degrees) set how fast.
+  `Cell::snow` (0..1) gives a cell its own share whatever the temperature (a snow shower on a mild day).
+- `MaterialDesc::snow = 0` keeps a material bare (a warm roof, a moving vehicle); `QUENCH_SURFACE_NO_SNOW` before
+  `quench/SurfaceEntries.hlsli` keeps a surface file bare. Floors under roofs stay bare through the rain occlusion
+  map; walls never take snow.
+- `effects().snow`, `stats().snowAtCamera`, `snowShareAtCamera`, `snowFlakes` say what happened;
+  `docs/weather.md`, "Snow"; the demo's Weather section, presets Snowfall, Thaw and Snow showers.
+
 ## Physics
 
 ```cpp

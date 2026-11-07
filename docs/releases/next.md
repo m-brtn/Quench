@@ -12,10 +12,11 @@ indirect light settles in a still scene instead of staying grainy (a user report
 a new module with the demo's Navigation section (the user's queue, item 4); profiling with Tracy, opt-in, with
 captures recorded and summed up without its GUI; the weather's first part, volumetric clouds that drift, change shape
 and shade the light, in a new headless module with the demo's Weather section (stage 13, part 1); its second part,
-rain where the clouds drop it, wet ground and puddles that dry afterwards, and the rain's sound (stage 13, part 2).
+rain where the clouds drop it, wet ground and puddles that dry afterwards, and the rain's sound (stage 13, part 2);
+its third, snow where the air is cold enough, a cover that builds and melts, and quiet (stage 13, part 3).
 This file becomes
-`v<version>.md` when the user asks for the release; what was verified is in the devlog of
-[2026-11-07](../../devlog/2026-11-07.md).
+`v<version>.md` when the user asks for the release; what was verified is in the devlogs of
+[2026-11-07](../../devlog/2026-11-07.md) and [2026-11-08](../../devlog/2026-11-08.md).
 
 ## What changed
 
@@ -262,8 +263,40 @@ This file becomes
   procedural loops (`tools/assets/make_weather_sounds.py`, CC0) cooked by the CMake function
   `quench_weather_sounds(<name>)`.
 - **Cost** on the M4 Pro (offscreen, native backend, GPU busy time; [Performance](../performance.md#rain)): at
-  1920 x 1080 0.35, 0.68 and 1.17 ms for Low, Medium and High on the ground and up to 1.73 ms looking at a storm
-  from the air; the phone defaults (Low without shafts) 0.17 ms, 0.25 ms at 1206 x 2622.
+  1920 x 1080 0.38, 0.75 and 1.30 ms for Low, Medium and High on the ground and up to 1.88 ms looking at a storm
+  from the air; the phone defaults (Low without shafts) 0.20 ms, 0.25 ms at 1206 x 2622 (measured again with part
+  3's splashes).
+- **Polished with part 3:** the splashes show (the occlusion map was drawn with the cascades' slope bias, which sank
+  it by decimetres under slanted rain and put the splashes under the ground; now crowns of droplets with twice the
+  light and the sun's glint, 1536 and 4096 at Medium and High instead of 1024 and 3072), and the ripples differ from
+  puddle to puddle (each drop's size, the density and strength by place). The streaks and splashes are not drawn
+  where no rain falls near the camera (`RenderStats::rainStreaks` and `rainSplashes` are 0 then).
+
+### Weather: snow (stage 13, part 3)
+
+- **Rain or snow by the temperature** ([Weather](../weather.md#snow)): `Settings::temperature` (15 degrees C at the
+  ground by default) and `lapseRate` (0.0065 per metre); snow at or below 0 degrees, rain from 2.5, sleet between;
+  `Cell::snow` gives a cell its own share. `Weather::snowShare(point)`, `temperature(point)`, `snowVelocity(point)`
+  and `kSnowFallSpeed` (1 m/s); `distanceToPrecipitation(..., Precipitation kind)` finds rain or snow only
+  (`weather::Precipitation`: `Any`, `Rain`, `Snow`). In the shared field `quenchWeatherSnow`. With the defaults
+  nothing below the default cloud base is snow.
+- **A snow cover the weather remembers:** `Wetness::snow` (0..1) in the wetness grid builds by the snowfall in
+  `Settings::snowTime` (600 s) and melts above freezing in `meltTime` (900 s at 5 degrees), its water wetting the
+  ground and filling the puddles; deterministic like the wetness; `WetnessCell::snowShare`. Headless: also under
+  Node.js.
+- **The snow in the renderer** (`RenderSettings::snow`: `Off` by default, `Low`, `Medium`, `High`;
+  [Render module](../render.md#snow)): flakes that flutter and drift with the wind near the camera, none under
+  roofs (the rain's occlusion map, looking at most 17 degrees off the vertical under snow); with clouds the shafts of
+  snow from afar, 3 to 5 times as dense as rain's and whiter. Surfaces get the cover where they face up and the snow
+  reaches them (`quenchApplySnow` in the surface entries after `quenchApplyRain`): patches that close as it deepens,
+  snow's albedo and roughness. `MaterialDesc::snow` (1 by default) scales it, `QUENCH_SURFACE_NO_SNOW` opts a surface
+  file out. `ActiveEffects::snow`; `RenderStats::snow`, `snowAtCamera`, `snowShareAtCamera`, `snowFlakes`; timed
+  range `snow`.
+- **Quiet:** `audio::WeatherSoundState::snow` (the share at the listener) takes the snowfall out of the rain's
+  layers and muffles the distant rain in a snowfall.
+- **Cost** on the M4 Pro (offscreen, native backend, GPU busy time; [Performance](../performance.md#snow)): at
+  1920 x 1080 0.35, 0.76 and 1.02 ms for Low, Medium and High under a snowfall, up to 0.97 ms in snow showers seen
+  from the air; the phone defaults (rain and snow Low without shafts) 0.23 ms, 0.34 ms at 1206 x 2622.
 
 ### Profiling with Tracy
 
@@ -371,7 +404,11 @@ This file becomes
   wetness and the sound with its layers; phone defaults Low without shafts, estimated. A batch part `rain` with
   three golden captures (`demo_rain.png`, `demo_rain_rainbow.png`, `demo_rain_shelter.png`), the weather captures
   replaced (the shafts under their clouds), `scenarios/rain_cost.txt` and check mode items `weather.rain` and
-  `weather.rain_sound` (48 items).
+  `weather.rain_sound` (48 items). With part 3 presets Snowfall, Thaw and Snow showers, a view over the shelter, the
+  temperature and the snow's quality (phone defaults Low, estimated); a batch part `snow` with four golden captures
+  (`demo_snow.png`, `demo_snow_building.png`, `demo_snow_thaw.png`, `demo_snow_sky.png`),
+  `scenarios/snow_cost.txt` and a check mode item `weather.snow` (49 items). The rain's three captures replaced (the
+  splashes and the ripples).
 
 ### Gates
 
@@ -538,6 +575,20 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `asan` 593; `tsan` 593; `wasm-node` 183 (under Node.js); `ios-sim-tests` 448 in the iOS Simulator; `ios-xcode`
   generated; a new game built and started. All passed.
 
+- **The snow** (M4 Pro; [Weather](../weather.md#snow); devlog of [2026-11-08](../../devlog/2026-11-08.md)):
+  `weather.*` 18 cases (300 s of snowfall give a cover of 0.500; 225 s at 5 degrees after it 0.250, the ground
+  0.500 and standing water 0.125); `renderer_snow_covers_the_open_ground` (open ground 0.318 bare and 0.875 under
+  snow, 0.318 under the roof, a material with `snow = 0` bare, flakes over 451 of 4096 pixels, no streaks) and
+  `renderer_snow_shafts_from_afar` on SDL GPU's Metal driver, the native backend and Vulkan through MoltenVK, and in
+  the iOS Simulator; `audio.weather_audio_gains` (no rain layer in a snowfall, sleet as its rain's share, the
+  distant rain muffled). The demo's `snow` part (35 checks) and its four captures looked at (offscreen); the native
+  backend's are the same images as SDL GPU's, Vulkan through MoltenVK within a mean of 0.006. The rain's three
+  captures replaced with the visible splashes and the ripples that differ by puddle (mean 0.65 to 1.24 against the
+  old ones, looked at); the other sections' captures unchanged.
+- **Gates with the snow:** `tools/check.sh full` (2026-11-08, 512.0 s): format; `debug` 602 tests; `release` 733;
+  `asan` 602; `tsan` 602; `wasm-node` 186 (under Node.js); `ios-sim-tests` 455 in the iOS Simulator; `ios-xcode`
+  generated; a new game built and started. All passed.
+
 ## What was not verified
 
 - **The per-pixel indirect light's denoiser on a phone:** measured offscreen on the Mac only, no numbers from a
@@ -592,15 +643,18 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 - **The clouds on a phone and on a screen:** not run on an iPhone; the Weather section's phone defaults are an
   estimate (about 4.3 ms on the iPhone 17 by its ratio to the M4 Pro, over the roadmap's 2 ms); nobody has looked at
   the clouds in motion (drift, change of shape, the accumulation when the camera turns) or on a phone's screen. The
-  storm's bases look smooth in the captures; a camera above the clouds is not tuned. Snow and wind are parts 3 and 4
+  storm's bases look smooth in the captures; a camera above the clouds is not tuned. The wind is part 4
   ([Weather](../weather.md#later-parts)).
 - **The rain in motion, by ear and on a phone:** nobody has looked at the streaks, splashes and rings moving or
   listened to the rain (measured only: levels, spectra, the mix's RMS); not run on an iPhone, the phone defaults'
-  0.7 ms there an estimate by the iPhone 17's ratio. The splashes are faint in the captures; the storm from the air
-  is a grey veil more than shafts; the 2D layer's shafts look smoky; the occlusion map reaches 64 m from the camera,
+  0.7 ms there an estimate by the iPhone 17's ratio. The storm from the air is a grey veil more than shafts; the 2D layer's shafts look smoky; the occlusion map reaches 64 m from the camera,
   so roofs beyond it do not keep the rain off (the wetness there is the weather's open ground); streaks and
   splashes are not in reflections, and the path tracer's frame has no rain; the heavy layer's default loop peaks
   at 0.98.
+- **The snow in motion and on a phone:** nobody has looked at the flakes moving or the cover building on a screen;
+  not run on an iPhone, the phone defaults' cost there an estimate. The cover is a whitening of open ground, not
+  geometry (no depth, drifts or footprints); beyond 64 m of the camera floors under roofs whiten too; the grid melts
+  by the temperature at y = 0. Sleet is a mix of the rain's and the snow's drawing.
 
 ## Changes for games
 
@@ -704,6 +758,22 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `quench_weather_sounds()` (needs Python 3 at build time, as the demo's sounds do). A game that leaves the rain off
   draws what it drew before; `Weather::update` now also steps the wetness grid (256 samples of the field per 0.25 s
   of weather time, about 0.05 ms by the `sample` cost above).
+- **Snow (optional), and surface shaders that see it:** `FrameUniforms` grew by 16 bytes (`snow` at its end);
+  `FrameUniforms::rain.w` is now 1 where the rain is drawn (it was the ripples' strength, the same value with the
+  rain on); `MaterialUniforms::weather.w` is the material's snow; the weather maps' wetness rows have the rain's share
+  in `a` and the snow cover in the 16 x 16 texels beside the grid. The surface entries apply the snow after the rain:
+  a game surface built on `SurfaceEntries.hlsli` gets the cover where it faces up once a game turns
+  `RenderSettings::snow` on and its weather is cold enough; one that must stay bare defines
+  `QUENCH_SURFACE_NO_SNOW`, a material sets `MaterialDesc::snow = 0`. New: `render::Snow`, `RenderSettings::snow`,
+  `ActiveEffects::snow`, the `RenderStats` members; in `quench_weather` `Settings::temperature`, `lapseRate`,
+  `snowTime`, `meltTime`, `Cell::snow`, `Precipitation`, `Wetness::snow`, `WetnessCell::snowShare`, `snowShare`,
+  `temperature`, `snowVelocity`, `kSnowFallSpeed` and the `kind` argument of `distanceToPrecipitation` (`Any` by
+  default, as before); `audio::WeatherSoundState::snow` (0 by default: everything plays as rain, as before). A game
+  that leaves the temperature at its default gets no snow; one that sets it lower gets snow wherever the air is
+  below 2.5 degrees (under the default cloud base from about 12 degrees at the ground, in the shafts first): pass
+  `Precipitation::Rain` for the distant rain's sound and the snow share to `WeatherAudio` then. The rain occlusion map is drawn without the slope bias now (pipelines of its own for game
+  surfaces, made when the rain or snow first falls); `RenderStats::rainStreaks` and `rainSplashes` are 0 where no
+  rain falls near the camera.
 - **The skill:** a game made before this release has no copy; copy `.agents/skills/quench-game/` from the engine
   at the pinned commit if its agents should use it (and again when the pin moves).
 - The rest is in the demo and the engine's own test and gate scripts; `quench_add_batch()` in

@@ -4,7 +4,7 @@ description: >-
   Builds, extends and verifies a game on the Quench C++20 engine: tools/new_game.py and templates/game, the pinned
   engine (FetchContent and the local override), the quench::app::Game interface and fixed-step loop,
   quench_add_game, input actions, ImGui, the retained render::Scene, cooked assets (quench_cook_assets,
-  SceneAssets), weather, clouds and rain, physics, audio, animation, navigation, jobs, quench::fs, iOS builds, scripted
+  SceneAssets), weather, clouds, rain and snow, physics, audio, animation, navigation, jobs, quench::fs, iOS builds, scripted
   offscreen checks with captures and golden images, and Tracy profiles recorded without its GUI. Use when creating a
   game on Quench, working in a repository whose CMakeLists.txt fetches Quench or calls quench_add_game, or when the
   user asks how to make a game with the engine.
@@ -136,7 +136,10 @@ Link what the game uses beside `quench_add_game()`:
   and, with clouds, shafts from afar; call `weather.setWetnessFocus(...)` with the camera's ground point. Its sound:
   `audio::WeatherAudio` fed each frame from the weather and `stats().rainCover`, the defaults cooked by
   `quench_weather_sounds(<name>)` and listed in `COOKED_ASSETS`, or a game's own (`setSound`, `setEnabled(false)`).
-  [reference.md](reference.md), "Weather and clouds"; `docs/weather.md`.
+  Snow: `Settings::temperature` (15 degrees C by default: no snow) below freezing and `RenderSettings::snow =
+  render::Snow::Medium` (`Low` on phones) draw flakes and a snow cover on surfaces that face up
+  (`MaterialDesc::snow = 0` or `QUENCH_SURFACE_NO_SNOW` keeps one bare); give the sound `.snow =
+  weather.snowShare(listener)`. [reference.md](reference.md), "Weather and clouds"; `docs/weather.md`.
 - **Physics.** `quench::PhysicsWorld` on `&app.jobs()` (Jolt, its jobs on the engine's pool); bodies through
   `bodies()` with `PhysicsLayers::kStatic` or `kMoving`; `step(float(dt))` in `fixedStep`.
 - **Audio.** `app.audio()`: `load`, `play` with `PlayParams` (buses `"music"`, `"effects"`, `"ui"` by default;

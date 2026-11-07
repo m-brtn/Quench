@@ -16,10 +16,11 @@ optional HRTF, reverb buses, Ogg Vorbis, device output, offline captures; not ye
 animation (skeletons and clips, state machines, 1D and 2D blending, events, root motion, IK and foot placement, LOD,
 retargeting, blend shape weights from clips; not yet run on the iPhone or looked at in motion by the user),
 navigation (navmeshes built on jobs or cooked, obstacles, paths and crowds; not yet run on the iPhone or looked at in
-motion), the first two parts of stage 13, weather (a weather map that drifts and evolves, volumetric clouds with a
+motion), the first three parts of stage 13, weather (a weather map that drifts and evolves, volumetric clouds with a
 2D layer as the fallback, their shadows, overcast light and a sky cube for reflections; rain kept from under roofs,
-shafts of rain from afar, wet ground that dries, puddles with ripples and the rain's sound; not yet run on the
-iPhone, looked at in motion or listened to), the sample, the engine demo (finished in stage 10, with a tour, a check mode and a benchmark of every
+shafts of rain from afar, wet ground that dries, puddles with ripples and the rain's sound; snow by the temperature
+with flakes, a cover that builds and melts and white shafts; not yet run on the iPhone, looked at in motion or
+listened to), the sample, the engine demo (finished in stage 10, with a tour, a check mode and a benchmark of every
 section) and the game template. Where a document describes something planned, it says so. [Migration](migration.md) describes the
 engine code in the two games, what has moved and what is not moved yet.
 
@@ -45,14 +46,14 @@ in `images/`.
 | [Audio](audio.md) | The mixer, buses, sounds and streams, generators, 3D sound, voice limit, the audio thread, device output and the iOS audio session, offline mixing and captures, `audio_measure`, the demo section and tests, platforms, limitations |
 | [Animation](animation.md) | Skeletons and clip sets, graphs (state machines), events, root motion, IK, foot placement and attachments, cooking glTF skins and animations, the file formats, GPU skinning, budgets and failures, the demo section and tests, platforms, limitations |
 | [Navigation](navigation.md) | Navmeshes built at run time on jobs or cooked (`.qnav`), area types, off-mesh links, obstacles and rebuilds, queries, crowds and their link events, debug geometry, cooking, threads, cost, the demo section and tests, platforms, limitations |
-| [Weather](weather.md) | Stage 13's design (snow and wind as later parts) and what is built: the headless weather map, its queries and the wetness it remembers, the clouds (volumetric and the 2D layer), their light and shadows, the sky cube, the rain (occlusion map, streaks, splashes, wet surfaces, puddles, ripples, shafts, rainbow) and its sound, phone defaults, cost, the demo section and tests, platforms, limitations |
+| [Weather](weather.md) | Stage 13's design (the wind as a later part) and what is built: the headless weather map, its queries and the wetness and snow cover it remembers, the clouds (volumetric and the 2D layer), their light and shadows, the sky cube, the rain (occlusion map, streaks, splashes, wet surfaces, puddles, ripples, shafts, rainbow) and its sound, the snow (flakes, the cover on surfaces, shafts, quiet), phone defaults, cost, the demo section and tests, platforms, limitations |
 | [Render module](render.md) | The retained scene, the standard frame, sky and sun, tone mapping and HDR output, fallbacks, game passes, surface shaders, the shader library, skinned meshes, limitations |
 | [Engine demo](demo.md) | The demo's code, sections, coverage, layouts and controls, its modes (tour, check mode, benchmark of every section), flags and files, About and settings, the check mode on the iPhone, its checks and golden images, its benchmark, packaged builds (`tools/package_demo.sh`) |
 | [Performance](performance.md) | The benchmark, how to run and compare it, GPU time per pass, budgets per device, the thermal state |
 | [Platforms](platforms.md) | Target platforms, what has run where, backend and shader formats, known constraints (WebGPU, Android, texture formats) |
 | [Dependencies](dependencies.md) | Pinned libraries, planned libraries with licences and verified capabilities |
 | [Migration](migration.md) | Inventory of the engine code in TrailForge and Ashfall, how far the copies diverged, the procedure for moving code, progress per game |
-| [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, the weather stage (its first two parts built), what is next, the requested features and their priorities |
+| [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, the weather stage (its first three parts built), what is next, the requested features and their priorities |
 | [Releases](releases/) | Release notes per version |
 
 Coding agents: see [AGENTS.md](../AGENTS.md). The daily development log is in [devlog/](../devlog/).
