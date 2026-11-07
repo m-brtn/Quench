@@ -9,7 +9,8 @@ lights from shadow maps where the device cannot trace (stage 12's remaining work
 hits and the probe grid's cascades, relocation and classification (stage 11's remaining work); Basis Universal
 textures, one cooked set for every device (stage 6's remaining work); the per-pixel ray-traced
 indirect light settles in a still scene instead of staying grainy (a user report); navigation on Recast & Detour,
-a new module with the demo's Navigation section (the user's queue, item 4). This file becomes
+a new module with the demo's Navigation section (the user's queue, item 4); profiling with Tracy, opt-in, with
+captures recorded and summed up without its GUI. This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
 
@@ -194,6 +195,33 @@ a new module with the demo's Navigation section (the user's queue, item 4). This
   3.4 ms on the job system; a path 7 to 15 µs; a crowd update 0.02 to 0.05 ms for 25 agents and 0.13 to 0.20 ms for
   100 ([Navigation](../navigation.md#cost)).
 
+### Profiling with Tracy
+
+- **`QUENCH_TRACY`** (CMake option, off by default; the `profile` configure, build and test preset: Release with
+  it on; [Performance](../performance.md#profiling-with-tracy)): Tracy 0.15.0's client in `quench_core`, on demand
+  (it records only while a Tracy server is connected) and on localhost only on desktops. Off, nothing of Tracy is
+  fetched, compiled or linked. Forced off in WebAssembly builds. `QUENCH_TRACY_MEMORY` (off) adds allocation
+  tracking through the global `operator new` and `operator delete`.
+- **Profiling macros for the engine and games** (`quench/core/Profile.h`): `QUENCH_PROFILE_ZONE`,
+  `QUENCH_PROFILE_ZONE_DYNAMIC`, `QUENCH_PROFILE_ZONE_TEXT`, `QUENCH_PROFILE_FRAME`, `QUENCH_PROFILE_PLOT`,
+  `QUENCH_PROFILE_MESSAGE`, `QUENCH_PROFILE_THREAD_NAME`, nothing without `QUENCH_TRACY` (their arguments are not
+  evaluated); `quench::profile::connected()`. No Tracy header in public headers unless it is on.
+- **What the engine records:** a frame mark and zones of the app loop (update, fixed steps, UI, render, the wait for
+  the GPU, submit), a CPU zone per timed range of passes on every backend, and on the native Metal backend the same
+  ranges as GPU zones from the engine's own timestamps (their busy intervals, so they add up to the perf lines' busy
+  times); named worker threads and a zone per job (`JobSystem::run(name, ...)`, `parallelFor(name, ...)`),
+  `physics.step` with Jolt's own zones, the animation update, asset loads, reads, decodes, transcodes and uploads,
+  audio stream refills; plots of the frame, CPU and GPU times and the mix time; log lines as messages, perf regions
+  as `perf_begin` and `perf_end` messages. The audio device's callback records nothing (Tracy's zone path may
+  allocate).
+- **Captures without the GUI:** Tracy's `tracy-capture` and `tracy-csvexport`, built by the profile preset with
+  their dependencies pinned by hash (`QUENCH_TRACY_TOOLS`), and `tools/tracy_capture.py`: records a scenario run
+  offscreen into a `.tracy` file and writes zone statistics per perf region to CSV (count and time per frame, mean,
+  p50, p99, self time). The demo's `scenarios/raytracing_profile.txt`: the ray tracing section at its defaults and
+  at heavier settings.
+- **Tests:** `core.profile_macros`, `core.profile_without_server`, `core.jobs_named`; in profile builds
+  `hello_tracy_capture` (a capture of hello, its zones and, on the native backend, its GPU zones).
+
 ### Building games
 
 - **The agent skill `quench-game`** (`.agents/skills/quench-game/`: `SKILL.md` and `reference.md`): how a coding
@@ -375,6 +403,16 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   unchanged; the demo's noise scenarios, captures looked at, still and in motion; no golden image changed (the
   demo's captures trace the probe grid, not per-pixel indirect light). On the iPhone 17's screen (an interim build, the ray tracing
   section with Indirect light "Ray traced"), the user: "the grain is fine now" (2026-11-07 17:47).
+- **Profiling with Tracy** (Mac, offscreen; [Performance](../performance.md#profiling-with-tracy)): the `profile`
+  preset's ctest 656 of 656 (Vulkan through MoltenVK included), `hello_tracy_capture` recording hello with its CPU
+  zones, the frame plot and the GPU zone `game` on the native backend; the ray tracing section recorded at
+  1920 x 1080 (its GPU zones per frame within 0.03 ms of the perf lines' busy times). Off, against the build before:
+  the demo's sections' CPU p50 -0.1 % and p99 -0.9 % summed, hello's p50 the same; compiled in without a server
+  +0.5 % p50; recorded +0 to +2.4 % per section. The iOS Simulator and device builds with `-DQUENCH_TRACY=ON`
+  compile; `QUENCH_TRACY_MEMORY` recorded hello once.
+- **Gates with Tracy** (Tracy off): `tools/check.sh full` (2026-11-07, 1342.9 s): format; `debug` 536 tests;
+  `release` 655; `asan` 536; `tsan` 536; `wasm-node` 149 (under Node.js); `ios-sim-tests` 400 in the iOS Simulator;
+  `ios-xcode` generated; a new game built and started. All passed.
 
 - **Navigation** (M4 Pro): `navigation.*` (16 cases), `cook.cook_navmesh`, `cook.cook_navmesh_errors` and the
   navmesh in `cook_cli` in `headless`, `debug`, `release`, `asan` and `tsan`, as WebAssembly under Node.js and in
@@ -426,6 +464,12 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 - Basis Universal has not run on an iPhone (the transcode time there, ETC2 on the native backend) and nobody has
   looked at the ETC1S and UASTC tiles on a screen; the numbers are of the demo's procedural textures on the M4 Pro.
   No ETC1S quality option and no rate-distortion optimization for smaller UASTC files yet.
+- **Tracy on a phone and Tracy's GUI:** the iOS builds compile, nothing recorded from an iPhone (the app has no
+  local network usage description yet); the GUI was not built or started (it opens a window), the captures were
+  read by `tracy-csvexport` only. GPU zones exist on the native backend only (SDL GPU: the frame's GPU time as a
+  plot). Tracy's statistics leave out zones shorter than its timer's tick (about 42 ns on Apple silicon).
+- The ray tracing section's render scale by the window's pixel count is a proposal from offscreen numbers on the
+  M4 Pro ([Performance](../performance.md#the-ray-tracing-section-by-frame-size)); the defaults are unchanged.
 
 - **Navigation in motion and on a phone:** nobody has looked at the crowds moving (avoidance, turns, the walk and
   run blend, the link arcs, the moving obstacles); the check mode's `navigation.crowd` asks for it. Not run on an
@@ -435,6 +479,14 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 
 ## Changes for games
 
+- **Profiling with Tracy (optional, nothing to change):** a game that configures the engine with
+  `-DQUENCH_TRACY=ON` (or its own preset like the engine's `profile`) gets the engine's zones and can add its own with
+  the macros of `quench/core/Profile.h`, which are nothing in its other builds. `quench_core` then links
+  `quench_tracy` publicly and defines `QUENCH_TRACY=1` for its users; the engine's Jolt is built with
+  `PROFILER_IN_DISTRIBUTION` and `JPH_USE_EXTERNAL_PROFILE` (Jolt's zones into Tracy), so a game that builds Jolt
+  code of its own against the engine's Jolt sees `JPH_PROFILE` active there. New overloads `JobSystem::run(name,
+  fn, ...)` and `parallelFor(name, count, minRange, fn, ...)` name a job's zone; the old ones are unchanged. Off (the
+  default) nothing changes.
 - **The default backend on Apple platforms is the native Metal backend.** A game that leaves
   `AppDesc::gpuBackend` (or `DeviceDesc::backend`) at `Backend::Default` runs on it on the Mac, the iPhone and in the
   iOS Simulator after moving its pin, through the same `quench::gpu` API and shaders; the engine's captures are the

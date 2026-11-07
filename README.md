@@ -54,6 +54,8 @@ look and listen.
   for every device, transcoded at load time), loading in the background, streaming, hot reload.
 - **Input and UI:** keyboard, mouse, gamepad and touch through named actions; Dear ImGui for tools.
 - **Testing:** scripted scenarios, runs without a window, screenshot comparison, frame time and memory measurements.
+- **Profiling:** Tracy zones on the CPU and the GPU for the engine and your game, recorded from a scripted run into
+  a table of where the frame's time goes.
 - **Platforms:** macOS and iOS; Windows, Linux, Android and the web are planned.
 
 ## Getting started

@@ -136,6 +136,98 @@ starts the vertex stage of a pass while the previous pass still shades fragments
 demo's frame panel shows the last frame's ranges with their start and end in the frame. Not in the ranges: the
 skinning compute pass (its own command buffer, `RenderStats::skinningGpuMs`) and `Device::upload`s.
 
+## Profiling with Tracy
+
+[Tracy](https://github.com/wolfpld/tracy) (0.15.0, [Dependencies](dependencies.md#added-for-profiling)) records
+zones (named spans of time on a thread), GPU zones, plots and messages while a Tracy server is connected to the
+program. A build with `QUENCH_TRACY` (off by default; the `profile` preset is Release with it on) links Tracy's
+client into `quench_core`. Without it nothing of Tracy is compiled or linked, and the profiling macros compile to
+nothing without evaluating their arguments. The client records on demand (`TRACY_ON_DEMAND`): it listens on
+localhost only (`TRACY_ONLY_LOCALHOST` on desktops: port 8086 or the first free one of the 19 after it, or the port
+in `TRACY_PORT`) and records nothing until a server connects. Its cost while nobody records and while it records:
+[below](#tracy-on-and-off).
+
+```sh
+cmake --preset profile && cmake --build --preset profile
+# A scenario recorded offscreen, without the Tracy GUI: build/profile/tracy/raytracing.tracy and _zones.csv
+python3 tools/tracy_capture.py --output build/profile/tracy/raytracing -- \
+    build/profile/examples/demo/quench-demo --gpu-backend metal --frame-size 1920x1080 --audio-device null \
+    --script examples/demo/scenarios/raytracing_profile.txt
+# The statistics of a saved capture again
+python3 tools/tracy_capture.py --stats build/profile/tracy/raytracing.tracy
+```
+
+`tools/tracy_capture.py` picks a free port, starts the program with `TRACY_PORT` set to it, records with
+`tracy-capture` and exports with `tracy-csvexport` (Tracy's command line tools, built by the `profile` preset into
+its build directory; `QUENCH_TRACY_TOOLS`, on with `QUENCH_TRACY` in host builds). `<output>_zones.csv` has a row per
+CPU zone, GPU zone and plot, for the whole capture (`all`) and for every perf region of the script (found by the
+`perf_begin <label>` and `perf_end <label>` messages the app sends): count, count and time per frame, mean, p50, p99
+and max of single zones, total and self time (without child zones). The script prints the zones with the most time
+per region; `--seconds N` stops recording after N seconds, `--expect NAME` and `--expect-gpu NAME` fail the run
+without that zone (the `hello_tracy_capture` test). The program must leave by itself: `--script` with `quit`, or
+`--quit-after`. Two limits of Tracy's: recording starts when the server connects, so the program's first moments
+are missing (the script retries `tracy-capture` until the program listens: started earlier it fails at once on
+macOS); and its statistics leave out zones shorter than one tick of its timer (about 42 ns on Apple silicon), so
+the counts of tiny zones are low.
+
+What a capture has:
+
+- **Frames**: a frame mark per app frame; plots `app.frame_ms`, `app.cpu_ms`, `gpu.frame_ms` (the command buffer's
+  GPU time, every backend with `gpu::Caps::gpuTiming`, also SDL GPU), `audio.mix_ms` and `audio.load` (the audio
+  statistics the game thread reads every 0.5 s).
+- **The app loop** (thread `main`): `app.frame`, `app.gpu_time`, `app.scenario`, `app.fixed_step` (each tick),
+  `app.update`, `app.ui`, `app.render` with `app.wait_gpu` (offscreen: the wait for the oldest frame in flight),
+  `app.acquire_swapchain`, `app.submit` and `app.capture`, and `render.frame` (`Renderer::render`).
+- **Timed ranges**: a CPU zone `pass.<range>` around each range of [GPU time per pass](#gpu-time-per-pass)
+  (`pass.game`, `pass.raytrace`, ...), on every backend: while a server is connected the app times the ranges every
+  frame. On the native Metal backend the same ranges are also GPU zones, on a GPU timeline named after the device,
+  made from the engine's own timestamps: each interval in which a range kept the GPU busy is a zone, so a range's
+  time per frame is its busy time in the perf lines (the ray tracing section at 1920 x 1080: `raytrace` 4.781 ms
+  per frame in the capture, 4.804 ms p50 in the perf line). Where passes overlap (an Apple GPU starts a pass's
+  vertex stage while the previous one shades) a range has several zones per frame. The GPU timeline begins at the
+  timestamps' calibration, about 1 s after the start. SDL GPU has no timestamp queries: only the plot there.
+- **Jobs** (threads `jobs.worker N`): a zone per job, named where the job has a name (`JobSystem::run(name, ...)`,
+  `parallelFor(name, ...)`; others are `job`): `assets.load`, `audio.stream_open`, `audio.stream_fill`,
+  `animation.characters`, `physics.jobs` (Jolt's jobs).
+- **Modules**: `physics.step` with Jolt's own zones inside (`jolt.<name>`, through Jolt's external profile hooks),
+  `animation.update`, `assets.update` with `assets.finish` per finished asset, `assets.read`, `assets.decode`,
+  `assets.transcode_basis` and `assets.decode_bc7` (the asset's path as the zone's text), `gpu.upload_buffer`,
+  `gpu.upload_texture`, `audio.update`, `audio.decode` (a stream's refill), `audio.mix_offline`.
+- **Messages**: every log line while a server is connected.
+
+Not recorded: the audio device's callback. It must not allocate, lock or wait, and Tracy's zone path may allocate
+(a thread's first event, a new block of its event queue); its mix time comes through the `audio.mix_ms` plot.
+Allocations are recorded only with `-DQUENCH_TRACY_MEMORY=ON` (with `QUENCH_TRACY`; off by default): it replaces
+the global `operator new` and `operator delete` (not the aligned ones) with versions that report to Tracy while a
+server is connected, and every allocation then pays for that check.
+
+Games use the same macros (`#include <quench/core/Profile.h>`, all of them nothing without `QUENCH_TRACY`):
+
+```cpp
+QUENCH_PROFILE_ZONE("game.ai");             // a zone to the end of the scope; the name a string literal
+QUENCH_PROFILE_ZONE_DYNAMIC(name);          // a zone with a name made at run time (copied while recording)
+QUENCH_PROFILE_ZONE_TEXT(path);             // text on the current zone
+QUENCH_PROFILE_PLOT("game.enemies", count); // a value over time; the name a string literal
+QUENCH_PROFILE_MESSAGE(text);               // a message on the timeline
+QUENCH_PROFILE_THREAD_NAME("loader");       // the calling thread's name
+```
+
+`QUENCH_PROFILE_FRAME()` marks the end of a frame; the app does it. `quench::profile::connected()` tells whether a
+server records (for work that only feeds a profile).
+
+**Opening a capture** (by the user; agents do not start the GUI, it opens a window): Tracy's profiler GUI of version
+0.15.0 or newer opens a `.tracy` file (its welcome window, "Open saved trace"); an older one refuses it (Homebrew had
+0.14.1 on 2026-11-07). It builds from the source the configure fetched (not built or run here):
+`cmake -S build/profile/_deps/tracy-src/profiler -B build/tracy-profiler -DCMAKE_BUILD_TYPE=Release`, then
+`cmake --build build/tracy-profiler` (upstream's CMake, which downloads its own libraries). Connected to a running
+profile build instead of `tracy-capture`, it shows the frames live (the program in its list, or `127.0.0.1` and the
+port).
+
+On iOS the client builds with `TRACY_NO_BROADCAST` (no discovery broadcast on the phone's network) and listens on
+all addresses; a server would connect to the phone's address on the local network. Not run on a phone yet, and the
+app would need iOS's local network permission (`NSLocalNetworkUsageDescription`, not in the engine's Info.plist).
+Off in WebAssembly builds (the option is ignored there: Tracy's client needs threads and TCP sockets).
+
 ## Budgets
 
 First budgets, set on 2026-11-05 from the version 0.1.0 runs below (deterministic region) at about twice the measured
@@ -203,6 +295,110 @@ demo's Adapt to heat (Settings, off) uses them as they are, and its check mode h
 (`tunnel.heat`: the tunnel's phone defaults for 10 minutes with it on; [Engine demo](demo.md#modes)).
 
 ## Measurements
+
+### Tracy on and off
+
+2026-11-07 18:58-19:19, the Mac (Apple M4 Pro), offscreen, the native backend (the default), `--frame-size 480x270
+--audio-device null`, the demo's `benchmark.txt` (every section, 5 s each, unpaced) and hello's `benchmark.txt`
+(10 s, unpaced, about 20,000 frames per second); runs of the builds alternated, the medians of the runs' CPU p50
+and p99, ms. Off: Release before the change (`c981cc6`) against Release with it (Tracy off), three runs of the demo
+and eight of hello. On: Release against the `profile` preset (Tracy compiled in), without a server and recorded by
+`tracy-capture` (`tools/tracy_capture.py`), two runs each.
+
+| Build | Sum of the demo sections' CPU p50 / p99 | hello CPU p50 / p99 |
+|---|---|---|
+| Release before the change | 2.842 / 5.974 | 0.022 / 0.0595 |
+| Release, Tracy off | 2.839 / 5.920 (-0.1 % / -0.9 %) | 0.022 / 0.0625 (0 / +5.0 %) |
+| Release (the second session) | 2.801 / 6.528 | 0.022 / 0.059 |
+| `profile`, no server | 2.814 / 5.777 (+0.5 % / -11.5 %) | 0.022 / 0.059 (0 / 0) |
+| `profile`, recorded | 2.814 / 7.144 (+0.5 % / +9.4 %) | 0.023 / 0.068 (+4.5 % / +14 %) |
+
+**Off**, every section's CPU p50 is within -3.6 % to +4.6 % of the build before (the ray tracing section +4.6 %:
+0.456 to 0.477, its runs 0.41 to 0.52 in both builds). A section's p99 moves by up to 2 times between runs of the
+same binary, so the per-section p99 says nothing at this size. hello's p99 median is 3 µs higher (0.057 to 0.078
+in the runs before, 0.046 to 0.067 after; the mean of the runs' p99 0.0615 before, 0.0603 after); its frame has
+no code of the change but the macros, which compile to nothing, so this is the spread of the runs. The demo's
+stripped program is 208 bytes larger (the job names; [Dependencies](dependencies.md#added-for-profiling)).
+**Compiled in, no server**: each zone costs a check of the connection, a load of one flag; the sections' p50 within
+-8 % to +13.5 % (the ray tracing section 0.474 and 0.490 against 0.414 and 0.435, inside the spread of the runs
+above), their sum +0.5 %. **Recorded**: the sections' p50 +0 to +2.4 % (the sum +0.5 %), the first section more
+(+19.5 %: the server connects during it, 8375 frames in the first run against 11,684); hello +4.5 % p50 and +14 %
+p99, and one of its two recorded runs made 149,110 frames instead of about 200,000: at 20,000 frames per second
+Tracy's thread has about 20 events a frame to send (zones, GPU zones, plots). The recorded demo benchmark made a capture of 91 MB
+(162,000 frames, 65 s), hello's 17 MB (10 s); `tracy-csvexport` took about two minutes over the demo's.
+
+One run of hello before the change and one recorded run showed `gpu ms avg` of 3,110 and 3,045 ms with p95 under
+0.06 ms: one command buffer's GPU time read as 7.2 days on the native backend, about the host clock since the Mac
+started (a start time of zero, probably), a fault older than Tracy (cause not checked); the frame times and the
+ranges' busy times are not affected.
+
+### The ray tracing section by frame size
+
+2026-11-07 18:53-18:57, the demo's ray tracing section on the Mac (Apple M4 Pro), offscreen on the native backend,
+Release (Tracy off), `--audio-device null`, one run per size, 5 s per region (`scenarios/raytracing_profile.txt`;
+the render scales in a scenario of the same form, not committed, 4 s per region). The open question: the user saw
+57 ms of GPU time per frame in that section (the 0.10.0 package, the `raytrace` range 43.9 ms, `rays` 15 ms,
+`denoise` 4.8 ms) at render scale 1.0 with 8 shadow rays, 4 occlusion rays, traced reflections, per-pixel indirect
+light, the temporal denoiser and MetalFX temporal, likely in a large window on a Retina display. Mac defaults: render
+scale 0.67 with MetalFX temporal, ray-traced sun shadows (2 rays), occlusion (2 rays), the 2 lamps' shadows and
+reflections, the probe grid, the temporal denoiser. GPU busy time p50 per range, ms (the perf lines; the Tracy
+capture at 1920 x 1080 reads the same within 0.03 ms):
+
+| Output (rendered) | Frame p50 | `game` | `raytrace` | `rays` | `denoise` | `probes` | `reflections` | `hdr` | `upscale` | `accel` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1280 x 720 (858 x 482) | 4.28 | 4.65 | 3.09 | 1.20 | 0.39 | 1.19 | 0.31 | 0.40 | 0.65 | 0.35 |
+| 1920 x 1080 (1286 x 724) | 7.17 | 7.75 | 4.80 | 2.33 | 0.78 | 1.20 | 0.52 | 0.78 | 1.29 | 0.55 |
+| 2560 x 1440 (1715 x 965) | 11.40 | 12.12 | 7.29 | 3.97 | 1.36 | 1.20 | 0.75 | 1.30 | 2.32 | 0.59 |
+| 3456 x 2160 (2316 x 1447) | 21.57 | 22.26 | 13.29 | 7.86 | 2.76 | 1.20 | 1.46 | 2.52 | 4.76 | 0.58 |
+
+The user's settings (`heavy` in the scenario: render scale 1.0, the rest as above), ms:
+
+| Output | Frame p50 | GPU p50 | `raytrace` | `rays` | `indirect` | `denoise` | `probes` | `reflections` | `upscale` |
+|---|---|---|---|---|---|---|---|---|---|
+| 1280 x 720 | 9.24 | 9.65 | 8.06 | 3.65 | 1.95 | 0.77 | 1.19 | 0.50 | 0.79 |
+| 1920 x 1080 | 18.54 | 19.34 | 15.93 | 7.81 | 4.32 | 1.68 | 1.19 | 0.95 | 1.79 |
+| 2560 x 1440 | 31.94 | 33.44 | 27.36 | 13.70 | 7.85 | 3.02 | 1.20 | 1.60 | 3.27 |
+| 3456 x 2160 | 64.66 | 67.82 | 55.49 | 27.88 | 16.75 | 6.49 | 1.20 | 3.13 | 6.63 |
+
+**Where the time goes.** Everything but the probe grid (1.2 ms at every size: its 2048 probes do not depend on the
+frame) and the acceleration structures (0.35 to 0.6 ms) grows with the pixel count. The traced passes and the HDR
+pass grow with the rendered pixels (`raytrace` without the probes about 3.6 ms per million rendered pixels at the
+defaults from 1080p on, more at 720p); MetalFX's temporal upscaler, bloom and tone mapping with the output pixels
+(`upscale` 0.63 ms per million output pixels at every size). No range grows faster than its pixels. The user's
+settings cost 8.7 to 9.0 ms of frame time per million pixels from 1080p on, over 40 % of it in the sun and
+occlusion rays and a quarter in the per-pixel indirect light. The user's 57 ms fall between 2560 x 1440 (33.4 ms of
+GPU time) and 3456 x 2160 (67.8 ms), at about 6.3 million pixels by the GPU time per pixel here: a large window on a
+Retina display. Their split differs: at their `denoise` time (about 5.6 million pixels here) `rays` would take
+about 21 ms against their 15, and the rest of `raytrace` (indirect light, reflections, probes) about 16 ms against
+their 24; the view (the sun turns, the character walks) changes the split, the total follows the pixel count. The
+section's defaults are fixed while the window is not.
+
+**Render scales** (Mac defaults otherwise; frame p50 / `game` busy / `upscale` busy, ms):
+
+| Output | 0.67 temporal (default) | 0.5 temporal | 0.4 temporal | 0.5 spatial | 0.67 spatial |
+|---|---|---|---|---|---|
+| 1920 x 1080 | 7.17 / 7.75 / 1.29 | 5.26 / 5.78 / 1.14 | 4.22 / 4.70 / 0.91 | 4.38 / 4.99 / 0.27 | 6.11 / 6.74 / 0.27 |
+| 2560 x 1440 | 11.40 / 12.12 / 2.32 | 7.94 / 8.51 / 1.95 | 6.11 / 6.71 / 1.61 | 6.52 / 7.15 / 0.49 | 9.62 / 10.08 / 0.49 |
+| 3456 x 2160 | 21.57 / 22.26 / 4.76 | 14.46 / 14.98 / 3.99 | 10.76 / 11.29 / 3.26 | 11.47 / 12.00 / 1.01 | 17.82 / 18.27 / 1.03 |
+
+The spatial columns' busy times include TAA (0.08 to 0.49 ms), which runs before MetalFX's spatial upscaler. Their
+command buffers' GPU time reads 2.8 to 2.9 times the frame time (`gpu ms` p50 12.2 against a frame of 4.4 ms at 1920 x
+1080, 0.5): not possible for a GPU-bound frame, so that number is wrong with MetalFX spatial on the native backend
+(cause not checked); the frame time and the ranges' busy times agree with each other.
+
+**Proposal (not applied: the section's defaults are unchanged).** Scale the Mac defaults' render scale with the
+output's pixel count, so that the rendered pixels stay near the 0.93 million of 1920 x 1080 at 0.67: scale =
+clamp(sqrt(0.93 million / output pixels), 0.5, 0.67), 0.5 being the panel's lowest. By the table: 0.67 up to
+1920 x 1080 (unchanged), 0.5 at 2560 x 1440 (7.9 instead of 11.4 ms: within 120 Hz's 8.33 ms, just) and at
+3456 x 2160 (14.5 instead of 21.6 ms: 60 Hz instead of 46 frames per second). Chosen when the section starts and when
+the window's size changes, and only while the player has not set a scale (the settings are saved). Beyond that, the
+upscaler's own cost grows with the output (4.0 ms of the 14.5 at 3456 x 2160); MetalFX spatial would save 3 ms there
+(11.5 ms), and a lower bound of 0.4 would give 10.8 ms. Ray counts by pixel count were not measured: at the
+defaults `rays` is about a third of the frame, while the render scale acts on all of it but the probe grid, the
+acceleration structures and the passes at the output's size. The user's 8 and 4 rays with per-pixel indirect light
+at scale 1.0 do not hold 60 Hz even at 1920 x 1080 (18.5 ms). Not looked at: what 0.5 or spatial upscaling look
+like in this scene (a check by eye on the Mac's display), and whether a game wants this in the engine (a target
+rendered pixel count in `RenderSettings`) or in its own settings, as the section would do it.
 
 ### The denoiser in a still scene
 

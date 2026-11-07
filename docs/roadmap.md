@@ -649,8 +649,10 @@ The queue the user set on 2026-11-07, in this order:
 1. The native Metal backend as the default on Apple platforms (done 2026-11-07).
 2. A game-level reaction to the thermal state (built 2026-11-07, item 2 below; its phone run is open).
 3. The stages' remaining work (item 3 below).
-4. Navigation (built 2026-11-07, [Navigation](navigation.md)) and Tracy profiling
-   ([Other modules](#other-modules-when-a-game-needs-them)).
+4. Navigation (built 2026-11-07, [Navigation](navigation.md)) and Tracy profiling (built 2026-11-07:
+   `QUENCH_TRACY`, the `profile` preset, captures without the GUI; [Performance](performance.md#profiling-with-tracy);
+   its run on an iPhone is open, with the user); what is left of them in
+   [Other modules](#other-modules-when-a-game-needs-them).
 5. Stage 13, weather (above).
 
 What else stays open, in the order it is useful (not scheduled; the user decides):
@@ -678,14 +680,17 @@ What else stays open, in the order it is useful (not scheduled; the user decides
    intervals at fair, a minute before serious; check mode item `tunnel.heat`). The probe grid on phones:
    traced in turns since 2026-11-07 (`probeUpdatePeriod`, measured on the Mac only); its phone default waits for
    `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns with classification at half size,
-   60 Hz).
+   60 Hz). Proposed 2026-11-07, not changed: the ray tracing section's render scale on the Mac by the window's pixel
+   count, from 0.67 down to 0.5 (about a million pixels traced up to 2560 x 1440; 0.5 there: 7.9 instead of 11.4 ms
+   a frame, at 3456 x 2160 14.5 instead of 21.6; [Performance](performance.md#the-ray-tracing-section-by-frame-size)).
 3. **Remaining work of the stages:** browser audio (stage 7).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
-5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. The
-   Xcode build's late asset copies and re-cooks were not reproduced after stage 12 (2026-11-06: a change reached the
-   bundle in the same build, a build without changes did nothing; [App shell](app.md#ios-runs)); what left the
-   licence files out of one stage 10 build is not known.
+5. **Known open questions:** per-frame call counts and profiles: answered on the Mac by Tracy since 2026-11-07
+   (recorded offscreen by `tools/tracy_capture.py`, zones with their counts and times per frame, no GUI); on the
+   iPhone not yet (a run with the user). The Xcode build's late asset copies and re-cooks were not reproduced after
+   stage 12 (2026-11-06: a change reached the bundle in the same build, a build without changes did nothing;
+   [App shell](app.md#ios-runs)); what left the licence files out of one stage 10 build is not known.
 6. Other modules when a game needs them and the later platforms when the user asks (below).
 
 ## Other modules (when a game needs them)
@@ -693,7 +698,8 @@ What else stays open, in the order it is useful (not scheduled; the user decides
 Navigation is built (2026-11-07, Recast & Detour: [Navigation](navigation.md)). Its remaining work: crossings of
 off-mesh links that a game drives (Detour moves agents along a straight line), navmesh tiles streamed by distance,
 compressed layers, the crowd's update on jobs, a cooked level in the demo, and a look in motion and a run on the
-iPhone. Tracy profiling, Flecs as an optional ECS module.
+iPhone. Flecs as an optional ECS module. Tracy profiling, listed here before, was built on 2026-11-07
+([Performance](performance.md#profiling-with-tracy)).
 
 ## Later platforms
 

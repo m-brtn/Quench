@@ -249,6 +249,21 @@ records no ranges. Timing costs CPU time in every timed command buffer, measured
 ([App shell](app.md#command-line-flags)). Without timing, the native backend's CPU time in the demo is that of SDL GPU
 within the noise (see [Performance](performance.md#measurements)).
 
+### Profiling
+
+`QUENCH_TRACY` (off by default) links Tracy's client into `quench_core`; the macros of `quench/core/Profile.h`
+(zones, frame marks, plots, messages, thread names) are its only interface, so no Tracy header reaches a public
+header in other builds and a game's zones use the same macros. Tracy's own GPU back-end for Metal times one encoder
+per zone with names fixed at compile time and timestamp buffers of its own; the native backend already samples
+every encoder for the ranges above. It hands those samples to Tracy instead (`profile::gpuContext` at the timestamp
+calibration, `profile::gpuZones` per resolved command buffer), as zones for the intervals a range kept the GPU busy,
+so a capture and the perf lines agree. The app turns pass timing on while a server is connected and mirrors each
+range as a CPU zone (`pass.<range>`) in `CommandBuffer` on every backend. The job system names its workers and
+records a zone per job; Jolt's profile macros record through its external profile hooks
+(`JPH_USE_EXTERNAL_PROFILE`, in `src/physics/PhysicsWorld.cpp`). The audio device's callback records nothing: Tracy
+may allocate on a thread's first event or on a new block of its queue
+([Performance](performance.md#profiling-with-tracy)).
+
 ## Ray tracing
 
 Stage 9, second half (2026-11-06). Built on the native Metal backend and the retained scene, and keeping the rules:

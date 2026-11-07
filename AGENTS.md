@@ -29,7 +29,11 @@ iPhone 18 Pro Max and the checks by eye and ear:
 the CMake
 skeleton and presets,
 `quench_core` (`Result`, `QUENCH_ASSERT`, `quench::log`, `FixedStepClock`, JSON, `quench::fs` with its standard
-library backend, worker thread priority, the job system `quench::JobSystem` on enkiTS), `quench_physics`
+library backend, worker thread priority, the job system `quench::JobSystem` on enkiTS, profiling macros in
+`quench/core/Profile.h`: Tracy's on-demand client with `QUENCH_TRACY`, off by default, the `profile` preset; zones of
+the app loop, the timed ranges (GPU zones on the native backend), jobs, physics, animation, assets and audio;
+captures recorded offscreen and summed up without Tracy's GUI by `tools/tracy_capture.py`; not run on a phone),
+`quench_physics`
 (`PhysicsWorld` on Jolt, its jobs on the engine's job system), `quench_assets` (asset IDs, the `AssetManager` cache
 with reference counts, placeholders, budgets, loads on jobs, a per-frame upload budget, hot reload on the Mac and,
 in development builds, on a device through an asset overlay in the user directory filled by `tools/push_assets.sh`
@@ -142,8 +146,9 @@ with one HLSL shader source compiled at build time (glslang; DXC, built from sou
 Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer, bc7enc_rdo's BC7 decoder,
 mikktspace and Basis Universal's transcoder (assets), miniaudio (sound decoding, Vorbis through its stb_vorbis, the reverb through its verblib, and device output),
 the SADIE HRTF set (from Resonance Audio's repository, reduced to a table in `quench_audio`), ozz-animation (the animation runtime and the offline library
-that builds skeletons and clips); the cooker adds fastgltf, stb_image, astc-encoder and Basis Universal's encoder at
-build time. Pins, planned additions and
+that builds skeletons and clips), Tracy (profiling, only with `QUENCH_TRACY`; its `tracy-capture` and
+`tracy-csvexport` with capstone, Zstandard and PPQSort); the cooker adds fastgltf, stb_image, astc-encoder and Basis
+Universal's encoder at build time. Pins, planned additions and
 their licences: `docs/dependencies.md`.
 
 ## Platforms
@@ -209,6 +214,12 @@ build/release/examples/demo/quench-demo --section shadows   # --gpu-backend meta
 build/release/examples/demo/quench-demo --onscreen --frame-size 1920x1080 --gpu-backend metal --audio-device null \
     --script examples/demo/scenarios/raytracing_benchmark.txt
 tools/package_demo.sh                    # --ios also builds a development-signed .ipa (ios-xcode, not installed)
+# Tracy profiling (docs/performance.md, "Profiling with Tracy"): Release with QUENCH_TRACY, a capture offscreen and
+# its zones per perf region in a CSV; never start Tracy's GUI (it opens a window)
+cmake --preset profile && cmake --build --preset profile && ctest --preset profile -L "core|hello" -j8
+python3 tools/tracy_capture.py --output build/profile/tracy/rt -- build/profile/examples/demo/quench-demo \
+    --gpu-backend metal --frame-size 1920x1080 --audio-device null \
+    --script examples/demo/scenarios/raytracing_profile.txt
 # The asset cooker (docs/assets.md); games and the demo cook at build time through quench_cook_assets()
 build/debug/quench_cook --help
 ```
@@ -260,7 +271,8 @@ decision, 2026-11-06); `tools/check.sh` runs them, offscreen:
   Look at a capture when its check fails or its golden image changes, not at all of them every time. Add the one step
   that can break where the change can: `tools/check.sh step asan` or `step tsan` (threaded code), `step wasm` (a
   headless module), `step ios` (platform code), `step new-game` (what a game's build uses: `cmake/QuenchGame.cmake`,
-  the template, the game skill).
+  the template, the game skill). A change to profiling code (`Profile.h`, `cmake/QuenchTracy.cmake`, the zones)
+  also builds the `profile` preset and runs its `ctest -L "core|hello"` (`hello_tracy_capture` records a capture).
 - **Shared foundations (core, the job system and threads, the GPU layer, the app loop, the build and CMake) and the
   end of a stage: `tools/check.sh full`.** format; `debug`, `release`, `asan` and `tsan` (build and ctest each; the
   captures of every backend in `release`); `wasm-node`; `host-tools`, `ios-sim-release` and `ios-sim-tests`; the
@@ -555,10 +567,11 @@ cmake/                 Dependencies (runtime pins), ShaderToolchain (shader comp
                        per-machine tool cache), QuenchBasisu (Basis Universal's sources, kept in that cache, and its
                        transcoder), QuenchToolCache (the cache's place), QuenchShaders (quench_add_shaders,
                        quench_add_ray_hits), QuenchCook (quench_cook_assets), EmbedShaders, QuenchTargets (warnings,
-                       include directories), QuenchGame (quench_add_game)
+                       include directories), QuenchGame (quench_add_game), QuenchTracy (with QUENCH_TRACY:
+                       Tracy's client, tracy-capture and tracy-csvexport, their pins)
                        and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator;
                        MikkTSpaceRotate: a shift by 32 in MikkTSpace masked; DetourAlign8: Detour's tile sections
-                       aligned to 8 bytes with 64-bit references)
+                       aligned to 8 bytes with 64-bit references; TracyPpqsort: Tracy's changes to PPQSort)
 include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, navigation/, gpu/,
                        app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
@@ -608,6 +621,7 @@ tools/make_ltc_table.py writes src/render/LtcTable.inc from selfshadow/ltc_code'
 tools/make_hrtf_table.py writes src/audio/HrtfTable.inc from Resonance Audio's SADIE set (checks its SHA256)
 tools/new_game.py      creates a game from templates/game, with the quench-game skill
 tools/check_skill.py   checks that the paths, flags and names the quench-game skill uses exist (step new-game)
+tools/tracy_capture.py records a profile build with tracy-capture (offscreen, no GUI), zone statistics to CSV
 tools/check.sh         the gates: quick (a small change), full, release, single steps
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
 tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a development-signed .ipa)
