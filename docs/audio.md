@@ -244,6 +244,41 @@ device; `Device::update()` starts it again when the interruption ends. Route cha
 followed by the system and logged; `interruptions()` and `routeChanges()` count them. On other platforms the session
 settings are ignored.
 
+## Weather sounds
+
+`audio::WeatherAudio` (`quench/audio/WeatherAudio.h`, in `quench_audio`, headless) plays the weather's sounds from
+numbers a game gives it once per frame (`WeatherSoundState`: the precipitation at the listener, the distance to the
+nearest rain, the cover over the listener; [Weather](weather.md#the-rains-sound)). Stage 13 part 2 has the rain:
+
+| Layer | Default sound | Gain |
+|---|---|---|
+| `RainLight` | `quench/weather/rain_light.wav`: fine drops, most energy above 2 kHz | the loudness times the light share, times 1 - cover |
+| `RainHeavy` | `rain_heavy.wav`: dense, broad, the loudest | the loudness times the heavy share, times 1 - cover |
+| `RainFar` | `rain_far.wav`: a low rumble, most energy below 700 Hz | rises to 1 as the nearest rain comes from `farDistance` (4 km) to 0 m (squared), fades out as rain starts at the listener (gone at precipitation 0.1), halved under cover |
+| `RainCover` | `rain_cover.wav`: drops drumming on a roof, low and ringing | the loudness times the cover |
+
+The loudness is `sqrt((p - 0.02) / 0.98)` above a trace of 0.02; light and heavy crossfade at equal power (their
+squares sum to the loudness's) between precipitation 0.25 and 0.75. `WeatherAudio::targetGains` gives these rules
+for a game that plays its own sounds. Each layer follows its target over `smoothing` (0.5 s), starts (fading in)
+when it becomes audible and stops after two seconds of silence; the layers play on a bus (`effects` by default) at a
+volume of their own.
+
+A game **replaces** a layer with `setSound(layer, path)` or `WeatherSoundDesc::sounds` (a playing layer crossfades
+into the new sound), silences it with an empty path, or turns the object off (`setEnabled(false)`: its sounds fade
+out) and plays its own sounds from the same numbers. The sounds are assets: a hot-reloaded file crossfades into its
+new data. It runs on the game thread only and plays, fades and restarts sounds through the `AudioSystem`; the audio
+thread's rules hold (nothing of it runs there).
+
+**The default sounds** are procedural loops (`tools/assets/make_weather_sounds.py`, Python's standard library,
+CC0): 4 s at 32 kHz, stereo, filtered as periodic signals and with drops placed around the loop, so they have no
+seam. The CMake function `quench_weather_sounds(<name>)` (`cmake/QuenchCook.cmake`) writes them at build time and
+cooks them like any sound; a game lists `<name>` in `quench_add_game(... COOKED_ASSETS ...)` to ship them.
+`audio.weather_default_sounds` measures them (rms, peak, the energy below 700 Hz and above 2 kHz through one-pole
+filters, the seam): light 0.060 rms, 0.04 below 700 Hz, 0.51 above 2 kHz; heavy 0.178 rms, peak 0.980, 0.18 and
+0.39; far 0.100, 0.71 and 0.05; roof 0.120, 0.53 and 0.10; each seam smaller than the loop's own largest change over
+two frames. It runs in the Mac's builds (the host writes the sounds) and is skipped under Node.js and in the iOS
+Simulator.
+
 ## Offline mixing and captures
 
 Without a device the app mixes on the main thread, on the frame clock: `--no-audio` (the mix is discarded),
@@ -295,13 +330,15 @@ the fade and 0.0006 a second later, -25 dB; at room size 0.2 under 0.0001 a seco
 batches write no WAV file, so the backends' mixes are no longer compared byte for byte (`demo_audio_wav_match` is
 gone).
 
-Tests (`tests/audio/`): `audio.*` (35 cases, headless, also under Node.js: spatial formulas, bus gains, click-free
+Tests (`tests/audio/`): `audio.*` (38 cases, headless, also under Node.js: spatial formulas, bus gains, click-free
 ramps, resampling and pitch, Doppler, panning and attenuation in the mix, voice stealing, one-shots and loops,
 pause, handles, offline carry and the monitor, `PcmStream`, the thread stress case, no allocation in render, the
 reverb (bit-exact when unused, decay by room size), the HRTF (left and right at two rates, bit-exact when off, the
 voice cap, a moving source switched on and off), the opt-in mix cost, streams across chunk
 boundaries, on jobs, gapless loops, crossfades, Vorbis streams, loops and music, missing files, decoders and their
-errors, the sound asset type, the analysis functions) and `audio_device.*` (`null_device`: the null backend renders and suspends;
+errors, the sound asset type, the analysis functions; the weather's sounds: their gains, a mix of sine layers by its
+strongest frequency with a game's sound, a hot reload, a bus and off, and the default loops measured, a case that
+skips where the build has no Python) and `audio_device.*` (`null_device`: the null backend renders and suspends;
 `default_output`: plays 0.5 s of a quiet 440 Hz tone through the default output, only with
 `QUENCH_TEST_AUDIO_DEVICE=1` in the environment; `audio_session_category`: iOS only). No automated test plays
 through the speakers: the app tests and capture checks run offscreen, where the mix is offline
@@ -330,6 +367,10 @@ the sines it was encoded from.
   Mac's speakers, headphones and the iPhone is for the user to judge.
 - **3D**: panning or the HRTF; no occlusion, obstruction or distance filters; one listener; no virtual voices (a
   stolen or rejected sound is gone).
+- **Weather sounds**: rain only (wind and thunder come with the weather's part 4), one set of layers for the
+  listener, not per surface (leaves, puddles, metal), not placed in 3D; the cover is the camera's
+  (`RenderStats::rainCover`) unless the game gives its own. The default loops are procedural noise, measured, not
+  listened to.
 - **HRTF**: one generic head (the KU100 dummy head), not chosen per listener; no near-field responses (the same
   filters at any distance); its voices go to the first sounds that need one, not by priority or loudness. The
   table's onsets at -70 degrees are uneven (the far ear under the torso), so directions interpolated near that ring

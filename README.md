@@ -45,7 +45,8 @@ look and listen.
   shadows, cut-outs.
 - **Weather:** volumetric clouds that drift with the wind and change shape, from fair-weather cumulus to storm
   clouds and overcast, a single shower in a blue sky, cloud shadows on the ground, light that dims and greys under
-  them, sunsets.
+  them, sunsets; rain that falls only under raining clouds, dry under roofs, shafts of rain in the distance and a
+  rainbow, ground that gets wet and dries again, puddles with rings of drops, and a rain sound you can replace.
 - **Physics:** Jolt Physics, multithreaded on the engine's job system.
 - **Sound:** 3D sound with HRTF for headphones, reverb, buses and mixing, streamed music with crossfades; WAV, FLAC,
   MP3 and Ogg Vorbis.

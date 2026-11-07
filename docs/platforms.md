@@ -259,14 +259,15 @@ the job system, and inside `NavMesh::update()` where there are no worker threads
 | Web | `navigation.*` under Node.js (`wasm-node`, single-threaded: the builds run inside `update()`); no rendering |
 | Windows, Linux, Android | nothing |
 
-`quench_weather` is headless and portable C++ (the field is a header shared with the shaders); the clouds are
-`quench_render`'s, with the 2D layer as their fallback by format support ([Weather](weather.md#platforms)).
+`quench_weather` is headless and portable C++ (the field is a header shared with the shaders); the clouds and the
+rain are `quench_render`'s, with the 2D layer as the clouds' fallback by format support, and `WeatherAudio` is
+`quench_audio`'s ([Weather](weather.md#platforms)).
 
 | Where | Run so far |
 |---|---|
-| Mac | `weather.*` in `headless`, `debug`, `release`, `asan` and `tsan`; `render.renderer_clouds_shadow_the_ground` and the GPU cases `texture_3d_from_layers` and `cube_faces` on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK; the demo's Weather section and its three captures on all three (offscreen); the costs on the native backend (offscreen) |
+| Mac | `weather.*` in `headless`, `debug`, `release`, `asan` and `tsan`; `render.renderer_clouds_shadow_the_ground` and the GPU cases `texture_3d_from_layers` and `cube_faces`, `render.renderer_rain_wets_the_open_ground` and `renderer_rain_shafts_from_afar` on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK; the demo's Weather section, its `weather` and `rain` parts and their six captures on all three (offscreen); `audio.weather_*` (the mix and the default sounds, by measurement); the costs on the native backend (offscreen) |
 | iOS Simulator | `ios-sim-tests`: `weather.*` and the GPU and render cases on both backends |
-| iPhone | nothing. Needs the user: the clouds in motion on the phone's screen, the phone defaults' cost |
+| iPhone | nothing. Needs the user: the clouds and the rain in motion on the phone's screen, the rain by ear, the phone defaults' cost |
 | Web | `weather.*` under Node.js (`wasm-node`); no rendering |
 | Windows, Linux, Android | nothing |
 

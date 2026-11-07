@@ -4,11 +4,13 @@ Stage 13 of the [Roadmap](roadmap.md) (requested by the user on 2026-11-07): rai
 form, drift and change shape, light that follows them, rain under a single cloud in a blue sky, ripples in puddles
 and weather sounds a game can replace. This page is the design of the whole stage and the description of what is
 built. **Part 1, the weather map, the clouds and their light, is built** (2026-11-07): `quench_weather`, a headless
-module, and the clouds in `quench_render`, with the demo's "Weather" section. Parts 2 to 4 (rain, snow, wind) are a
-plan ([Later parts](#later-parts)). Written for the engine, not moved from a game; neither game uses it. It ran on
-the Mac (Metal, the native Metal backend and Vulkan through MoltenVK), in the iOS Simulator (the test executables) and
-as WebAssembly under Node.js (the headless tests); not on an iPhone, and nobody has looked at the clouds in motion.
-All documentation: [index](README.md).
+module, and the clouds in `quench_render`, with the demo's "Weather" section. **Part 2, rain, is built**
+(2026-11-07): the wetness the weather remembers, the rain in `quench_render` (streaks, splashes, shafts, a rainbow,
+the rain occlusion map, wet surfaces, puddles and ripples) and the rain's sound (`audio::WeatherAudio`). Parts 3 and
+4 (snow, wind) are a plan ([Later parts](#later-parts)). Written for the engine, not moved from a game; neither game
+uses it. It ran on the Mac (Metal, the native Metal backend and Vulkan through MoltenVK), in the iOS Simulator (the
+test executables) and as WebAssembly under Node.js (the headless tests); not on an iPhone, and nobody has looked at
+the clouds or the rain in motion or listened to the rain. All documentation: [index](README.md).
 
 ## Use
 
@@ -30,22 +32,32 @@ weather.setTime(1200.0);                  // where the weather's clock starts (s
 wx::CellId shower = weather.addCell({.position = {2600, -10500}, .radius = 3200,
                                      .type = wx::CloudType::Cumulonimbus, .precipitation = 1});
 
-quench::render::RenderSettings rs;        // clouds are off by default
+quench::render::RenderSettings rs;        // clouds and rain are off by default
 rs.clouds = quench::render::Clouds::Volumetric;
 rs.cloudResolution = 0.5f;                // half size, accumulated over frames (cloudTemporal)
+rs.rain = quench::render::Rain::Medium;   // streaks, splashes, wet surfaces; shafts with the clouds
 renderer.setSettings(rs);
+// What gets wet: every material by default (wetness 1); puddles where a material asks for them
+MaterialId paving = scene.addMaterial({.baseColor = {0.4f, 0.4f, 0.42f, 1}, .roughness = 0.7f, .puddles = 1});
+MaterialId lake = scene.addMaterial({.baseColor = {0.02f, 0.05f, 0.06f, 1}, .roughness = 0.03f, .water = true});
+
+quench::audio::WeatherAudio rainSound(app.audio()); // the engine's default rain sounds (quench_weather_sounds)
 
 // Every frame
 weather.update(dt);
+weather.setWetnessFocus({camera.x, camera.z}); // where the remembered wetness follows the rain that fell
 scene.setWeather(weather);                // a copy: set it again after each update
 float rain = weather.precipitation(listenerPosition);           // 0..1 falling here
 float nearest = weather.distanceToPrecipitation({x, z});        // m to the nearest rain
 float overcast = weather.cover({x, z}, 6000.0f);                // mean coverage around a point
 glm::vec3 wind = weather.windAt(position);                      // m/s
+weather::Wetness wet = weather.wetness({x, z});                 // ground 0..1, standing water 0..1
+float underRoof = renderer.stats().rainCover;                   // 0 open .. 1 covered (-1: not known yet)
+rainSound.update({.precipitation = rain, .distanceToRain = nearest, .cover = std::max(underRoof, 0.0f)}, dt);
 ```
 
-`Scene::clearWeather()` removes it (no clouds). A game links `quench_weather` for the queries alone (headless, no
-GPU); `quench_render` links it publicly.
+`Scene::clearWeather()` removes it (no clouds, no rain). A game links `quench_weather` for the queries alone
+(headless, no GPU); `quench_render` links it publicly.
 
 ## Where the weather lives
 
@@ -91,8 +103,8 @@ A top-down field over the whole world, `Sample{coverage, type, precipitation, ci
   mountains. A cell drifts with the wind or stays over its position (`drifts = false`); its precipitation falls
   within about half its radius.
 
-Queries: `sample(xz)`; `precipitation(point)` (the map's below the cloud base, 0 above; no roofs: part 2's
-occlusion map handles cover); `distanceToPrecipitation(xz, threshold, maxDistance)` (rings of 32 directions with a
+Queries: `sample(xz)`; `precipitation(point)` (the map's below the cloud base, 0 above; no roofs: the renderer's
+rain occlusion map handles cover, [Rain](#rain)); `distanceToPrecipitation(xz, threshold, maxDistance)` (rings of 32 directions with a
 bisection, at most 48 rings: 0.03 ms on the M4 Pro with rain 3.7 km away, about 0.3 ms when there is none; a few
 times a second, not per object per frame); `cover(xz, radius)` (19 samples); `windAt(point)` (the setting's wind
 at the cloud base, a logarithmic profile below it: about 0.3 of it at 2 m); `cloudTop(type)`; `highestType()` (an
@@ -185,13 +197,119 @@ ones would be.
 - `FrameUniforms` has three members for it: `cloudShadow`, `skyCube` and `overcast` (all 0 without clouds); a game
   shader built on `quench/Surface.hlsli` gets all of this without a change.
 
+## Rain
+
+`RenderSettings::rain` (`Off` by default) draws the rain of the scene's weather where its precipitation falls, so a
+single raining cloud rains on its own patch of ground and the sun shines beside it:
+
+| Setting | |
+|---|---|
+| `rain` | `Off`, `Low`, `Medium`, `High` (below) |
+| `rainShafts` | the shafts of rain under raining clouds seen from afar (on; they need clouds: they read the clouds' weather map) |
+| `rainbow` | a rainbow in the shafts where the sun is behind the viewer (off) |
+
+| Level | Streaks | Box around the camera | Splashes | Within | Shaft steps | Shafts marched at |
+|---|---|---|---|---|---|---|
+| `Low` | 8192 | 18 m | none | | 12 | a quarter of the render size per side |
+| `Medium` | 24576 | 24 m | 1024 | 10 m | 20 | half |
+| `High` | 49152 | 30 m | 3072 | 15 m | 32 | half |
+
+`Renderer::effects().rain` and `.rainShafts` say what runs after the fallbacks; `RenderStats::rain`, `rainAtCamera`,
+`rainStreaks`, `rainSplashes`, `rainOccluders`, `rainShafts`, `rainbow` and `rainCover` what a frame drew.
+**Fallbacks by formats**, never by platform: the rain needs Rgba16Float targets it can sample and a depth format it
+can sample (the shadow cascades'), else `Off` with a line in `Renderer::fallbacks()`; the shafts need clouds, else
+off with a line; the path tracer's frame has no rain (a line). Every backend has the formats today.
+
+**The passes** (timed ranges `rain_map`, `rain_shafts` and `rain`):
+
+1. **The rain occlusion map**, before every pass that runs the surfaces: the shadow casters drawn into a 512² depth
+   map over 128 m around the camera, an orthographic view along `Weather::rainVelocity` at the camera (the wind
+   slants it), 200 m deep from 100 m above the camera, on its texel grid. A point is under cover where the highest
+   surface along the rain is more than 0.4 m above it. **The cover over the camera** (`RenderStats::rainCover`,
+   what the rain's sound takes): the texels within 0.75 m of the camera in last frame's map, copied in a command
+   buffer of their own and read a few frames later without waiting; the share whose surface is more than 0.5 m
+   above the camera.
+2. **The weather maps** (surface sampler 14): one Rgba16Float texture of 512 x 1040 texels in three regions
+   (`QUENCH_WEATHER_MAPS_*` in `quench/SceneUniforms.h`): the clouds' shadow (rows 0 to 511), the occlusion map (512
+   to 1023) and the weather's wetness grid (the last rows' first 16 x 16 texels: ground wetness, standing water,
+   precipitation), uploaded when `Weather::wetnessVersion()` changes.
+3. **Wet surfaces** in the HDR pass and the G-buffer ([Wetness and puddles](#wetness-and-puddles)).
+4. **The shafts** (with clouds), after the HDR pass and before TAA: marched at a quarter or half of the render size
+   from 20 m to the scene, the cloud base or 30 km, in steps that grow with the square of their number. Each step
+   reads the precipitation of the clouds' weather map at a mip as long as the step (a far step does not miss a
+   shaft), denser in fall streaks (value noise at 220 and 70 m), thinning in the 150 m below the cloud base; an
+   extinction of 0.0012 per metre at precipitation 1 (a visibility of about 2.5 km); single scattering of the sky's
+   and the ground's light (dimmed where clouds are above the step) and of the sun's through the cloud shadow, with
+   the rainbow (the primary bow 40.6 to 42.3 degrees from the antisolar point, the secondary 50.4 to 53.4 at a fifth
+   of it, the whole at 0.06 of the sun's light). Jittered per frame (TAA blends the steps); blended into the HDR
+   image by a depth-aware upsample (the four nearest texels' bilinear weights divided by how far their depth is from
+   the pixel's), so a near edge does not take the veil of the distance behind it.
+5. **The streaks and splashes**, after TAA and upscaling in the output-size image (TAA would smear them), tested
+   against the scene's depth in the shader. Procedural: a fixed set of drops in a box around the camera, each falling
+   with the rain's velocity from a place of its own and wrapped around the box, so nothing is simulated or stored; a
+   drop is drawn where the precipitation there is above its own threshold and the occlusion map lets the rain reach
+   it. A streak is the distance its drop falls in 0.04 s, 6 mm wide (at least a pixel; thinner ones fainter), faded
+   toward the box's edge and within 0.3 m of the camera; lit by the sky's and the ground's light it refracts (as
+   radiance) and the sun's it scatters forward (Henyey-Greenstein, g 0.7): rain against a dark wall and rain toward
+   the sun shine. Splashes: rings of droplets for 0.25 s each at random places within the radius on the highest
+   surface the occlusion map has. One instanced draw of six vertices per streak or splash (every instance runs;
+   culled ones are degenerate).
+
+Where the build differs from the agreed plan: the drops are procedural instances instead of compute particles with
+an indirect draw (the same look without state, on every backend and in the iOS Simulator); the shafts are a pass of
+their own after the HDR pass instead of a part of the cloud march (they veil the scene in front of geometry, which
+the clouds, drawn behind it, do not).
+
+## Wetness and puddles
+
+- **The weather remembers how wet the ground is** (`quench_weather`, headless): `Weather::wetness(xz)` gives
+  `Wetness{ground, water}`, each 0..1, for open ground. A grid of 16 x 16 cells of 64 m around a focus
+  (`setWetnessFocus`: a game's camera or player; the grid moves in whole cells) wets and dries by the precipitation in
+  each cell in steps of 0.25 s of weather time: the ground soaks in `Settings::wettingTime` (120 s of precipitation
+  1, twice as long at 0.5) and dries in `dryingTime` (900 s); standing water fills in `puddleFillTime` (900 s) and
+  drains in `puddleDryTime` (2400 s), so puddles outlast the wet ground. Precipitation below `kWettingThreshold`
+  (0.02) neither wets nor keeps the ground from drying. Outside the grid, for the cells a move brings in and after
+  `setTime`, an estimate from the last hours of the weather (48 samples, about 0.01 ms). Deterministic: the same
+  calls in the same order give the same grid; `wetnessGrid()`, `wetnessOrigin()` and `wetnessVersion()` are what
+  the renderer uploads.
+- **On surfaces** (`quenchApplyRain` in `quench/Surface.hlsli`; the surface entries call it after the surface
+  function, also for the G-buffer, so traced and screen-space reflections see the wet surface; not in ray hits):
+  where the rain reaches (the occlusion map, read 0.3 m off the surface along its normal: walls see the open ground
+  beside them, floors their roof), the ground's wetness times `MaterialDesc::wetness` (1 by default, 0: never wet),
+  less on steep faces, darkens the albedo (to 0.55 when soaked, less where metallic) and lowers the roughness toward
+  `max(0.12, 0.4 r)`. Up-facing parts of a material with `puddles` collect standing water in the hollows of a relief
+  (`quenchPuddleHeight`: value noise at 6 and 1.5 m) up to 0.42 of it at full water, about a third of a flat surface:
+  a dark mirror there (roughness 0.02, not metallic, the geometric normal). On standing water and on materials with
+  `water` (a lake) the rings of the drops falling now (`quenchRipples`: two offset grids of 0.4 m cells, a drop every
+  0.8 s in a share of the cells that grows with the rain, its ring spreading and fading; within 60 m of the camera)
+  bend the normal, so they show in the sky cube's, SSR's and traced reflections.
+- **Opt-out:** a surface file that defines `QUENCH_SURFACE_NO_RAIN` before including `quench/SurfaceEntries.hlsli`
+  keeps its surface as its function makes it, or calls `quenchApplyRain` itself and changes what it gets; a material
+  with wetness 0, no puddles and not water costs a branch.
+- `FrameUniforms` has three members for it (`rainViewProj`; `rain`: the maps on, the occlusion map's depth range, the
+  precipitation at the camera, the ripples; `rainGrid`: the wetness grid's place) and `MaterialUniforms` one
+  (`weather`).
+
+## The rain's sound
+
+`audio::WeatherAudio` (in `quench_audio`, headless; [Audio](audio.md#weather-sounds)) mixes looping layers of rain
+from what the weather does at the listener: light and heavy rain crossfaded at equal power by the precipitation,
+distant rain as the nearest rain comes within 4 km (`distanceToPrecipitation`, a few times a second), and rain
+drumming on a roof by the cover over the listener (`RenderStats::rainCover`, or a game's own test along
+`rainVelocity`). The engine's defaults are procedural (`tools/assets/make_weather_sounds.py`, cooked by the CMake
+function `quench_weather_sounds()`); a game names its own sound for any layer, or turns the object off and plays its
+own sounds from the same numbers (`WeatherAudio::targetGains` gives the engine's mix rules). Wind and thunder come
+with part 4.
+
 ## Phones and fallbacks
 
 The demo's phone defaults (`App::mobile()`): volumetric at half size with the accumulation, 48 steps, one sky cube
 face per frame, 60 frames per second. They come from the costs on the M4 Pro at a phone's size (below) and the
 stage 11 ratio of about 3 between the iPhone 17 and the M4 Pro: about 4 ms on the iPhone 17, an estimate, over the
-2 ms the roadmap set for the clouds; the 2D layer (about 1 ms by the same ratio) is the cheap setting. Not run on a
-phone yet: the defaults wait for that run.
+2 ms the roadmap set for the clouds; the 2D layer (about 1 ms by the same ratio) is the cheap setting. The rain on a
+phone: `Low` without the shafts (so without the rainbow), 0.25 ms on the M4 Pro at the iPhone 17's size, about
+0.7 ms on the phone by the same ratio, within the 1 ms set for the rain; `Low` with the shafts would be about 1.5 ms.
+Not run on a phone yet: the defaults wait for that run.
 
 ## Cost
 
@@ -215,49 +333,65 @@ outside these numbers. Drawing the weather and shadow maps in turns took the wea
 0.36 to 0.22 ms, and the sky cube without detail and with 24 instead of 32 steps from 0.41 to 0.28 ms (two faces per
 frame). Measured offscreen only, never on the screen or on a phone.
 
+**The rain** (`scenarios/rain_cost.txt`, 2026-11-07 23:10, the same way: the Rain here preset from the ground and
+the storm preset from the air, half-size clouds, 3 s per setting): `rain_map`, `rain_shafts` and `rain`, and the HDR
+pass's growth over rain off (the wet surfaces); "added" is their sum, ms.
+
+| Setting | 1920 x 1080: map, shafts, drops, HDR | added | 1206 x 2622: map, shafts, drops, HDR | added |
+|---|---|---|---|---|
+| Ground, Low | 0.02, 0.18, 0.08, 0.07 | 0.35 | 0.02, 0.26, 0.12, 0.11 | 0.50 |
+| Ground, Medium | 0.02, 0.44, 0.14, 0.08 | 0.68 | 0.02, 0.59, 0.17, 0.11 | 0.90 |
+| Ground, High | 0.02, 0.60, 0.46, 0.09 | 1.17 | 0.02, 0.81, 0.49, 0.13 | 1.46 |
+| Ground, Low without shafts (phone defaults) | 0.02, -, 0.09, 0.07 | 0.17 | 0.02, -, 0.12, 0.11 | 0.25 |
+| Storm from the air, Low | 0.02, 0.23, 0.09, 0.04 | 0.37 | 0.02, 0.34, 0.13, 0.05 | 0.54 |
+| Storm from the air, Medium | 0.02, 0.83, 0.14, 0.05 | 1.04 | 0.02, 1.23, 0.19, 0.06 | 1.50 |
+| Storm from the air, High | 0.02, 1.20, 0.45, 0.07 | 1.73 | 0.02, 1.84, 0.48, 0.08 | 2.42 |
+
+The shafts cost the most where rain fills the view (a storm seen from the air); at full size they took 1.6, 2.7 and
+4.4 ms there at 1080p (the first runs, the same session), hence the reduced size. Their upsample is most of `Low`'s
+shaft time. The drops cost by their count, not by the rain: every instance runs.
+
 ## Demo and tests
 
 The demo's "Weather" section (14; [Engine demo](demo.md)): a plain 20 km wide with hills, towers and a lake seen
-from a few hundred metres up; presets (fair weather, sun shower, towering, storm, overcast, cirrus), coverage, type,
-variation, precipitation, cirrus, a raining cumulonimbus as a cell, wind speed and direction, change of shape, the
-weather's speed, the sun, Run day and Sunset, the quality (full size, half size, 2D layer, off), steps, cloud
-shadows, the sky cube and its faces per frame, 60 Hz. Its batch part `weather` checks the cell's rain, the distance
-to it and the cover, the march's size and the fallback to the layer, with three golden captures per backend
-(`demo_weather.png`, `demo_weather_sunset.png`, `demo_weather_layer.png`); check mode item `weather.clouds` waits
-for a person.
+from a few hundred metres up; presets (fair weather, sun shower, towering, storm, overcast, cirrus, rain here,
+downpour, passing shower), coverage, type, variation, precipitation, cirrus, a raining cumulonimbus as a cell, wind
+speed and direction, change of shape, the weather's speed, the sun, Run day and Sunset, the quality (full size, half
+size, 2D layer, off), steps, cloud shadows, the sky cube and its faces per frame, 60 Hz; the rain's level, shafts,
+rainbow, sound and its volume; views from the air, from the ground, toward the cloud and from the shelter. On the
+ground: wet paving with puddles, a pond, a shelter with a crate under it and one in the open, a dark block that the
+rain shows against. Its batch parts: `weather` checks the cell's rain, the distance to it and the cover, the march's
+size and the fallback to the layer, with three golden captures per backend (`demo_weather.png`,
+`demo_weather_sunset.png`, `demo_weather_layer.png`, which show the shafts since part 2); `rain` checks the rain at
+the camera, the streaks and splashes, the cover under the shelter, the wetness, the sound's layers and level, a
+passing shower drying and its distant rain, and the rain off, with three captures (`demo_rain.png`: the streaks,
+puddles and rings, the dry floor under the shelter; `demo_rain_rainbow.png`: toward the cloud with the rainbow;
+`demo_rain_shelter.png`: from under the roof). Check mode items `weather.clouds`, `weather.rain` (in motion) and
+`weather.rain_sound` (by ear) wait for a person.
 
-Tests: `weather.*` (12 cases: the coverage's mean by setting, determinism, drift, evolution, seeds, type and
+Tests: `weather.*` (15 cases: the coverage's mean by setting, determinism, drift, evolution, seeds, type and
 precipitation, a cell in a clear sky and the distance to it, cells that drift and stay, wind and cloud tops, the
-grid against single samples, queries on the job system's threads, a sample's cost), also under Node.js and with the
-sanitizers; `gpu_device.texture_3d_from_layers` and `cube_faces` on every backend variant (a 3D texture filled from
-the layers of a 2D array; a cube's faces drawn with `quench/Cube.hlsli`'s directions and sampled back, with its
-mips); `render.renderer_clouds_shadow_the_ground` on every backend variant (off by default changes nothing; a raining
-cell's shadow on the ground, 0.073 under it against 0.775 in the sun, in both modes; the sky cube's faces; no clouds
-after `clearWeather`).
+grid against single samples, queries on the job system's threads, a sample's cost; the wetness building and drying,
+under a passing shower, and the grid following its focus), also under Node.js and with the sanitizers;
+`audio.weather_audio_gains`, `weather_audio_mix` (the layers by the strongest frequency of an offline mix, a game's
+sound, a hot reload, the bus, silence and off) and `weather_default_sounds` (the default loops: levels, seams, where
+their energy is); `gpu_device.texture_3d_from_layers` and `cube_faces` on every backend variant (a 3D texture
+filled from the layers of a 2D array; a cube's faces drawn with `quench/Cube.hlsli`'s directions and sampled back,
+with its mips); on every backend variant `render.renderer_clouds_shadow_the_ground` (off by default changes
+nothing; a raining cell's shadow on the ground, 0.073 under it against 0.775 in the sun, in both modes; the sky
+cube's faces; no clouds after `clearWeather`), `renderer_rain_wets_the_open_ground` (open ground 0.521 dry, 0.288
+wet; under a roof 0.521 both; the cover 0 in the open and above 0.9 under the roof; the streaks; the puddles' rings
+moving; no rain with the path tracer or without a weather) and `renderer_rain_shafts_from_afar` (none without
+clouds; with them a shaft over 733 of 4096 pixels).
 
 ## Later parts
 
-The design agreed for the rest of the stage (a plan: nothing below is built).
-
-### Part 2: rain, wetness, puddles, ripples and their sounds
-
-- **Rain from afar:** shafts under raining cloud bases (the weather map's precipitation, marched in the cloud pass
-  below the base, lit by the sun so that rain against a dark cloud shines), and as an option a rainbow where the
-  sun is behind the viewer.
-- **Rain near the camera:** GPU particles in a volume around the camera (compute), drawn as streaks and splashes, as
-  dense as `Weather::precipitation` at the camera; an indirect draw where `Caps::indirectDraw` allows it, else a
-  fixed count with culled particles drawn degenerate (the iOS Simulator).
-- **Rain occlusion:** a top-down depth map of the scene around the camera, so no rain, splashes or wetness under
-  roofs; `Weather::precipitation` stays the open-sky value, and the renderer exposes the covered one.
-- **Wetness:** a wetness map around the camera (and per point in `quench_weather`, headless, for games) that fills
-  under rain and dries after it; wet materials darker and glossier, puddles in the low parts of a surface (a
-  material's puddle mask or its height) that fill and dry; ripples by rain intensity in the puddles' normals, so they
-  show in the sky cube's, SSR's and traced reflections.
-- **Sounds:** below.
+The design agreed for the rest of the stage (a plan: nothing below is built). Part 2 is built (above); where it
+differs from its plan is said in [Rain](#rain).
 
 ### Part 3: snow
 
-Flakes with flutter and wind (the rain's particles with another motion and shape); accumulation on upward-facing
+Flakes with flutter and wind (the rain's streaks with another motion and shape); accumulation on upward-facing
 surfaces, none under cover (the same occlusion map), melting by the same clock as drying. Out of scope unless asked:
 footprints.
 
@@ -266,17 +400,7 @@ footprints.
 One wind field (direction, speed, gusts that travel with the air, local slowdowns behind terrain) in
 `quench_weather`, extending `windAt`: the particles, the clouds' drift (already from the same wind), vegetation sway
 (a surface shader's `QUENCH_SURFACE_VERTEX` reading the wind uniforms), forces on physics bodies (opt-in, through a
-game's call per body), the wind sound and thunder.
-
-### Weather sounds
-
-A game-replaceable set of sound assets with engine defaults (procedural or CC0, cooked like any sound): rain layers
-light and heavy, near and far, per surface (roof, leaves, puddles, ground), wind, thunder. An engine weather audio
-object (in `quench_audio`, headless) mixes them from the weather data: rain at the listener and the distance to the
-nearest rain (`distanceToPrecipitation`, a few times a second), the cover above the listener (part 2's occlusion
-map, through the renderer, or a game's own), the wind speed. A game replaces a layer by naming its own asset for it,
-or turns the engine's weather audio off and drives its own sounds from the same queries. They hot reload like any
-sound asset.
+game's call per body), the wind sound and thunder (new layers of `WeatherAudio`).
 
 ### Phone budget for the whole stage
 
@@ -290,20 +414,31 @@ without missed intervals with the thermal reaction on.
 |---|---|
 | Mac, SDL GPU's Metal driver | every test, the demo's batch with its captures |
 | Mac, native Metal backend | every test, the demo's batch (captures identical to SDL GPU's), the costs above |
-| Mac, Vulkan through MoltenVK | every test with the Khronos validation layer, the demo's batch (captures within a mean of 0.001 of Metal's); needs the engine's SDL patch (`cmake/patches/SdlVulkan3d.cmake`: 3D textures 2D-array compatible only as color targets) |
+| Mac, Vulkan through MoltenVK | every test with the Khronos validation layer, the demo's batch (captures within a mean of 0.04 of Metal's); needs the engine's SDL patch (`cmake/patches/SdlVulkan3d.cmake`: 3D textures 2D-array compatible only as color targets) |
 | iOS Simulator | the test executables (`ios-sim-tests`) |
-| WebAssembly under Node.js | `weather.*` (the headless module) |
+| WebAssembly under Node.js | `weather.*` (the headless module) and `audio.weather_audio_*` |
 | iPhone | not run |
 
 ## Limitations
 
-- Nobody has looked at the clouds in motion, on the Mac's screen or on a phone (check mode item `weather.clouds`);
-  the captures were looked at still.
+- Nobody has looked at the clouds or the rain in motion, on the Mac's screen or on a phone, or listened to the rain
+  (check mode items `weather.clouds`, `weather.rain`, `weather.rain_sound`); the captures were looked at still, the
+  sound measured.
 - The traced effects see an overcast amount, not the clouds (above); the probe grid does not pick up single clouds.
 - Cloud shadows are a 24 km map on the plane y = 0: a surface far above or below it reads the shadow of the column
   its sun ray crosses at y = 0, and beyond the map its edge holds.
-- The storm's bases are somewhat smooth and sheet-like; the cumulonimbus has no rain shafts until part 2.
+- The storm's bases are somewhat smooth and sheet-like. Seen from the air a storm is a grey veil over the plain; the
+  shafts of the 2D layer's clouds look like smoky blobs more than rain.
 - Clouds beyond 64 km fade out (the weather map's reach); a camera above the cloud layer is not tuned (the march
   works, the look is not checked).
 - Phone costs are estimates from the Mac; the phone defaults wait for a run on the iPhone 17.
-- Precipitation is a number, not yet rain or snow on the screen (parts 2 and 3).
+- The rain: no roofs beyond 64 m of the camera (the occlusion map's reach: farther surfaces count as open) and
+  nothing above 100 m over the camera counts as a roof; the wetness grid covers 1 km around its focus (beyond it an
+  estimate without the rain's history); wetness knows no roofs (`Weather::wetness` is open ground; the renderer
+  applies the occlusion map, a game asks its own physics); the cover is the camera's only (`RenderStats::rainCover`),
+  a few frames late. Splashes are faint on bright reflections. The streaks do not refract the scene behind them.
+  The ripples are the same rings on every puddle, not a simulation; no drips from roofs, no runoff, no wet
+  footprints. Ray hits do not apply the rain (traced reflections and the probe grid see dry surfaces), the streaks
+  are not in any reflection, and the path tracer's frame has no rain.
+- The sound: one set of layers for the listener, not per surface (leaves, puddles, metal); the defaults are
+  procedural noise, measured but not listened to.

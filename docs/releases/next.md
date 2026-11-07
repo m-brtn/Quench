@@ -11,7 +11,9 @@ textures, one cooked set for every device (stage 6's remaining work); the per-pi
 indirect light settles in a still scene instead of staying grainy (a user report); navigation on Recast & Detour,
 a new module with the demo's Navigation section (the user's queue, item 4); profiling with Tracy, opt-in, with
 captures recorded and summed up without its GUI; the weather's first part, volumetric clouds that drift, change shape
-and shade the light, in a new headless module with the demo's Weather section (stage 13, part 1). This file becomes
+and shade the light, in a new headless module with the demo's Weather section (stage 13, part 1); its second part,
+rain where the clouds drop it, wet ground and puddles that dry afterwards, and the rain's sound (stage 13, part 2).
+This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
 
@@ -231,6 +233,38 @@ and shade the light, in a new headless module with the demo's Weather section (s
   full size 4.29 and 3.23 ms; at the iPhone 17's 1206 x 2622 within 0.05 ms of those at half size and 5.14 and
   3.55 ms at full size.
 
+### Weather: rain (stage 13, part 2)
+
+- **Wetness the weather remembers** ([Weather](../weather.md#wetness-and-puddles)): `Weather::wetness(xz)` (ground
+  and standing water, 0..1) follows the rain that fell there: a grid of 16 x 16 cells of 64 m around
+  `setWetnessFocus` (a game's camera or player) wets and dries in steps of 0.25 s of weather time by
+  `Settings::wettingTime`, `dryingTime`, `puddleFillTime` and `puddleDryTime`; `setTime` estimates it from the last
+  hours of the weather, so a jump in time and a saved game give the same ground. `wetnessGrid`, `wetnessOrigin`,
+  `wetnessVersion`; `rainVelocity(point)` and `kRainFallSpeed` (the rain carried by the wind). Headless: also under
+  Node.js.
+- **The rain in the renderer** (`RenderSettings::rain`: `Off` by default, `Low`, `Medium`, `High`;
+  [Render module](../render.md#rain)): where the weather's precipitation falls, streaks around the camera lit by the
+  sky and the sun, splashes where they land (Medium and High), and a rain occlusion map (the shadow casters drawn
+  along the rain, 128 m around the camera) that keeps them and the wetness from under roofs and tells how covered
+  the camera is (`RenderStats::rainCover`). With clouds, the rain's shafts below raining clouds from afar
+  (`rainShafts`, on; at a quarter or half of the render size) and a rainbow (`rainbow`, off), on the 2D layer too.
+- **Wet surfaces, puddles and ripples:** the surface entries call `quenchApplyRain` (`quench/Rain.hlsli`): wet
+  surfaces darker and glossier as the weather's ground, standing water in the hollows of materials with
+  `MaterialDesc::puddles`, and rings of the drops on it and on `MaterialDesc::water` (a lake) in the normals, so they
+  show in the reflections. `MaterialDesc::wetness` (1 by default) scales it per material; `QUENCH_SURFACE_NO_RAIN`
+  keeps a surface file dry. `ActiveEffects::rain`, `rainShafts`; `RenderStats::rain`, `rainAtCamera`, `rainStreaks`,
+  `rainSplashes`, `rainOccluders`, `rainShafts`, `rainbow`; timed ranges `rain_map`, `rain_shafts`, `rain`.
+- **The rain's sound** (`audio::WeatherAudio`, `quench/audio/WeatherAudio.h`; [Audio](../audio.md#weather-sounds)):
+  light and heavy rain crossfaded by the precipitation at the listener, distant rain by the distance to the nearest
+  rain, rain on the roof by the cover, on a bus, smoothed; a game names its own sound for a layer (`setSound`),
+  silences one, or switches the object off (`setEnabled`) and plays its own from the same numbers
+  (`targetGains`). Its sounds are assets, so a reloaded file crossfades into the new data. Engine defaults: four
+  procedural loops (`tools/assets/make_weather_sounds.py`, CC0) cooked by the CMake function
+  `quench_weather_sounds(<name>)`.
+- **Cost** on the M4 Pro (offscreen, native backend, GPU busy time; [Performance](../performance.md#rain)): at
+  1920 x 1080 0.35, 0.68 and 1.17 ms for Low, Medium and High on the ground and up to 1.73 ms looking at a storm
+  from the air; the phone defaults (Low without shafts) 0.17 ms, 0.25 ms at 1206 x 2622.
+
 ### Profiling with Tracy
 
 - **`QUENCH_TRACY`** (CMake option, off by default; the `profile` configure, build and test preset: Release with
@@ -331,7 +365,13 @@ and shade the light, in a new headless module with the demo's Weather section (s
   with three golden captures (`demo_weather.png`, `demo_weather_sunset.png`, `demo_weather_layer.png`; SDL GPU's
   Metal driver and the native backend share them, Vulkan through MoltenVK has its own), a benchmark region,
   `scenarios/weather_cost.txt` (the cost per quality level, offscreen) and a check mode item `weather.clouds` (46
-  items now). The menu has 14 entries (`demo_ui.png` changed in both golden sets).
+  items now). The menu has 14 entries (`demo_ui.png` changed in both golden sets). With part 2 a place on the ground
+  (paving, a pond, a shelter with a crate under it and one in the open), views (from the air, the ground, toward the
+  cloud, the shelter), presets Rain here, Downpour and Passing shower, the rain's quality, shafts and rainbow, the
+  wetness and the sound with its layers; phone defaults Low without shafts, estimated. A batch part `rain` with
+  three golden captures (`demo_rain.png`, `demo_rain_rainbow.png`, `demo_rain_shelter.png`), the weather captures
+  replaced (the shafts under their clouds), `scenarios/rain_cost.txt` and check mode items `weather.rain` and
+  `weather.rain_sound` (48 items).
 
 ### Gates
 
@@ -484,6 +524,20 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `asan` 575; `tsan` 575; `wasm-node` 177 (under Node.js); `ios-sim-tests` 434 in the iOS Simulator; `ios-xcode`
   generated; a new game built and started. All passed.
 
+- **The rain** (M4 Pro; [Weather](../weather.md#rain)): `weather.*` 15 cases (60 s of rain give ground 0.500 and
+  water 0.067; a passing shower's wetness updated every frame 0.498 and 0.033, estimated by `setTime` 0.465 and
+  0.020); `renderer_rain_wets_the_open_ground` (open ground 0.521 dry and 0.288 wet, the same 0.521 under the roof;
+  1041 of 4096 pixels with drops) and `renderer_rain_shafts_from_afar` on SDL GPU's Metal driver, the native backend
+  and Vulkan through MoltenVK, and in the iOS Simulator on both of its backends; `audio.weather_*` (the mix rules,
+  crossfades, a game's sound, hot reload, off, the default loops' levels and spectra). The demo's `rain` part (44
+  checks: the mix's RMS 0.0695 in the open, 0.0932 under the shelter, 0.0165 from a shower 1.4 km away; no
+  underruns or clipping) and its three captures, looked at (offscreen); the native backend's are the same bytes as
+  SDL GPU's, Vulkan through MoltenVK within a mean of 0.036. The weather captures replaced with the shafts (mean
+  0.98 to 1.52 against part 1's, looked at); the other sections' captures unchanged.
+- **Gates with the rain:** `tools/check.sh full` (2026-11-07, 521.1 s): format; `debug` 593 tests; `release` 721;
+  `asan` 593; `tsan` 593; `wasm-node` 183 (under Node.js); `ios-sim-tests` 448 in the iOS Simulator; `ios-xcode`
+  generated; a new game built and started. All passed.
+
 ## What was not verified
 
 - **The per-pixel indirect light's denoiser on a phone:** measured offscreen on the Mac only, no numbers from a
@@ -538,8 +592,15 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 - **The clouds on a phone and on a screen:** not run on an iPhone; the Weather section's phone defaults are an
   estimate (about 4.3 ms on the iPhone 17 by its ratio to the M4 Pro, over the roadmap's 2 ms); nobody has looked at
   the clouds in motion (drift, change of shape, the accumulation when the camera turns) or on a phone's screen. The
-  storm's bases look smooth in the captures; a camera above the clouds is not tuned. Nothing falls yet: rain, snow and
-  wind are parts 2 to 4 ([Weather](../weather.md#later-parts)).
+  storm's bases look smooth in the captures; a camera above the clouds is not tuned. Snow and wind are parts 3 and 4
+  ([Weather](../weather.md#later-parts)).
+- **The rain in motion, by ear and on a phone:** nobody has looked at the streaks, splashes and rings moving or
+  listened to the rain (measured only: levels, spectra, the mix's RMS); not run on an iPhone, the phone defaults'
+  0.7 ms there an estimate by the iPhone 17's ratio. The splashes are faint in the captures; the storm from the air
+  is a grey veil more than shafts; the 2D layer's shafts look smoky; the occlusion map reaches 64 m from the camera,
+  so roofs beyond it do not keep the rain off (the wetness there is the weather's open ground); streaks and
+  splashes are not in reflections, and the path tracer's frame has no rain; the heavy layer's default loop peaks
+  at 0.98.
 
 ## Changes for games
 
@@ -629,6 +690,20 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   there are no clouds. A surface's fragment samplers 0 to 15 are now all the engine's (SDL GPU allows 16 per stage):
   a game surface shader that declared its own textures in 14 or 15 loses them. A game's own SDL declaration
   (TrailForge's) does not get the engine's new SDL patch.
+- **Rain (optional), and surface shaders that see it:** `FrameUniforms` grew by 96 bytes (`rainViewProj`, `rain`,
+  `rainGrid` at its end) and `MaterialUniforms` by 16 (`weather`), in `quench/SceneUniforms.h`. Surface sampler 14
+  is now the weather maps (`QUENCH_WEATHER_MAPS_*`, `QUENCH_RAIN_MAP_ROW`, `QUENCH_WETNESS_ROW`): the clouds'
+  shadow is its first 512 rows, and `quenchCloudShadow(maps, sampler, P)` reads that region (a game shader that
+  sampled sampler 14 itself reads it through `quenchCloudShadow` now). The surface entries apply the rain after the
+  surface function: a game surface built on `SurfaceEntries.hlsli` gets wet where the rain falls once a game turns
+  `RenderSettings::rain` on; one that must stay dry defines `QUENCH_SURFACE_NO_RAIN`, and a material
+  sets `MaterialDesc::wetness = 0`. New: `render::Rain`, `RenderSettings::rain`, `rainShafts`, `rainbow`, the
+  `ActiveEffects` and `RenderStats` members, `MaterialDesc::wetness`, `puddles`, `water`; in `quench_weather`
+  `Wetness`, `WetnessCell`, the wetness calls and settings above, `rainVelocity`, `kRainFallSpeed`; every
+  `Weather` gets a `wetnessVersion` no other has had (a copy keeps it). `audio::WeatherAudio` and
+  `quench_weather_sounds()` (needs Python 3 at build time, as the demo's sounds do). A game that leaves the rain off
+  draws what it drew before; `Weather::update` now also steps the wetness grid (256 samples of the field per 0.25 s
+  of weather time, about 0.05 ms by the `sample` cost above).
 - **The skill:** a game made before this release has no copy; copy `.agents/skills/quench-game/` from the engine
   at the pinned commit if its agents should use it (and again when the pin moves).
 - The rest is in the demo and the engine's own test and gate scripts; `quench_add_batch()` in

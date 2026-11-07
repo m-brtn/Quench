@@ -326,6 +326,30 @@ times the M4 Pro's: by that ratio the phone defaults would take about 4.3 ms and
 the roadmap's 2 and 0.5 ms; an estimate, not a measurement, so the section's phone defaults (half size, 48 steps,
 one cube face, 60 Hz) wait for a run on the phone. Not run on the screen.
 
+### Rain
+
+2026-11-07 23:08-23:10, the Mac (Apple M4 Pro), offscreen, the native backend, `--window 1920x1080` and
+`--window 1206x2622`, `--audio-device null`, `examples/demo/scenarios/rain_cost.txt`: the weather section's Rain here
+preset from the ground and its storm preset from the air, half-size clouds, 3 s per setting after a second, unpaced;
+the GPU busy time per range, p50, ms: `rain_map`, `rain_shafts`, `rain` and the `hdr` range's growth over rain off
+(the wet surfaces), "added" their sum.
+
+| Setting | 1920 x 1080: map / shafts / drops / hdr | added | 1206 x 2622: map / shafts / drops / hdr | added |
+|---|---|---|---|---|
+| Ground, Low | 0.020 / 0.177 / 0.084 / 0.070 | 0.35 | 0.021 / 0.255 / 0.118 / 0.107 | 0.50 |
+| Ground, Medium | 0.023 / 0.437 / 0.138 / 0.084 | 0.68 | 0.023 / 0.592 / 0.173 / 0.111 | 0.90 |
+| Ground, High | 0.021 / 0.604 / 0.456 / 0.087 | 1.17 | 0.022 / 0.813 / 0.491 / 0.132 | 1.46 |
+| Phone defaults: Low without shafts | 0.020 / - / 0.085 / 0.068 | 0.17 | 0.021 / - / 0.116 / 0.109 | 0.25 |
+| Storm from the air, Low | 0.020 / 0.225 / 0.085 / 0.043 | 0.37 | 0.020 / 0.338 / 0.128 / 0.054 | 0.54 |
+| Storm from the air, Medium | 0.020 / 0.825 / 0.140 / 0.054 | 1.04 | 0.021 / 1.232 / 0.190 / 0.055 | 1.50 |
+| Storm from the air, High | 0.019 / 1.197 / 0.446 / 0.072 | 1.73 | 0.020 / 1.837 / 0.481 / 0.078 | 2.42 |
+
+In the first runs of the session (22:55) the shafts were marched at the render size: 0.66, 1.04 and 1.61 ms from
+the ground and 1.64, 2.67 and 4.40 ms from the air at 1080p. Marched at a quarter (Low) or half (Medium, High) of the
+size with a depth-aware upsample they cost 0.18 to 1.2 ms there; the upsample is most of Low's. By the stage 11
+ratio of about 3 the phone defaults would take about 0.7 ms on the iPhone 17, within the roadmap's 1 ms for the
+rain, and Low with the shafts about 1.5 ms: an estimate, not a measurement. Not run on the screen or on a phone.
+
 ### Tracy on and off
 
 2026-11-07 18:58-19:19, the Mac (Apple M4 Pro), offscreen, the native backend (the default), `--frame-size 480x270

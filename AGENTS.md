@@ -23,8 +23,9 @@ skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`
 
 **Current state (2026-11-07, version 0.10.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
-the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) part 1 (the weather map, the clouds and their light)
-except its runs on a phone and the checks by eye, parts 2 to 4 (rain, snow, wind) designed in `docs/weather.md`; the
+the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
+light) and 2 (rain, wetness, puddles, ripples, the rain's sound) except their runs on a phone and the checks by eye
+and ear, parts 3 and 4 (snow, wind) designed in `docs/weather.md`; the
 plan the user left (stages 6 to 10) and stages 11 and 12 have been
 worked through, apart from the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the
 iPhone 18 Pro Max and the checks by eye and ear:
@@ -96,12 +97,18 @@ rebuild only their tiles, paths, raycasts and random points, crowds with avoidan
 run on the Mac, in the iOS Simulator and as WebAssembly under Node.js, the demo's Navigation section offscreen on the
 three backends; nobody has looked at it in motion), `quench_weather` (headless, 2026-11-07, stage 13 part 1: a
 deterministic weather map of cloud coverage, type, precipitation and cirrus that the wind moves and that changes
-shape, with cells a game places, queries for precipitation, cover and wind; the field shared with the shaders in
+shape, with cells a game places, queries for precipitation, cover and wind; since part 2 the wetness of the ground
+it remembers around a focus, wetting and drying deterministically; the field shared with the shaders in
 `shaders/quench/WeatherField.h`), the clouds in `quench_render` (off by default: volumetric, after Nubis, at half
 size accumulated over frames, or a 2D layer as the fallback; their shadows with shadow maps and traced sun shadows,
-the sun dimmed and the sky's light greyed under overcast, a sky cube with the clouds for reflections; run on the
-Mac's three backends offscreen, in the iOS Simulator's tests and, the headless part, as WebAssembly under Node.js;
-not on a phone; nobody has looked at them in motion)
+the sun dimmed and the sky's light greyed under overcast, a sky cube with the clouds for reflections), the rain in
+`quench_render` (stage 13 part 2, off by default, three quality levels: a rain occlusion map against roofs and the
+cover over the camera, procedural streaks and splashes, wet surfaces with puddles and ripples in the surface entries
+(`QUENCH_SURFACE_NO_RAIN` opts out), shafts of rain from afar at a reduced size and an optional rainbow) and its
+sound (`audio::WeatherAudio`: light, heavy, distant and roof layers, replaceable, procedural defaults cooked by
+`quench_weather_sounds()`); the weather run on the Mac's three backends offscreen, in the iOS Simulator's tests and,
+the headless part, as WebAssembly under Node.js; not on a phone; nobody has looked at it in motion or listened to
+the rain)
 and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons, clips and navmeshes).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (finished in stage 10: a section per feature,
@@ -575,7 +582,8 @@ cmake/                 Dependencies (runtime pins), ShaderToolchain (shader comp
                        cooker pins), QuenchDxc and BuildDxc (DXC for ray query shaders, built from source into a
                        per-machine tool cache), QuenchBasisu (Basis Universal's sources, kept in that cache, and its
                        transcoder), QuenchToolCache (the cache's place), QuenchShaders (quench_add_shaders,
-                       quench_add_ray_hits), QuenchCook (quench_cook_assets), EmbedShaders, QuenchTargets (warnings,
+                       quench_add_ray_hits), QuenchCook (quench_cook_assets,
+                       quench_weather_sounds), EmbedShaders, QuenchTargets (warnings,
                        include directories), QuenchGame (quench_add_game), QuenchTracy (with QUENCH_TRACY:
                        Tracy's client, tracy-capture and tracy-csvexport, their pins)
                        and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator;
@@ -588,12 +596,12 @@ src/                   sources and internal headers per module (src/core/Platfor
                        src/core/Jobs.cpp: the job system; src/physics/JoltJobSystem: Jolt's jobs on it;
                        src/assets/: the asset manager, KTX2, Basis Universal (Basis.cpp; BasisTranscoder.cpp and
                        BasisZstd.c build the transcoder), cooked models, tangents, streaming; src/audio/: the mixer,
-                       decoders, streams, the HRTF (Hrtf; HrtfTable.inc: the reduced SADIE set), the device and the
-                       iOS audio session (AudioSessionApple.m);
+                       decoders, streams, the HRTF (Hrtf; HrtfTable.inc: the reduced SADIE set), the weather's
+                       sounds (WeatherAudio), the device and the iOS audio session (AudioSessionApple.m);
                        src/animation/: skeletons, clips, graphs, the character update, IK, the animation system
                        (ozz-animation inside); src/navigation/: navmesh builds on jobs (Build.cpp), tiles and
                        obstacles (NavMesh.cpp), .qnav data and the asset type, queries, the crowd, debug geometry
-                       (Recast & Detour inside); src/weather/: the weather map, its cells and queries;
+                       (Recast & Detour inside); src/weather/: the weather map, its cells, queries and wetness;
                        src/gpu/Backend.h: the backend interface; src/gpu/sdlgpu/: the
                        SDL GPU backend; src/gpu/metal/: the native Metal backend (Objective-C++, ARC; Apple
                        platforms); src/gpu/shaders/: the backends' own shaders (blit); src/app/Main.cpp: quench_main;
@@ -602,10 +610,13 @@ src/                   sources and internal headers per module (src/core/Platfor
                        TemporalFilter: the temporal denoiser; PathTracer: the reference path tracer; ScreenSpace:
                        the screen-space fallbacks (GTAO, after XeGTAO; SSR, after Ashfall's); LtcTable.inc:
                        the area lights' fitted table; Clouds: the cloud noise, the weather and cloud shadow maps,
-                       the volumetric march and its accumulation, the 2D layer and the sky cube)
+                       the volumetric march and its accumulation, the 2D layer and the sky cube; Rain: the rain
+                       occlusion map, the weather maps' rain regions, streaks, splashes and shafts (rain.hlsl,
+                       RainUniforms.h))
 shaders/quench/        the engine shader library (#include "quench/..."): BRDF (also anisotropic), shadows, sky, fog,
                        tone curves, surface shaders, the probe grid, area lights (AreaLights.hlsli: LTC), the
-                       clouds' shadow and the sky cube (Clouds.hlsli, Cube.hlsli); SceneUniforms.h, the uniform
+                       clouds' shadow and the sky cube (Clouds.hlsli, Cube.hlsli), the rain on surfaces
+                       (Rain.hlsli: wetness, puddles, ripples); SceneUniforms.h, the uniform
                        structs shared by C++ and HLSL; WeatherField.h, the weather field shared by quench_weather
                        and the cloud shaders
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
@@ -616,7 +627,8 @@ examples/demo/         the engine demo: a menu of sections (rendering features, 
                        section a scenario with a golden capture, scenarios for the menu, the modes, the settings and the
                        switch cycle; smoke and benchmark scenarios (raytracing_benchmark.txt: ray tracing, denoising and
                        MetalFX options and the tunnel; raytracing_phone*.txt, tunnel_phone*.txt: the same on a phone;
-                       weather_cost.txt: the clouds' cost per quality level, offscreen);
+                       weather_cost.txt and rain_cost.txt: the clouds' and the rain's cost per quality level,
+                       offscreen);
                        assets_src/ (procedural sources cooked at build time) and assets/ (files used as they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
@@ -629,7 +641,8 @@ tools/assets/          make_demo_assets.py: writes the demo's procedural source 
                        demo's procedural sounds; make_demo_character.py: the demo's animated mannequin as glTF;
                        make_demo_strider.py: its second character (other names and proportions) and bone map;
                        make_demo_blob.py: the blend shape creature; make_demo_tunnel.py: the tunnel's textures
-                       (the last five run at build time)
+                       (the last five run at build time); make_weather_sounds.py: the engine's default rain sounds
+                       (run at build time by quench_weather_sounds)
 tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the icons of the sample and the demo
 tools/make_ltc_table.py writes src/render/LtcTable.inc from selfshadow/ltc_code's fit (checks its SHA256)
