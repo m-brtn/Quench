@@ -1,5 +1,6 @@
 // Screen-space effects of quench::render::Renderer, the fallbacks of the traced ones (docs/render.md, "Screen-space
-// effects"): ss_gtao_fs and ss_gtao_blur_fs, ambient occlusion from the depth of the opaque surfaces.
+// effects"): ss_gtao_fs and ss_gtao_blur_fs, ambient occlusion from the depth of the opaque surfaces;
+// ss_reflect_fs and ss_reflect_resolve_fs, reflections of what is on the screen.
 //
 // ss_gtao_fs is ground-truth ambient occlusion (Jimenez et al. 2016, "Practical Real-Time Strategies for Accurate
 // Indirect Occlusion", Algorithm 1) adapted from XeGTAO's XeGTAO_MainPass (https://github.com/GameTechDev/XeGTAO,
@@ -17,12 +18,25 @@
 //
 // ss_gtao_blur_fs: at full resolution, the 4 x 4 term texels around the pixel (one period of the noise tile), each
 // weighted by how well its depth (kept next to the term) continues the pixel's depth gradient (other surfaces do not bleed in), with the
-// strength, into alpha of the mask the surfaces read (sampler 6, FrameUniforms::options.w bit 2); rgb 1, or kept by
+// strength, into alpha of the mask the surfaces read (sampler 6, FrameUniforms::options.w bit 1); rgb 1, or kept by
 // the pipeline's write mask where the traced sun's visibility is there.
+//
+// ss_reflect_fs and ss_reflect_resolve_fs, reflections from the previous frame's image: the march, its refinement
+// and the hit's confidence are moved from Ashfall's ssr_fs (github.com/m-brtn/strategy, commit 2d5db57,
+// shaders/scene.hlsl; the same author), generalized: per 2 x 2 pixels a ray along the GGX lobe of the G-buffer's
+// normal and roughness (Ashfall: the mirror direction only), camera-relative, its steps and the surfaces' thickness
+// relative to the view depth (Ashfall: meters for its top-down camera), the hit's color from the previous frame's
+// image at the hit's position in that frame (Ashfall composites after its scene pass and reads the same frame's).
+// The resolve: the 4 x 4 term texels around the pixel, weighted by the depth gradient as the GTAO blur and by a
+// distance falloff that widens with roughness, their colors also by 1 / (1 + brightness) (Karis's average, against
+// single bright rays); rgb the reflected radiance, a its confidence, which the surfaces
+// multiply into their traced reflections' weight (sampler 7, FrameUniforms::options.w bit 6).
 //
 // Bindings (fragment): uniform 0 FrameUniforms, uniform 1 ScreenSpaceUniforms. ss_gtao_fs: sampler 0 the prepass
 // depth. ss_gtao_blur_fs: sampler 0 the term (r; g: its depth; half resolution), sampler 1 the
-// depth.
+// depth. ss_reflect_fs: sampler 0 the prepass depth, sampler 1 the G-buffer's normal and roughness, sampler 2 the
+// previous frame's image (linear). ss_reflect_resolve_fs: sampler 0 the term (half resolution), sampler 1 the depth,
+// sampler 2 the G-buffer's normal and roughness.
 
 #include "quench/Bindings.hlsli"
 #include "quench/Common.hlsli"
@@ -178,5 +192,168 @@ float4 ss_gtao_blur_fs(FullscreenOut vin) : SV_Target0 {
         }
     const float occlusion = weight > 0.0 ? sum / weight : termTex.Load(int3(p >> 1, 0)).r;
     return float4(1.0, 1.0, 1.0, lerp(1.0, occlusion, ss.occlusion.w));
+}
+#endif
+
+#if defined(QUENCH_ENTRY_ss_reflect_fs)
+#include "RayCommon.hlsli"
+
+Texture2D<float> depthTex : QUENCH_TEXTURE(0);
+SamplerState depthSampler : QUENCH_SAMPLER(0);
+Texture2D<float4> normalTex : QUENCH_TEXTURE(1);
+SamplerState normalSampler : QUENCH_SAMPLER(1);
+Texture2D<float4> historyTex : QUENCH_TEXTURE(2);
+SamplerState historySampler : QUENCH_SAMPLER(2);
+
+// Radiance above this is clipped, as the traced reflections' is.
+static const float kMaxReflectedRadiance = 64.0;
+
+// The render uv of a camera-relative position under a view-projection, and its clip w (> 0 in front).
+float3 ssProject(float4x4 m, float3 X) {
+    const float4 c = mul(m, float4(X, 1.0));
+    return float3(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5, c.w);
+}
+
+// Fades a hit out toward the screen's border.
+float ssEdge(float2 uv) { return saturate(min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)) * 12.0); }
+
+float4 ss_reflect_fs(FullscreenOut vin) : SV_Target0 {
+    const int2 h = int2(vin.position.xy);
+    const int2 p = min(h * 2, int2(quenchFrame.screen.xy) - 1);
+    const float d = depthTex.Load(int3(p, 0));
+    if (d <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    const float4 g = normalTex.Load(int3(p, 0));
+    if (g.w >= ss.reflection.w || dot(g.xyz, g.xyz) <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    const float3 P = ssViewAt(float2(p) + 0.5, d);
+    const float3 V = normalize(-P);
+    const float3 N = normalize(g.xyz);
+    uint seed = rtSeed(uint2(h), uint(ss.reflectionParams.x), 0x55e1u);
+    const float2 u = float2(rtRandom(seed), rtRandom(seed));
+    float3 R = reflect(-V, rtGgxVisibleNormal(N, V, max(g.w * g.w, 1e-3), u));
+    if (dot(R, N) <= 0.0) R = reflect(-V, N);
+    const float3 forward = quenchFrame.cameraFwd.xyz;
+    const float near = quenchFrame.cameraFwd.w;
+    const float z = near / d;
+    const float3 origin = P + N * (0.002 * z);
+    // The view depth the ray gains per meter: a ray toward the camera only passes behind what is in front of the
+    // surfaces it would hit, which the screen does not show.
+    const float depthRate = dot(R, forward);
+    const float away = saturate(depthRate * 2.0 + 1.0);
+    if (away <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    // Steps that grow along the ray, from a jittered start; the first surface the ray passes behind (by less than
+    // its thickness, or the depth of two steps) is the hit. Clip coordinates are linear along the ray, and clip w is
+    // the view depth.
+    const float4 clipOrigin = mul(ss.viewProj, float4(origin, 1.0));
+    const float4 clipStep = mul(ss.viewProj, float4(R, 0.0));
+    const float2 size = quenchFrame.screen.xy;
+    const float steps = ss.reflection.x;
+    float stride = ss.reflection.y * z;
+    float t = stride * (0.5 + rtRandom(seed)), last = 0.0, i = 0.0;
+    bool hit = false;
+    float2 hitUv = float2(0.0, 0.0);
+    [loop] for (; i < steps; i += 1.0) {
+        const float4 c = clipOrigin + clipStep * t;
+        if (c.w <= 1e-4) break;
+        const float2 uv = float2(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5);
+        if (uv.x < 0.0 || uv.x >= 1.0 || uv.y < 0.0 || uv.y >= 1.0) break;
+        const int2 q = int2(uv * size);
+        const float sd = depthTex.Load(int3(q, 0));
+        const float behind = c.w - near / max(sd, 1e-8); // the sky (0) is never in front
+        if (behind > 0.0 && behind < max(ss.reflection.z * near / sd, 2.0 * stride * depthRate)) {
+            // Not the surface the ray leaves: within a pixel of a grazing plane the ray seems behind it. The ray
+            // stays above the tangent plane at its origin, so what it hits does too.
+            if (dot(ssViewAt(float2(q) + 0.5, sd) - P, N) > 0.002 * z) {
+                hit = true;
+                hitUv = uv;
+                break;
+            }
+        }
+        last = t;
+        t += stride;
+        stride *= ss.reflectionParams.z;
+    }
+    if (!hit) return float4(0.0, 0.0, 0.0, 0.0);
+    // Bisection between the last step in front and the first behind.
+    float lo = last, hi = t;
+    [unroll] for (int j = 0; j < 5; ++j) {
+        const float mid = 0.5 * (lo + hi);
+        const float4 c = clipOrigin + clipStep * mid;
+        const float2 uv = float2(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5);
+        const float sd = depthTex.Load(int3(clamp(int2(uv * size), int2(0, 0), int2(size) - 1), 0));
+        if (sd > 0.0 && c.w > near / sd) {
+            hi = mid;
+            hitUv = uv;
+        } else {
+            lo = mid;
+        }
+    }
+    const float3 Nh = normalTex.Load(int3(clamp(int2(hitUv * quenchFrame.screen.xy), int2(0, 0),
+                                                int2(quenchFrame.screen.xy) - 1),
+                                          0))
+                          .xyz;
+    // The back of the hit surface (seen from the ray) is not what the ray would see; rays toward the camera, hits
+    // near the screen's border and near the end of the march fade out.
+    const float facing = dot(Nh, Nh) > 0.0 ? saturate(-dot(normalize(Nh), R) * 4.0 + 0.4) : 0.0;
+    const float far = saturate((steps - i) / (steps * 0.25));
+    const float3 previous = ssProject(ss.previousViewProj, origin + R * hi);
+    if (previous.z <= 1e-4) return float4(0.0, 0.0, 0.0, 0.0);
+    const float confidence = facing * away * far * ssEdge(hitUv) * ssEdge(previous.xy);
+    if (confidence <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    float3 color = historyTex.SampleLevel(historySampler, previous.xy, 0.0).rgb;
+    const float l = max(max(color.r, color.g), color.b);
+    if (l > kMaxReflectedRadiance) color *= kMaxReflectedRadiance / l;
+    return float4(max(color, 0.0), confidence);
+}
+#endif
+
+#if defined(QUENCH_ENTRY_ss_reflect_resolve_fs)
+Texture2D<float4> termTex : QUENCH_TEXTURE(0);
+SamplerState termSampler : QUENCH_SAMPLER(0);
+Texture2D<float> depthTex : QUENCH_TEXTURE(1);
+SamplerState depthSampler : QUENCH_SAMPLER(1);
+Texture2D<float4> normalTex : QUENCH_TEXTURE(2);
+SamplerState normalSampler : QUENCH_SAMPLER(2);
+
+float4 ss_reflect_resolve_fs(FullscreenOut vin) : SV_Target0 {
+    const int2 p = int2(vin.position.xy);
+    const int2 last = int2(quenchFrame.screen.xy) - 1;
+    const float d = depthTex.Load(int3(p, 0));
+    if (d <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    const float roughness = normalTex.Load(int3(p, 0)).w;
+    if (roughness >= ss.reflection.w) return float4(0.0, 0.0, 0.0, 0.0);
+    // The depth gradient, as in ss_gtao_blur_fs.
+    const float dr = depthTex.Load(int3(min(p + int2(1, 0), last), 0)) - d;
+    const float dl = d - depthTex.Load(int3(max(p - int2(1, 0), int2(0, 0)), 0));
+    const float dd = depthTex.Load(int3(min(p + int2(0, 1), last), 0)) - d;
+    const float du = d - depthTex.Load(int3(max(p - int2(0, 1), int2(0, 0)), 0));
+    const float2 gradient = float2(abs(dr) < abs(dl) ? dr : dl, abs(dd) < abs(du) ? dd : du);
+    const float invTolerance = 1.0 / (ss.reflectionParams.y * d);
+    // The lobe's spread on the screen grows with roughness (pixels); a mirror's reflection stays sharp.
+    const float sigma = 0.8 + 6.0 * roughness;
+    const float falloff = -0.5 / (sigma * sigma);
+    const int2 first = (p >> 1) - 2 + (p & 1);
+    const int2 halfLast = last >> 1;
+    // Each ray's color counts less the brighter it is (a Karis average): a ray of a rough surface that finds a lamp
+    // does not stand out as a square of the ray's texel.
+    float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+    float weight = 0.0, colorWeight = 0.0;
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) {
+            const int2 t = clamp(first + int2(x, y), int2(0, 0), halfLast);
+            const int2 q = min(t * 2, last);
+            const float2 offset = float2(q - p);
+            const float texelDepth = depthTex.Load(int3(q, 0));
+            const float expected = d + dot(offset, gradient);
+            const float w = texelDepth > 0.0 ? saturate(1.0 - abs(texelDepth - expected) * invTolerance) *
+                                                   exp(dot(offset, offset) * falloff)
+                                             : 0.0;
+            const float4 term = termTex.Load(int3(t, 0));
+            const float k = term.a * w / (1.0 + max(max(term.r, term.g), term.b));
+            sum += float4(term.rgb * k, term.a * w);
+            colorWeight += k;
+            weight += w;
+        }
+    if (weight <= 0.0 || sum.a <= 1e-5 || colorWeight <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    return float4(sum.rgb / colorWeight, sum.a / weight);
 }
 #endif

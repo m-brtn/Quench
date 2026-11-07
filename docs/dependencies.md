@@ -249,6 +249,11 @@ The half-resolution layout (the top-left pixel of every 2 x 2 block) follows Ash
 (`shaders/scene.hlsl` at Ashfall `2d5db57`, the same author); no Ashfall code was copied for GTAO. Neither game uses
 it, so no game pin is affected.
 
+Screen-space reflections ([Render](render.md#screen-space-reflections)), 2026-11-07. No library and no third-party
+code: the march, its bisection and the hit's confidence are moved from Ashfall's `ssr_fs` (the same file and
+commit, the same author, released under the engine's licence as it lands here) and generalized; the GGX sampling
+is the engine's own (`RayCommon.hlsli`). Nothing to add to `THIRD_PARTY_LICENSES`.
+
 ## Added for stage 6's remaining work
 
 ASTC 4x4 textures for iOS ([Assets](assets.md#cooked-formats)), 2026-11-07. One library, in

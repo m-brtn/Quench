@@ -61,7 +61,7 @@ occlusion and MetalFX upscaling, and since stage 11 ray-traced shadows of up to 
 indirect light by a probe grid (DDGI-like; traced in turns on request, after 0.9.0, not released) or per-pixel rays, the engine's temporal denoiser (the default; a spatial
 one), MetalFX's denoising upscaler and a reference path tracer, falling back to shadow maps, no occlusion (or, as an
 option, screen-space GTAO, after 0.9.0, not released),
-unshadowed local lights (or, as an option, shadow maps for point and spot lights, after 0.9.0, not released), the sky's reflection and ambient light and bilinear scaling; since stage 12 area lights
+unshadowed local lights (or, as an option, shadow maps for point and spot lights, after 0.9.0, not released), the sky's reflection (or, as an option, screen-space reflections, after 0.9.0, not released) and ambient light and bilinear scaling; since stage 12 area lights
 (rect, disk, tube: LTC shading, soft traced shadows, in the path tracer; unshadowed as the fallback) and anisotropic
 GGX; game passes and surface
 shaders (with a G-buffer entry for the rays); GPU skinning by compute (linear or dual quaternion; blend shapes before it; unchanged poses copied); `SceneAssets` puts asset textures and models
@@ -116,8 +116,8 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
 work), the native backend as the default, custom
-surface shading in ray hits (normal maps are read there since 2026-11-07, after 0.9.0), screen-space reflections
-(SSR) for devices without ray tracing (stage 9 and 11 remaining work; GTAO is there since 2026-11-07) or shadows of area lights without ray tracing (stage 12 remaining work)
+surface shading in ray hits (normal maps are read there since 2026-11-07, after 0.9.0; stage 11 remaining work) or
+shadows of area lights without ray tracing (stage 12 remaining work)
 yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is
@@ -543,7 +543,7 @@ src/                   sources and internal headers per module (src/core/Platfor
                        src/render/: the scene, SceneAssets, the frame modules and their shaders, GPU skinning,
                        RayTracing: acceleration structures, hit data, the probe grid and the traced effects;
                        TemporalFilter: the temporal denoiser; PathTracer: the reference path tracer; ScreenSpace:
-                       the screen-space fallbacks (GTAO, after XeGTAO); LtcTable.inc:
+                       the screen-space fallbacks (GTAO, after XeGTAO; SSR, after Ashfall's); LtcTable.inc:
                        the area lights' fitted table)
 shaders/quench/        the engine shader library (#include "quench/..."): BRDF (also anisotropic), shadows, sky, fog,
                        tone curves, surface shaders, the probe grid, area lights (AreaLights.hlsli: LTC);

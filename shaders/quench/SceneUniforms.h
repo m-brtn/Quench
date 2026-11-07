@@ -59,7 +59,8 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // bit 0: sampler 6's rgb is the sun's visibility (in place of the shadow maps), bit 1: its alpha is the ambient
     // occlusion, bit 2: sampler 9 holds the shadows of the local lights whose LocalLight::cone.y is non-zero, bit 3:
     // sampler 7 the reflections (rgb radiance, a: weight), bit 4: sampler 8 the indirect light (rgb, irradiance /
-    // pi), bit 5: the probe grid (samplers 10 and 11, probeGrid) lights what bit 4 does not.
+    // pi), bit 5: the probe grid (samplers 10 and 11, probeGrid) lights what bit 4 does not, bit 6: sampler 7 the
+    // screen-space reflections (rgb radiance, a: confidence, which scales their weight).
     float4 options;
     // Translucent casters (render::ShadowMode::Translucent) in the transmittance maps: x: the cascades that have them
     // (bit n: cascade n; 0: none, the maps are not read), y: 1 / transmittance map size, zw: unused.
@@ -70,7 +71,8 @@ struct QUENCH_ALIGN16 FrameUniforms {
     float4 probeGrid;
     float4 probeCounts; // xyz: probes per axis, w: irradiance texels per probe side (with a one-texel border)
     float4 probeAtlas;  // x: distance texels per probe side (with the border), y: the sampling bias (m), zw: unused
-    // x: the roughness above which surfaces reflect the sky instead of the traced reflections, yzw: unused
+    // x: the roughness above which surfaces reflect the sky instead of the traced (or screen-space) reflections,
+    // yzw: unused
     float4 rayLighting;
     // The local lights' shadow maps (sampler 13): x: texels per side, y: 1 / x, z: the normal offset (texels), w: the
     // tangent of half the field of view of a point light's six maps (a little over 1, so that the filter's taps at a

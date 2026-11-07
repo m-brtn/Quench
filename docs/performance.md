@@ -403,6 +403,57 @@ occlusion and with GTAO, from the nominal thermal state, and a capture); on the 
 passed 8 of 8 (SDL GPU's GPU time p50 4.42 to 5.96 ms in the shadows section, 5.09 to 6.52 in the ray tracing
 section).
 
+### Screen-space reflections
+
+`Reflections::ScreenSpace`, SSR ([Render module](render.md#screen-space-reflections)). 2026-11-07 08:43-09:02,
+Release, Mac (Apple M4 Pro), **offscreen** at 1920 x 1080 (`--frame-size 1920x1080 --audio-device null --script`,
+unpaced), 4 s regions after a second each, thermal state nominal.
+
+**Frames without SSR** (the 5% rule and "no cost where unused"): the commit before (`3abc380`) and this change
+alternating, two pairs on the native backend and four on SDL GPU, each section at its defaults (on the native
+backend the ray tracing section and the tunnel traced). Measured with an earlier version of the change; what
+changed after it runs only in frames with SSR. Native backend, GPU busy time p50 of the frame's `game` range, ms;
+SDL GPU, frame average (the tunnel's p50 is bimodal) and the means of the CPU p50 and p99, ms:
+
+| Section | native `game` before | after | SDL GPU frame before | after | CPU p50 before | after | CPU p99 before | after |
+|---|---|---|---|---|---|---|---|---|
+| materials | 1.822, 1.832 | 1.823, 1.813 | 1.659 | 1.663 | 0.473 | 0.477 | 0.866 | 0.878 |
+| shadows | 1.455, 1.451 | 1.443, 1.447 | 1.341 | 1.341 | 0.417 | 0.424 | 0.893 | 0.915 |
+| ray tracing | 7.652, 7.664 | 7.666, 7.654 | 1.603 | 1.604 | 0.575 | 0.571 | 0.956 | 0.962 |
+| tunnel | 11.197, 11.202 | 11.187, 11.137 | 3.345 | 3.338 | 0.578 | 0.595 | 1.395 | 1.408 |
+
+The largest change is the tunnel's CPU p50 (+2.9 %), within the 5 % and within the spread of the four runs
+(0.556 to 0.605 before, 0.583 to 0.602 after).
+
+**Frames with SSR** (`set reflections screen` against each section's default: the sky's reflection, on the native
+backend the traced ones in the ray tracing section and the tunnel; two runs each):
+
+| Region | native `game` | native `ssr` (`prepass`, `ssr history`) | SDL GPU frame average | SDL GPU CPU p50 |
+|---|---|---|---|---|
+| materials section, its default | 1.818, 1.828 | | 1.658, 1.655 | 0.476, 0.486 |
+| the same, SSR | 2.096, 2.093 | 0.116, 0.116 (0.091, 0.134) | 1.903, 1.908 | 0.552, 0.551 |
+| shadows section, its default | 1.456, 1.459 | | 1.342, 1.340 | 0.439, 0.421 |
+| the same, SSR | 1.783, 1.773 | 0.183, 0.184 (0.076, 0.177 and 0.084) | 1.672, 1.637 | 0.483, 0.484 |
+| ray tracing section, its default (native: traced reflections, `reflections` 0.51) | 7.649, 7.633 | | 1.600, 1.614 | 0.585, 0.602 |
+| the same, SSR | 7.193, 7.184 | 0.090, 0.089 (0.107, 0.018) | 1.845, 1.844 | 0.633, 0.659 |
+| tunnel, its default (native: traced reflections, `reflections` 3.65) | 11.139, 11.129 | | 3.328, 3.342 | 0.591, 0.572 |
+| the same, SSR | 8.440, 8.448 | 0.695, 0.697 (0.160, 0.020) | 5.230, 5.236 | 0.777, 0.779 |
+
+The native tunnel renders at 1286 x 724 (temporal upscaling) and its ray tracing section's G-buffer prepass is there
+anyway; SDL GPU renders at 1080p and draws the G-buffer prepass for SSR. In the SDL GPU tunnel, leaving out passes
+one at a time (one run each, frame average): the prepass and the copy 0.37 ms, the resolve about 0.4 ms, the march
+about 1.2 ms (half of 1080p: 518,400 rays of up to 48 steps along the tunnel's long floor and walls). On the native
+tunnel the march is 0.54 of `ssr`'s 0.70 ms and the resolve 0.16. Stepping linearly in clip space instead of
+projecting every step changed nothing (0.694 to 0.685 ms: the depth loads, not the arithmetic); 32 steps growing
+1.15 or 1.18 times cost 0.56 ms, 24 steps growing 1.25 times 0.50 ms, so 48 steps growing 1.1 times stay. The
+resolve's Karis weights cost about 0.05 ms in the tunnel and keep single bright rays from showing as squares (looked
+at in a capture of the tunnel).
+
+Not measured on a phone. `scenarios/ssr_phone.txt` measures it there on SDL GPU (the materials, ray tracing and
+tunnel sections with the sky's reflection and with SSR, from the nominal thermal state, and a capture); on the Mac
+offscreen at 1170 x 2532 it passed 8 of 8 (SDL GPU's GPU time average 11.77 to 15.80 ms in the tunnel, 5.10 to
+5.77 in the ray tracing section, 5.37 to 5.42 in the materials section; the capture looked at).
+
 ### On the screen after the bug packages
 
 2026-11-07 00:00-00:06, Release, Mac (Mac mini, Apple M4 Pro), its one display (the LG UltraFine 5K at 60 Hz; no

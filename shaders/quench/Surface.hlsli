@@ -125,7 +125,8 @@ SamplerState quenchTransmittanceSampler : QUENCH_SAMPLER(5);
 // nothing was traced (transparent surfaces, game passes that bind it so).
 Texture2D<float4> quenchRayMask : QUENCH_TEXTURE(6);
 SamplerState quenchRayMaskSampler : QUENCH_SAMPLER(6);
-// Ray-traced reflections (rgb radiance, a: weight), indirect light (rgb: irradiance / pi) and the shadows of up to
+// Ray-traced (or screen-space) reflections (rgb radiance, a: weight or confidence), indirect light (rgb: irradiance /
+// pi) and the shadows of up to
 // four local lights (one channel each) at the render size, and the probe grid's atlases (quench/Probes.hlsli);
 // FrameUniforms::options.w says which are read.
 Texture2D<float4> quenchRayReflections : QUENCH_TEXTURE(7);
@@ -357,11 +358,13 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     const float3 R = reflect(-V, lobeNormal);
     float3 env = lerp(skyRadiance(R), ambient, saturate(lobeRoughness * 1.2)) * lerp(0.35, 1.0, shadow);
     float envOcclusion = occlusion;
-    // Traced reflections up to the roughness cutoff, faded into the sky's over its last quarter.
-    [branch] if ((rayTraced & 8u) != 0u) {
+    // Traced reflections up to the roughness cutoff, faded into the sky's over its last quarter; screen-space ones
+    // (bit 6) also by their confidence in alpha.
+    [branch] if ((rayTraced & 72u) != 0u) {
         const float4 traced = quenchRayReflections.SampleLevel(quenchRayReflectionsSampler, screenUv, 0.0);
         const float cutoff = quenchFrame.rayLighting.x;
-        const float w = traced.a > 0.0 ? saturate((cutoff - s.roughness) / max(cutoff * 0.25, 1e-3)) : 0.0;
+        const float fade = saturate((cutoff - s.roughness) / max(cutoff * 0.25, 1e-3));
+        const float w = (rayTraced & 64u) != 0u ? fade * saturate(traced.a) : traced.a > 0.0 ? fade : 0.0;
         env = lerp(env, traced.rgb, w);
         envOcclusion = lerp(occlusion, 1.0, w);
     }

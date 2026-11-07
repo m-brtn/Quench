@@ -3,11 +3,11 @@
 // shadows of local lights, reflections, indirect light from a probe grid or per pixel, the engine's denoisers and
 // MetalFX's denoising upscaler, and the reference path tracer. Elsewhere the same settings fall back to the cascaded
 // shadow maps, no occlusion (GTAO with the screen-space fallbacks), unshadowed local lights (or their shadow maps),
-// the sky's reflections and ambient light and bilinear scaling, and the section says why. The scene has what the rays
-// must handle: a fence with holes (cut-out) lit by a spot behind it, a glass torus (translucent, tinted), a walking
-// character (skinned, refitted every frame), a mirror, a strip of gold spheres from smooth to rough, a red and green
-// corner with a white block and a lamp (colour bleeding, contact occlusion), a glowing panel (emissive light through
-// the probes), under a turning sun.
+// the sky's reflections (screen-space ones with the fallbacks) and ambient light and bilinear scaling, and the section
+// says why. The scene has what the rays must handle: a fence with holes (cut-out) lit by a spot behind it, a glass
+// torus (translucent, tinted), a walking character (skinned, refitted every frame), a mirror, a strip of gold spheres
+// from smooth to rough, a red and green corner with a white block and a lamp (colour bleeding, contact occlusion), a
+// glowing panel (emissive light through the probes), under a turning sun.
 
 #include "Demo.h"
 
@@ -80,10 +80,9 @@ public:
                "walking character), ambient occlusion, reflections (the mirror, the gold spheres from smooth to "
                "rough), indirect light (the red and green corner, the glowing panel), the engine's denoisers, "
                "MetalFX upscaling and denoising, and a reference path tracer: the native Metal backend on a GPU "
-               "with ray queries. Elsewhere: cascaded shadow maps, no occlusion (or screen-space occlusion, an "
-               "option), "
-               "unshadowed lamps (or their shadow maps, an option), the sky's reflections and ambient light, "
-               "bilinear scaling.";
+               "with ray queries. Elsewhere: cascaded shadow maps, no occlusion and the sky's reflections (or "
+               "screen-space occlusion and reflections, an option), unshadowed lamps (or their shadow maps, an "
+               "option), the sky's ambient light, bilinear scaling.";
     }
 
     Result<void> init(Context& c) override {
@@ -303,7 +302,8 @@ public:
         bool reflections = settings.reflections == Reflections::RayTraced;
         if (ImGui::Checkbox("Traced reflections", &reflections))
             settings.reflections = reflections ? Reflections::RayTraced : Reflections::Sky;
-        fallback(settings.reflections == e.reflections, "the sky's");
+        fallback(settings.reflections == e.reflections,
+                 e.reflections == Reflections::ScreenSpace ? "screen space (SSR)" : "the sky's");
         int indirect = int(settings.indirectLight);
         if (ImGui::Combo("Indirect light", &indirect,
                          "Sky\0"

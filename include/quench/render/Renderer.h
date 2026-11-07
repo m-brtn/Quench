@@ -94,8 +94,15 @@ enum class RayDenoiser : std::uint8_t {
 
 // How surfaces below RenderSettings::reflectionRoughness reflect their surroundings.
 enum class Reflections : std::uint8_t {
-    Sky,       // the sky, blurred toward the ambient light with roughness (all surfaces)
-    RayTraced, // one ray per pixel along the GGX lobe; hits lit by the sun with shadows (gpu::Caps::rayTracing)
+    Sky, // the sky, blurred toward the ambient light with roughness (all surfaces)
+    // One ray per pixel along the GGX lobe; hits lit by the sun with shadows (gpu::Caps::rayTracing). Falls back to
+    // ScreenSpace with RenderSettings::screenSpaceFallbacks, else to Sky.
+    RayTraced,
+    // A ray per 2 x 2 pixels along the GGX lobe, marched through the depth of the opaque surfaces (a prepass with
+    // a G-buffer where nothing is traced); a hit takes its color from the previous frame's image, so only what was
+    // on the screen is reflected, and the sky's reflection stays where nothing is hit. Needs a depth buffer the
+    // device can sample; else Sky.
+    ScreenSpace,
 };
 
 // The light that reaches surfaces from other surfaces and the sky (the diffuse part; reflections are separate).
@@ -132,7 +139,8 @@ struct RenderSettings {
     float occlusionRadius = 1.0f; // m
     float occlusionStrength = 1.0f;
     // Where a ray-traced effect cannot run (no gpu::Caps::rayTracing, no ray query shaders in the build): its
-    // screen-space version (AmbientOcclusion::ScreenSpace) in place of none. Off: those fallbacks cost nothing.
+    // screen-space version (AmbientOcclusion::ScreenSpace in place of none, Reflections::ScreenSpace in place of the
+    // sky's). Off: those fallbacks cost nothing.
     bool screenSpaceFallbacks = false;
     // Ray-traced shadows of the frame's nearest local lights with castsShadows (0..kMaxRayLocalShadows; one ray per
     // pixel and light, soft by LightDesc::sourceRadius; gpu::Caps::rayTracing, else localShadowMapSize's maps).
@@ -142,7 +150,7 @@ struct RenderSettings {
     // texels. 0: unshadowed there. Area lights stay unshadowed without ray tracing.
     std::uint32_t localShadowMapSize = 0;
     Reflections reflections = Reflections::Sky;
-    float reflectionRoughness = 0.5f; // traced reflections up to this roughness, faded into the sky's above
+    float reflectionRoughness = 0.5f; // traced (or screen-space) reflections up to this roughness, the sky's above
     IndirectLight indirectLight = IndirectLight::Sky;
     float probeSpacing = 2.0f; // m between the probes of the grid
     // The probe grid traces 1 / probeUpdatePeriod of its probes per frame (1, 2, 4 or 8; other values round down to
@@ -288,9 +296,12 @@ struct RenderStats {
     std::uint32_t localShadowMaps = 0;
     std::uint32_t localShadowInstances = 0;
     std::uint32_t localShadowDraws = 0;
-    // Screen-space effects this frame: GTAO ran (AmbientOcclusion::ScreenSpace or the fallback), and the draw calls
-    // of their own depth prepass (0 where the ray tracing prepass gave the depth).
+    // Screen-space effects this frame: GTAO ran (AmbientOcclusion::ScreenSpace or the fallback); the screen-space
+    // reflections ran (Reflections::ScreenSpace or the fallback; not in a frame without the previous one's image:
+    // the first, after a cut or a resize); the draw calls of their own depth prepass (0 where the ray tracing
+    // prepass gave the depth).
     bool screenOcclusion = false;
+    bool screenReflections = false;
     std::uint32_t screenPrepassDraws = 0;
     std::uint32_t renderWidth = 0; // the 3D resolution
     std::uint32_t renderHeight = 0;

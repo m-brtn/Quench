@@ -31,7 +31,11 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
                             ? std::clamp(settings.localLightShadows, 0, kMaxRayLocalShadows)
                             : 0;
     const bool lighting = support.rayTracing && support.rayLighting;
-    e.reflections = lighting ? settings.reflections : Reflections::Sky;
+    const bool screenReflections = settings.reflections == Reflections::ScreenSpace ||
+                                   (settings.reflections == Reflections::RayTraced && settings.screenSpaceFallbacks);
+    e.reflections = settings.reflections == Reflections::RayTraced && lighting ? Reflections::RayTraced
+                    : screenReflections && screenSpace                         ? Reflections::ScreenSpace
+                                                                               : Reflections::Sky;
     e.indirectLight = lighting ? settings.indirectLight : IndirectLight::Sky;
     e.pathTracer = lighting && settings.pathTracer;
     e.antiAliasing = settings.antiAliasing;

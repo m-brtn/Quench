@@ -75,6 +75,14 @@ constexpr float kGtaoSteps = 4.0f;
 constexpr float kGtaoRadiusMultiplier = 1.457f;
 constexpr float kGtaoMaxRadius = 0.2f;
 constexpr float kGtaoBlurTolerance = 0.02f;
+// Screen-space reflections (screenspace.hlsl): march steps, the first step (relative to the view depth), the growth
+// of each next step (48 steps reach about 4.8 view depths), the surfaces' thickness and the resolve's depth tolerance
+// (relative to the view depth).
+constexpr float kSsrSteps = 48.0f;
+constexpr float kSsrFirstStep = 0.005f;
+constexpr float kSsrGrowth = 1.1f;
+constexpr float kSsrThickness = 0.03f;
+constexpr float kSsrResolveTolerance = 0.02f;
 
 #include "LtcTable.inc"
 constexpr std::uint32_t kLtcSize = 64;
@@ -466,8 +474,9 @@ Result<void> RendererImpl::init() {
     support.rayTracing =
         caps.rayTracing && support.sampledDepth && shaders::render_raytrace.find("rt_shadow_fs") != nullptr;
     support.rayLighting = support.rayTracing && shaders::render_raylight.find("rt_reflect_fs") != nullptr;
-    support.screenSpace =
-        support.sampledDepth && supports(TextureFormat::Rg16Float, gpu::TextureType::Texture2D, targetSampled);
+    support.screenSpace = support.sampledDepth &&
+                          supports(TextureFormat::Rg16Float, gpu::TextureType::Texture2D, targetSampled) &&
+                          supports(TextureFormat::Rgba16Float, gpu::TextureType::Texture2D, targetSampled);
     support.spatialUpscaling = caps.spatialUpscaling;
     support.temporalUpscaling = caps.temporalUpscaling;
     support.denoisedUpscaling = caps.denoisedUpscaling;
@@ -723,15 +732,23 @@ void RendererImpl::applySettings() {
          (settings.ambientOcclusion == AmbientOcclusion::RayTraced && settings.screenSpaceFallbacks &&
           next.ambientOcclusion != AmbientOcclusion::RayTraced)) &&
         next.ambientOcclusion == AmbientOcclusion::None)
-        fallbacks.emplace_back("screen-space ambient occlusion: needs a depth buffer to sample and Rg16Float targets, "
-                               "or its pipelines failed; none");
+        fallbacks.emplace_back("screen-space ambient occlusion: needs a depth buffer to sample and 16-bit float "
+                               "targets, or its pipelines failed; none");
     if (settings.localLightShadows > 0 && next.localLightShadows == 0)
         fallbacks.push_back(
             std::format("ray-traced local light shadows: {}; {}", noRays,
                         next.localShadowMaps > 0 ? "shadow maps (area lights unshadowed)" : "unshadowed"));
     const char* noLighting = support.rayTracing ? "this build has no ray query shaders for traced lighting" : noRays;
     if (settings.reflections == Reflections::RayTraced && next.reflections != Reflections::RayTraced)
-        fallbacks.push_back(std::format("ray-traced reflections: {}; the sky's", noLighting));
+        fallbacks.push_back(
+            std::format("ray-traced reflections: {}; {}", noLighting,
+                        next.reflections == Reflections::ScreenSpace ? "screen space (SSR)" : "the sky's"));
+    if ((settings.reflections == Reflections::ScreenSpace ||
+         (settings.reflections == Reflections::RayTraced && settings.screenSpaceFallbacks &&
+          next.reflections != Reflections::RayTraced)) &&
+        next.reflections == Reflections::Sky)
+        fallbacks.emplace_back("screen-space reflections: need a depth buffer to sample and 16-bit float targets, or "
+                               "their pipelines failed; the sky's");
     if (settings.indirectLight != IndirectLight::Sky && next.indirectLight == IndirectLight::Sky)
         fallbacks.push_back(std::format("{}: {}; the sky's ambient light",
                                         settings.indirectLight == IndirectLight::Probes ? "the probe grid"
@@ -1650,13 +1667,15 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     }
     if (!pathTracing) pathTracer.release();
     bool screenOcclusion = !pathTracing && effects.ambientOcclusion == AmbientOcclusion::ScreenSpace;
-    if (screenOcclusion && !screenSpace.ready()) {
-        if (!screenSpaceTried && !screenSpace.init(*device, pipelineCount, pointClamp)) {
+    bool screenReflections = !pathTracing && effects.reflections == Reflections::ScreenSpace;
+    if ((screenOcclusion || screenReflections) && !screenSpace.ready()) {
+        if (!screenSpaceTried && !screenSpace.init(*device, pipelineCount, pointClamp, linearClamp)) {
             support.screenSpace = false; // logged
             applySettings();
         }
         screenSpaceTried = true;
-        screenOcclusion = screenSpace.ready();
+        screenOcclusion = screenOcclusion && screenSpace.ready();
+        screenReflections = screenReflections && screenSpace.ready();
     }
     // Local lights with ray-traced shadows: the nearest ones that cast shadows, one channel each.
     int channels = 0;
@@ -1723,11 +1742,11 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     // Hits are shaded (not only tested for shadows): every visible instance is in the top level, with its material.
     const bool hitData = rayReflections || probes || pathTracing;
     const bool denoisedUpscale = effects.upscaling == Upscaling::TemporalDenoised;
-    const bool gbuffer = rayReflections || rayIndirect || denoisedUpscale;
+    const bool gbuffer = rayReflections || rayIndirect || denoisedUpscale || screenReflections;
     if (!rayTraced) rayTracing.releaseTargets();
-    // Screen-space occlusion reads the ray tracing prepass's depth, or that of a depth prepass of its own.
-    const bool screenPrepass = screenOcclusion && !rayTraced;
-    if (!screenOcclusion) screenSpace.releaseTargets();
+    // The screen-space effects read the ray tracing prepass's depth and G-buffer, or those of a prepass of their own.
+    const bool screenPrepass = (screenOcclusion || screenReflections) && !rayTraced;
+    if (!screenOcclusion && !screenReflections) screenSpace.releaseTargets();
     Cascades shadow;
     if (cascades > 0)
         shadow = computeCascades(view.view, view.fovY, aspect, view.nearPlane, towardSun,
@@ -1797,7 +1816,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 Item item{0, glm::length(center - cameraPos), i, pipeline};
                 if ((rayTraced || screenPrepass) && !pathTracing && m.blend == BlendMode::Opaque) {
                     const bool cutOut = m.alphaCutoff > 0.0f;
-                    const bool withGbuffer = gbuffer && rayTraced;
+                    const bool withGbuffer = gbuffer && (rayTraced || screenReflections);
                     item.depth = withGbuffer ? surfaceGbufferPipeline(*surface, m.doubleSided)
                                              : surfaceDepthPipeline(*surface, m.doubleSided, cutOut);
                     item.depthMaterial = withGbuffer || cutOut;
@@ -2004,11 +2023,26 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         fu.rayLighting = glm::vec4(std::clamp(settings.reflectionRoughness, 0.05f, 1.0f), 0.0f, 0.0f, 0.0f);
     }
     // Screen-space occlusion: into alpha of the traced mask (its rgb the sun's when traced), else of its own mask.
+    // Screen-space reflections: read where the previous frame's image is there to take the hits' color from.
     const bool tracedPrepass = rayMask && !pathFrame;
-    const bool screenAo = screenOcclusion && (tracedPrepass || screenPrepass) &&
-                          screenSpace.ensureTargets(rw, rh, depthFormat, !tracedPrepass);
+    const bool screenTargets = (screenOcclusion || screenReflections) && (tracedPrepass || screenPrepass) &&
+                               screenSpace.ensureTargets({.width = rw,
+                                                          .height = rh,
+                                                          .depthFormat = depthFormat,
+                                                          .imageFormat = hdrFormat,
+                                                          .ownDepth = !tracedPrepass,
+                                                          .occlusion = screenOcclusion,
+                                                          .reflections = screenReflections});
+    const bool screenAo = screenOcclusion && screenTargets;
+    const bool screenHistory = screenReflections && screenTargets; // this frame's image is kept for the next
+    const bool screenReflect = screenHistory && screenSpace.historyValid() && !cut;
     if (screenAo) rayBits |= 2u;
+    if (screenReflect) {
+        rayBits |= 64u;
+        fu.rayLighting = glm::vec4(std::clamp(settings.reflectionRoughness, 0.05f, 1.0f), 0.0f, 0.0f, 0.0f);
+    }
     stats.screenOcclusion = screenAo;
+    stats.screenReflections = screenReflect;
     fu.options.w = float(rayBits);
     commands.pushUniforms(kVertex, 0, fu);
     commands.pushUniforms(kFragment, 0, fu);
@@ -2147,13 +2181,20 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (rayIndirect) rayTracing.traceIndirect(commands, hu, lu, inputs, filtering);
         commands.endTiming();
     }
-    // ---- 0b. Screen-space effects: the depth of the opaque surfaces (where nothing is traced), then GTAO
-    if (screenAo) {
+    // ---- 0b. Screen-space effects: the depth (and G-buffer) of the opaque surfaces where nothing is traced, then GTAO
+    // and the reflections. Positions are camera-relative (precise far from the origin).
+    const glm::mat4 relativeViewProj = projJ * glm::mat4(glm::mat3(view.view));
+    if (screenAo || screenReflect) {
         if (screenPrepass) {
             commands.beginTiming("prepass");
             const gpu::DepthTarget dt{
                 .texture = screenSpace.depth(), .store = gpu::StoreOp::Store, .clearDepth = 0.0f, .cycle = true};
-            if (gpu::RenderPass pass = commands.beginRenderPass(std::span<const gpu::ColorTarget>{}, &dt)) {
+            const gpu::ColorTarget colors[] = {{.texture = screenSpace.gbufferNormal(), .cycle = true},
+                                               {.texture = screenSpace.gbufferAlbedo(), .cycle = true}};
+            gpu::RenderPass pass = commands.beginRenderPass(
+                screenReflections ? std::span<const gpu::ColorTarget>(colors) : std::span<const gpu::ColorTarget>{},
+                &dt);
+            if (pass) {
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
                 pass.bindSampler(kFragment, 0, noShadowBinding);
                 drawBatches(pass, opaqueBatches, -1, stats.screenPrepassDraws, true);
@@ -2161,9 +2202,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             }
             commands.endTiming();
         }
-        commands.beginTiming("gtao");
-        // The camera rays at reversed depth 1 from the jittered projection and the view's rotation (no translation:
-        // camera-relative, precise far from the origin).
+        // The camera rays at reversed depth 1 from the jittered projection and the view's rotation.
         const glm::mat4 invProj = glm::inverse(projJ);
         const glm::mat3 rotation(invView);
         const auto rayAt = [&](float x, float y) {
@@ -2172,16 +2211,32 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             return rotation * (glm::vec3(v) / v.w);
         };
         const glm::vec3 rayOrigin = rayAt(0.0f, 0.0f);
+        const float noiseFrame = taa ? float(sequenceIndex % 64) : 0.0f;
         const shader::ScreenSpaceUniforms su{
             glm::vec4(float(std::clamp(settings.occlusionRays, 1, 8)), kGtaoSteps,
                       std::max(settings.occlusionRadius, 0.01f) * kGtaoRadiusMultiplier,
                       std::clamp(settings.occlusionStrength, 0.0f, 1.0f)),
-            glm::vec4(taa ? float(sequenceIndex % 64) : 0.0f, kGtaoMaxRadius * float(rh), kGtaoBlurTolerance, 0.0f),
-            glm::vec4(rayOrigin, 0.0f), glm::vec4((rayAt(float(rw), 0.0f) - rayOrigin) / float(rw), 0.0f),
-            glm::vec4((rayAt(0.0f, float(rh)) - rayOrigin) / float(rh), 0.0f)};
-        screenSpace.occlusion(commands, tracedPrepass ? rayTracing.depth() : screenSpace.depth(),
-                              tracedPrepass ? rayTracing.mask() : screenSpace.mask(), tracedPrepass && rayShadows, su);
-        commands.endTiming();
+            glm::vec4(noiseFrame, kGtaoMaxRadius * float(rh), kGtaoBlurTolerance, 0.0f),
+            glm::vec4(rayOrigin, 0.0f),
+            glm::vec4((rayAt(float(rw), 0.0f) - rayOrigin) / float(rw), 0.0f),
+            glm::vec4((rayAt(0.0f, float(rh)) - rayOrigin) / float(rh), 0.0f),
+            glm::vec4(kSsrSteps, kSsrFirstStep, kSsrThickness, std::clamp(settings.reflectionRoughness, 0.05f, 1.0f)),
+            glm::vec4(noiseFrame, kSsrResolveTolerance, kSsrGrowth, 0.0f),
+            relativeViewProj,
+            screenReflect ? screenSpace.historyViewProj(cameraPos) : relativeViewProj};
+        const gpu::Texture& screenDepth = tracedPrepass ? rayTracing.depth() : screenSpace.depth();
+        if (screenAo) {
+            commands.beginTiming("gtao");
+            screenSpace.occlusion(commands, screenDepth, tracedPrepass ? rayTracing.mask() : screenSpace.mask(),
+                                  tracedPrepass && rayShadows, su);
+            commands.endTiming();
+        }
+        if (screenReflect) {
+            commands.beginTiming("ssr");
+            screenSpace.reflect(commands, screenDepth,
+                                tracedPrepass ? rayTracing.gbufferNormal() : screenSpace.gbufferNormal(), su);
+            commands.endTiming();
+        }
     }
 
     // ---- 1. Sun shadow cascades (standard depth), then the transmittance of their translucent casters
@@ -2320,8 +2375,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             };
             const gpu::TextureSamplerBinding opaqueTraced[] = {
                 traced(3u, tracedPrepass ? rayTracing.mask() : screenSpace.mask()),
-                traced(8u, rayTracing.reflections()), traced(16u, rayTracing.indirect()),
-                traced(4u, rayTracing.localShadows())};
+                (rayBits & 64u) != 0 ? traced(64u, screenSpace.reflections()) : traced(8u, rayTracing.reflections()),
+                traced(16u, rayTracing.indirect()), traced(4u, rayTracing.localShadows())};
             const gpu::TextureSamplerBinding noTraced[] = {
                 {white, pointClamp}, {white, pointClamp}, {white, pointClamp}, {white, pointClamp}};
             const bool grid = (rayBits & 32u) != 0;
@@ -2358,6 +2413,14 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         }
     }
     commands.endTiming();
+    // The image the next frame's screen-space reflections take their hits' color from.
+    if (screenHistory) {
+        commands.beginTiming("ssr history");
+        screenSpace.keepHistory(commands, hdr, relativeViewProj, cameraPos);
+        commands.endTiming();
+    } else {
+        screenSpace.dropHistory();
+    }
 
     // ---- 3. Motion vectors and TAA
     gpu::TextureRef image = hdr;

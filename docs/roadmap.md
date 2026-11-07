@@ -103,8 +103,8 @@ code may be moved), verified with the engine's tests and the engine demo; no ver
   on 2026-11-06 after 0.9.0: hello's `input.txt` 14 passed, the demo's `physics.txt` 18, `input.txt` 22 and
   `menu.txt` 35, none failed; it did not attach there on 2026-11-05; the likely fix, not checked against an older
   build, is the offscreen runs' change that makes the virtual pad the only gamepad `Input` and ImGui use).
-- Not done, remaining: Ashfall's screen-space bounce light, reflections and sun shafts (optional modules; GTAO in
-  their place for the occlusion since 2026-11-07);
+- Not done, remaining: Ashfall's screen-space bounce light and sun shafts (optional modules; GTAO in their place
+  for the occlusion and Ashfall's reflections, generalized, as SSR since 2026-11-07);
   motion vectors for other vertex-deformed surfaces (custom vertex shaders); quality presets; GPU timing per pass on
   SDL GPU; HDR seen on a Mac HDR display (this Mac's display has no HDR range; on the iPhone the user looked at the
   demo's HDR section, on and off, on 2026-11-05: "everything is fine"); PQ encoding for `Hdr10` output; auto
@@ -404,6 +404,15 @@ scaler.
   [Performance](performance.md#screen-space-ambient-occlusion)). Open: the cost on a phone
   (`scenarios/gtao_phone.txt`), a look in motion.
 - [x] Ray-traced reflections with hit lighting and a roughness cut-off; sky fallback (no SSR this stage).
+- [x] SSR as the screen-space fallback of the traced reflections (after 0.9.0, 2026-11-07, on the Mac):
+  `Reflections::ScreenSpace`, and `RenderSettings::screenSpaceFallbacks` (the same flag as GTAO's) for `RayTraced`
+  where the device cannot trace; Ashfall's march generalized (a GGX ray per 2 x 2 pixels, steps relative to the view
+  depth), the hit's color from the previous frame's image, a depth-aware resolve; after a prepass with the G-buffer
+  where nothing is traced; on the native backend 0.09 to 0.18 ms of the M4 Pro's 1080p frame in the demo's sections
+  and 0.70 ms in the tunnel (in place of 3.65 ms of traced reflections), on SDL GPU about 1.9 ms in the tunnel at
+  1080p ([Render module](render.md#screen-space-reflections),
+  [Performance](performance.md#screen-space-reflections)). Open: the cost on a phone (`scenarios/ssr_phone.txt`), a
+  look in motion.
 - [x] Indirect light: DDGI-like probes (16 x 8 x 16, 64 rays each per frame), then per-pixel rays; sky ambient
   fallback; furnace test against the sky's light.
 - [x] The probe grid in turns for phones (after 0.9.0, 2026-11-07, on the Mac): `RenderSettings::probeUpdatePeriod`
@@ -513,8 +522,7 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    traced in turns since 2026-11-07 (`probeUpdatePeriod`, measured on the Mac only); its phone default waits for
    `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns at half size, 60 Hz).
 3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); custom surfaces
-   in ray hits, screen-space reflections (SSR) for devices without ray tracing (GTAO is there since 2026-11-07), a
-   denser or cascaded probe grid
+   in ray hits, a denser or cascaded probe grid
    (stage 11); shadows of area lights without ray tracing (stage 12).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.

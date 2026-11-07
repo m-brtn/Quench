@@ -111,11 +111,14 @@ void effectsPanel(Context& c, const render::RenderSettings& settings, const rend
     ImGui::TextWrapped("Translucent shadows: %s, %u transmittance draws",
                        e.translucentShadows == render::TranslucentShadows::Map ? "transmittance map" : "dithered",
                        s.transmittanceDraws);
-    if (e.localLightShadows > 0 || e.reflections == render::Reflections::RayTraced ||
+    if (e.localLightShadows > 0 || e.reflections != render::Reflections::Sky ||
         e.indirectLight != render::IndirectLight::Sky)
         ImGui::TextWrapped("Traced lighting: %d local light shadows, reflections %s, indirect light %s (%u probes); "
                            "%s denoiser",
-                           e.localLightShadows, e.reflections == render::Reflections::RayTraced ? "traced" : "sky",
+                           e.localLightShadows,
+                           e.reflections == render::Reflections::RayTraced     ? "traced"
+                           : e.reflections == render::Reflections::ScreenSpace ? "screen space (SSR)"
+                                                                               : "sky",
                            e.indirectLight == render::IndirectLight::RayTraced ? "traced"
                            : e.indirectLight == render::IndirectLight::Probes  ? "probes"
                                                                                : "sky",

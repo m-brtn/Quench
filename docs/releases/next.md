@@ -175,6 +175,19 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   (GTAO)" and "Screen-space fallbacks" (`set ao screen`, `set screen_fallbacks`), the ray tracing section the
   fallback without ray tracing, and the batches a part `raytracing_screen` with new golden images for Metal and
   Vulkan through MoltenVK; `scenarios/gtao_phone.txt` measures it on a phone (not run yet).
+- Screen-space reflections, SSR (stage 9 and 11 remaining work): `Reflections::ScreenSpace`, and
+  `RenderSettings::screenSpaceFallbacks` (the same flag), which now also turns the traced reflections into SSR where
+  the device cannot trace ([Render module](../render.md#screen-space-reflections)). Ashfall's march (`2d5db57`, the
+  same author) generalized: a ray per 2 x 2 pixels along the GGX lobe of the G-buffer's normal and roughness, steps
+  relative to the view depth, the hit's color from the previous frame's image, a depth-aware resolve with Karis
+  weights, after a prepass with the G-buffer where nothing is traced. On the M4 Pro (offscreen, 1080p) on the native
+  backend 0.12 ms in the demo's materials section and 0.18 ms in the shadows section (the frame 0.27 and 0.32 ms
+  more, with the prepass and the copy of the image), 0.70 ms in the tunnel in place of 3.65 ms of traced
+  reflections; on SDL GPU about 1.9 ms in the tunnel; frames without it cost what they did
+  ([Performance](../performance.md#screen-space-reflections)). The demo's Graphics panel has "Screen space (SSR)"
+  (`set reflections screen`), the screen-space fallbacks cover it, the batches' `raytracing_screen` part shows it (its
+  golden images for Metal and Vulkan through MoltenVK changed: the gold spheres reflect the floor), and
+  `scenarios/ssr_phone.txt` measures it on a phone (not run yet).
 
 ## Fixes
 
@@ -245,6 +258,15 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   `RenderStats::screenOcclusion` and `screenPrepassDraws` (before `renderWidth`). With GTAO the renderer makes three
   more pipelines (`RenderStats::pipelines`) the first time it runs. Surfaces read it as the traced occlusion
   (`FrameUniforms::options.w` bit 2, sampler 6): a surface on `Surface.hlsli` needs nothing.
+- **Screen-space reflections** (additions; nothing changes while a game does not ask for it):
+  `render::Reflections::ScreenSpace` after `RayTraced` (a `switch` over the enum without a `default` warns until it
+  handles it); `RenderSettings::screenSpaceFallbacks` now also covers the reflections, so a game that set it for
+  GTAO gets SSR where it asks for traced reflections on a device that cannot trace (and the fallback line says
+  "screen space (SSR)" in place of "the sky's"); `RenderStats::screenReflections` (after `screenOcclusion`). With SSR
+  the renderer makes two more pipelines the first time it runs and keeps a copy of the HDR image. Shader side:
+  `FrameUniforms::options.w` bit 64 says sampler 7 holds screen-space reflections, whose alpha is a confidence that
+  `Surface.hlsli` multiplies into the reflection's weight (bit 8 as before for the traced ones): a surface on
+  `Surface.hlsli` needs nothing; one that reads sampler 7 itself should do the same.
 - **`render::RenderSettings::probeUpdatePeriod`** is new (after `probeSpacing`; default 1, as before).
   `RenderStats::probes` is the probes traced this frame: 2048 as before by default, 2048 / n in turns. A shader of
   a game's own that reads the probe atlases through `quenchProbeIrradiance` needs nothing; one that reads the

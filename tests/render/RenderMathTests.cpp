@@ -164,6 +164,28 @@ QUENCH_TEST(effects_screen_space_fallbacks) {
     full.temporalUpscaling = full.denoisedUpscaling = true;
     CHECK(selectEffects(s, full).upscaling == Upscaling::Temporal,
           "nothing traced for the denoising upscaler: temporal upscaling");
+
+    // Reflections: ray traced, else screen space with the fallbacks, else the sky's.
+    RenderSettings r;
+    r.reflections = Reflections::RayTraced;
+    CHECK(selectEffects(r, maps).reflections == Reflections::Sky, "without the fallbacks: the sky's reflections");
+    r.screenSpaceFallbacks = true;
+    CHECK(selectEffects(r, maps).reflections == Reflections::ScreenSpace, "with the fallbacks: screen-space ones");
+    CHECK(selectEffects(r, full).reflections == Reflections::RayTraced, "traced where the device can");
+    quench::render::detail::DeviceSupport noLighting = full;
+    noLighting.rayLighting = false;
+    CHECK(selectEffects(r, noLighting).reflections == Reflections::ScreenSpace,
+          "no traced lighting shaders: screen-space ones");
+    r.reflections = Reflections::ScreenSpace;
+    r.screenSpaceFallbacks = false;
+    CHECK(selectEffects(r, full).reflections == Reflections::ScreenSpace,
+          "asked for: screen-space reflections also where rays could run");
+    CHECK(selectEffects(r, noDepth).reflections == Reflections::Sky &&
+              selectEffects(r, noPipelines).reflections == Reflections::Sky,
+          "they need a depth buffer to sample and their pipelines");
+    r.upscaling = Upscaling::TemporalDenoised;
+    CHECK(selectEffects(r, full).upscaling == Upscaling::Temporal,
+          "screen-space reflections are not traced: temporal upscaling");
 }
 
 QUENCH_TEST(effects_ray_traced_lighting_falls_back) {

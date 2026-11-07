@@ -296,12 +296,14 @@ are noted below.
   2026-11-07 shadow maps for its point and spot lights where `localShadowMapSize` asks for them, drawn through a
   surface variant of their own so that frames without them pay nothing; since stage 12 also the area lights' soft
   shadows, unshadowed without rays),
-  `Reflections::Sky | RayTraced`, `IndirectLight::Sky | Probes | RayTraced` (the sky's ambient values without rays),
+  `Reflections::Sky | RayTraced | ScreenSpace` (since 2026-11-07 SSR, the traced reflections' fallback with the same
+  flag), `IndirectLight::Sky | Probes | RayTraced` (the sky's ambient values without rays),
   `RayDenoiser::Spatial | Temporal` and `pathTracer`. Without the capability the renderer takes the fallback and logs
   why, as for TAA and depth clamp ([Render module](render.md#fallbacks)). Of the screen-space fallbacks the design
-  names, GTAO is built (2026-11-07, off by default: `RenderSettings::screenSpaceFallbacks` turns the traced
-  occlusion into GTAO where it cannot trace; [Render module](render.md#screen-space-ambient-occlusion)); SSR and
-  Ashfall's bounce light are not: a device without ray tracing gets the sky's values for those.
+  names, GTAO and SSR are built (2026-11-07, off by default: `RenderSettings::screenSpaceFallbacks` turns the traced
+  occlusion into GTAO and the traced reflections into SSR where the device cannot trace;
+  [Render module](render.md#screen-space-ambient-occlusion), [SSR](render.md#screen-space-reflections)); Ashfall's
+  bounce light is not: a device without ray tracing gets the sky's ambient values.
 - **Denoising** (stage 11): the engine's own filters (a spatial one and, the default, a temporal one with
   reprojection, a neighbourhood clamp, anti-lag and a-trous passes; [Render module](render.md#denoising)) run
   everywhere ray tracing does; MetalFX's temporal denoised scaler replaces them and TAA where `denoisedUpscaling`

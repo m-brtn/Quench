@@ -1945,6 +1945,80 @@ QUENCH_TEST(renderer_ray_traced_reflections) {
           sum(o), sum(at(sky, open)));
 }
 
+// Screen-space reflections on every backend, on the mirror floor of the traced ones: from the second frame (the first
+// keeps its image for the next one's hits) the emissive box's mirror image where the sky's reflection was, from a
+// prepass of their own. With screenSpaceFallbacks they replace ray-traced reflections where the device cannot trace;
+// where it can, asked for beside traced sun shadows, they read the ray tracing prepass's depth and G-buffer.
+QUENCH_TEST(renderer_screen_space_reflections) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.reflections = Reflections::ScreenSpace;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().reflections != Reflections::ScreenSpace)
+        QUENCH_SKIP("no depth buffer to sample: sky reflections");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyZenith = e.skyHorizon = glm::vec3(0.1f, 0.2f, 0.8f);
+    scene.setEnvironment(e);
+    scene.addInstance(
+        {.mesh = addMesh(scene, planeMesh(glm::vec2(10.0f))),
+         .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = 0.05f, .metallic = 1.0f})});
+    scene.addInstance({.mesh = addMesh(scene, boxMesh(glm::vec3(0.5f))),
+                       .material = scene.addMaterial(
+                           {.baseColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f), .emissive = glm::vec3(4.0f, 0.0f, 0.0f)}),
+                       .transform = glm::translate(glm::mat4(1.0f), {0, 1.0f, -2.0f})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 1.0f, 3.0f), glm::vec3(0, 0, -1.0f));
+    const glm::ivec2 image = pixelOf(view, {0, -1.0f, -2.0f}), open = pixelOf(view, {2.5f, -1.0f, -2.0f});
+    const std::vector<Rgba8> first = renderOnce(device, *renderer, scene, view, *target);
+    REQUIRE(first.size() == kSize * kSize, "%zu pixels", first.size());
+    CHECK(!renderer->stats().screenReflections && renderer->stats().screenPrepassDraws == 0,
+          "the first frame only keeps its image (%u prepass draws)", renderer->stats().screenPrepassDraws);
+    const std::vector<Rgba8> reflected = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().screenReflections && renderer->stats().screenPrepassDraws > 0,
+          "the reflections ran after a prepass of %u draws", renderer->stats().screenPrepassDraws);
+    const Rgba8 t = at(reflected, image), f = at(first, image), o = at(reflected, open);
+    std::printf("  mirror image %d %d %d (first frame %d %d %d), open floor %d %d %d\n", t.r, t.g, t.b, f.r, f.g, f.b,
+                o.r, o.g, o.b);
+    CHECK(t.r > 150 && t.r > t.b * 2, "the box's red in the mirror: %d %d %d", t.r, t.g, t.b);
+    CHECK(f.b > f.r, "the first frame reflects the sky: %d %d %d", f.r, f.g, f.b);
+    CHECK(o.b > o.r && std::abs(sum(o) - sum(at(first, open))) < 24,
+          "the open floor reflects the sky in both: %d vs %d", sum(o), sum(at(first, open)));
+
+    // Ray-traced reflections asked for, with the screen-space fallbacks.
+    settings.reflections = Reflections::RayTraced;
+    settings.screenSpaceFallbacks = true;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> fallback = settle(device, *renderer, scene, view, *target, 2);
+    if (renderer->effects().reflections == Reflections::ScreenSpace) {
+        CHECK(!device.caps().rayTracing, "ray tracing on the device, screen-space reflections in the renderer");
+        const ImageDiff d = compare(reflected, fallback);
+        CHECK(d.mean < 0.1, "the fallback is the same reflections: mean %.3f", d.mean);
+        const bool named = std::ranges::any_of(renderer->fallbacks(), [](const std::string& line) {
+            return line.starts_with("ray-traced reflections: ") && line.ends_with("; screen space (SSR)");
+        });
+        CHECK(named, "Renderer::fallbacks names the screen-space fallback");
+        return;
+    }
+    CHECK(renderer->effects().reflections == Reflections::RayTraced, "traced where the device can");
+
+    // Screen-space reflections with ray-traced sun shadows: the ray tracing prepass writes the G-buffer for them.
+    RenderSettings traced = rayTraced(settings);
+    traced.shadowCascades = 2; // 0 turns the sun's shadows off, the traced ones too
+    traced.reflections = Reflections::ScreenSpace;
+    addSun(scene, kSunDown);
+    renderer->setSettings(traced);
+    const std::vector<Rgba8> withRays = settle(device, *renderer, scene, view, *target, 2);
+    CHECK(renderer->effects().sunShadows == SunShadows::RayTraced && renderer->stats().screenReflections &&
+              renderer->stats().screenPrepassDraws == 0,
+          "the reflections from the ray tracing prepass (%u draws of their own)", renderer->stats().screenPrepassDraws);
+    const Rgba8 r = at(withRays, image);
+    std::printf("  with traced sun shadows: mirror image %d %d %d\n", r.r, r.g, r.b);
+    CHECK(r.r > 150 && r.r > r.b * 2, "the box's red in the mirror: %d %d %d", r.r, r.g, r.b);
+}
+
 // Normal maps in ray hits and in the path tracer: two walls under a sun from the upper right, the right one with a
 // normal map that turns its normal toward +u and +v (the light), over a mirror floor. The mapped wall's gain over the
 // plain one is the raster's on the walls, in their mirror images (traced reflections) and in the path tracer. A wrong

@@ -435,6 +435,8 @@ bool DemoGame::setRenderSetting(std::string_view name, std::string_view value) {
             s.reflections = render::Reflections::Sky;
         else if (value == "rt")
             s.reflections = render::Reflections::RayTraced;
+        else if (value == "screen")
+            s.reflections = render::Reflections::ScreenSpace;
         else
             return false;
     } else if (name == "reflection_roughness" && number) {
@@ -641,6 +643,7 @@ std::optional<double> DemoGame::scenarioValue(std::string_view name) const {
     if (name == "local_maps") return double(s.localShadowMaps);
     if (name == "local_map_draws") return double(s.localShadowDraws);
     if (name == "screen_occlusion") return s.screenOcclusion ? 1.0 : 0.0;
+    if (name == "screen_reflections") return s.screenReflections ? 1.0 : 0.0;
     if (name == "screen_prepass_draws") return double(s.screenPrepassDraws);
     if (name == "reflections") return double(int(e.reflections));
     if (name == "indirect") return double(int(e.indirectLight));
@@ -851,7 +854,10 @@ std::string DemoGame::perfDetails(App& app) {
         : e.upscaling == render::Upscaling::Temporal       ? "temporal"
         : e.upscaling == render::Upscaling::Spatial        ? "spatial"
                                                            : "bilinear",
-        s.rayInstances, e.localLightShadows, e.reflections == render::Reflections::RayTraced ? "rt" : "sky",
+        s.rayInstances, e.localLightShadows,
+        e.reflections == render::Reflections::RayTraced     ? "rt"
+        : e.reflections == render::Reflections::ScreenSpace ? "screen"
+                                                            : "sky",
         e.indirectLight == render::IndirectLight::RayTraced ? "rt"
         : e.indirectLight == render::IndirectLight::Probes  ? "probes"
                                                             : "sky",

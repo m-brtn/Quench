@@ -82,7 +82,8 @@ on how many were rendered before it (in a scripted run, the frames spent waiting
    trace the sun's and the local lights' shadows and the ambient occlusion, update the probe grid, trace the
    reflections and the indirect light, each followed by its filter. With ray-traced sun shadows the cascades of step
    1 are not drawn. The path tracer replaces steps 0 to 3 (below). Then screen-space ambient occlusion (GTAO,
-   below) where it runs, after a depth prepass of its own when nothing is traced.
+   below) and screen-space reflections (SSR, below) where they run, after a prepass of their own when nothing is
+   traced (with SSR also the G-buffer); after the HDR pass SSR copies the image for the next frame.
 1. **Shadow cascades** of the sun (standard depth, `Depth32Float` texture array): the view is split between linear and
    logarithmic distances up to `shadowDistance`, each cascade snapped to its texels; casters are culled per cascade.
    Solid casters write depth with their position only; cut-out ones run their surface and discard where it is cut
@@ -303,7 +304,8 @@ by default until measured on the iPhone, and each runs from the prepass at the r
 - **Reflections** (`Reflections::RayTraced`, default `Sky`): one ray per pixel along a GGX visible-normal sample of
   the pixel's roughness up to `reflectionRoughness` (0.5), faded into the sky's reflection above it; the hit is
   shaded as above, a miss sees the sky. The surface takes it in place of the sky's reflection (sampler 7, bit 8).
-  Test `renderer_ray_traced_reflections`: a mirror floor shows an emissive box's red texture where the sky's
+  Without ray tracing the sky's reflection, or since 2026-11-07 screen-space reflections with
+  `screenSpaceFallbacks` ([below](#screen-space-reflections)). Test `renderer_ray_traced_reflections`: a mirror floor shows an emissive box's red texture where the sky's
   reflection was (247 7 14 against 66 105 198), with one material texture in the hit arrays.
 - **Probe grid** (`IndirectLight::Probes`): 16 x 8 x 16 probes `probeSpacing` apart (2 m) at the cell centers of a
   world-aligned grid around `View::probeCenter` (default the camera; a top-down camera sets the point it looks at).
@@ -427,6 +429,58 @@ Where the device traces, `RayTraced` stays traced; `ScreenSpace` set by the game
   8 x 8 pixel footprint soften the contact (0.940 against the rays' 0.822 in the test's small image). No bent
   normals, no temporal filter of its own, no occlusion of translucent surfaces.
 
+### Screen-space reflections
+
+Since 2026-11-07 (after 0.9.0, not released). `Reflections::ScreenSpace`, or `Reflections::RayTraced` with
+`RenderSettings::screenSpaceFallbacks` (off by default; the same flag as GTAO's) where the rays are not available
+(SDL GPU, so the default backend everywhere, and the native backend without `gpu::Caps::rayTracing`): reflections of
+what the previous frame showed. They need a sampleable depth and `Rgba16Float` targets; else the sky's reflection,
+with a line in `fallbacks()`. Where the device traces, `RayTraced` stays traced; `ScreenSpace` set by the game runs
+SSR there too. `RenderStats::screenReflections` says whether it ran: not in a frame without a previous image (the
+first one, after a cut or a resize, or after a frame without SSR), which keeps the sky's reflection.
+
+- **G-buffer.** Where something is traced, the ray tracing prepass's depth and G-buffer; else a prepass of its own
+  (depth with the G-buffer's normal, roughness, albedo and metallic: the opaque batches with the G-buffer pipelines,
+  `surface_gbuffer_fs` where a surface has one; timed range `prepass`, its draws in `screenPrepassDraws`), shared
+  with GTAO.
+- **March** (`ss_reflect_fs` in `src/render/shaders/screenspace.hlsl`, timed range `ssr`): moved from Ashfall's
+  `ssr_fs` (`shaders/scene.hlsl` at Ashfall `2d5db57`, the same author) and generalized. At half resolution (the
+  top-left pixel of every 2 x 2 block), up to `reflectionRoughness`: one ray along a GGX visible-normal sample of
+  the G-buffer's normal and roughness (as the traced reflections; Ashfall: the mirror direction), camera-relative,
+  48 steps from 0.5 % of the view depth, each 1.1 times the last (about 4.8 view depths), stepped linearly in clip
+  space. The hit is the first depth the ray passes behind by less than 3 % of that depth or two steps' depth, and
+  above the tangent plane of the ray's origin (within a pixel of a grazing floor the ray seems behind the floor
+  itself), refined by 5 bisections. Its confidence fades for rays toward the camera (what they would hit is not on
+  the screen), hits on the back of a surface, near the screen's border, near the march's end and where the hit was
+  outside the previous frame's image. Its color is the previous frame's HDR image (before TAA) at the hit's position
+  in that frame (the previous view-projection, moved by the camera's movement), clipped at 64 as the traced
+  reflections' radiance.
+- **Resolve** (`ss_reflect_resolve_fs`, full resolution, `Rgba16Float`): the 4 x 4 term texels around the pixel,
+  weighted by the depth gradient as GTAO's blur (tolerance 2 % of the view depth) and by a Gaussian of 0.8 + 6 x
+  roughness pixels; the colors also by 1 / (1 + brightness) (Karis's average), so a single ray that finds a lamp does
+  not stay a bright square. Surfaces built on `Surface.hlsli` take rgb in place of the sky's reflection as the traced
+  reflections (sampler 7, `FrameUniforms::options.w` bit 64 beside bit 8), weighted by its alpha, the confidence: the
+  sky's reflection where the screen has nothing.
+- **History.** After the HDR pass a copy of the image (timed range `ssr history`), kept with the camera-relative
+  view-projection and the camera's position; dropped when SSR is off.
+- **Cost** on the M4 Pro at 1080p (offscreen, [Performance](performance.md#screen-space-reflections)): native backend
+  `ssr` 0.12 ms in the materials section, 0.18 ms in the shadows section (their own prepass 0.09 and 0.08 ms, the
+  copy 0.08 to 0.18 ms), 0.09 ms in the ray tracing section in place of the traced reflections (0.51 ms), 0.70 ms in
+  the tunnel in place of the traced ones (3.65 ms; its 1286 x 724 render size); SDL GPU's Metal driver frame average
+  1.66 to 1.91 ms (materials), 1.34 to 1.65 ms (shadows) and 3.34 to 5.23 ms in the tunnel (the march about 1.2 ms at
+  half of 1080p).
+- **Test** `renderer_screen_space_reflections` (64 x 64, a mirror floor before an emissive box; SDL GPU's Metal
+  driver, Vulkan through MoltenVK, the native backend): the first frame has no previous image and shows the sky's
+  reflection (66 105 198), the second the box's red (247 9 14, the traced reflections' 247 7 14), the open floor
+  still the sky; the fallback from `RayTraced` the same and named in `fallbacks()`; on the native backend with traced
+  sun shadows SSR reads the traced prepass's G-buffer and draws no prepass of its own.
+- **Limits.** Only what the previous frame showed is reflected: nothing behind the camera, off the screen or
+  hidden, so a mirror the camera looks straight at shows the sky, and an object moving fast is reflected a frame
+  late. One ray per 2 x 2 pixels and a spatial resolve only: rough surfaces near bright lights keep a fine grain (the
+  tunnel's lower walls in captures on both backends, finer under TAA than under MetalFX's temporal upscaling). Surfaces are taken to be 3 % of their depth thick, so a thin
+  object can be hit through. Translucent surfaces keep the sky's reflection. Cost grows with the render size: about
+  2 ms on the M4 Pro at 1080p in the tunnel on SDL GPU.
+
 ### Denoising
 
 The traced signals (the sun's visibility and the occlusion, the local light shadows, the reflections, the indirect
@@ -512,7 +566,8 @@ maps"), so a game can show them (the demo's "Frame and fallbacks" panel); it is 
 | Ray-traced ambient occlusion | the same | GTAO with `screenSpaceFallbacks`, else none |
 | Screen-space ambient occlusion (GTAO) | a sampleable depth, `Rg16Float` targets | none |
 | Ray-traced local light shadows (also area lights) | the same | point and spot lights: shadow maps if `localShadowMapSize` is set and a depth array is sampleable; else (and area lights always) unshadowed |
-| Ray-traced reflections | the same and the hit shaders | the sky's reflection |
+| Ray-traced reflections | the same and the hit shaders | SSR with `screenSpaceFallbacks`, else the sky's reflection |
+| Screen-space reflections (SSR) | a sampleable depth, `Rgba16Float` targets | the sky's reflection |
 | Probe grid, per-pixel indirect light | the same and the hit shaders | `skyAmbient` and `groundAmbient` |
 | Path tracer | the same and the hit shaders | the real-time frame |
 | Temporal ray denoiser | a sampleable depth and an `Rg16Float` target (the motion vectors) | spatial |
@@ -617,7 +672,7 @@ sun shadows (shadow maps or ray traced), cascades (0..4), shadow map size, shado
 12 taps), translucent shadows (transmittance map or dithered), shadow rays and softness, ambient occlusion (none, ray
 traced or screen space) with its rays, radius and strength, the screen-space fallbacks of the traced effects
 (`screenSpaceFallbacks`), local light shadows (0..4) and the size of their shadow maps where
-they are not traced (`localShadowMapSize`, 0: none), reflections (sky or ray traced) and
+they are not traced (`localShadowMapSize`, 0: none), reflections (sky, ray traced or screen space) and
 their roughness limit, indirect light (sky, probe grid or ray traced), the probe spacing and the probe updates
 (every probe per frame, 1/2, 1/4 or 1/8), the ray denoiser
 (spatial or temporal), the path tracer with its bounces and samples, anti-aliasing (none, FXAA, TAA) and sharpening,
@@ -639,22 +694,24 @@ path tracer's samples (`pathSamples`), and (stage 12) the area lights among the 
 the lights that took another light's shadow channel (`localShadowChanges`), and (2026-11-07, after 0.9.0) the
 lights with shadow maps, their maps, the instances and draws in them (`localShadowLights`, `localShadowMaps`,
 `localShadowInstances`, `localShadowDraws`), whether GTAO ran and the draws of its prepass (`screenOcclusion`,
-`screenPrepassDraws`).
+`screenPrepassDraws`), whether SSR ran (`screenReflections`).
 The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`,
 `area_lights`, `local_shadow_changes`, `local_map_lights`, `local_maps`, `local_map_draws`, `moved`,
 `render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`,
 `ray_compactions`, `ray_top_refit`, `ray_memory_mb`, `hit_textures`, `probes`, `path_samples`, `screen_occlusion`,
-`screen_prepass_draws`).
+`screen_prepass_draws`, `screen_reflections`).
 
 GPU time per pass (stage 9, where `gpu::Caps::gpuPassTiming`: the native Metal backend): `Renderer::render` wraps its
 passes in timed ranges of the command buffer it records into, `upload` (the instance and light buffers), `accel`
 (with `blas`, the bottom levels' builds, refits and compactions, and `tlas`, the top level, inside it),
 `prepass` (with the G-buffer, the motion vectors for the temporal denoiser and the denoising upscaler's inputs) and
 `raytrace` (ray tracing; `rays`, `denoise`, `probes`, `reflections` and `indirect` inside it), `path` (the path
-tracer), `gtao` (screen-space ambient occlusion, after its own `prepass` where nothing is traced), `shadows` (the
+tracer), `gtao` (screen-space ambient occlusion, after its own `prepass` where nothing is traced), `ssr` (screen-space
+reflections: the march and the resolve), `shadows` (the
 cascades and their
 transmittance maps), `local_shadows` (the local lights' shadow maps), `hdr` (opaque, sky, transparent and the game's passes in them), `taa` (motion vectors and the
-resolve), `upscale` (MetalFX), `bloom` and `tonemap` (with FXAA and the overlay passes). A range whose effect is off
+resolve), `upscale` (MetalFX), `bloom` and `tonemap` (with FXAA and the overlay passes), `ssr history` (after
+`hdr`). A range whose effect is off
 records nothing; the game's `PostHdr` passes are in no range of the renderer. The app reads them per frame
 (`app::FrameStats::gpuPasses`, inside its `game` range); the skinning pass has its own command buffer and stays in
 `skinningGpuMs`. [Performance](performance.md#gpu-time-per-pass) has the numbers.
@@ -733,8 +790,7 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   normal maps without a strength, as in the raster), not a custom surface's own shading or `surface_shadow_fs`; `QUENCH_SURFACE_VERTEX`
   deformations are not in the acceleration structures. Skinned casters further than `shadowDistance` are not in
   them. Hits are lit by local lights without shadow rays. Reflections are one bounce (a mirror in a mirror shows the
-  second one lit, not reflecting); rough surfaces above `reflectionRoughness` keep the sky's reflection, with no
-  screen-space fallback. The probe grid is one fixed size around one point (no cascades of grids), a few frames
+  second one lit, not reflecting); rough surfaces above `reflectionRoughness` keep the sky's reflection (SSR has the same cut-off). The probe grid is one fixed size around one point (no cascades of grids), a few frames
   behind changes of light (n times more with `probeUpdatePeriod` n: halfway in about 18 n frames, within 10 % in
   about 70 n), and its probes are not moved out of walls (a probe inside a wall is dark and its neighbours'
   visibility hides it). Turns are a fixed round-robin, not chosen by priority (a probe near the camera or in changing
@@ -775,6 +831,6 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   lights only by rays (at most 4), at most 16 local lights per frame (8 of them area lights) and no clustered or
   tiled light lists.
 - One render per scene and frame (several views of one scene need a scene per view).
-- Not in this stage, listed in the roadmap: Ashfall's other screen-space effects (bounce light, reflections, sun
-  shafts) as fallbacks for devices without ray tracing (GTAO is there since 2026-11-07), particles, terrain, decals, quality presets. GPU timing per pass exists only on the
+- Not in this stage, listed in the roadmap: Ashfall's other screen-space effects (bounce light, sun shafts) as
+  fallbacks for devices without ray tracing (GTAO and SSR are there since 2026-11-07), particles, terrain, decals, quality presets. GPU timing per pass exists only on the
   native Metal backend (SDL GPU has no timestamps inside a command buffer).

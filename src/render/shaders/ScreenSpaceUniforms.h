@@ -20,6 +20,15 @@ struct QUENCH_ALIGN16 ScreenSpaceUniforms {
     float4 rayOrigin;
     float4 rayX;
     float4 rayY;
+    // Reflections: x: march steps, y: the first step (relative to the view depth; each next one reflectionParams.z
+    // times longer), z: the thickness a surface is taken to have behind its depth (relative to its view depth), w: the
+    // roughness cutoff (RenderSettings::reflectionRoughness)
+    float4 reflection;
+    // x: the noise's frame, y: depth tolerance of the resolve (relative to the view depth), z: the growth of the
+    // march's steps, w: unused
+    float4 reflectionParams;
+    float4x4 viewProj;         // camera-relative position -> clip of this frame (with the TAA jitter)
+    float4x4 previousViewProj; // camera-relative position (this frame's camera) -> clip of the previous frame's image
 };
 
 QUENCH_SHARED_END

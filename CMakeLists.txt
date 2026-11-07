@@ -235,9 +235,10 @@ if(NOT QUENCH_HEADLESS)
         ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment surface_local_shadows_fs:fragment
                 surface_shadow_fs:fragment surface_transmittance_fs:fragment surface_gbuffer_fs:fragment)
     quench_add_shaders(quench_render NAME render_skin SOURCE src/render/shaders/skin.hlsl ENTRIES skin_cs:compute skin_morph_cs:compute)
-    # The screen-space effects (ambient occlusion where nothing is traced, or where a game asks for it).
+    # The screen-space effects (ambient occlusion and reflections where nothing is traced, or where a game asks for
+    # them).
     quench_add_shaders(quench_render NAME render_screenspace SOURCE src/render/shaders/screenspace.hlsl
-        ENTRIES ss_gtao_fs:fragment ss_gtao_blur_fs:fragment)
+        ENTRIES ss_gtao_fs:fragment ss_gtao_blur_fs:fragment ss_reflect_fs:fragment ss_reflect_resolve_fs:fragment)
     # Ray tracing (gpu::Caps::rayTracing): the rayquery entries need DXC (cmake/QuenchDxc.cmake); without it the sets
     # have the other entries only and the renderer uses the shadow maps and the sky's light.
     quench_add_shaders(quench_render NAME render_raytrace SOURCE src/render/shaders/raytrace.hlsl

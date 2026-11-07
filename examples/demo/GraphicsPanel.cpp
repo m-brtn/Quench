@@ -122,9 +122,9 @@ constexpr std::array<OptionInfo, kGraphicsOptions> kOptions{{
      "Reflections",
      Kind::Choice,
      0,
-     1,
-     {"sky", "rt"},
-     {"Sky", "Ray traced"}},
+     2,
+     {"sky", "rt", "screen"},
+     {"Sky", "Ray traced", "Screen space (SSR)"}},
     {O::ReflectionRoughness, "reflection_roughness", "reflection roughness", "Up to roughness", Kind::Number, 0, 1},
     {O::IndirectLight,
      "indirect",
@@ -710,8 +710,9 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
         rows.row(O::OcclusionRadius, [&] { return slider(s.occlusionRadius, 0.2f, 3.0f, "%.1f m"); });
         rows.row(O::OcclusionStrength, [&] { return slider(s.occlusionStrength, 0.0f, 1.0f, "%.2f"); });
         rows.row(O::ScreenSpaceFallbacks, [&] { return checkbox(s.screenSpaceFallbacks); });
-        note(s.screenSpaceFallbacks ? "Where occlusion cannot be ray traced: screen-space occlusion in place of none"
-                                    : "Where occlusion cannot be ray traced: none",
+        note(s.screenSpaceFallbacks ? "Where occlusion and reflections cannot be ray traced: their screen-space "
+                                      "versions in place of none and the sky's"
+                                    : "Where occlusion and reflections cannot be ray traced: none and the sky's",
              false);
     }
 
@@ -735,13 +736,20 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
         else
             note("Where local light shadows cannot be ray traced", false);
         rows.row(O::Reflections, [&] { return combo(O::Reflections, int(s.reflections)); });
+        const bool screenReflections = e.reflections == render::Reflections::ScreenSpace;
         if (s.reflections == render::Reflections::RayTraced && e.reflections != render::Reflections::RayTraced)
-            note(std::format("-> the sky's: {}",
+            note(std::format("-> {}: {}", screenReflections ? "screen space (SSR)" : "the sky's",
                              caps.rayTracing ? reason("ray-traced reflections", "no ray tracing here") : whyNot),
                  true);
+        else if (s.reflections == render::Reflections::ScreenSpace && !screenReflections)
+            note(std::format("-> the sky's: {}", reason("screen-space reflections", "no depth buffer to sample")),
+                 true);
+        if (screenReflections)
+            note("From the previous frame's image, at half resolution: only what was on the screen is reflected, the "
+                 "sky's reflection elsewhere",
+                 false);
         rows.row(O::ReflectionRoughness, [&] { return slider(s.reflectionRoughness, 0.0f, 1.0f, "%.2f"); });
-        if (e.reflections == render::Reflections::RayTraced)
-            note("Rougher surfaces fade into the sky's reflection", false);
+        if (e.reflections != render::Reflections::Sky) note("Rougher surfaces fade into the sky's reflection", false);
         rows.row(O::IndirectLight, [&] { return combo(O::IndirectLight, int(s.indirectLight)); });
         if (s.indirectLight != render::IndirectLight::Sky && e.indirectLight == render::IndirectLight::Sky)
             note(std::format("-> the sky's ambient light: {}",
