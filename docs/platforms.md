@@ -36,7 +36,8 @@ on the iPhone (the device test app, 2026-11-06) and under Node.js; nothing was l
 skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator, on the iPhone (the device test app
 and the demo's benchmark, 2026-11-06) and (without rendering) under Node.js. The native Metal backend (stage 9, the
 default on Apple platforms since 2026-11-07; see "Native Metal backend" below) ran on the Mac, in the iOS Simulator
-and on the iPhone (2026-11-06, as an option; not yet as the default;
+and on the iPhone (2026-11-06, as an option; as the default on the Mac and in the iOS Simulator, not yet on an
+iPhone;
 it crashes in builds of the Xcode generator before the ARC fix of that day, the 0.8.0 iOS package among them). Its
 ray tracing and MetalFX (see "Hardware ray tracing" below) ran on the Mac and both iPhones; the stage 11 effects
 (0.9.0: local light shadows, reflections, indirect light, the temporal denoiser, MetalFX denoising, the path
@@ -172,8 +173,9 @@ the default on macOS, iOS and the iOS Simulator since 2026-11-07 (the user's dec
 `--gpu-backend sdl` or `QUENCH_GPU_BACKEND=sdl`, and for `--gpu-driver vulkan`). A native device that fails to start
 falls back to SDL GPU with one warning. Built for macOS and iOS (device and Simulator); nothing of it exists
 elsewhere, and a request for it there creates SDL GPU with a warning. As the default (no flag) it has run on the Mac
-only: hello and the demo started offscreen without `--gpu-backend` (2026-11-07). The tests and batches name their
-backend, so it has not run as the default in the iOS Simulator or on an iPhone; the runs below chose it explicitly.
+(hello and the demo offscreen) and in the iOS Simulator (hello and the demo's smoke scenario, 17 of 17, with
+captures; 2026-11-07). The tests and batches name their backend, so it has not run as the default on an iPhone; the
+runs below chose it explicitly.
 
 | Where | Run so far |
 |---|---|

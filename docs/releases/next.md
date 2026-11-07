@@ -95,6 +95,9 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `--gpu-backend sdl`, `QUENCH_GPU_BACKEND=sdl` and `--gpu-driver vulkan` give SDL GPU; `native_fallback` gets an SDL
   GPU device from a native device that fails; `buffer_cycle` passes on SDL GPU's Metal driver, the native backend
   and Vulkan through MoltenVK; every batch checks the backend it ran on.
+- **The native backend as the default in the iOS Simulator** (iPhone 18 Pro Max Simulator, iOS 27.0, no backend
+  flag): hello and the demo's smoke scenario (every section once, 17 of 17) ran on it, the ray tracing section and
+  the tunnel with their fallbacks (no ray tracing there); the captures were looked at.
 - **Performance against SDL GPU** (offscreen, unpaced; [Performance](../performance.md#sdl-gpu-and-the-native-backend-before-it-became-the-default)):
   at 480 x 270 (CPU-bound) the native backend's CPU p50 is within -11 to +2 % of SDL GPU's without per-pass
   timestamps and +2 to +8.5 % (8 to 12 µs) with them, as in every perf region; the animation section 0.646 against
@@ -128,8 +131,8 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 
 ## What was not verified
 
-- **The native backend as the default on an iPhone and in the iOS Simulator:** the tests and batches name their
-  backend, so neither ran it as the default, and nobody has looked at it on a screen. The iPhone 18 Pro Max has not
+- **The native backend as the default on an iPhone:** the tests and batches name their backend, so no iPhone ran it
+  as the default (the iOS Simulator did), and nobody has looked at it on a phone's screen. The iPhone 18 Pro Max has not
   run the ray tracing section's and the tunnel's phone defaults, which the demo now shows there without a flag
   (the iPhone 17 has, 2026-11-06). The hello benchmark on the Mac's screen on both backends is still to run.
 - Per-pass timestamps cost the native backend 8 to 12 µs of CPU per frame, and 6.5 % of the frames in the animation
