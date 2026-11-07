@@ -4,6 +4,7 @@
 
 #include <quench/core/Jobs.h>
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
@@ -192,7 +193,7 @@ struct NavMesh::Impl {
         }
         std::vector<Job> after;
         if (tile.source) after.push_back(tile.sourceReady);
-        tile.job = jobs.run([cfg = config, work] { runTile(*cfg, *work); }, JobPriority::Low, after);
+        tile.job = jobs.run("navigation.tile", [cfg = config, work] { runTile(*cfg, *work); }, JobPriority::Low, after);
         tile.work = std::move(work);
         tile.running = true;
         tile.dirty = false;
@@ -314,7 +315,8 @@ Result<NavMesh> NavMesh::build(Geometry geometry, const BuildSettings& settings,
     source->geometry = std::move(geometry);
     source->maskMaxX = c.tilesX - 1;
     source->maskMaxZ = c.tilesZ - 1;
-    const Job ready = jobs.run([source, cfg = impl->config] { source->prepare(*cfg); }, JobPriority::Low);
+    const Job ready =
+        jobs.run("navigation.prepare", [source, cfg = impl->config] { source->prepare(*cfg); }, JobPriority::Low);
     for (int i = 0; i < c.tilesX * c.tilesZ; ++i) {
         impl->tiles[std::size_t(i)].source = source;
         impl->tiles[std::size_t(i)].sourceReady = ready;
@@ -348,7 +350,10 @@ Result<NavMesh> NavMesh::create(std::shared_ptr<const NavMeshData> data, JobSyst
     return NavMesh(std::move(impl));
 }
 
-void NavMesh::update(double jobSeconds) { m_impl->update(jobSeconds); }
+void NavMesh::update(double jobSeconds) {
+    QUENCH_PROFILE_ZONE("navigation.update");
+    m_impl->update(jobSeconds);
+}
 
 bool NavMesh::ready() const { return m_impl->running.empty() && m_impl->dirty.empty(); }
 
@@ -423,7 +428,8 @@ Result<void> NavMesh::rebuild(Geometry geometry, glm::vec3 min, glm::vec3 max) {
     source->maskMaxZ = std::min(c.tilesZ - 1, tile(max.z, c.settings.boundsMin.z, c.tilesZ));
     if (source->maskMinX > source->maskMaxX || source->maskMinZ > source->maskMaxZ) return {};
     source->geometry = std::move(geometry);
-    const Job ready = m.jobs.run([source, cfg = m.config] { source->prepare(*cfg); }, JobPriority::Low);
+    const Job ready =
+        m.jobs.run("navigation.prepare", [source, cfg = m.config] { source->prepare(*cfg); }, JobPriority::Low);
     for (int z = source->maskMinZ; z <= source->maskMaxZ; ++z)
         for (int x = source->maskMinX; x <= source->maskMaxX; ++x) {
             Tile& t = m.tiles[std::size_t(z * c.tilesX + x)];

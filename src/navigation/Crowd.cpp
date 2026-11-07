@@ -3,6 +3,7 @@
 #include "Internal.h"
 
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
 #include <DetourCrowd.h>
 #include <glm/geometric.hpp>
@@ -253,6 +254,7 @@ void Crowd::setFilter(int index, const Filter& filter) {
 }
 
 void Crowd::update(float dt) {
+    QUENCH_PROFILE_ZONE("navigation.crowd");
     Impl& m = *m_impl;
     m.events.clear();
     for (std::size_t i = 0; i < m.slots.size(); ++i) {

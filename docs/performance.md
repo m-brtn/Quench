@@ -188,11 +188,12 @@ What a capture has:
   timestamps' calibration, about 1 s after the start. SDL GPU has no timestamp queries: only the plot there.
 - **Jobs** (threads `jobs.worker N`): a zone per job, named where the job has a name (`JobSystem::run(name, ...)`,
   `parallelFor(name, ...)`; others are `job`): `assets.load`, `audio.stream_open`, `audio.stream_fill`,
-  `animation.characters`, `physics.jobs` (Jolt's jobs).
+  `animation.characters`, `navigation.tile`, `navigation.prepare`, `physics.jobs` (Jolt's jobs).
 - **Modules**: `physics.step` with Jolt's own zones inside (`jolt.<name>`, through Jolt's external profile hooks),
   `animation.update`, `assets.update` with `assets.finish` per finished asset, `assets.read`, `assets.decode`,
   `assets.transcode_basis` and `assets.decode_bc7` (the asset's path as the zone's text), `gpu.upload_buffer`,
-  `gpu.upload_texture`, `audio.update`, `audio.decode` (a stream's refill), `audio.mix_offline`.
+  `gpu.upload_texture`, `audio.update`, `audio.decode` (a stream's refill), `audio.mix_offline`,
+  `navigation.update` (a navmesh's finished tiles) and `navigation.crowd` (a crowd's step).
 - **Messages**: every log line while a server is connected.
 
 Not recorded: the audio device's callback. It must not allocate, lock or wait, and Tracy's zone path may allocate
