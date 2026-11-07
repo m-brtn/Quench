@@ -79,6 +79,11 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
 
 ## Fixes
 
+- **`JobSystem::wait()` could return before the job left `pendingCount()`:** the job was marked done before it was
+  counted out, so a `pendingCount()` right after waiting for every job read 1 now and then (`core.jobs_run_and_wait`
+  under ThreadSanitizer and load: 13 of 480 runs). `wait()` now returns once the job is also counted out; 0 of 1200
+  runs since.
+
 - **Xcode builds put changed assets into the app one build late:** the merged `assets/` folder was a folder
   reference, which Xcode checks before the build that changes it: the demo's textures cooked again as ASTC were in
   the merged folder after a build and in the app only after the next. A script phase after the target's other

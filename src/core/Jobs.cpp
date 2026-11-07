@@ -57,7 +57,8 @@ struct JobState final : enki::ITaskSet {
     std::atomic<int> waitingOn{1};
     std::atomic<bool> launched{false};
     std::atomic<bool> done{false};
-    std::shared_ptr<JobState> self; // set while the job is in enkiTS
+    std::atomic<bool> released{false}; // done and no longer in pendingCount(): what wait() waits for
+    std::shared_ptr<JobState> self;    // set while the job is in enkiTS
 
     Releaser releaser;
     enki::Dependency releaserDependency;
@@ -89,6 +90,7 @@ void JobState::Releaser::OnDependenciesComplete(enki::TaskScheduler* scheduler, 
     JobCounters& counters = state->counters;
     std::shared_ptr<JobState> keep = std::move(state->self);
     counters.pending.fetch_sub(1, std::memory_order_acq_rel);
+    state->released.store(true, std::memory_order_release);
     // May destroy the job and this releaser with it: nothing is touched after this line.
     keep.reset();
 }
@@ -177,13 +179,13 @@ void JobSystem::wait(const Job& job) {
     QUENCH_ASSERT(threadIndex() >= 0, "JobSystem::wait from a thread that is neither the creating thread nor a worker");
     detail::JobState* state = job.m_state.get();
     if (!state) return;
-    while (!state->done.load(std::memory_order_acquire)) {
+    while (!state->released.load(std::memory_order_acquire)) {
         if (state->launched.load(std::memory_order_acquire))
             m_impl->scheduler.WaitforTask(state);
         else
             m_impl->scheduler.WaitforTask(nullptr);
         // The task can be complete while its releaser still runs on another thread for a moment.
-        if (!state->done.load(std::memory_order_acquire)) std::this_thread::yield();
+        if (!state->released.load(std::memory_order_acquire)) std::this_thread::yield();
     }
 }
 
