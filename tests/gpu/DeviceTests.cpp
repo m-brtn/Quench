@@ -228,6 +228,56 @@ QUENCH_TEST(copy_pass) {
           got[1].r, got[2].r, got[3].r);
 }
 
+// Writes with cycle while earlier work may still read the buffer: what was recorded before a write reads the old
+// contents, what was recorded after it the new, over more frames than are in flight and with two writes in one
+// command buffer; a command buffer acquired before the one that writes, submitted after it, reads the new.
+QUENCH_TEST(buffer_cycle) {
+    QUENCH_GPU_DEVICE(device);
+    constexpr std::uint32_t kRounds = 6;
+    constexpr std::uint32_t kCopies = 2 * kRounds + 1;
+    Result<TransferBuffer> staging = device.createTransferBuffer({.size = 128});
+    Result<Buffer> buffer = device.createBuffer({.size = 64, .name = "cycled"});
+    Result<Buffer> copies = device.createBuffer({.size = 64 * kCopies, .name = "cycle copies"});
+    REQUIRE(staging && buffer && copies, "creation failed");
+    const auto write = [&](unsigned first) {
+        std::span<std::byte> mapped = staging->map(true);
+        std::memcpy(mapped.data(), pattern(64, first).data(), 64);
+        std::memcpy(mapped.data() + 64, pattern(64, first + 1).data(), 64);
+        staging->unmap();
+    };
+    for (std::uint32_t round = 0; round < kRounds; ++round) {
+        write(2 * round);
+        CommandBuffer commands = device.acquireCommandBuffer();
+        REQUIRE(commands, "no command buffer");
+        // A pass per step: one pass would rely on the order of its copies.
+        for (std::uint32_t half = 0; half < 2; ++half) {
+            commands.beginCopyPass().upload(*staging, half * 64, *buffer, 0, 64, true);
+            commands.beginCopyPass().copy(*buffer, 0, *copies, (2 * round + half) * 64, 64);
+        }
+        Result<void> submitted = commands.submit();
+        REQUIRE(submitted, "submit %u: %s", round, submitted.error().c_str());
+    }
+    write(2 * kRounds);
+    CommandBuffer reader = device.acquireCommandBuffer();
+    CommandBuffer writer = device.acquireCommandBuffer();
+    REQUIRE(reader && writer, "no command buffers");
+    {
+        CopyPass copy = writer.beginCopyPass();
+        copy.upload(*staging, 0, *buffer, 0, 64, true);
+    }
+    REQUIRE(writer.submit(), "submit the writer");
+    {
+        CopyPass copy = reader.beginCopyPass();
+        copy.copy(*buffer, 0, *copies, (kCopies - 1) * 64, 64);
+    }
+    REQUIRE(reader.submit(), "submit the reader");
+
+    Result<std::vector<std::byte>> back = device.download(*copies, 0, 64 * kCopies);
+    REQUIRE(back && back->size() == 64 * kCopies, "download");
+    for (std::uint32_t i = 0; i < kCopies; ++i)
+        CHECK(std::memcmp(back->data() + i * 64, pattern(64, i).data(), 64) == 0, "copy %u differs", i);
+}
+
 QUENCH_TEST(generate_mipmaps) {
     QUENCH_GPU_DEVICE(device);
     Result<Texture> texture = device.createTexture({.usage = TextureUsage::Sampled | TextureUsage::ColorTarget,

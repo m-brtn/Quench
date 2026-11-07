@@ -22,7 +22,6 @@ namespace {
 
 MetalCommandBuffer& commandsOf(void* native) { return *static_cast<MetalCommandBuffer*>(native); }
 MetalTexture& textureOf(const TextureRef& ref) { return *static_cast<MetalTexture*>(ref.native); }
-id<MTLBuffer> bufferOf(const BufferRef& ref) { return static_cast<MetalBuffer*>(ref.native)->handle; }
 MetalTransferBuffer& transferOf(void* native) { return *static_cast<MetalTransferBuffer*>(native); }
 
 std::size_t stageIndex(ShaderStage stage) {
@@ -139,6 +138,33 @@ std::uint64_t MetalDevice::finishedBelow() const {
 
 void MetalDevice::useTransfer(MetalCommandBuffer& commands, MetalTransferBuffer& buffer) {
     buffer.current().lastUse = std::max(buffer.current().lastUse, commands.serial);
+}
+
+id<MTLBuffer> MetalDevice::useBuffer(MetalCommandBuffer& commands, const BufferRef& ref, bool cycle) {
+    MetalBuffer& buffer = *static_cast<MetalBuffer*>(ref.native);
+    if (cycle) {
+        reclaim();
+        const std::uint64_t finished = finishedBelow();
+        if (buffer.current().lastUse >= finished) {
+            auto it = std::find_if(buffer.backings.begin(), buffer.backings.end(),
+                                   [finished](const MetalBuffer::Backing& b) { return b.lastUse < finished; });
+            if (it == buffer.backings.end()) {
+                if (id<MTLBuffer> backing = [m_device newBufferWithLength:buffer.size
+                                                                  options:MTLResourceStorageModePrivate]) {
+                    backing.label = buffer.label;
+                    buffer.backings.push_back({backing, 0});
+                    it = buffer.backings.end() - 1;
+                } else {
+                    // The write goes to the backing in use: Metal orders it after the earlier reads.
+                    log::error("gpu", "cannot cycle a buffer of {} bytes", buffer.size);
+                }
+            }
+            if (it != buffer.backings.end()) buffer.active = std::size_t(it - buffer.backings.begin());
+        }
+    }
+    MetalBuffer::Backing& backing = buffer.current();
+    backing.lastUse = std::max(backing.lastUse, commands.serial);
+    return backing.handle;
 }
 
 id<MTLBuffer> MetalDevice::uniformChunk() {
@@ -497,7 +523,7 @@ void MetalDevice::setBlendConstants(void* pass, const Color& color) {
 void MetalDevice::bindVertexBuffers(void* pass, std::uint32_t firstSlot, std::span<const BufferBinding> buffers) {
     MetalCommandBuffer& c = commandsOf(pass);
     for (std::size_t i = 0; i < buffers.size(); ++i) {
-        c.vertexBuffers[firstSlot + i] = bufferOf(buffers[i].buffer);
+        c.vertexBuffers[firstSlot + i] = useBuffer(c, buffers[i].buffer);
         c.vertexOffsets[firstSlot + i] = buffers[i].offset;
     }
     c.vertexBufferCount = std::max(c.vertexBufferCount, firstSlot + std::uint32_t(buffers.size()));
@@ -506,7 +532,7 @@ void MetalDevice::bindVertexBuffers(void* pass, std::uint32_t firstSlot, std::sp
 
 void MetalDevice::bindIndexBuffer(void* pass, const BufferBinding& buffer, IndexFormat format) {
     MetalCommandBuffer& c = commandsOf(pass);
-    c.indexBuffer = bufferOf(buffer.buffer);
+    c.indexBuffer = useBuffer(c, buffer.buffer);
     c.indexOffset = buffer.offset;
     c.indexType = format == IndexFormat::Uint32 ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
 }
@@ -526,7 +552,7 @@ void MetalDevice::bindStorageBuffers(void* pass, ShaderStage stage, std::uint32_
                                      std::span<const BufferRef> buffers) {
     MetalCommandBuffer& c = commandsOf(pass);
     const std::size_t s = stageIndex(stage);
-    for (std::size_t i = 0; i < buffers.size(); ++i) c.storageBuffers[s][firstSlot + i] = bufferOf(buffers[i]);
+    for (std::size_t i = 0; i < buffers.size(); ++i) c.storageBuffers[s][firstSlot + i] = useBuffer(c, buffers[i]);
     c.storageBuffersDirty[s] = true;
 }
 
@@ -638,7 +664,7 @@ void MetalDevice::drawIndexed(void* pass, std::uint32_t indexCount, std::uint32_
 void MetalDevice::drawIndirect(void* pass, const BufferRef& buffer, std::uint32_t offset, std::uint32_t drawCount) {
     MetalCommandBuffer& c = commandsOf(pass);
     flushGraphics(c);
-    id<MTLBuffer> indirect = bufferOf(buffer);
+    id<MTLBuffer> indirect = useBuffer(c, buffer);
     // 16-byte commands (vertex count, instance count, first vertex, first instance).
     for (std::uint32_t i = 0; i < drawCount; ++i)
         [c.render drawPrimitives:c.graphicsPipeline->primitive
@@ -650,7 +676,7 @@ void MetalDevice::drawIndexedIndirect(void* pass, const BufferRef& buffer, std::
                                       std::uint32_t drawCount) {
     MetalCommandBuffer& c = commandsOf(pass);
     flushGraphics(c);
-    id<MTLBuffer> indirect = bufferOf(buffer);
+    id<MTLBuffer> indirect = useBuffer(c, buffer);
     // 20-byte commands (index count, instance count, first index, vertex offset, first instance).
     for (std::uint32_t i = 0; i < drawCount; ++i)
         [c.render drawIndexedPrimitives:c.graphicsPipeline->primitive
@@ -682,7 +708,8 @@ void* MetalDevice::beginComputePass(void* commands, std::span<const StorageBuffe
         }
         c.pass = MetalPass::Compute;
         QUENCH_ASSERT(writes.size() <= metal::kMaxStorage, "too many compute storage writes");
-        for (std::size_t i = 0; i < writes.size(); ++i) c.computeWrites[i] = bufferOf(writes[i].buffer);
+        for (std::size_t i = 0; i < writes.size(); ++i)
+            c.computeWrites[i] = useBuffer(c, writes[i].buffer, writes[i].cycle);
         return &c;
     }
 }
@@ -709,7 +736,7 @@ void MetalDevice::bindComputePipeline(void* pass, void* pipeline) {
 
 void MetalDevice::bindComputeStorageBuffers(void* pass, std::uint32_t firstSlot, std::span<const BufferRef> buffers) {
     MetalCommandBuffer& c = commandsOf(pass);
-    for (std::size_t i = 0; i < buffers.size(); ++i) c.computeBuffers[firstSlot + i] = bufferOf(buffers[i]);
+    for (std::size_t i = 0; i < buffers.size(); ++i) c.computeBuffers[firstSlot + i] = useBuffer(c, buffers[i]);
     c.computeBuffersDirty = true;
 }
 
@@ -826,7 +853,8 @@ void MetalDevice::buildBottomLevel(void* pass, void* structure, const RayGeometr
         MetalCommandBuffer& c = commandsOf(pass);
         MetalAccelerationStructure& as = *static_cast<MetalAccelerationStructure*>(structure);
         MTLPrimitiveAccelerationStructureDescriptor* d =
-            metal::bottomLevelDescriptor(&geometry, geometry.triangleCount, as.allowRefit);
+            metal::bottomLevelDescriptor(&geometry, useBuffer(c, geometry.vertices), useBuffer(c, geometry.indices),
+                                         geometry.triangleCount, as.allowRefit);
         const NSUInteger offset = scratch(c, refit ? as.refitScratch : as.buildScratch);
         if (refit)
             [c.accel refitAccelerationStructure:as.handle
@@ -1110,13 +1138,13 @@ void MetalDevice::endCopyPass(void*, void* pass) {
 
 void MetalDevice::uploadToBuffer(void* pass, void* transferBuffer, std::uint32_t sourceOffset,
                                  const BufferRef& destination, std::uint32_t destinationOffset, std::uint32_t size,
-                                 bool) {
+                                 bool cycle) {
     MetalCommandBuffer& c = commandsOf(pass);
     MetalTransferBuffer& transfer = transferOf(transferBuffer);
     useTransfer(c, transfer);
     [c.blit copyFromBuffer:transfer.current().handle
               sourceOffset:sourceOffset
-                  toBuffer:bufferOf(destination)
+                  toBuffer:useBuffer(c, destination, cycle)
          destinationOffset:destinationOffset
                       size:size];
 }
@@ -1164,7 +1192,7 @@ void MetalDevice::downloadFromBuffer(void* pass, const BufferRef& source, std::u
     MetalCommandBuffer& c = commandsOf(pass);
     MetalTransferBuffer& transfer = transferOf(transferBuffer);
     useTransfer(c, transfer);
-    [c.blit copyFromBuffer:bufferOf(source)
+    [c.blit copyFromBuffer:useBuffer(c, source)
               sourceOffset:sourceOffset
                   toBuffer:transfer.current().handle
          destinationOffset:destinationOffset
@@ -1172,12 +1200,15 @@ void MetalDevice::downloadFromBuffer(void* pass, const BufferRef& source, std::u
 }
 
 void MetalDevice::copyBuffer(void* pass, const BufferRef& source, std::uint32_t sourceOffset,
-                             const BufferRef& destination, std::uint32_t destinationOffset, std::uint32_t size, bool) {
-    [commandsOf(pass).blit copyFromBuffer:bufferOf(source)
-                             sourceOffset:sourceOffset
-                                 toBuffer:bufferOf(destination)
-                        destinationOffset:destinationOffset
-                                     size:size];
+                             const BufferRef& destination, std::uint32_t destinationOffset, std::uint32_t size,
+                             bool cycle) {
+    MetalCommandBuffer& c = commandsOf(pass);
+    id<MTLBuffer> from = useBuffer(c, source); // before the destination moves, when both are one buffer
+    [c.blit copyFromBuffer:from
+              sourceOffset:sourceOffset
+                  toBuffer:useBuffer(c, destination, cycle)
+         destinationOffset:destinationOffset
+                      size:size];
 }
 
 void MetalDevice::copyTexture(void* pass, const TextureRegion& source, const TextureRegion& destination, bool) {

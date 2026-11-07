@@ -174,8 +174,10 @@ CFStringRef compositionColorSpace(SwapchainComposition composition) {
 
 } // namespace
 
-MTLPrimitiveAccelerationStructureDescriptor*
-metal::bottomLevelDescriptor(const RayGeometry* geometry, std::uint32_t triangleCount, bool allowRefit) {
+MTLPrimitiveAccelerationStructureDescriptor* metal::bottomLevelDescriptor(const RayGeometry* geometry,
+                                                                          id<MTLBuffer> vertices, id<MTLBuffer> indices,
+                                                                          std::uint32_t triangleCount,
+                                                                          bool allowRefit) {
     MTLAccelerationStructureTriangleGeometryDescriptor* g =
         [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
     g.vertexFormat = MTLAttributeFormatFloat3;
@@ -183,10 +185,10 @@ metal::bottomLevelDescriptor(const RayGeometry* geometry, std::uint32_t triangle
     g.triangleCount = triangleCount;
     g.opaque = YES; // instances decide (RayInstanceFlags)
     if (geometry) {
-        g.vertexBuffer = static_cast<MetalBuffer*>(geometry->vertices.native)->handle;
+        g.vertexBuffer = vertices;
         g.vertexBufferOffset = geometry->vertexOffset;
         g.vertexStride = geometry->vertexStride;
-        g.indexBuffer = static_cast<MetalBuffer*>(geometry->indices.native)->handle;
+        g.indexBuffer = indices;
         g.indexBufferOffset = geometry->indexOffset;
     }
     MTLPrimitiveAccelerationStructureDescriptor* d = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
@@ -459,8 +461,12 @@ Result<void*> MetalDevice::createBuffer(const BufferDesc& desc) {
         id<MTLBuffer> buffer = [m_device newBufferWithLength:size options:MTLResourceStorageModePrivate];
         if (!buffer)
             return Error{std::format("cannot create {} of {} bytes", describe("buffer", desc.name), desc.size)};
-        if (m_debug && !desc.name.empty()) buffer.label = label(desc.name);
-        return static_cast<void*>(new MetalBuffer{buffer});
+        auto* result = new MetalBuffer{.backings = {{buffer}}, .size = size};
+        if (m_debug && !desc.name.empty()) {
+            result->label = label(desc.name);
+            buffer.label = result->label;
+        }
+        return static_cast<void*>(result);
     }
 }
 
@@ -627,7 +633,7 @@ Result<void*> MetalDevice::createAccelerationStructure(const AccelerationStructu
         if (desc.compactedSize == 0) {
             MTLAccelerationStructureDescriptor* d = nil;
             if (desc.level == AccelerationStructureLevel::Bottom) {
-                d = metal::bottomLevelDescriptor(nullptr, desc.triangleCount, desc.allowRefit);
+                d = metal::bottomLevelDescriptor(nullptr, nil, nil, desc.triangleCount, desc.allowRefit);
             } else {
                 MTLInstanceAccelerationStructureDescriptor* top =
                     [MTLInstanceAccelerationStructureDescriptor descriptor];

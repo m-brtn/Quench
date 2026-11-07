@@ -57,9 +57,11 @@ constexpr std::uint32_t kFramesInFlight = 2;
 constexpr std::uint32_t kTimestampSamples = 512;
 
 MTLPixelFormat pixelFormat(TextureFormat format);
-// The descriptor of a bottom level: sizes only without geometry (for the sizes query).
-MTLPrimitiveAccelerationStructureDescriptor* bottomLevelDescriptor(const RayGeometry* geometry,
-                                                                   std::uint32_t triangleCount, bool allowRefit);
+// The descriptor of a bottom level: sizes only without geometry (for the sizes query); with it, the geometry's
+// buffers are the backings given.
+MTLPrimitiveAccelerationStructureDescriptor* bottomLevelDescriptor(const RayGeometry* geometry, id<MTLBuffer> vertices,
+                                                                   id<MTLBuffer> indices, std::uint32_t triangleCount,
+                                                                   bool allowRefit);
 
 } // namespace metal
 
@@ -67,8 +69,19 @@ struct MetalTexture {
     id<MTLTexture> handle;
 };
 
+// Private memory, cycled: a write with cycle = true moves to a backing no unfinished command buffer uses (made when
+// none is free), as SDL GPU does; what was recorded before keeps the old backing.
 struct MetalBuffer {
-    id<MTLBuffer> handle;
+    struct Backing {
+        id<MTLBuffer> handle;
+        std::uint64_t lastUse = 0; // serial of the last command buffer that bound, copied or built from it
+    };
+    std::vector<Backing> backings;
+    std::size_t active = 0;
+    NSUInteger size = 0;
+    NSString* label = nil; // for new backings (debug devices)
+
+    Backing& current() { return backings[active]; }
 };
 
 struct MetalSampler {
@@ -383,6 +396,9 @@ private:
     // The serial below which every command buffer has finished on the GPU (or was cancelled).
     std::uint64_t finishedBelow() const;
     void useTransfer(MetalCommandBuffer& commands, MetalTransferBuffer& buffer);
+    // A GPU buffer that the command buffer binds, copies or builds from; written with cycle, it first moves to a
+    // backing no unfinished command buffer uses.
+    id<MTLBuffer> useBuffer(MetalCommandBuffer& commands, const BufferRef& buffer, bool cycle = false);
     id<MTLBuffer> uniformChunk();
     // Shared memory for the command buffer's GPU work (uniform blocks, copies); nil when it cannot be allocated
     // (logged).

@@ -179,10 +179,14 @@ Stage 9, first half (2026-11-06): `src/gpu/metal/` (`MetalDevice.mm`: device, re
   nothing pushed reads a zeroed buffer (SDL binds a pooled buffer with whatever it held). Bindings are applied lazily at the draw or dispatch, and reset at
   the end of every pass.
 - **Resources**: textures and GPU buffers in private storage, transfer buffers in shared storage (write-combined for
-  uploads) with one backing per cycle that the GPU still uses. `cycle` on a GPU buffer or texture is a no-op: Metal's
-  hazard tracking orders the writes after earlier reads (SDL keeps several copies instead; the pixels are the same,
-  the overlap of frames may differ). Releasing a resource drops the reference at once; command buffers retain what
-  they use. Depth24Stencil8 only on macOS.
+  uploads). Transfer and GPU buffers are cycled as in SDL GPU: a write with `cycle` (a mapped transfer buffer, an
+  upload or copy into a buffer, a compute pass's storage write) moves to a backing that no unfinished command buffer
+  used, made when none is free; every binding, copy and bottom-level build records the serial of its command buffer
+  on the backing it reads. Until 2026-11-07 GPU buffers were not cycled and Metal's hazard tracking ordered the writes
+  after the earlier reads: the same pixels, but each frame's first uploads (instances, skinning palettes) waited for
+  the previous frame's draws, and the demo's animation section ran 22% fewer frames than on SDL GPU offscreen.
+  `cycle` on a texture is still a no-op (hazard tracking orders the writes; SDL keeps several copies). Releasing a
+  resource drops the reference at once; command buffers retain what they use. Depth24Stencil8 only on macOS.
 - **Passes**: render, compute (serial dispatch) and copy passes on their own encoders; at the start of a render pass
   the viewport and scissor cover the smallest target, blend constants are 1 and the stencil reference 0; no depth
   clip mode in the iOS Simulator (`Caps::depthClamp` false, as with the SDL patch). `CommandBuffer::blit` is a render
