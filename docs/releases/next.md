@@ -1,12 +1,35 @@
 # Quench, the next release (draft)
 
 Not released: no version or tag yet (the version in `project()` stays 0.10.0). Changes since [0.10.0](v0.10.0.md)
-(tag `v0.10.0`): an agent skill on building a game on the engine, copied into every new game; the demo's dual
-quaternion skinning showcase made readable after a user report, and its characters' wrists closed; the Xcode
-project's generation in the full gate. This file becomes `v<version>.md` when the user asks for the release; what
-was verified is in the devlog of [2026-11-07](../../devlog/2026-11-07.md).
+(tag `v0.10.0`): the native Metal backend as the default on Apple platforms; an agent skill on building a game
+on the engine, copied into every new game; the demo's dual quaternion skinning showcase made readable after a user
+report, and its characters' wrists closed; the Xcode project's generation in the full gate. This file becomes
+`v<version>.md` when the user asks for the release; what was verified is in the devlog of
+[2026-11-07](../../devlog/2026-11-07.md).
 
 ## What changed
+
+### The GPU backend
+
+- **The native Metal backend is the default on macOS, iOS and the iOS Simulator** (the user's decision,
+  2026-11-07; [Architecture](../architecture.md#native-metal-backend), [Platforms](../platforms.md#native-metal-backend)).
+  `gpu::defaultBackend()` is the one place that decides it: Metal on Apple platforms, SDL GPU elsewhere.
+  `Backend::Default` (`DeviceDesc::backend`, `AppDesc::gpuBackend`) follows it; `QUENCH_GPU_BACKEND=sdl|metal` and
+  `--gpu-backend sdl|metal` override it, and a driver only SDL GPU has (`--gpu-driver vulkan`, `SDL_GPU_DRIVER`)
+  selects SDL GPU. Nothing else changes by default: `RenderSettings` keep shadow maps and every ray tracing and
+  MetalFX effect off.
+- **A fallback:** a native Metal device that fails to start gives an SDL GPU device with one warning (`the native
+  Metal backend failed to start (...): SDL GPU instead`); when both fail, the error names both reasons.
+- **Buffers cycled on the native backend:** a GPU buffer written with `cycle` (an upload or copy into it, a compute
+  pass's storage write) moves to a backing no unfinished command buffer used, as on SDL GPU. Before, Metal's hazard
+  tracking ordered the write after the previous frame's reads: the same pixels, but each frame's instance and
+  skinning uploads waited for the previous frame's draws. `cycle` on a texture is still a no-op there.
+- **Tests and batches name their backend:** `gpu_device.*` and `render.*` run on SDL GPU's Metal driver
+  (`QUENCH_GPU_BACKEND=sdl`), `gpu_metal_native.*` and `render_metal_native.*` on the native backend, `*_vulkan` on
+  Vulkan through MoltenVK; the test harness fails a case whose device runs on another backend than its variant (a
+  fallback included), and each batch checks the app's `gpu: backend` line (`quench_add_batch(... GPU
+  <backend>:<driver>)`). New cases: `default_backend`, `native_fallback`, `buffer_cycle`. Debug and sanitizer builds
+  run `demo_smoke_metal` and `demo_smoke_metal_native` on Apple platforms.
 
 ### Building games
 
@@ -21,6 +44,8 @@ was verified is in the devlog of [2026-11-07](../../devlog/2026-11-07.md).
 - **The template's iOS presets cook assets:** `ios-base` passes `QUENCH_HOST_COOK` and the `host-tools` build
   preset builds `quench_cook` too; before, a template game that called `quench_cook_assets()` stopped at its iOS
   configure (`cmake/QuenchCook.cmake` needs the host cooker in a cross build). See "Changes for games".
+
+### The demo
 
 - **The skinning showcase** (section 10, view "Skinning"; [Engine demo](../demo.md#sections)): the user toggled
   "Dual quaternion skinning" there and saw nothing change (2026-11-07): the checkbox switched only the other
@@ -44,6 +69,11 @@ was verified is in the devlog of [2026-11-07](../../devlog/2026-11-07.md).
   the box wholly, so the join follows the hand when it turns (`tools/assets/make_demo_character.py`,
   `make_demo_strider.py`: 884 vertices each, 836 before). The Skinning view's camera is a little further back and
   lower, so that the bars clear the demo's caption and the menu at the default window size.
+- **The native backend by default:** the ray tracing section and the tunnel trace where `gpu::Caps` allow it
+  without a flag now (on the Mac and on phones with ray tracing: the iPhone 17 and the iPhone 18 Pro Max), with their
+  phone defaults on phones; `--gpu-backend sdl` shows their fallbacks. About names the platform's default backend and
+  says when a run is not on it; the Graphics panel's relaunch buttons mark the default. The settings (version 1)
+  store no backend, so nothing is migrated. The `*_phone` scenarios measured on SDL GPU say `--gpu-backend sdl`.
 
 ### Gates
 
@@ -60,6 +90,20 @@ was verified is in the devlog of [2026-11-07](../../devlog/2026-11-07.md).
 ## What was verified
 
 From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
+
+- **The native backend as the default** (offscreen): hello and the demo without `--gpu-backend` run on it;
+  `--gpu-backend sdl`, `QUENCH_GPU_BACKEND=sdl` and `--gpu-driver vulkan` give SDL GPU; `native_fallback` gets an SDL
+  GPU device from a native device that fails; `buffer_cycle` passes on SDL GPU's Metal driver, the native backend
+  and Vulkan through MoltenVK; every batch checks the backend it ran on.
+- **Performance against SDL GPU** (offscreen, unpaced; [Performance](../performance.md#sdl-gpu-and-the-native-backend-before-it-became-the-default)):
+  at 480 x 270 (CPU-bound) the native backend's CPU p50 is within -11 to +2 % of SDL GPU's without per-pass
+  timestamps and +2 to +8.5 % (8 to 12 µs) with them, as in every perf region; the animation section 0.646 against
+  0.673 ms (it was 0.882 against 0.647 before buffers were cycled). At 1920 x 1080 (GPU-bound) 0.3 % more to 3.1 %
+  fewer frames. hello: CPU p50 0.022 ms and GPU p50 0.145 to 0.146 ms on both. The memory footprint in the
+  animation section with 256 characters: 505 MB on the native backend, 761 MB on SDL GPU.
+- **Gates with the native default:** `tools/check.sh full` (2026-11-07, 1130.6 s): format; `debug` 496 tests;
+  `release` 605; `asan` 496; `tsan` 496; `wasm-node` 140 (under Node.js); `ios-sim-tests` 369 in the iOS Simulator;
+  `ios-xcode` generated; a new game built and started. All passed.
 
 - **The showcase's captures**, looked at on Metal and on Vulkan through MoltenVK, linear and with the checkbox on:
   the linear capture against the dual quaternion one differs in 4.70 % of the pixels (mean 4.02; 5.08 % before the
@@ -84,6 +128,13 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 
 ## What was not verified
 
+- **The native backend as the default on an iPhone and in the iOS Simulator:** the tests and batches name their
+  backend, so neither ran it as the default, and nobody has looked at it on a screen. The iPhone 18 Pro Max has not
+  run the ray tracing section's and the tunnel's phone defaults, which the demo now shows there without a flag
+  (the iPhone 17 has, 2026-11-06). The hello benchmark on the Mac's screen on both backends is still to run.
+- Per-pass timestamps cost the native backend 8 to 12 µs of CPU per frame, and 6.5 % of the frames in the animation
+  section (perf regions and `App::requestPassTiming` only); `cycle` on a texture is still a no-op there.
+
 - Nobody has looked at the new showcase yet, on the Mac's screen in motion or on a phone; the user's report was
   about the previous one. The closed wrists were looked at in still captures only, not while a hand turns (the
   hero's wave) or in motion.
@@ -94,6 +145,16 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 
 ## Changes for games
 
+- **The default backend on Apple platforms is the native Metal backend.** A game that leaves
+  `AppDesc::gpuBackend` (or `DeviceDesc::backend`) at `Backend::Default` runs on it on the Mac, the iPhone and in the
+  iOS Simulator after moving its pin, through the same `quench::gpu` API and shaders; the engine's captures are the
+  same on both backends. What differs: `gpu::Caps` (`backend`, `gpuPassTiming`, `rayTracing`, the upscaling caps,
+  `driver` stays `metal`), per-pass GPU times in perf regions, and the memory a run takes. A game that wants SDL GPU
+  there sets `AppDesc::gpuBackend = gpu::Backend::SdlGpu`, or passes `--gpu-backend sdl` or `QUENCH_GPU_BACKEND=sdl`;
+  `--gpu-driver vulkan` still gives SDL GPU. A game whose own tests or scripts assumed SDL GPU on Apple platforms
+  names it now.
+- **New:** `gpu::defaultBackend()` (`quench/gpu/Device.h`). `Device::create` no longer returns an error when only
+  the native device fails to start: it returns an SDL GPU device (check `caps().backend` where it matters).
 - **iOS presets of games made from the template before this release:** a game that cooks assets
   (`quench_cook_assets()`) and builds for iOS adds the host cooker to its `CMakePresets.json`, as the template now
   has it. In the configure preset that the iOS presets inherit (`ios-base` in the template), next to
@@ -113,4 +174,4 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 - **The skill:** a game made before this release has no copy; copy `.agents/skills/quench-game/` from the engine
   at the pinned commit if its agents should use it (and again when the pin moves).
 - The rest is in the demo and the engine's own test and gate scripts; `quench_add_batch()` in
-  `tests/CMakeLists.txt` is not part of what games use.
+  `tests/CMakeLists.txt` (now with `GPU <backend>:<driver>`) is not part of what games use.

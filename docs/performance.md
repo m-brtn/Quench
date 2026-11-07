@@ -178,6 +178,61 @@ crowd (51 skinned characters, `--benchmark-all` on 2026-11-06, below) stays with
 
 ## Measurements
 
+### SDL GPU and the native backend, before it became the default
+
+2026-11-07 13:41-14:03, Release, Mac (Apple M4 Pro), **offscreen** (`--audio-device null --script`, frames not
+paced), thermal state nominal; another app's window rendered on the same GPU during the runs (about 20 % of a core).
+The demo's `benchmark.txt` (a region per section) three times per backend and hello's `benchmark.txt` five times,
+in a rotating order; medians over the runs. Three configurations: SDL GPU (`--gpu-backend sdl`), the native backend
+(`--gpu-backend metal`; per-pass timestamps on, as in every perf region) and the native backend with the timestamps
+off (a temporary switch, not committed). At 480 x 270 the frame thread is CPU-bound and runs 88 to 100 % on
+performance cores, so its CPU times compare; at 1920 x 1080 the frames are GPU-bound and it runs 3 to 11 % on them
+(more for the animation section), so only the frame counts compare there.
+
+| 480 x 270 | SDL GPU frames, CPU p50, p99 | native | native, no timestamps |
+|---|---|---|---|
+| materials | 8993, 0.145, 0.493 | 8756, 0.156, 0.225 | 8769, 0.144, 0.181 |
+| shadows | 12905, 0.125, 0.350 | 12884, 0.132, 0.178 | 12864, 0.124, 0.164 |
+| sky | 12143, 0.123, 0.178 | 11660, 0.126, 0.164 | 11670, 0.117, 0.157 |
+| post | 13324, 0.124, 0.208 | 13089, 0.132, 0.194 | 13192, 0.123, 0.165 |
+| hdr | 14665, 0.117, 0.324 | 14852, 0.127, 0.208 | 15094, 0.118, 0.183 |
+| hdr_on | 14057, 0.122, 0.177 | 13983, 0.132, 0.371 | 14524, 0.124, 0.198 |
+| physics | 13770, 0.122, 0.343 | 13677, 0.131, 0.245 | 13693, 0.120, 0.213 |
+| assets | 13409, 0.134, 0.209 | 13067, 0.142, 0.331 | 13272, 0.132, 0.251 |
+| audio | 13541, 0.128, 0.338 | 12990, 0.136, 0.296 | 13244, 0.127, 0.171 |
+| animation (crowd 256) | 4133, 0.673, 0.984 | 4000, 0.646, 1.204 | 4277, 0.598, 0.857 |
+| raytracing (traced on native) | 10133, 0.182, 0.551 | 1851, 0.680, 1.083 | 1848, 0.502, 0.966 |
+| tunnel (traced on native) | 10873, 0.145, 0.209 | 1546, 0.614, 1.138 | 1544, 0.463, 0.997 |
+
+Frames in a 5 s region, CPU times of the frame thread in milliseconds. Without timestamps the native backend's CPU
+p50 is within -11 to +2 % of SDL GPU's in the sections that do the same work (the animation section's -11 % the
+largest), and its p99 lower in all of them but hdr_on (0.198 against 0.177) and assets (0.251 against 0.209);
+single runs' p99 vary by up to 0.3 ms in the light sections and 0.8 ms in the animation section, on both backends.
+The timestamps cost 8 to 12 microseconds of CPU time per frame (+2 to +8.5 % over SDL GPU's p50 in the light
+sections) and, in the animation section, 6.5 % of the frames: Metal samples them at the stage boundaries of every
+pass, and with them the GPU overlaps that section's many passes less; its frame thread then waits longer and runs
+slower (CPU p50 0.646 ms, still below SDL GPU's 0.673; p99 1.204 against 0.984). They are on only in perf regions
+and when a game asks for them (`App::requestPassTiming`, the demo's Performance panel); SDL GPU has no per-pass
+times at all. At 1920 x 1080 the native backend ran 0.3 % more to 3.1 % fewer frames than SDL GPU in the same
+sections (animation 1552 against 1602, the largest gap; hdr_on 3142 against 3134), within 1.5 % of its frames
+without timestamps. hello at 1920 x 1080 (CPU-bound): 100757, 100472 and 100801 frames, CPU p50 0.022 ms on all
+three, p99 0.033, 0.044 and 0.034 ms (single runs 0.031 to 0.062 on each), GPU p50 0.145 to 0.146 ms. The ray tracing section and the tunnel trace on the native backend (ray-traced
+shadows, reflections, area light shadows) and show their fallbacks on SDL GPU: different work, not compared.
+
+An earlier session the same day (13:00-13:24, the same runs) found the native backend's animation section at 3232
+frames and CPU p50 0.882 ms against SDL GPU's 4156 and 0.647 (+36 %), with or without timestamps. The cause: GPU
+buffers written with `cycle` were not cycled on the native backend, so each frame's skinning palette upload and
+skinning pass waited for the previous frame's draws; the frame thread waited longer (wait p50 0.38 against
+0.09 ms) and every part of its work ran slower, the draw lists' culling (no GPU calls) 33 % slower included. SDL GPU
+with those two writes not cycled reproduced it (3855 frames, CPU p50 0.91 ms). The native backend cycles GPU
+buffers since ([Architecture](architecture.md#native-metal-backend)); after it, 4925 to 4933 frames and CPU p50
+0.662 to 0.684 ms against SDL GPU's 4965 to 4979 and 0.684 to 0.718 in that section's region alone. The memory
+footprint in the animation section (256 characters, 1920 x 1080): 504 to 505 MB on the native backend, 761 to
+763 MB on SDL GPU.
+
+Not measured on the screen (the hello benchmark on both backends at the display's rate is still to run, with
+`--onscreen`) or on an iPhone with the native backend as the default.
+
 ### Animation LOD
 
 2026-11-07 03:38-03:47, Release, Mac (Apple M4 Pro), the demo's Animation section with a crowd of 256 (260
@@ -355,7 +410,8 @@ lamp (6 maps) and spot lamp (1 map); the tunnel's two spot lamps, 1 map each; tw
 Seven maps add 0.3 to 0.4 ms to the frame and 0.1 to 0.15 ms of CPU time (seven depth passes with their culling and
 draws); the size matters little at these counts of casters. The native backend's timed range `local_shadows`
 splits it per pass where it runs, but on the Mac the native backend traces these shadows instead. Not measured on
-a phone (the reason to have the maps: phones on the default SDL GPU backend).
+a phone (the reason to have the maps: phones on SDL GPU, the default until 2026-11-07, and devices without ray
+tracing).
 
 ### Screen-space ambient occlusion
 
