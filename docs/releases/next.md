@@ -329,13 +329,14 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `renderer_indirect_light_settles` (0.3 % from frame to frame, the spatial filter's long mean within 1.5 %; the
   filter before the change: 9.8 % and a quarter of that mean), the other denoiser and indirect light cases
   unchanged; the demo's noise scenarios, captures looked at, still and in motion; no golden image changed (the
-  demo's captures trace the probe grid, not per-pixel indirect light).
+  demo's captures trace the probe grid, not per-pixel indirect light). On the iPhone 17's screen (an interim build, the ray tracing
+  section with Indirect light "Ray traced"), the user: "the grain is fine now" (2026-11-07 17:47).
 
 ## What was not verified
 
-- **The per-pixel indirect light's denoiser on a phone:** measured offscreen on the Mac only; nobody has looked at
-  it on the iPhone yet, where the report came from, or in motion on a screen. After a sudden change of light it is a
-  few levels behind the old filter in the first 8 frames.
+- **The per-pixel indirect light's denoiser on a phone:** measured offscreen on the Mac only, no numbers from a
+  phone; looked at on the iPhone 17 only (above), not on the iPhone 18 Pro Max. After a sudden change of light it is
+  a few levels behind the old filter in the first 8 frames.
 
 - **The reaction to heat on a hot phone:** it has run with fake states only. Its defaults are a starting point: in
   the iPhone 17's ten-minute run of 2026-11-06 the tunnel missed intervals at fair, about a minute before serious,
