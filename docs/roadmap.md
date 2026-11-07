@@ -501,11 +501,123 @@ BRDF; own procedural content only. Released with 0.10.0 ([docs/releases/v0.10.0.
   aluminium, the puddle): by the user (the demo's check mode).
 - [ ] The tunnel on the iPhone 18 Pro Max.
 
+## Stage 13: weather (planned; requested 2026-11-07, not started)
+
+Requested by the user on 2026-11-07, to come after the queue in "What is next": rain, snow, sun and wind, with
+raindrop ripples on puddles (14:16); light that changes with the clouds, and volumetric clouds that morph (14:18); rain
+with sun, a single cloud pouring while the sky beyond it is blue, and cumulus clouds (14:23); rain sounds that game
+makers can change (14:26). The design below was agreed in the reply to those requests. It is a plan: nothing of it
+is built. Out of scope unless asked: snow footprints.
+
+**Goal.** Weather that a game turns on and drives: clouds that form, drift and change shape, light that follows
+them, rain and snow only where clouds drop them, one wind that moves all of it, and sound from the same data. For any
+genre (a driving game's sky, a top-down game's rain): no game's levels or rules in it.
+
+**Scope.** A weather map; volumetric clouds of four types; cloud lighting and cloud shadows; the sky with its clouds
+as the environment of reflections and indirect light; rain (near and far), wetness, puddles and ripples; snow; a
+wind field; weather sounds; a demo section with its checks. Order inside the stage: clouds and their light; rain,
+wetness and puddles; snow; wind (the sounds come with the part they belong to).
+
+**Design.**
+
+- **Weather is spatial, not a global switch.** A weather map (top-down, world-sized; channels: cloud coverage, cloud
+  type, precipitation) moves with the wind and evolves over time; a game sets it, edits it (a rain cell, a front) or
+  lets it evolve from a seed. Rain falls only under raining clouds, so one cloud can pour while the sky beyond it is
+  blue; wetness and puddle ripples appear only where it rained or rains (a wetness map that fills under rain and
+  dries after it). The map, its evolution, the wind field and the queries on them (rain intensity and wind at a
+  point, distance to the nearest rain) are headless, so they run in CTest and under Node.js and games and the audio
+  read them without the GPU; the renderer reads the same data as textures.
+- **Volumetric clouds**, raymarched in a layer between two altitudes, after Guerrilla's Nubis (Horizon Zero Dawn):
+  density from the weather map's coverage and type, a height profile per type and 3D noise (`TextureType::Texture3D`)
+  that evolves with time, so clouds morph instead of only scrolling. Types: fair-weather cumulus, towering cumulus
+  and cumulonimbus, stratus overcast, and a high cirrus layer.
+- **Cloud lighting:** dark bases and a silver lining (a light march toward the sun, a forward-scattering phase
+  function), sunset colours from the existing atmosphere (`Sky.hlsli`, `daylightFor`); clouds composited with the
+  sky and fog. Cloud shadows on the ground from a top-down map of the clouds' transmittance toward the sun, read by
+  the surface shading with the sun's shadow; under overcast the sun dims and the sky light turns grey.
+- **The sky as an environment:** the sky with its clouds baked into a cube map (`TextureType::Cube`), updated in turns
+  (some faces per frame). Today the sky model itself is the environment ([Render module](render.md#limitations)); the
+  cube map serves the sky reflection, the misses of ray-traced reflections and SSR, and the probe grid's sky rays, so
+  the probes pick up the change.
+- **Rain from afar:** rain shafts under raining cloud bases, sunlit rain against a dark cloud, and as an option a
+  rainbow where the sun is behind the viewer.
+- **Rain near the camera:** GPU particles in a volume around the camera (compute), drawn as streaks and splashes; a
+  rain occlusion map from above (a top-down depth of the scene around the camera), so no rain, splashes or wetness
+  under roofs.
+- **Wet surfaces and puddles:** wet materials darker and glossier, puddles that fill and dry, and ripples by rain
+  intensity in the puddles' normals, so they also show in their reflections (the sky reflection, SSR or traced).
+- **Snow:** flakes with flutter and wind; accumulation on upward-facing surfaces, none under cover (the same
+  occlusion map).
+- **Wind:** one wind field (direction, speed, gusts) for the particles, the clouds, vegetation sway (a surface
+  shader's `QUENCH_SURFACE_VERTEX`), forces on physics bodies (opt-in) and the sound.
+- **Sound:** weather sounds are a game-replaceable set of sound assets (rain layers light and heavy, near and far,
+  per surface: roof, leaves, puddles, ground; wind; thunder) with engine defaults that are procedural or CC0. A game
+  can switch the engine's weather audio off and drive its own from the weather data (rain intensity at the listener,
+  distance to the nearest rain, wind speed, the surface above the listener). They hot reload like any sound asset.
+
+**Fallbacks by `gpu::Caps`** (effects as slots, never by platform `#ifdef`):
+
+- The clouds' slot: volumetric clouds, or a 2D cloud layer drawn from the same weather map, for devices that cannot
+  hold the volumetric clouds' cost (a setting; the demo picks it in its phone defaults, as the ray tracing section's
+  defaults are picked). Both light the ground through the same cloud shadow map.
+- With `Caps::rayTracing` the traced reflections and the probe grid see the clouds through the cube map (no cloud
+  volumes in the acceleration structures); without it the sky reflection and SSR read the same cube map.
+- Rain particles drawn with an indirect draw where `Caps::indirectDraw` allows it, otherwise with a fixed count and
+  the culled particles drawn degenerate (the iOS Simulator).
+- The 3D noise and the cube map in formats chosen by `Device::supportsFormat`; the SDL GPU backends (Vulkan through
+  MoltenVK today) run everything except the traced paths.
+
+**Phone budget** (targets for the iPhone 17 at 60 Hz, the rate the demo's heavy sections run at on phones; not
+measured): the volumetric clouds at a reduced resolution with temporal amortisation (a part of the pixels traced per
+frame and reconstructed) within about 2 ms of GPU time, rain, splashes and ripples within about 1 ms, the cube map's
+turns within about 0.5 ms, the whole weather within about 4 ms; the 2D layer within about 0.5 ms. Ten minutes at
+60 Hz without missed intervals, with the thermal reaction ("What is next") on. On the Mac (M4 Pro, 1080p) the
+volumetric clouds within about 2 ms at half resolution.
+
+**Demo section** "Weather": probably the tunnel with an exit to open air: out of the tunnel into a landscape under a
+weather map with a single cumulonimbus pouring in a blue sky, cumulus around it and an overcast front coming in;
+controls for coverage, cloud type, precipitation (rain or snow), wind and the sun; a roof to stand under; puddles
+with ripples. Phone defaults (the 2D layer or reduced volumetric clouds, 60 Hz). The user checks the motion by eye.
+
+**Checks.** Headless tests of the weather map (deterministic evolution for a seed and a time, motion with the wind,
+the queries, wetness filling and drying), also under Node.js; render tests with pixel checks (a cloud's shadow on
+the ground and none beside it, no rain or wetness under a roof, the cube map following a change of the clouds, each
+fallback on SDL GPU and Vulkan through MoltenVK); audio mix checks by measurement (rain layers following intensity
+and distance, a game's replacement sound, the engine's weather audio off); the demo's parts with golden captures per
+backend (the weather clock set by the script, so captures are deterministic); benchmark regions per effect on the Mac
+and a phone scenario for the iPhone 17; check mode items for a person (clouds morphing, rain shafts, ripples in
+reflections, snow, wind, the sounds by ear, on the phone's screen).
+
+TODO for stage 13, in this order:
+
+- [ ] The weather map, its evolution and the wind field (headless), with tests.
+- [ ] Volumetric clouds of the four types, their lighting, the cloud shadow map, the sun and sky light under
+  overcast; the 2D cloud layer as the fallback.
+- [ ] The sky with clouds in a cube map for reflections (sky, SSR, traced) and the probe grid.
+- [ ] Rain: shafts from afar, sunlit rain, the rainbow option; particles, streaks, splashes, the rain occlusion map;
+  rain sounds.
+- [ ] Wet surfaces, puddles and ripples in the puddles' normals.
+- [ ] Snow: flakes, accumulation, none under cover.
+- [ ] Wind: particles, clouds, vegetation sway, physics forces; wind sound and thunder.
+- [ ] Weather sounds as a game-replaceable set with engine defaults, and the engine's weather audio off for games
+  that drive their own.
+- [ ] Demo section "Weather" with its checks, golden captures and phone defaults; costs on the Mac and the iPhone 17.
+- [ ] Look at it in motion and listen to it, on the Mac and the iPhone (by the user).
+
 ## What is next
 
 The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, stage 11 with 0.9.0, and stage
-12 (area lights, anisotropy, the tunnel) with most of the earlier stages' remaining work with 0.10.0. What stays
-open, in the order it is useful (nothing of it is scheduled; the user decides):
+12 (area lights, anisotropy, the tunnel) with most of the earlier stages' remaining work with 0.10.0.
+
+The queue the user set on 2026-11-07, in this order:
+
+1. The native Metal backend as the default on Apple platforms (done 2026-11-07).
+2. A game-level reaction to the thermal state (item 2 below).
+3. The stages' remaining work (item 3 below).
+4. Navigation and Tracy profiling ([Other modules](#other-modules-when-a-game-needs-them)).
+5. Stage 13, weather (above).
+
+What else stays open, in the order it is useful (not scheduled; the user decides):
 
 1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (40 items:
    the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
@@ -571,6 +683,7 @@ Priorities from the user's request of 2026-11-05.
 | Engine demo: interactive sections for every feature (added 2026-11-05) | after the stages | 10 (done; started in 5; not yet run on the iPhone in its finished form) |
 | Full ray tracing: reflections, indirect light, local light shadows, denoising, a path tracer (added 2026-11-06) | after the stages | 11 (done; run on the iPhone 17, not yet looked at in motion) |
 | Area lights, anisotropic GGX, a demo tunnel with lamps of every shape and metal, wet, rubber and plastic materials (added 2026-11-06) | after stage 11 | 12 (done; run on the iPhone 17, not yet looked at in motion or on the phone's screen) |
+| Weather: rain, snow, sun and wind, volumetric clouds that morph and light that follows them, rain under a single cloud in a blue sky, puddle ripples, replaceable weather sounds (added 2026-11-07) | after the queue in "What is next" | 13 (planned) |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under

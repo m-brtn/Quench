@@ -45,7 +45,7 @@ in `images/`.
 | [Platforms](platforms.md) | Target platforms, what has run where, backend and shader formats, known constraints (WebGPU, Android, texture formats) |
 | [Dependencies](dependencies.md) | Pinned libraries, planned libraries with licences and verified capabilities |
 | [Migration](migration.md) | Inventory of the engine code in TrailForge and Ashfall, how far the copies diverged, the procedure for moving code, progress per game |
-| [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, what is next, the requested features and their priorities |
+| [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, the planned weather stage, what is next, the requested features and their priorities |
 | [Releases](releases/) | Release notes per version |
 
 Coding agents: see [AGENTS.md](../AGENTS.md). The daily development log is in [devlog/](../devlog/).
