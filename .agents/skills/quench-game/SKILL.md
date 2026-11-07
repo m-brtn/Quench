@@ -110,7 +110,9 @@ Link what the game uses beside `quench_add_game()`:
   Apple platforms (SDL GPU elsewhere, and with `--gpu-backend sdl`); the default effects (shadow maps, nothing
   traced) run on both. Ray-traced effects need a `RenderSettings` choice on the native backend and a GPU with ray
   tracing. Own shading: surface shaders
-  (`Renderer::addSurface`, `docs/render.md`, "Surface shaders") and game passes (`Renderer::addPass`).
+  (`Renderer::addSurface`, `docs/render.md`, "Surface shaders"; in ray hits too with `quench_add_ray_hits()` and
+  `SurfaceDesc::rayHitShaders`, [reference.md](reference.md), "Own surface shading") and game passes
+  (`Renderer::addPass`).
 - **Assets.** Sources are cooked at build time by `quench_cook_assets()` (`cmake/QuenchCook.cmake`: `TEXTURES`,
   `DATA_TEXTURES`, `MODELS`, `SOUNDS`, `SKELETONS`, `ANIMATIONS`, `FILES`) and merged into the game's assets by
   `quench_add_game(... COOKED_ASSETS <name>)`; `ASSETS <dir>` copies files as they are. The runtime path is the path

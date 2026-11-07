@@ -298,6 +298,7 @@ if(NOT QUENCH_HEADLESS)
     quench_add_shaders(quench_render_tests NAME render_test SOURCE render/shaders/custom.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment)
+    quench_add_ray_hits(quench_render_tests NAME render_test_hits SURFACES render/shaders/custom.hlsl)
     if(QUENCH_TEST_VULKAN_LOADER)
         quench_add_test_variant(quench_render_tests PREFIX render_vulkan LABEL render vulkan
             ENVIRONMENT ${vulkan_environment}
@@ -425,7 +426,8 @@ if(NOT QUENCH_HEADLESS)
             # Vulkan through MoltenVK, batch_native.txt (ray tracing itself instead of its fallbacks, and cycle.txt) on
             # the native Metal backend, which compares with the Metal golden images except for ray tracing's and the
             # tunnel's own (demo_raytracing_native, demo_tunnel_native, demo_tunnel_motion_native: the tunnel in motion,
-            # the last part, so that no other capture moves in the frame sequence). The tunnel's path tracer part
+            # demo_raytracing_mirror_native: the checker's own function in the mirror; parts added later come last,
+            # so that no other capture moves in the frame sequence). The tunnel's path tracer part
             # (tunnel_path) writes its capture without a golden image: 1.3 MB of noise at 256 samples; the render tests
             # check the path tracer's area lights by numbers.
             # A part with a golden name ends in a capture: the sections without the demo's windows, demo_ui and the
@@ -451,7 +453,7 @@ if(NOT QUENCH_HEADLESS)
                         BACKEND metal GPU metal:metal ARGS ${demo_args} --gpu-backend metal
                         ENVIRONMENT MTL_DEBUG_LAYER=1
                         PARTS ${demo_parts} raytracing:demo_raytracing_native tunnel:demo_tunnel_native tunnel_path
-                        cycle tunnel_motion:demo_tunnel_motion_native)
+                        cycle tunnel_motion:demo_tunnel_motion_native raytracing_mirror:demo_raytracing_mirror_native)
                 endif()
                 if(QUENCH_TEST_VULKAN_LOADER)
                     quench_add_batch(demo vulkan APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND vulkan

@@ -433,6 +433,32 @@ level has a normal map. In the tunnel the maps cost reflections 0.1 to 0.33 ms (
 1.2 ms (4 %); its hit arrays hold 10 textures instead of 6 (ray memory 4.10 MB instead of 3.10). Not measured on
 the screen or on the iPhone.
 
+### Surface functions in ray hits
+
+`quench_add_ray_hits()` ([Render module](render.md#ray-hits-of-surfaces)). 2026-11-07 16:33-16:37, Release, Mac
+(Apple M4 Pro), the native Metal backend, **offscreen** at 1920 x 1080 as above, unpaced, full size with bilinear
+scaling, 3 s regions after a second each; the commit before (`c35c8b1`) and this change alternating, five pairs
+(two with every region, three with indirect light and the path tracer only). Other agents' builds and runs loaded
+the Mac throughout (load average 40 to 85); two more pairs, in which one run was 15 to 60 % slower in its ranges,
+are left out. GPU busy time p50 of the range, ms, the lowest and the median of the runs:
+
+| Region | Range | Before | After |
+|---|---|---|---|
+| ray tracing section (the checker ground's hits run its function after), reflections | `reflections` | 0.925, 0.944 | 0.972, 0.983 |
+| the same, probe grid | `probes` | 1.243, 1.249 | 1.268, 1.269 |
+| the same, per-pixel indirect light | `indirect` | 3.976, 4.222 | 4.086, 4.366 |
+| the same, path tracer | `path` | 11.74, 12.14 | 12.73, 12.85 |
+| tunnel (no surface with hits), reflections | `reflections` | 3.815, 3.835 | 3.824, 3.829 |
+
+A frame without such a surface runs the engine's own entries and costs what it did (the tunnel). With the checker's
+hits the traced passes cost 2 to 5 % more and the path tracer 6 to 8 % (0.7 to 1.0 ms); in an earlier set of five
+pairs (16:26-16:31, the same load), with the checker's box-filtered form in its hits (a filter width of 0 there,
+since replaced by the plain square waves), the path tracer was unchanged (12.11 against 12.02 ms, the lowest) and
+reflections and indirect light 0.06 and 0.3 ms more: about a tenth of a millisecond either way is within what the
+compiler makes of a different function in the big tracing shaders. The instances' hit table grew from 144 to 256
+bytes each. The first frame that traces such a surface compiles its pipelines (the path tracer's about 0.9 s the
+first time on the Mac, 0.02 s from Metal's cache). Not measured on the screen or on the iPhone.
+
 ### Probe grid in turns
 
 `RenderSettings::probeUpdatePeriod` ([Render module](render.md#ray-traced-lighting)). 2026-11-07 06:52-06:57,

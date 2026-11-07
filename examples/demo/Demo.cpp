@@ -9,6 +9,7 @@
 #include <quench/core/Log.h>
 
 #include <demo_checker_shaders.h>
+#include <demo_hits_shaders.h>
 
 #include <glm/trigonometric.hpp>
 #include <imgui.h>
@@ -99,6 +100,8 @@ Result<void> DemoGame::init(App& app) {
         .fragmentShader = shaders::demo_checker.find("surface_fs"),
         .basicFragmentShader = shaders::demo_checker.find("surface_basic_fs"),
         .localShadowFragmentShader = shaders::demo_checker.find("surface_local_shadows_fs"),
+        .rayHitShaders = &shaders::demo_hits, // the checker in reflections, indirect light and the path tracer
+        .rayHit = 1,
         .name = "checker",
     });
     if (surface)
@@ -695,6 +698,7 @@ std::optional<double> DemoGame::scenarioValue(std::string_view name) const {
     if (name == "ray_top_refit") return s.rayTopRefit ? 1.0 : 0.0;
     if (name == "ray_memory_mb") return double(s.rayMemoryBytes) / (1024.0 * 1024.0);
     if (name == "hit_textures") return double(s.hitTextures);
+    if (name == "ray_hit_surfaces") return double(s.rayHitSurfaces);
     if (name == "local_shadows") return double(e.localLightShadows);
     if (name == "local_map_lights") return double(s.localShadowLights);
     if (name == "local_maps") return double(s.localShadowMaps);
@@ -782,15 +786,18 @@ app::ScenarioExec DemoGame::scenarioCommand(App& app, const app::ScenarioCommand
         return done;
     }
     if (command.op == "camera") {
-        // camera YAW PITCH DISTANCE (degrees, m)
-        if (args.size() != 3) return fail("camera YAW PITCH DISTANCE");
-        const std::optional<float> yaw = parseFloat(args[0]), pitch = parseFloat(args[1]),
-                                   distance = parseFloat(args[2]);
-        if (!yaw || !pitch || !distance) return fail("camera: numbers expected");
+        // camera YAW PITCH DISTANCE [X Y Z] (degrees, m; the point it orbits)
+        if (args.size() != 3 && args.size() != 6) return fail("camera YAW PITCH DISTANCE [X Y Z]");
+        std::array<std::optional<float>, 6> v;
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            v[i] = parseFloat(args[i]);
+            if (!v[i]) return fail("camera: numbers expected");
+        }
         OrbitCamera& camera = current().camera;
-        camera.yaw = glm::radians(*yaw);
-        camera.pitch = glm::radians(*pitch);
-        camera.distance = *distance;
+        camera.yaw = glm::radians(*v[0]);
+        camera.pitch = glm::radians(*v[1]);
+        camera.distance = *v[2];
+        if (args.size() == 6) camera.target = glm::vec3(*v[3], *v[4], *v[5]);
         return done;
     }
     if (command.op == "set") {

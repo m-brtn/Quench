@@ -283,7 +283,9 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   interpolated normal and uv, the base color, metallic-roughness, normal and emissive textures as layers of two
   256 x 256 texture arrays (every material texture once, scaled down, no mip levels, at most 64 layers), and shades
   it with the standard surface's BRDF: the emissive light, the sun with a shadow ray, the local lights without shadow
-  rays, and the probe grid or the sky's ambient light. A surface shader's own shading is not run for rays. The
+  rays, and the probe grid or the sky's ambient light. Its albedo, roughness, metallic, normal, emissive and
+  anisotropy are the standard surface's from the material's values, or, for a surface whose hits are in the game's
+  `quench_add_ray_hits()` set (since 2026-11-07, after 0.10.0; "Surface shaders" below), its own function's. The
   normal map (texture 2) is read in the raster's frame (`quenchNormalFromMap`: the vertex tangent made perpendicular
   to the interpolated normal of the side the ray hit, the bitangent's sign turned by a mirroring transform); a mapped
   normal that faces away from the ray's origin is dropped for the interpolated one. Since 2026-11-07 (0.10.0)
@@ -554,7 +556,8 @@ the next direction from the standard surface's BRDF (GGX visible normals or a co
 Russian roulette after the second bounce; translucent surfaces are crossed with the probability of their
 transparency. The mean replaces the HDR pass and TAA (no game passes before `PostHdr`); bloom and tone mapping
 follow. MetalFX's temporal scalers have nothing to resolve then: they become the spatial one below render scale 1,
-or bilinear. Hits on custom surfaces use the material's values (the demo's checker ground is plain there). Test
+or bilinear. Hits on custom surfaces use the material's values, or their own function where they have ray hits
+(the demo's checker ground has them). Test
 `renderer_path_tracer_furnace`: a white sphere under a uniform sky of radiance 1 reads 0.992 in the middle, 0.962
 half way out and 0.863 at the silhouette pixel (sky 0.999): the BRDF's Fresnel and single-scattering GGX lose a few
 percent toward grazing views, as in the raster path; the mean restarts after a move and after a new pose, not after
@@ -696,6 +699,58 @@ scene.addMaterial({.surface = checker, .params = {...}});
 - `addSurface` creates the opaque pipeline at once (and the basic one), so a shader that does not fit the interface
   fails there with an error, not at the first draw.
 
+### Ray hits of surfaces
+
+Since 2026-11-07 (after 0.10.0) a surface's function can also shade its ray hits: the traced reflections, the indirect
+light, the probe grid's rays and the path tracer, where the hits otherwise take the standard surface from the
+material's values ("Ray-traced lighting" above). The game lists its surface files in one set; the engine's tracing
+entries are compiled again with them at build time, and the hit calls the function of the instance's surface through
+a switch over the list:
+
+```cmake
+quench_add_ray_hits(my_game NAME my_hits SURFACES shaders/checker.hlsl shaders/foliage.hlsl)
+```
+
+```cpp
+const render::SurfaceId checker = *renderer.addSurface({
+    .vertexShader = quench::shaders::my_surface.find("surface_vs"),
+    .fragmentShader = quench::shaders::my_surface.find("surface_fs"),
+    .rayHitShaders = &quench::shaders::my_hits, .rayHit = 1, // its number in SURFACES, from 1
+    .name = "checker"});
+```
+
+- `quench_add_ray_hits()` (`cmake/QuenchShaders.cmake`) writes a source that includes `src/render/shaders/raylight.hlsl`
+  with `QUENCH_RT_SURFACES` 1 and a generated `QuenchRaySurfaces.hlsli` with every listed file in a namespace of its
+  own and `quenchRaySurface(n, input)`, and compiles the 8 tracing entries (with and without normal maps) through
+  `quench_add_shaders()` as ray query entries (DXC; no entries without it, then the hits take the standard surface).
+  Every listed file is compiled into the same source: functions and globals may share names across files, macros may
+  not (each file's `QUENCH_SURFACE` and `QUENCH_SURFACE_VERTEX` are undefined after it).
+- In the hits `QUENCH_SURFACE_HIT` is 1 (0 elsewhere). `Surface.hlsli` then declares no resources and no lighting
+  (`quenchShade`, `quenchDirectLight`, `quenchAmbient`), `SurfaceEntries.hlsli` no entries, and the trace shader
+  provides `quenchMaterial` (the material's base color, emissive, roughness, metallic, cutoff, texture mask, params
+  and anisotropy, filled per hit) and `quenchTexture0..3` with `quenchSampler0..3`: the textures' 256 x 256 copies in
+  the hit arrays, every `Sample`, `SampleLevel`, `SampleBias` and `SampleGrad` reading their level 0 (white where a
+  texture is not in the arrays; `quenchHasTexture` is false then). `ddx`, `ddy` and `fwidth` are 0 (a hit has no
+  pixel footprint: the checker's filter becomes the plain checker). `QuenchSurfaceInput` is built as the raster
+  builds it: the hit's position, the interpolated normal of the side the ray hit, the tangent, `view` toward the ray's
+  origin, uv, the vertex color times the instance's color, the instance's `custom` vector, `pixel` 0 and `front`. A
+  surface that declares resources of its own keeps them out with `#if !QUENCH_SURFACE_HIT`.
+- The function's albedo, opacity, roughness, metallic, normal (dropped when it faces away from the ray's origin),
+  emissive and anisotropy replace the standard surface's; `occlusion` is not used. Shadow and occlusion rays still
+  read the standard surface's opacity (cut-out and translucent casters), and `QUENCH_SURFACE_VERTEX` deformations are
+  not in the acceleration structures.
+- A renderer takes one set (`addSurface` refuses a second one and a `rayHit` without `rayHitShaders`). The set's
+  pipelines (6 for the tracing passes, 2 for the path tracer) are made in the first frame that traces an instance of
+  such a surface; where they fail (logged once) the engine's are used. The other frames use the engine's own
+  pipelines; `RenderStats::rayHitSurfaces` counts the instances whose hits run their function.
+- The demo's checker grounds have their hits (`examples/demo/CMakeLists.txt`, `demo_hits`): the ray tracing
+  section's mirror and gold spheres show the ground's cells instead of its mean color (`demo_raytracing_mirror_native`,
+  [Demo](demo.md#checks)). Test
+  `renderer_ray_hits_run_surface_functions`: the test surface `flat` (no lighting, its emissive from `params[0]`,
+  green; the material's base color red) on two boxes over a mirror, the left one with its hits in the set: the
+  raster shows both green (15 243 15), the mirror the left one green (16 243 16) and the right one red from the
+  material's values (200 20 20), the path tracer the same (15 243 15 and 208 17 17), on the native Metal backend.
+
 ### Shader library and shared uniforms
 
 `shaders/quench/` is included by engine and game shaders: `Common.hlsli` (constants, hashes, noise), `Brdf.hlsli`,
@@ -829,7 +884,8 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
 - Ray tracing: the shadow and occlusion rays start from a normal made from the depth, not the shading normal, offset
   by 0.2 % of the view distance. Rays read the standard surface's opacity (base color, texture 0 and vertex alpha)
   and hits the standard surface's shading from the material's values and textures (256 x 256 copies, at most 64;
-  normal maps without a strength, as in the raster), not a custom surface's own shading or `surface_shadow_fs`; `QUENCH_SURFACE_VERTEX`
+  normal maps without a strength, as in the raster), or a surface's own function where its hits are in a
+  `quench_add_ray_hits()` set (textures at level 0, no derivatives), never `surface_shadow_fs`; `QUENCH_SURFACE_VERTEX`
   deformations are not in the acceleration structures. Skinned casters further than `shadowDistance` are not in
   them. Hits are lit by local lights without shadow rays. Reflections are one bounce (a mirror in a mirror shows the
   second one lit, not reflecting); rough surfaces above `reflectionRoughness` keep the sky's reflection (SSR has the same cut-off). The probe grid is one fixed size around one point (no cascades of grids), a few frames

@@ -3,13 +3,16 @@
 
 // The entry points of a surface shader (quench/Surface.hlsli): surface_vs, surface_fs, surface_basic_fs,
 // surface_local_shadows_fs, surface_shadow_vs, surface_shadow_fs, surface_transmittance_fs and surface_gbuffer_fs.
-// Include it after the surface function; QUENCH_SURFACE names it (default: quenchStandardSurface).
+// Include it after the surface function; QUENCH_SURFACE names it (default: quenchStandardSurface). In a ray hit
+// (QUENCH_SURFACE_HIT) it adds nothing: the trace shader calls the function itself.
 
 #include "quench/Surface.hlsli"
 
 #ifndef QUENCH_SURFACE
 #define QUENCH_SURFACE quenchStandardSurface
 #endif
+
+#if !QUENCH_SURFACE_HIT
 
 #if defined(QUENCH_STAGE_VERTEX)
 StructuredBuffer<InstanceData> quenchInstances : QUENCH_STORAGE(0);
@@ -130,4 +133,5 @@ float4 surface_transmittance_fs(QuenchVaryings v, bool front : SV_IsFrontFace) :
 }
 #endif
 
+#endif
 #endif

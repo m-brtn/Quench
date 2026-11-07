@@ -5,7 +5,8 @@ Not released: no version or tag yet (the version in `project()` stays 0.10.0). C
 heat for games, with the demo's Adapt to heat; an agent skill on building a game on the engine, copied into every
 new game; the demo's dual quaternion skinning showcase made readable after a user
 report, and its characters' wrists closed; the Xcode project's generation in the full gate; soft shadows of area
-lights from shadow maps where the device cannot trace (stage 12's remaining work). This file becomes
+lights from shadow maps where the device cannot trace (stage 12's remaining work); a game's surface shaders in ray
+hits (stage 11's remaining work). This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
 
@@ -49,6 +50,30 @@ lights from shadow maps where the device cannot trace (stage 12's remaining work
   Transparent surfaces leave area lights unshadowed.
 - **Cost** on the M4 Pro (offscreen, the tunnel's four nearest lamps, 21 maps at 512): 0.92 ms of GPU time at the
   tunnel's 0.67 render scale and 1.7 ms at 1080p ([Performance](../performance.md#area-light-shadow-maps)).
+
+### Rendering: surface shaders in ray hits
+
+- **`quench_add_ray_hits(<target> NAME <set> SURFACES <file>...)`** (`cmake/QuenchShaders.cmake`; stage 11's
+  remaining work; [Render module](../render.md#ray-hits-of-surfaces)): the engine's tracing entries (traced
+  reflections, indirect light, the probe grid's rays, the path tracer; with and without normal maps) compiled again
+  at build time with the game's surface files, each in a namespace of its own, and a generated switch over their
+  number. `SurfaceDesc::rayHitShaders` and `rayHit` name the set and the surface's number in it; the hits of its
+  materials then run its function (albedo, opacity, roughness, metallic, normal, emissive, anisotropy) with the
+  engine's lighting, instead of the standard surface from the material's values. One set per renderer; its 8
+  pipelines are made in the first frame that traces such a surface, and frames without one use the engine's own.
+- **`QUENCH_SURFACE_HIT`** is 1 in those hits: `Surface.hlsli` declares no resources or lighting there, the
+  material and its textures come from the hit tables (the textures' 256 x 256 copies at level 0), `ddx`, `ddy` and
+  `fwidth` are 0, `pixel` is 0 and `view` points toward the ray's origin.
+- **`RenderStats::rayHitSurfaces`** counts the instances whose hits run their function; the hit table's entry
+  (`RayInstanceData`) grew from 144 to 256 bytes per instance (the material's base color and params, the
+  instance's color and custom vector).
+- **The demo's checker grounds** have their hits: the ray tracing section's mirror and gold spheres show the
+  ground's cells instead of its mean color. A native batch part `raytracing_mirror` with its golden image; the
+  demo's `camera` command takes the point it orbits (`camera YAW PITCH DISTANCE X Y Z`).
+- **Cost** on the M4 Pro (offscreen, 1080p, the demo's ray tracing section, whose ground is the checker; GPU p50 of
+  the pass, the lowest of alternated runs under other agents' load): traced reflections 0.93 to 0.97 ms, the probe
+  grid's rays 1.24 to 1.27, per-pixel indirect light 3.98 to 4.09, the path tracer 11.7 to 12.7 (6 to 8 % more);
+  the tunnel (no such surface) unchanged ([Performance](../performance.md#surface-functions-in-ray-hits)).
 
 ### The app: a reaction to heat
 
@@ -197,6 +222,17 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `release` 618; `asan` 506; `tsan` 506; `wasm-node` 140 (under Node.js); `ios-sim-tests` 379 in the iOS
   Simulator; `ios-xcode` generated; a new game built and started. All passed.
 
+- **Surface shaders in ray hits** (native Metal backend, offscreen): `renderer_ray_hits_run_surface_functions`:
+  the test surface `flat` (green from its params; the material's base color red) on two boxes over a mirror, one
+  with its hits in the set: the raster shows both green (15 243 15), the mirror that one green (16 243 16) and the
+  other red from the material's values (200 20 20), the path tracer the same (15 243 15 and 208 17 17); `addSurface`
+  refuses a `rayHit` without a set and a second set. The demo's `demo_raytracing_mirror_native.png` looked at: the
+  mirror shows the ground's cells and the sun's shadows on them; `demo_raytracing_native.png` changed within its
+  thresholds (mean 0.136, 3 pixels over 16) and was replaced.
+- **Gates with surface shaders in ray hits:** `tools/check.sh full` (2026-11-07, 547.3 s): format; `debug` 512
+  tests; `release` 627; `asan` 512; `tsan` 512; `wasm-node` 140 (under Node.js); `ios-sim-tests` 383 in the iOS
+  Simulator; `ios-xcode` generated; a new game built and started. All passed.
+
 ## What was not verified
 
 - **The reaction to heat on a hot phone:** it has run with fake states only. Its defaults are a starting point: in
@@ -218,6 +254,10 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   hero's wave) or in motion.
 - The skill: one dry run on the Mac (Debug, Release, the iOS Simulator); its animation, jobs, surface shader and
   device parts were not run. `tools/check_skill.py` finds renamed or removed names, not changed behaviour.
+- Surface shaders in ray hits on a phone: built into the iOS presets, not run on an iPhone (the device tests include
+  the new render case); nobody has looked at the checker in the mirror on a screen in motion. A game's surface with
+  resources of its own, or several surfaces in one set, is not tested beyond the one-file sets of the test and the
+  demo.
 - The xcode step generates the project only: a build or signing problem in `xcodebuild` is still found only by a
   device build or `tools/package_demo.sh --ios`.
 
@@ -236,6 +276,13 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   of the M4 Pro for four lamps). A game that wants them unshadowed sets `castsShadows = false` on them. Custom
   surface shaders built on the engine's `Surface.hlsli` need no change: in those frames opaque surfaces read the
   screen-space term as they read traced shadows, and `quenchLocalShadows` skips area lights.
+- **Surface shaders in ray hits (optional):** `quench_add_ray_hits()`, `SurfaceDesc::rayHitShaders` and `rayHit`,
+  `RenderStats::rayHitSurfaces`, the macro `QUENCH_SURFACE_HIT` (0 in every other entry). A game that does nothing
+  keeps the standard surface in its hits, as before. A surface listed in a set compiles once more inside the
+  engine's tracing source: its own `cbuffer`s and textures go behind `#if !QUENCH_SURFACE_HIT`, and its macros must
+  not clash with another listed surface's. `Surface.hlsli` declares its bindings and lighting only where
+  `QUENCH_SURFACE_HIT` is 0, so shader code of a game's own that defines `QUENCH_SURFACE_HIT` for another purpose
+  breaks.
 - **New:** `gpu::defaultBackend()` (`quench/gpu/Device.h`). `Device::create` no longer returns an error when only
   the native device fails to start: it returns an SDL GPU device (check `caps().backend` where it matters).
 - **iOS presets of games made from the template before this release:** a game that cooks assets

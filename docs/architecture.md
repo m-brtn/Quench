@@ -296,9 +296,13 @@ are noted below.
   256 x 256), and shades it with the standard surface's BRDF (`src/render/shaders/RayHit.hlsli`); the normal maps
   only in variants of the tracing passes, used while an instance in the top level has one (2026-11-07: the tangent
   frame slowed the path tracer by 2 to 4 % where no hit read a map). One shading for every surface keeps
-  the passes few and the shaders known when the pipelines are made; a surface shader's own shading is not run for
-  rays (the cost of hit groups or callable shaders, which inline queries do not have, against the demo's one custom
-  surface: decided without the user, 2026-11-06).
+  the passes few and the shaders known when the pipelines are made. A game's surface functions shade their own hits
+  since 2026-11-07 (after 0.10.0) without hit groups or callable shaders (which inline queries do not have):
+  `quench_add_ray_hits()` compiles the engine's tracing entries again at build time with the game's surface files
+  included, each in a namespace, and a switch over their number (`RayInstanceData::maps.y`, from
+  `SurfaceDesc::rayHit`) picks the function in the hit; the renderer uses that set's pipelines in frames that trace
+  such a surface, its own otherwise. One set per renderer, so the shaders stay known when the pipelines are made
+  ([Render](render.md#ray-hits-of-surfaces)).
 - **Shaders**: HLSL `RaytracingAccelerationStructure` and `RayQuery`, entries marked `:rayquery` in
   `quench_add_shaders`, compiled by DXC (see "Shaders") and then SPIRV-Cross to MSL 3.0 as before; the acceleration
   structure takes a buffer slot after the storage buffers (`ShaderResources::accelerationStructures`). The renderer

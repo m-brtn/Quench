@@ -50,8 +50,16 @@ struct QUENCH_ALIGN16 RayInstanceData {
     float4 normal0;
     float4 normal1;
     float4 normal2;
-    // x: layer of the normal map in the linear hit texture array (-1: none), yzw: unused
+    // x: layer of the normal map in the linear hit texture array (-1: none), y: the surface whose own function shades
+    // the hits (SurfaceDesc::rayHit; 0: the standard surface from the values above), z: the material's textures (bit
+    // n: texture n), w: unused
     float4 maps;
+    // For a surface's own function (maps.y > 0; else not filled): the material's base color and params, the
+    // instance's color and custom vector.
+    float4 base;
+    float4 tint;
+    float4 custom;
+    float4 params[4];
 };
 
 // The passes that shade what rays hit (reflections, indirect light, probes, the path tracer).

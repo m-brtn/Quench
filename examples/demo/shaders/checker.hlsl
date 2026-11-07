@@ -11,10 +11,15 @@ float2 squareWaveIntegral(float2 x) { return 1.0 - abs(2.0 * frac(x * 0.5) - 1.0
 QuenchSurface checker(QuenchSurfaceInput i) {
     QuenchSurface s = quenchStandardSurface(i);
     const float2 p = i.world.xz / max(quenchMaterial.params[2].x, 1e-3);
+#if QUENCH_SURFACE_HIT
+    // A ray hit has no pixel footprint: the square waves themselves.
+    const float2 f = 1.0 - 2.0 * step(0.5, frac(p * 0.5));
+#else
     // The checker is the product of two square waves; each is box filtered over the pixel footprint w through its
     // integral, so cells smaller than a pixel fade to the average color instead of aliasing.
     const float2 w = max(abs(ddx(p)), abs(ddy(p))) + 1e-4;
     const float2 f = (squareWaveIntegral(p + 0.5 * w) - squareWaveIntegral(p - 0.5 * w)) / w;
+#endif
     const float t = 0.5 - 0.5 * f.x * f.y;
     const float4 a = quenchMaterial.params[0];
     const float4 b = quenchMaterial.params[1];

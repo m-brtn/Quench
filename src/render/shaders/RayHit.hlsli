@@ -4,8 +4,10 @@
 // What the rays of the hit passes see (raylight.hlsl, pathtrace.hlsl; ray queries, compiled by DXC): the scene's top
 // level, every instance's triangles and material (RayInstanceData), the base color, metallic-roughness, normal and
 // emissive textures as layers of two texture arrays (256 x 256, no mip levels), the lights and the probe grid. Hits
-// are shaded with the standard surface's BRDF from the material's values (anisotropy and normal maps included): a
-// surface shader's own shading is not run for rays. The shapes of area lights are in the top level for path rays only
+// are shaded with the standard surface's BRDF from the material's values (anisotropy and normal maps included), or,
+// in a game's set of these entries (quench_add_ray_hits(), QUENCH_RT_SURFACES 1), by the surface function of the
+// instance's surface (RayInstanceData::maps.y; the generated QuenchRaySurfaces.hlsli has them) with the same lighting.
+// The shapes of area lights are in the top level for path rays only
 // (QUENCH_RT_MASK_EMITTER): the other rays get the area lights' light from their shading, as the raster passes do.
 //
 // Bindings (fragment): uniform 0 FrameUniforms, uniform 1 RayHitUniforms, uniform 2 LightUniforms; samplers 0 the
@@ -61,6 +63,43 @@ StructuredBuffer<uint> rtIndices : QUENCH_STORAGE(11);
 RaytracingAccelerationStructure rtScene : QUENCH_STORAGE(12);
 #else
 #error "QUENCH_RT_SAMPLERS: 7 or 8"
+#endif
+
+#ifndef QUENCH_RT_SURFACES
+#define QUENCH_RT_SURFACES 0
+#endif
+#if QUENCH_RT_SURFACES
+// What a game's surface function sees in a hit (quench/Surface.hlsli with QUENCH_SURFACE_HIT): the material, filled
+// per hit, and its textures as their copies in the hit arrays.
+#define QUENCH_SURFACE_HIT 1
+static MaterialUniforms quenchMaterial;
+
+// A material texture in a hit: its 256 x 256 copy (layer -1: none, white), level 0 whatever the call asks for.
+struct QuenchHitTexture {
+    float layer;
+    bool fromLinear; // the linear array (textures 1 and 2), else the color one (sRGB; textures 0 and 3)
+    float4 SampleLevel(SamplerState s, float2 uv, float lod) {
+        if (layer < 0.0) return float4(1.0, 1.0, 1.0, 1.0);
+        if (fromLinear) return rtHitLinear.SampleLevel(rtHitLinearSampler, float3(uv, layer), 0.0);
+        return rtHitColor.SampleLevel(rtHitColorSampler, float3(uv, layer), 0.0);
+    }
+    float4 Sample(SamplerState s, float2 uv) { return SampleLevel(s, uv, 0.0); }
+    float4 SampleBias(SamplerState s, float2 uv, float bias) { return SampleLevel(s, uv, 0.0); }
+    float4 SampleGrad(SamplerState s, float2 uv, float2 dx, float2 dy) { return SampleLevel(s, uv, 0.0); }
+};
+static QuenchHitTexture quenchTexture0;
+static QuenchHitTexture quenchTexture1;
+static QuenchHitTexture quenchTexture2;
+static QuenchHitTexture quenchTexture3;
+#define quenchSampler0 rtHitColorSampler
+#define quenchSampler1 rtHitLinearSampler
+#define quenchSampler2 rtHitLinearSampler
+#define quenchSampler3 rtHitColorSampler
+
+#include "quench/SurfaceEntries.hlsli"
+#undef QUENCH_SURFACE
+// quenchRaySurface(n, input): the n-th surface of the set's list (1-based), else the standard surface.
+#include "QuenchRaySurfaces.hlsli"
 #endif
 
 // A vertex's float4 n (0: position and normal.x, 1: normal.yz and uv, 2: color, 3: tangent) by its index in the
@@ -183,6 +222,7 @@ RtSurface rtSurfaceAt(RtHit h, float3 origin, float3 direction) {
     float3 n = mul(normalMatrix, float3(a0.w, b0.x, b0.y) * w.x + float3(a1.w, b1.x, b1.y) * w.y +
                                      float3(a2.w, b2.x, b2.y) * w.z);
     n = dot(n, n) > 1e-12 ? normalize(n) : normalize(geometric);
+    const float3 interpolated = n;
     const bool facing = dot(geometric, direction) < 0.0; // counter-clockwise front faces
     const float2 uv = b0.zw * w.x + b1.zw * w.y + b2.zw * w.z;
     // The anisotropy direction: the vertex tangent turned by the material's rotation (the normal matrix keeps the
@@ -235,6 +275,52 @@ RtSurface rtSurfaceAt(RtHit h, float3 origin, float3 direction) {
     s.anisotropy = anisotropy;
     s.anisotropyDirection = anisotropyDirection;
     s.light = int(d.layers.w);
+#if QUENCH_RT_SURFACES
+    // The surface's own function, with the input its raster entries would build for this point.
+    const uint surface = uint(d.maps.y);
+    [branch] if (surface != 0u) {
+        const float4 t0 = rtVertex(d, v0, 3u), t1 = rtVertex(d, v1, 3u), t2 = rtVertex(d, v2, 3u);
+        const float3 T = mul(normalMatrix, t0.xyz * w.x + t1.xyz * w.y + t2.xyz * w.z);
+        const float T2 = dot(T, T);
+        const float mirrored = dot(cross(d.normal0.xyz, d.normal1.xyz), d.normal2.xyz) < 0.0 ? -1.0 : 1.0;
+        QuenchSurfaceInput i;
+        i.world = s.position;
+        i.normal = facing ? interpolated : -interpolated;
+        i.tangent = float4(T2 > 1e-12 ? T * rsqrt(T2) : float3(0.0, 0.0, 0.0), (t0.w < 0.0 ? -1.0 : 1.0) * mirrored);
+        i.view = -direction;
+        i.uv = uv;
+        i.color = vc * d.tint;
+        i.custom = d.custom;
+        i.pixel = float2(0.0, 0.0);
+        i.front = facing;
+        quenchMaterial.baseColor = d.base;
+        quenchMaterial.emissive = float4(d.emissive.rgb, 0.0);
+        quenchMaterial.surface = float4(d.surface.x, d.surface.y, d.emissive.w, d.maps.z);
+        quenchMaterial.params[0] = d.params[0];
+        quenchMaterial.params[1] = d.params[1];
+        quenchMaterial.params[2] = d.params[2];
+        quenchMaterial.params[3] = d.params[3];
+        quenchMaterial.shading = float4(d.normal0.w, d.normal1.w, d.normal2.w, 0.0);
+        quenchTexture0.layer = d.layers.x;
+        quenchTexture0.fromLinear = false;
+        quenchTexture1.layer = d.layers.y;
+        quenchTexture1.fromLinear = true;
+        quenchTexture2.layer = d.maps.x;
+        quenchTexture2.fromLinear = true;
+        quenchTexture3.layer = d.layers.z;
+        quenchTexture3.fromLinear = false;
+        const QuenchSurface c = quenchRaySurface(surface, i);
+        s.albedo = c.albedo;
+        s.opacity = c.opacity;
+        s.roughness = saturate(c.roughness);
+        s.metallic = saturate(c.metallic);
+        s.emissive = c.emissive;
+        s.anisotropy = saturate(c.anisotropy);
+        s.anisotropyDirection = c.anisotropyDirection;
+        // A shading normal that faces away from the ray's origin is not used (as a mapped one above).
+        if (dot(c.normal, c.normal) > 1e-8 && dot(c.normal, direction) < 0.0) s.normal = normalize(c.normal);
+    }
+#endif
     return s;
 }
 

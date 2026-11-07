@@ -15,9 +15,9 @@ namespace quench::render::detail {
 
 class PathTracer {
 public:
-    // false when the pipelines cannot be made (logged); `pipelines` counts them.
-    bool init(gpu::Device& device, RayTracing& rays, std::uint32_t& pipelines);
-    bool ready() const { return static_cast<bool>(m_pipeline); }
+    // false when the pipelines cannot be made (logged).
+    bool init(gpu::Device& device, RayTracing& rays);
+    bool ready() const { return static_cast<bool>(m_pipelines[0][0]); }
     bool ensureTargets(std::uint32_t width, std::uint32_t height);
     void release();
 
@@ -29,8 +29,13 @@ public:
     std::uint32_t samples() const { return m_samples; }
 
 private:
+    // The pipelines of the game's set (RayTracing::surfaceHits), made when first needed; false when they fail (logged).
+    bool ensureSurfacePipelines(RayTracing& rays);
+
     gpu::Device* m_device = nullptr;
-    gpu::GraphicsPipeline m_pipeline, m_mapsPipeline; // the second's hits read normal maps (RayTracing::normalMaps)
+    // [the game's set][normal maps] (RayTracing::surfaceHits, normalMaps)
+    std::array<std::array<gpu::GraphicsPipeline, 2>, 2> m_pipelines;
+    bool m_surfaceFailed = false;
     std::array<gpu::Texture, 2> m_accumulation;
     std::uint32_t m_width = 0, m_height = 0;
     int m_index = 0;

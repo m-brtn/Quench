@@ -6,7 +6,7 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 ## Contents
 
 - CMake
-- A lit scene with the renderer
+- A lit scene with the renderer (and own surface shading)
 - Cooked assets in the scene
 - Physics
 - Audio
@@ -119,6 +119,55 @@ private:
   teleport = true)` for a respawn (no motion blur from the old place).
 - `render::reversedPerspective(fovY, aspect, near)` is the renderer's projection, for picking and projecting points
   (`scenarioPoint`).
+
+### Own surface shading
+
+A surface shader is an HLSL function the engine lights; materials name it by `MaterialDesc::surface`:
+
+```hlsl
+#include "quench/Surface.hlsli"
+
+#if defined(QUENCH_STAGE_FRAGMENT)
+QuenchSurface stripes(QuenchSurfaceInput i) {
+    QuenchSurface s = quenchStandardSurface(i); // the material's values and textures
+    s.albedo *= frac(i.world.x) < 0.5 ? 1.0 : 0.4;
+    return s;
+}
+#endif
+
+#define QUENCH_SURFACE stripes
+#include "quench/SurfaceEntries.hlsli"
+```
+
+```cmake
+quench_add_shaders(my_game NAME my_surface SOURCE shaders/stripes.hlsl
+    ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment surface_local_shadows_fs:fragment)
+# Optional: the same function in ray hits (traced reflections, indirect light, the probe grid, the path tracer)
+quench_add_ray_hits(my_game NAME my_hits SURFACES shaders/stripes.hlsl)
+```
+
+```cpp
+#include <my_hits_shaders.h>
+#include <my_surface_shaders.h>
+
+Result<render::SurfaceId> stripes = m_renderer->addSurface({
+    .vertexShader = quench::shaders::my_surface.find("surface_vs"),
+    .fragmentShader = quench::shaders::my_surface.find("surface_fs"),
+    .basicFragmentShader = quench::shaders::my_surface.find("surface_basic_fs"),
+    .localShadowFragmentShader = quench::shaders::my_surface.find("surface_local_shadows_fs"),
+    .rayHitShaders = &quench::shaders::my_hits, // only with quench_add_ray_hits()
+    .rayHit = 1,                                // the file's number in SURFACES, from 1
+    .name = "stripes"});
+```
+
+- Without `rayHitShaders` the hits of its materials take the standard surface from the material's values (fine for
+  most surfaces; the default). One `quench_add_ray_hits()` set per renderer lists every surface file that needs it.
+- In the hits `QUENCH_SURFACE_HIT` is 1: textures read their 256 x 256 copies at level 0, `ddx`, `ddy` and `fwidth`
+  are 0 (filter by the footprint only in the raster), `pixel` is 0. A surface that declares resources of its own keeps
+  them behind `#if !QUENCH_SURFACE_HIT`. The files of a set are compiled into one source: their macros must not
+  clash.
+- `RenderStats::rayHitSurfaces` counts the instances whose hits run their function (on a device that traces).
+  `docs/render.md`, "Surface shaders" and "Ray hits of surfaces".
 
 ## Cooked assets in the scene
 

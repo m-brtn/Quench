@@ -68,7 +68,7 @@ unshadowed local lights (or, as an option, shadow maps for point, spot and area 
 (rect, disk, tube: LTC shading, soft traced shadows, in the path tracer; unshadowed as the fallback, or, as an
 option, soft shadows from shadow maps read in screen space) and anisotropic
 GGX; game passes and surface
-shaders (with a G-buffer entry for the rays); GPU skinning by compute (linear or dual quaternion; blend shapes before it; unchanged poses copied); `SceneAssets` puts asset textures and models
+shaders (with a G-buffer entry for the rays and, through `quench_add_ray_hits()`, their own shading in ray hits); GPU skinning by compute (linear or dual quaternion; blend shapes before it; unchanged poses copied); `SceneAssets` puts asset textures and models
 into the scene),
 `quench_audio` (headless: a float stereo 48 kHz mixer, buses with volume, mute, pause and meters, reverb buses with
 per-sound sends, sounds as an asset
@@ -121,8 +121,7 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
-work) or custom
-surface shading in ray hits (normal maps are read there since 0.10.0; stage 11 remaining work)
+work) or denser probe grids (stage 11 remaining work)
 yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is
@@ -542,8 +541,9 @@ LICENSE                MIT licence of the engine; THIRD_PARTY_LICENSES: licences
 CMakeLists.txt         engine targets; CMakePresets.json: configure, build and test presets
 cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), CookToolchain (asset
                        cooker pins), QuenchDxc and BuildDxc (DXC for ray query shaders, built from source into a
-                       per-machine tool cache), QuenchShaders (quench_add_shaders), QuenchCook (quench_cook_assets),
-                       EmbedShaders, QuenchTargets (warnings, include directories), QuenchGame (quench_add_game)
+                       per-machine tool cache), QuenchShaders (quench_add_shaders, quench_add_ray_hits), QuenchCook
+                       (quench_cook_assets), EmbedShaders, QuenchTargets (warnings, include directories), QuenchGame
+                       (quench_add_game)
                        and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator;
                        MikkTSpaceRotate: a shift by 32 in MikkTSpace masked)
 include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, gpu/, app/, render/

@@ -149,6 +149,7 @@ struct SurfaceEntry {
     const ShaderBlob* shadowFragment = nullptr;        // null: the standard surface's
     const ShaderBlob* transmittanceFragment = nullptr; // null: the standard surface's
     const ShaderBlob* gbufferFragment = nullptr;       // null: the standard surface's
+    std::uint32_t rayHit = 0;                          // SurfaceDesc::rayHit (0: the standard surface in hits)
     std::string name;
     std::array<gpu::GraphicsPipeline, kVariants> pipelines;
     std::array<bool, kVariants> failed{};
@@ -380,6 +381,7 @@ struct RendererImpl {
     // Ray tracing (the RayTraced effects, the probe grid and the path tracer)
     RayTracing rayTracing;
     bool rayTracingTried = false;
+    const ShaderTable* rayHitShaders = nullptr; // the surfaces' quench_add_ray_hits() set (SurfaceDesc)
     std::vector<RayCaster> rayCasters;
     PathTracer pathTracer;
     bool pathTracerTried = false;
@@ -1657,7 +1659,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         rayReflections = probes = rayIndirect = pathTracing = false;
     }
     if (pathTracing && !pathTracer.ready()) {
-        if (!pathTracerTried && !pathTracer.init(*device, rayTracing, pipelineCount)) {
+        if (!pathTracerTried && !pathTracer.init(*device, rayTracing)) {
             support.rayLighting = false; // logged; the real-time frame from the next one
             applySettings();
         }
@@ -1895,7 +1897,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 if (skinnedMesh) skinnedOffset(*inst, i, *mesh);
                 const bool translucent =
                     caster ? shadowMode == ShadowMode::Translucent : m.blend == BlendMode::AlphaBlend;
-                rayCasters.push_back({i, inst, mesh, material, {}, caster, translucent, m.doubleSided});
+                rayCasters.push_back(
+                    {i, inst, mesh, material, {}, caster, translucent, m.doubleSided, surface->rayHit});
             }
         }
         if (!inst->desc.castsShadows || shadowMode == ShadowMode::None) continue;
@@ -2056,6 +2059,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         stats.rayTopRefit = rs.topRefit;
         stats.rayMemoryBytes = rs.memoryBytes;
         stats.hitTextures = rs.hitTextures;
+        stats.rayHitSurfaces = rs.surfaceHits;
     }
     const bool pathFrame = pathTracing && rayMask && pathTracer.ensureTargets(rw, rh);
     std::uint32_t rayBits = 0;
@@ -2726,6 +2730,12 @@ Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
         (desc.transmittanceShader && desc.transmittanceShader->stage != ShaderStage::Fragment) ||
         (desc.gbufferShader && desc.gbufferShader->stage != ShaderStage::Fragment))
         return Error{std::format("surface '{}': needs a vertex and a fragment shader", name)};
+    if (desc.rayHit > 0 && !desc.rayHitShaders)
+        return Error{std::format("surface '{}': rayHit {} without rayHitShaders", name, desc.rayHit)};
+    if (desc.rayHitShaders && m_impl->rayHitShaders && desc.rayHitShaders != m_impl->rayHitShaders)
+        return Error{std::format("surface '{}': another quench_add_ray_hits() set than the renderer's surfaces have "
+                                 "(a renderer takes one)",
+                                 name)};
     detail::SurfaceEntry entry;
     entry.vertex = desc.vertexShader;
     entry.fragment = desc.fragmentShader;
@@ -2735,11 +2745,16 @@ Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
     entry.shadowFragment = desc.shadowFragmentShader;
     entry.transmittanceFragment = desc.transmittanceShader;
     entry.gbufferFragment = desc.gbufferShader;
+    entry.rayHit = desc.rayHit;
     entry.name = name;
     if (!m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false, detail::Shading::Full)) ||
         (entry.basicFragment &&
          !m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false, detail::Shading::Basic))))
         return Error{std::format("surface '{}': the pipeline could not be created (logged)", name)};
+    if (desc.rayHitShaders) {
+        m_impl->rayHitShaders = desc.rayHitShaders;
+        m_impl->rayTracing.setSurfaceHits(desc.rayHitShaders);
+    }
     return m_impl->surfaces.add(std::move(entry));
 }
 

@@ -13,6 +13,7 @@
 #include <quench/SceneUniforms.h>
 #include <quench/gpu/CommandBuffer.h>
 #include <quench/gpu/Device.h>
+#include <quench/gpu/ShaderBlob.h>
 
 #include <glm/vec3.hpp>
 
@@ -34,6 +35,7 @@ struct RayCaster {
     bool caster = true;           // casts shadows (else only seen by reflection, indirect and path rays)
     bool translucent = false;     // ShadowMode::Translucent: tints the rays it crosses
     bool doubleSided = false;
+    std::uint32_t rayHit = 0; // the surface function that shades its hits (SurfaceDesc::rayHit; 0: the standard one)
 };
 
 struct RayTracingStats {
@@ -45,6 +47,7 @@ struct RayTracingStats {
     bool topRefit = false;
     std::uint64_t memoryBytes = 0;
     std::uint32_t hitTextures = 0;
+    std::uint32_t surfaceHits = 0; // instances whose hits run their surface's function
 };
 
 // The targets of a frame besides the depth and the sun's mask.
@@ -98,6 +101,12 @@ public:
     // An instance in this frame's top level has a normal map (valid after build()): the hit passes use the variants
     // that read them.
     bool normalMaps() const { return m_normalMaps; }
+    // The tracing entries of the game's quench_add_ray_hits() set (SurfaceDesc::rayHitShaders; null: none). Their
+    // pipelines are made in the first frame with an instance whose surface shades its hits (RayCaster::rayHit).
+    void setSurfaceHits(const ShaderTable* table);
+    // Such an instance is in this frame's tables and the set's pipelines exist (valid after build()): the hit passes
+    // use them.
+    bool surfaceHits() const { return m_surfaceHits; }
 
     // The prepass and the traced targets at the render size; false on failure (logged).
     bool ensureTargets(std::uint32_t width, std::uint32_t height, gpu::TextureFormat depthFormat,
@@ -156,8 +165,10 @@ public:
     // Binds what RayHit.hlsli reads (samplers 0..5, the tables and the top level); probes: the grid's atlases
     // (else placeholders).
     void bindHits(gpu::RenderPass& pass, bool probes);
-    // A pipeline of a hit pass of raylight.hlsl into one target of `format`.
-    Result<gpu::GraphicsPipeline> hitPipeline(const char* entry, gpu::TextureFormat format, const char* name);
+    // A pipeline of a hit pass of raylight.hlsl (surfaces: of the game's set) into one target of `format`; counted
+    // with the others.
+    Result<gpu::GraphicsPipeline> hitPipeline(const char* entry, gpu::TextureFormat format, const char* name,
+                                              bool surfaces = false);
 
     // The probe grid around a camera position for this frame (FrameUniforms probeGrid, probeCounts, probeAtlas).
     ProbeGridState placeProbes(const glm::vec3& camera, float spacing);
@@ -193,6 +204,8 @@ private:
     // The layers of this frame's textures (-1: none) after copying new ones in; `layers` per texture of `wanted`.
     void updateHitArray(gpu::CommandBuffer& commands, HitArray& array, std::uint64_t scene,
                         std::span<const std::pair<TextureId, const gpu::Texture*>> wanted, std::vector<int>& layers);
+    // The tracing pipelines of the game's set; false when one fails (logged once: the engine's from then on).
+    bool ensureSurfacePipelines();
     bool createTarget(gpu::Texture& out, gpu::TextureFormat format, std::uint32_t width, std::uint32_t height,
                       const char* name,
                       gpu::TextureUsage usage = gpu::TextureUsage::ColorTarget | gpu::TextureUsage::Sampled);
@@ -200,16 +213,25 @@ private:
                 const gpu::Texture& output, const FilterInputs& inputs, const FilterParams& params,
                 RayFiltering filtering);
 
+    // A tracing pass's pipelines by [the game's set][normal maps] (raylight.hlsl's _maps entries read them).
+    using HitVariants = std::array<std::array<gpu::GraphicsPipeline, 2>, 2>;
+    const gpu::GraphicsPipeline& variant(const HitVariants& v) const {
+        return v[m_surfaceHits ? 1 : 0][m_normalMaps ? 1 : 0];
+    }
+
     gpu::Device* m_device = nullptr;
+    std::uint32_t* m_pipelineCount = nullptr;
     RaySamplers m_samplers;
     bool m_available = false;
     bool m_lighting = false;
     gpu::GraphicsPipeline m_tracePipeline, m_traceLocalPipeline, m_denoisePipeline, m_denoiseInputsPipeline;
-    gpu::GraphicsPipeline m_reflectPipeline, m_indirectPipeline, m_probeTracePipeline, m_probeIrradiancePipeline,
-        m_probeDistancePipeline;
-    // The tracing passes whose hits read normal maps (raylight.hlsl's _maps entries).
-    gpu::GraphicsPipeline m_reflectMapsPipeline, m_indirectMapsPipeline, m_probeTraceMapsPipeline;
+    gpu::GraphicsPipeline m_probeIrradiancePipeline, m_probeDistancePipeline;
+    HitVariants m_reflectPipelines, m_indirectPipelines, m_probeTracePipelines;
     bool m_normalMaps = false; // an instance in this frame's tables has a normal map
+    const ShaderTable* m_surfaceTable = nullptr;
+    bool m_surfacePipelines = false; // made from m_surfaceTable
+    bool m_surfaceFailed = false;    // tried and failed (logged)
+    bool m_surfaceHits = false;      // this frame's tables have an instance with RayCaster::rayHit
     TemporalFilter m_maskFilter, m_localFilter, m_reflectionFilter, m_indirectFilter;
     std::uint32_t m_width = 0, m_height = 0;
     RayTargets m_targets;

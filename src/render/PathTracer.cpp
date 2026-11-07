@@ -14,7 +14,7 @@ constexpr gpu::TextureFormat kAccumulationFormat = gpu::TextureFormat::Rgba32Flo
 
 } // namespace
 
-bool PathTracer::init(gpu::Device& device, RayTracing& rays, std::uint32_t& pipelines) {
+bool PathTracer::init(gpu::Device& device, RayTracing& rays) {
     m_device = &device;
     Result<gpu::GraphicsPipeline> p = rays.hitPipeline("pt_fs", kAccumulationFormat, "render path tracer");
     Result<gpu::GraphicsPipeline> maps =
@@ -23,9 +23,26 @@ bool PathTracer::init(gpu::Device& device, RayTracing& rays, std::uint32_t& pipe
         log::error("render", "path tracer pipeline: {}", !p ? p.error() : maps.error());
         return false;
     }
-    m_pipeline = std::move(*p);
-    m_mapsPipeline = std::move(*maps);
-    pipelines += 2;
+    m_pipelines[0][0] = std::move(*p);
+    m_pipelines[0][1] = std::move(*maps);
+    return true;
+}
+
+bool PathTracer::ensureSurfacePipelines(RayTracing& rays) {
+    if (m_pipelines[1][0]) return true;
+    if (m_surfaceFailed) return false;
+    Result<gpu::GraphicsPipeline> p =
+        rays.hitPipeline("pt_fs", kAccumulationFormat, "render path tracer (surfaces)", true);
+    Result<gpu::GraphicsPipeline> maps =
+        rays.hitPipeline("pt_maps_fs", kAccumulationFormat, "render path tracer (surfaces, normal maps)", true);
+    if (!p || !maps) {
+        log::error("render", "path tracer pipeline of surfaces: {}; their hits take the standard surface",
+                   !p ? p.error() : maps.error());
+        m_surfaceFailed = true;
+        return false;
+    }
+    m_pipelines[1][0] = std::move(*p);
+    m_pipelines[1][1] = std::move(*maps);
     return true;
 }
 
@@ -67,11 +84,12 @@ const gpu::Texture& PathTracer::render(gpu::CommandBuffer& commands, RayTracing&
     if (m_samples >= std::uint32_t(std::max(maxSamples, 1))) return m_accumulation[std::size_t(m_index)];
     const int write = m_index ^ 1;
     uniforms.path = glm::vec4(float(std::clamp(bounces, 1, 16)), float(m_samples), m_samples == 0 ? 1.0f : 0.0f, 0.0f);
+    const bool surfaces = rays.surfaceHits() && ensureSurfacePipelines(rays);
     commands.beginTiming("path");
     const gpu::ColorTarget color{
         .texture = m_accumulation[std::size_t(write)], .load = gpu::LoadOp::DontCare, .cycle = true};
     if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-        pass.bindPipeline(rays.normalMaps() ? m_mapsPipeline : m_pipeline);
+        pass.bindPipeline(m_pipelines[surfaces ? 1 : 0][rays.normalMaps() ? 1 : 0]);
         rays.bindHits(pass, false);
         pass.bindSampler(ShaderStage::Fragment, 7, {m_accumulation[std::size_t(m_index)], point});
         pass.pushUniforms(ShaderStage::Fragment, 1, uniforms);

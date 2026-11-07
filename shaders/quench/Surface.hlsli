@@ -34,7 +34,17 @@
 // surface_fs with the local lights' shadow maps (QUENCH_SURFACE_LOCAL_SHADOWS is 1 in it; RenderSettings::
 // localShadowMapSize, where those shadows are not ray traced); the renderer draws with it in frames with such maps.
 // Without it the surface's local lights stay unshadowed there, and the other variants pay nothing for the maps.
+//
+// Optional: the surface's function also shades its ray hits (traced reflections, indirect light, the probe grid, the
+// path tracer) when the game lists the file in quench_add_ray_hits() and passes that set and the surface's number
+// in it as SurfaceDesc::rayHitShaders and rayHit. There QUENCH_SURFACE_HIT is 1: the function sees the hit (view
+// toward the ray's origin, pixel 0), the material and its textures as the hits' 256 x 256 copies without mip levels
+// (every Sample reads level 0), and ddx, ddy and fwidth are 0. A surface that declares resources of its own keeps
+// them out of the hits with #if !QUENCH_SURFACE_HIT. Without it the hits take the standard surface.
 
+#ifndef QUENCH_SURFACE_HIT
+#define QUENCH_SURFACE_HIT 0
+#endif
 #if defined(QUENCH_ENTRY_surface_basic_fs)
 #define QUENCH_SURFACE_FULL 0
 #else
@@ -103,6 +113,8 @@ struct QuenchSurface {
 };
 
 #if defined(QUENCH_STAGE_FRAGMENT)
+// In a ray hit the trace shader provides quenchMaterial, quenchTexture0..3 and quenchSampler0..3 (RayHit.hlsli).
+#if !QUENCH_SURFACE_HIT
 cbuffer QuenchLightBlock : QUENCH_UNIFORM(1) {
     LightUniforms quenchLights;
 };
@@ -145,9 +157,12 @@ SamplerState quenchAreaSampler : QUENCH_SAMPLER(12);
 // The local lights' shadow maps (quenchLocalShadows), read where FrameUniforms::localShadows.x is not 0.
 Texture2DArray<float> quenchLocalShadowMaps : QUENCH_TEXTURE(13);
 SamplerState quenchLocalShadowSampler : QUENCH_SAMPLER(13);
+#endif
 
 // True when the material has texture n (MaterialDesc::textures); unset textures sample white.
 bool quenchHasTexture(int n) { return (uint(quenchMaterial.surface.w) & (1u << uint(n))) != 0u; }
+
+#if !QUENCH_SURFACE_HIT
 
 // In a frame with local light shadow maps (FrameUniforms::localShadows.x is not 0): the shadows of the point and spot
 // lights that have them, in their channels (LocalLight::cone.y = channel + 1), 1 = lit. Area lights' maps are read in
@@ -165,6 +180,7 @@ float4 quenchLocalShadows(Texture2DArray<float> maps, SamplerState s, float3 P, 
     }
     return lit;
 }
+#endif
 
 // The shading normal of a tangent-space normal map texel (glTF's encoding: xyz * 0.5 + 0.5, +y toward -v) in the
 // frame of the input's normal and tangent; the geometric normal where the tangent gives no frame.
@@ -212,6 +228,8 @@ QuenchSurface quenchStandardSurface(QuenchSurfaceInput i) {
 
 // The sun's light a translucent caster lets through (quenchTransmittanceOf).
 float3 quenchTransmittance(QuenchSurface s) { return quenchTransmittanceOf(s.albedo, s.opacity); }
+
+#if !QUENCH_SURFACE_HIT
 
 // Diffuse irradiance from the sky hemisphere, blended with the ground bounce by the normal.
 float3 quenchAmbient(float3 N) {
@@ -373,6 +391,7 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     color += env * envBRDFApprox(F0, lobeRoughness, NdotV) * envOcclusion;
     return color + s.emissive;
 }
+#endif
 #endif
 
 #endif

@@ -381,6 +381,13 @@ scaler.
   linear hit array, read in the raster's tangent frame, by variants of the tracing passes used only in frames where
   an instance has a normal map ([Render module](render.md#ray-traced-lighting)); test
   `renderer_ray_hits_read_normal_maps`.
+- [x] A game's surface shaders in ray hits (stage 11's remaining work; 2026-11-07, after 0.10.0, on the Mac):
+  `quench_add_ray_hits()` compiles the tracing entries again with the game's surface files and a generated switch
+  over them; `SurfaceDesc::rayHitShaders` and `rayHit` select the function per surface, the standard surface stays
+  the default; `QUENCH_SURFACE_HIT` in the surface file; the demo's checker in the traced mirror (native batch part
+  `raytracing_mirror`); test `renderer_ray_hits_run_surface_functions`
+  ([Render module](render.md#ray-hits-of-surfaces), [Performance](performance.md#surface-functions-in-ray-hits)).
+  Open: the iPhone.
 - [x] Counter-clockwise front faces through mirroring transforms in the Metal backend, with a test
   (`ray_query_front_faces`).
 - [x] Top-level refit when only transforms change, bottom-level compaction, `rayMemoryBytes`, `rayCompactions`,
@@ -652,9 +659,8 @@ What else stays open, in the order it is useful (not scheduled; the user decides
    intervals at fair, a minute before serious; check mode item `tunnel.heat`). The probe grid on phones:
    traced in turns since 2026-11-07 (`probeUpdatePeriod`, measured on the Mac only); its phone default waits for
    `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns at half size, 60 Hz).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); custom surfaces
-   in ray hits, a denser or cascaded probe grid
-   (stage 11).
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); a denser or
+   cascaded probe grid (stage 11).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. The

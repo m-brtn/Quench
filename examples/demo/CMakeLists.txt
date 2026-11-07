@@ -144,4 +144,5 @@ target_compile_definitions(quench_demo PRIVATE QUENCH_DEMO_CONFIG="$<CONFIG>")
 add_dependencies(quench_demo quench_demo_build_info)
 quench_add_shaders(quench_demo NAME demo_checker SOURCE shaders/checker.hlsl
     ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment surface_local_shadows_fs:fragment)
+quench_add_ray_hits(quench_demo NAME demo_hits SURFACES shaders/checker.hlsl)
 quench_add_shaders(quench_demo NAME demo_markers SOURCE shaders/markers.hlsl ENTRIES marker_vs:vertex marker_fs:fragment)

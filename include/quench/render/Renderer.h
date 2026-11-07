@@ -227,6 +227,12 @@ struct SurfaceDesc {
     // surface_gbuffer_fs: the surface's normal, roughness, albedo and metallic for the traced reflections, indirect
     // light and the denoising upscaler. Without it the standard surface's are written (the material's values).
     const ShaderBlob* gbufferShader = nullptr;
+    // The ray hits of this surface's materials (traced reflections, indirect light, the probe grid, the path tracer)
+    // shaded by its function: the table of a quench_add_ray_hits() set that lists the surface's file, and the file's
+    // number in it (from 1, in the order of SURFACES). A renderer takes one set: every surface names the same.
+    // Without them (or where the set has no pipelines) its hits take the standard surface (the material's values).
+    const ShaderTable* rayHitShaders = nullptr;
+    std::uint32_t rayHit = 0;
     std::string_view name{};
 };
 
@@ -325,6 +331,8 @@ struct RenderStats {
     // arrays and the probe atlases (not the targets).
     std::uint64_t rayMemoryBytes = 0;
     std::uint32_t hitTextures = 0; // material textures in the hit texture arrays
+    // Instances in the top level whose hits run their surface's function (SurfaceDesc::rayHit) this frame.
+    std::uint32_t rayHitSurfaces = 0;
     std::uint32_t probes = 0;      // probes traced this frame (IndirectLight::Probes and RayTraced)
     std::uint32_t pathSamples = 0; // samples in the path tracer's mean
 };

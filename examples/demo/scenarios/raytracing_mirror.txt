@@ -1,0 +1,22 @@
+# A surface shader's own function in ray hits on the native Metal backend (ctest: demo_raytracing_mirror_native, a
+# part of batch_native.txt): the camera close to the section's mirror, which shows the checker ground in front of it
+# with its cells (shaders/checker.hlsl in the hits through quench_add_ray_hits), as the ground itself, not the
+# material's flat mean color. Every traced effect at full size (bilinear, the engine's temporal denoiser); the capture
+# at 2.5 s.
+section raytracing
+
+set dither 0
+until rt_ready == 1 5
+set upscaling bilinear
+set scale 1
+camera 25 22 3.4 -2.2 1.0 -3.6
+wait 0.1
+expect reflections == 1
+expect ray_hit_surfaces == 1
+expect render_scale == 1
+expect fallbacks == 0
+until time >= 2.5 3
+windows off
+capture demo_raytracing_mirror_native.png
+windows on
+quit

@@ -60,6 +60,7 @@ std::uint64_t textureBytes(const gpu::Texture& t) {
 
 bool RayTracing::init(gpu::Device& device, std::uint32_t& pipelines, const RaySamplers& samplers) {
     m_device = &device;
+    m_pipelineCount = &pipelines;
     m_samplers = samplers;
     m_available = false;
     m_lighting = false;
@@ -114,36 +115,87 @@ bool RayTracing::init(gpu::Device& device, std::uint32_t& pipelines, const RaySa
         return true;
     }
     const gpu::ColorTargetDesc light{kLightFormat}, distance{kDistanceFormat};
-    m_lighting =
-        make(m_reflectPipeline, shaders::render_raylight.find("rt_reflect_fs"), {&light, 1}, "render ray reflect") &&
-        make(m_indirectPipeline, shaders::render_raylight.find("rt_indirect_fs"), {&light, 1}, "render ray indirect") &&
-        make(m_probeTracePipeline, shaders::render_raylight.find("rt_probe_trace_fs"), {&light, 1},
-             "render probe rays") &&
-        make(m_probeIrradiancePipeline, shaders::render_raylight.find("rt_probe_irradiance_fs"), {&light, 1},
-             "render probe irradiance") &&
-        make(m_probeDistancePipeline, shaders::render_raylight.find("rt_probe_distance_fs"), {&distance, 1},
-             "render probe distance") &&
-        make(m_reflectMapsPipeline, shaders::render_raylight.find("rt_reflect_maps_fs"), {&light, 1},
-             "render ray reflect (normal maps)") &&
-        make(m_indirectMapsPipeline, shaders::render_raylight.find("rt_indirect_maps_fs"), {&light, 1},
-             "render ray indirect (normal maps)") &&
-        make(m_probeTraceMapsPipeline, shaders::render_raylight.find("rt_probe_trace_maps_fs"), {&light, 1},
-             "render probe rays (normal maps)") &&
-        m_reflectionFilter.init(device, kLightFormat, "ray reflections", pipelines) &&
-        m_indirectFilter.init(device, kLightFormat, "ray indirect", pipelines);
+    m_lighting = make(m_reflectPipelines[0][0], shaders::render_raylight.find("rt_reflect_fs"), {&light, 1},
+                      "render ray reflect") &&
+                 make(m_indirectPipelines[0][0], shaders::render_raylight.find("rt_indirect_fs"), {&light, 1},
+                      "render ray indirect") &&
+                 make(m_probeTracePipelines[0][0], shaders::render_raylight.find("rt_probe_trace_fs"), {&light, 1},
+                      "render probe rays") &&
+                 make(m_probeIrradiancePipeline, shaders::render_raylight.find("rt_probe_irradiance_fs"), {&light, 1},
+                      "render probe irradiance") &&
+                 make(m_probeDistancePipeline, shaders::render_raylight.find("rt_probe_distance_fs"), {&distance, 1},
+                      "render probe distance") &&
+                 make(m_reflectPipelines[0][1], shaders::render_raylight.find("rt_reflect_maps_fs"), {&light, 1},
+                      "render ray reflect (normal maps)") &&
+                 make(m_indirectPipelines[0][1], shaders::render_raylight.find("rt_indirect_maps_fs"), {&light, 1},
+                      "render ray indirect (normal maps)") &&
+                 make(m_probeTracePipelines[0][1], shaders::render_raylight.find("rt_probe_trace_maps_fs"), {&light, 1},
+                      "render probe rays (normal maps)") &&
+                 m_reflectionFilter.init(device, kLightFormat, "ray reflections", pipelines) &&
+                 m_indirectFilter.init(device, kLightFormat, "ray indirect", pipelines);
     if (!m_lighting)
         log::error("render", "ray-traced lighting pipelines failed (logged); sky reflections and ambient light");
     return true;
 }
 
-Result<gpu::GraphicsPipeline> RayTracing::hitPipeline(const char* entry, TextureFormat format, const char* name) {
-    const ShaderBlob* shader = shaders::render_raylight.find(entry);
-    if (!shader) return Error{std::format("the shader '{}' is not in this build", entry)};
+Result<gpu::GraphicsPipeline> RayTracing::hitPipeline(const char* entry, TextureFormat format, const char* name,
+                                                      bool surfaces) {
+    const ShaderTable* table = surfaces ? m_surfaceTable : &shaders::render_raylight;
+    const ShaderBlob* shader = table ? table->find(entry) : nullptr;
+    if (!shader)
+        return Error{std::format("the shader '{}' is not in {}", entry,
+                                 surfaces ? "the quench_add_ray_hits() set" : "this build")};
     const gpu::ColorTargetDesc color{format};
-    return m_device->createPipeline({.vertexShader = shaders::render_frame.find("fullscreen_vs"),
-                                     .fragmentShader = shader,
-                                     .colorTargets = {&color, 1},
-                                     .name = name});
+    Result<gpu::GraphicsPipeline> p =
+        m_device->createPipeline({.vertexShader = shaders::render_frame.find("fullscreen_vs"),
+                                  .fragmentShader = shader,
+                                  .colorTargets = {&color, 1},
+                                  .name = name});
+    if (p && m_pipelineCount) ++*m_pipelineCount;
+    return p;
+}
+
+void RayTracing::setSurfaceHits(const ShaderTable* table) {
+    if (table == m_surfaceTable) return;
+    m_surfaceTable = table;
+    for (HitVariants* v : {&m_reflectPipelines, &m_indirectPipelines, &m_probeTracePipelines}) (*v)[1] = {};
+    m_surfacePipelines = m_surfaceFailed = m_surfaceHits = false;
+}
+
+bool RayTracing::ensureSurfacePipelines() {
+    if (m_surfacePipelines) return true;
+    if (m_surfaceFailed || !m_surfaceTable || !m_lighting) return false;
+    struct Pass {
+        HitVariants& pipelines;
+        const char* entries[2];
+        const char* names[2];
+    };
+    const Pass passes[] = {
+        {m_reflectPipelines,
+         {"rt_reflect_fs", "rt_reflect_maps_fs"},
+         {"render ray reflect (surfaces)", "render ray reflect (surfaces, normal maps)"}},
+        {m_indirectPipelines,
+         {"rt_indirect_fs", "rt_indirect_maps_fs"},
+         {"render ray indirect (surfaces)", "render ray indirect (surfaces, normal maps)"}},
+        {m_probeTracePipelines,
+         {"rt_probe_trace_fs", "rt_probe_trace_maps_fs"},
+         {"render probe rays (surfaces)", "render probe rays (surfaces, normal maps)"}},
+    };
+    for (const Pass& pass : passes) {
+        for (int maps = 0; maps < 2; ++maps) {
+            Result<gpu::GraphicsPipeline> p = hitPipeline(pass.entries[maps], kLightFormat, pass.names[maps], true);
+            if (!p) {
+                log::error("render", "ray hits of surfaces: pipeline '{}': {}; their hits take the standard surface",
+                           pass.names[maps], p.error());
+                for (HitVariants* v : {&m_reflectPipelines, &m_indirectPipelines, &m_probeTracePipelines}) (*v)[1] = {};
+                m_surfaceFailed = true;
+                return false;
+            }
+            pass.pipelines[1][std::size_t(maps)] = std::move(*p);
+        }
+    }
+    m_surfacePipelines = true;
+    return true;
 }
 
 bool RayTracing::ensureBuffer(gpu::Buffer& buffer, std::uint32_t& capacity, std::uint32_t bytes, const char* name) {
@@ -383,6 +435,7 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
     m_data.clear();
     m_alphaTextures.clear();
     m_normalMaps = false;
+    m_surfaceHits = false;
     m_skinned = skinned;
     if (!m_available || casters.empty()) return false;
     if (!updateTables(commands, scene.serial, casters, hitData)) return false;
@@ -583,12 +636,31 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
             d.normal2 = glm::vec4(normal[0][2], normal[1][2], normal[2][2], std::sin(m.anisotropyRotation));
             d.maps = glm::vec4(layerOf(linearWanted, linearLayers, m.textures[2]), 0.0f, 0.0f, 0.0f);
             m_normalMaps = m_normalMaps || d.maps.x >= 0.0f;
+            if (c.rayHit > 0 && hitData) {
+                // What the surface's function reads of the material (textures: the ones in the hit arrays).
+                const float layers[] = {d.layers.x, d.layers.y, d.maps.x, d.layers.z};
+                std::uint32_t textures = 0;
+                for (std::uint32_t t = 0; t < 4; ++t)
+                    if (layers[t] >= 0.0f) textures |= 1u << t;
+                d.maps.y = float(c.rayHit);
+                d.maps.z = float(textures);
+                d.base = m.baseColor;
+                d.tint = c.instance->desc.color;
+                d.custom = c.instance->desc.custom;
+                for (std::size_t p = 0; p < 4; ++p) d.params[p] = m.params[p];
+                m_surfaceHits = true;
+                ++stats.surfaceHits;
+            }
             instance.id = std::uint32_t(m_data.size());
             m_data.push_back(d);
         }
         m_instances.push_back(instance);
     }
     endBottomLevels();
+    if (m_surfaceHits && !ensureSurfacePipelines()) {
+        m_surfaceHits = false;
+        stats.surfaceHits = 0;
+    }
     if (m_instances.empty()) return false;
     const auto needed = std::uint32_t(m_instances.size());
     if (!m_top || m_top.desc().instanceCapacity < needed) {
@@ -777,7 +849,7 @@ std::uint32_t RayTracing::updateProbes(gpu::CommandBuffer& commands, shader::Ray
     {
         const gpu::ColorTarget color{.texture = m_probeRays, .load = gpu::LoadOp::DontCare, .cycle = true};
         if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-            pass.bindPipeline(m_normalMaps ? m_probeTraceMapsPipeline : m_probeTracePipeline);
+            pass.bindPipeline(variant(m_probeTracePipelines));
             // This turn's probes are one band of rows (raylight.hlsl, rtProbeRow).
             if (n > 1) pass.setScissor({0, std::int32_t(band) * turn, std::int32_t(kProbeRays), std::int32_t(band)});
             bindHits(pass, !restart);
@@ -821,7 +893,7 @@ void RayTracing::traceReflections(gpu::CommandBuffer& commands, const shader::Ra
                                  .load = gpu::LoadOp::DontCare,
                                  .cycle = true};
     if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-        pass.bindPipeline(m_normalMaps ? m_reflectMapsPipeline : m_reflectPipeline);
+        pass.bindPipeline(variant(m_reflectPipelines));
         bindHits(pass, uniforms.params.w > 0.5f);
         pass.pushUniforms(kFragment, 1, uniforms);
         pass.pushUniforms(kFragment, 2, lights);
@@ -845,7 +917,7 @@ void RayTracing::traceIndirect(gpu::CommandBuffer& commands, const shader::RayHi
                                  .load = gpu::LoadOp::DontCare,
                                  .cycle = true};
     if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-        pass.bindPipeline(m_normalMaps ? m_indirectMapsPipeline : m_indirectPipeline);
+        pass.bindPipeline(variant(m_indirectPipelines));
         bindHits(pass, uniforms.params.w > 0.5f);
         pass.pushUniforms(kFragment, 1, uniforms);
         pass.pushUniforms(kFragment, 2, lights);

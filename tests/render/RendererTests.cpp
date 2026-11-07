@@ -8,6 +8,7 @@
 #include <quench/render/Renderer.h>
 #include <quench/render/ToneMap.h>
 
+#include <render_test_hits_shaders.h>
 #include <render_test_shaders.h>
 
 #include <glm/ext/matrix_transform.hpp>
@@ -2087,6 +2088,82 @@ QUENCH_TEST(renderer_ray_hits_read_normal_maps) {
           double(walls));
     CHECK(std::abs(pathWalls / walls - 1.0f) < 0.15f, "the path tracer: %.2f against %.2f", double(pathWalls),
           double(walls));
+}
+
+// A surface's own function in ray hits (quench_add_ray_hits): two boxes of the custom surface "flat" (green from its
+// params, though the material's base color is red) over a mirror floor, the left one with its hits in the set. The
+// mirror shows the left box green as the raster does, the right one red (the standard surface from the material's
+// values); so does the path tracer.
+QUENCH_TEST(renderer_ray_hits_run_surface_functions) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.reflections = Reflections::RayTraced;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    const SurfaceDesc flat{.vertexShader = shaders::render_test.find("surface_vs"),
+                           .fragmentShader = shaders::render_test.find("surface_fs"),
+                           .name = "flat"};
+    SurfaceDesc withHits = flat;
+    withHits.rayHitShaders = &shaders::render_test_hits;
+    withHits.rayHit = 1;
+    SurfaceDesc noTable = flat;
+    noTable.rayHit = 1;
+    CHECK(!renderer->addSurface(noTable), "rayHit without rayHitShaders is refused");
+    Result<SurfaceId> hits = renderer->addSurface(withHits);
+    Result<SurfaceId> plain = renderer->addSurface(flat);
+    REQUIRE(hits && plain, "custom surfaces");
+    SurfaceDesc otherSet = withHits;
+    otherSet.rayHitShaders = &shaders::render_test;
+    CHECK(!renderer->addSurface(otherSet), "a second set is refused");
+    if (!lightingActive(device, *renderer, "ray-traced reflections: ")) QUENCH_SKIP("no ray tracing: sky reflections");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyZenith = e.skyHorizon = glm::vec3(0.1f, 0.1f, 0.1f);
+    scene.setEnvironment(e);
+    addSun(scene, -glm::normalize(glm::vec3(0.3f, 1.0f, 0.6f)));
+    const InstanceId floor = scene.addInstance(
+        {.mesh = addMesh(scene, planeMesh(glm::vec2(10.0f))),
+         .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = 0.05f, .metallic = 1.0f})});
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.4f)));
+    MaterialDesc red{.baseColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f), .roughness = 0.9f};
+    red.params[0] = glm::vec4(0.0f, 3.0f, 0.0f, 0.0f);
+    red.surface = *hits;
+    scene.addInstance({.mesh = box,
+                       .material = scene.addMaterial(red),
+                       .transform = glm::translate(glm::mat4(1.0f), {-0.7f, 1.0f, -2.0f})});
+    red.surface = *plain;
+    scene.addInstance({.mesh = box,
+                       .material = scene.addMaterial(red),
+                       .transform = glm::translate(glm::mat4(1.0f), {0.7f, 1.0f, -2.0f})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 1.0f, 3.0f), glm::vec3(0, 0, -2.0f));
+    const std::vector<Rgba8> traced = settle(device, *renderer, scene, view, *target, 8);
+    REQUIRE(traced.size() == kSize * kSize, "%zu pixels", traced.size());
+    CHECK(renderer->stats().rayHitSurfaces == 1, "%u instances shade their hits", renderer->stats().rayHitSurfaces);
+    const Rgba8 left = at(traced, pixelOf(view, {-0.7f, 1.0f, -1.6f})),
+                right = at(traced, pixelOf(view, {0.7f, 1.0f, -1.6f})),
+                leftImage = at(traced, pixelOf(view, {-0.7f, -1.0f, -1.6f})),
+                rightImage = at(traced, pixelOf(view, {0.7f, -1.0f, -1.6f}));
+
+    scene.removeInstance(floor);
+    settings.pathTracer = true;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> path = settle(device, *renderer, scene, view, *target, 16);
+    const Rgba8 leftPath = at(path, pixelOf(view, {-0.7f, 1.0f, -1.6f})),
+                rightPath = at(path, pixelOf(view, {0.7f, 1.0f, -1.6f}));
+    std::printf("  raster %d %d %d | %d %d %d; mirror images %d %d %d | %d %d %d; path tracer %d %d %d | %d %d %d\n",
+                left.r, left.g, left.b, right.r, right.g, right.b, leftImage.r, leftImage.g, leftImage.b, rightImage.r,
+                rightImage.g, rightImage.b, leftPath.r, leftPath.g, leftPath.b, rightPath.r, rightPath.g, rightPath.b);
+    CHECK(left.g > 150 && right.g > 150 && left.r < 40 && right.r < 40, "both boxes green in the raster");
+    CHECK(leftImage.g > 150 && leftImage.g > leftImage.r * 2, "the left box's mirror image green: %d %d %d",
+          leftImage.r, leftImage.g, leftImage.b);
+    CHECK(rightImage.r > 60 && rightImage.r > rightImage.g * 2, "the right box's mirror image red: %d %d %d",
+          rightImage.r, rightImage.g, rightImage.b);
+    CHECK(leftPath.g > 150 && leftPath.g > leftPath.r * 2, "the left box green in the path tracer: %d %d %d",
+          leftPath.r, leftPath.g, leftPath.b);
+    CHECK(rightPath.r > 60 && rightPath.r > rightPath.g * 2, "the right box red in the path tracer: %d %d %d",
+          rightPath.r, rightPath.g, rightPath.b);
 }
 
 // A point light beside a box: with ray-traced local light shadows the box shadows the ground behind it.
