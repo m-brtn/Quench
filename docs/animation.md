@@ -91,9 +91,23 @@ A graph is a JSON file, loaded as the asset type "animgraph" (`parseGraph` for s
 - **Layers**: the first is the base pose; the others `"blend": "override"` (default) on a joint `mask` (the subtrees
   of the joints named; empty: all) or `"additive"`, each with a `weight` and an optional `weightParameter`.
 - **States**: a `clip`, a 1D `blend` tree over a float parameter (points sorted by `at`, two neighbours weighted
-  linearly), or neither (the rest pose in the base layer, nothing in the others). The clips of a blend tree play at
-  one normalized time (phases in step, so the feet of walk and run do not cross), its duration the weighted mean of
-  theirs. `speed`, `speedParameter` and `loop` (overrides the clip's flag) per state; `start` names the first state.
+  linearly), a 2D `blend2d` space over two float parameters, or neither (the rest pose in the base layer, nothing in
+  the others); at most 16 clips per tree or space. The clips of a tree or a space play at one normalized time (phases
+  in step, so the feet of walk and run do not cross), its duration the weighted mean of theirs; a point's `phase`
+  (default 0) shifts its clip's normalized time, for clips whose feet land at other phases. `speed`,
+  `speedParameter` and `loop` (overrides the clip's flag) per state; `start` names the first state.
+- **2D blend spaces**: `{"name": "move", "blend2d": {"parameters": ["vx", "vz"], "clips": [{"clip": "idle", "at":
+  [0, 0]}, {"clip": "walk", "at": [0, 1.1]}, {"clip": "strafe_l", "at": [0.75, 0], "phase": 0}, ...]}}` (the demo's
+  `mannequin_2d.graph.json`: idle, walk, run, walk back and the two strafes at their velocities). Freeform
+  Cartesian weights by gradient band interpolation (Johansen, "Automated Semi-Procedural Animation for Character
+  Locomotion", 2009, section 6.3; `blendSpaceWeights()` in `Graph.h`): each point's weight is the smallest of
+  `1 - (p - p_i)·(p_j - p_i) / |p_j - p_i|²` over the other points, clamped to 0..1, the weights normalized to sum
+  1. They are exact at the points (1 there, 0 for the others), continuous, symmetric for mirrored points, the same
+  as the 1D tree's on a line of points, and outside the points' hull the nearest edge or point holds. Weights below
+  1e-4 are dropped (those clips are not sampled). Points must be at least 1e-4 apart. Events and the root motion's
+  loops come from the heaviest clip; the root motion is the weighted sum of the clips' (between points it does not
+  match the parameters: the demo's steered character moves at 0.49 m/s when 0.8 m/s ahead is asked for, between
+  idle and walk, idle's 3 s cycle slowing the shared phase; the same holds in a 1D tree).
 - **Transitions**: `from` (a state or `"*"`, any other state), `to`, `conditions` (all of
   `{"parameter", "op": ">" | ">=" | "<" | "<=" | "==" | "!=", "value"}`), a `trigger`, an `exitTime` (normalized time
   of the source, every cycle for loops) and the cross-fade `duration` in seconds (default 0.2). Checked in order;
@@ -211,10 +225,13 @@ characters that use the asset and keeps their parameters.
 
 - **Demo**: section 10, "Animation" (key 0): the hero on a circle by root motion (speed blend, jump, wave on a
   masked layer, additive lean, look-at, a torch on its hand, footstep sounds from events), two characters with foot
-  placement on a ramp and a step, a crowd of up to 512 with the update and skinning times on screen
+  placement on a ramp and a step, a crowd of up to 512 with the update and skinning times on screen; in the view
+  "2D blend space", a character steered by its velocity through a blend space while it faces one way
   ([Engine demo](demo.md)). Its character is procedural (`tools/assets/make_demo_character.py`, generated and cooked
-  at build time; 20 joints, 836 vertices, clips idle, walk, run, jump, wave, lean).
-- **Tests**: `animation.*` (22 cases: sampling at and between keys, blend weights and phase sync, masked and additive
+  at build time; 20 joints, 836 vertices, clips idle, walk, run, jump, wave, lean, walk_back, strafe_l, strafe_r).
+- **Tests**: `animation.*` (25 cases: sampling at and between keys, blend weights and phase sync, 2D blend space
+  weights (on a grid: in 0..1, a sum of 1 within 1.2e-7, at most 0.0018 of change per mm, exact at the points,
+  mirror symmetric) and their pose, phases and root motion, graph errors, masked and additive
   layers, transitions, cross-fades, triggers and exit times, events in order, across loops and with a large dt, root
   motion, two-bone IK reached and unreachable, aim IK, foot placement on a step and a slope, look-at, missing and
   corrupt assets, clips for another skeleton, reload, a parallel update equal to a single-threaded one, a crowd on
@@ -222,7 +239,8 @@ characters that use the asset and keeps their parameters.
   `cook_animation_errors`, `cook_skinned_model`, and `cook_cli` (the demo's character cooked twice, the same bytes);
   `render.renderer_skins_on_the_gpu`, `renderer_skinned_motion_vectors`, `renderer_rejects_bad_skins` (also
   `render_vulkan.*`); `gpu_device.compute_dispatch`; `demo_animation_metal` and `demo_animation_vulkan` (21 checks
-  and a golden capture).
+  and a golden capture); `demo_animation_blend2d_<backend>` (the steered character's root motion against its
+  velocity, 17 checks and a golden capture).
 
 ## Platforms
 
@@ -237,7 +255,8 @@ characters that use the asset and keeps their parameters.
   numbers and still captures only.
 - **Retargeting** (clips of one skeleton on another) is not done: clip sets bind to the skeleton they were cooked
   for. Different proportions with the same joint names need a rest-pose correction (not in ozz).
-- **Blend trees are 1D** (one parameter); no 2D blend spaces. No sync markers beyond normalized time.
+- **No sync markers** beyond normalized time (and a point's `phase`): clips whose foot contacts are not at the same
+  phases do not stay in step. No directional blend spaces (polar gradient bands): a space's weights are Cartesian.
 - **Linear blend skinning** only (no dual quaternions), four joints per vertex, no blend shapes (morph targets).
 - **No animation LOD**: every character is sampled every frame; no update rate by distance.
 - **One `SceneAssets` per `AssetManager`** (stage 6): a second scene needs a second manager (the demo's section has

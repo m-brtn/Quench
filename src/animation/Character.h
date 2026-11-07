@@ -24,11 +24,13 @@ struct AnimationSystem::Character {
     struct ClipSlot {
         const Clip* clip = nullptr; // nullptr: missing from the clip sets (the rest pose instead)
         float at = 0.0f;            // blend trees: the parameter value
+        float phase = 0.0f;         // added to the state's normalized time
         int context = 0;
     };
     struct StateRuntime {
         const StateDef* def = nullptr;
-        std::vector<ClipSlot> clips; // one, a blend tree's points, or none (empty state)
+        std::vector<ClipSlot> clips;   // one, a blend tree's or a blend space's points, or none (empty state)
+        std::vector<glm::vec2> points; // a blend space's, in clip order
         bool loop = true;
     };
     struct LayerRuntime {
@@ -98,7 +100,8 @@ struct AnimationSystem::Character {
     glm::vec3 lastLookTarget{0.0f}; // model space: the turn fades out toward it after the target is cleared
 
     // Pose buffers of one update (SoA, local space) and the model-space matrices.
-    ozz::vector<ozz::math::SoaTransform> sample[2], statePose[2], layerPose, pose, scratch;
+    std::vector<ozz::vector<ozz::math::SoaTransform>> samples; // as many as the graph's largest blend has clips
+    ozz::vector<ozz::math::SoaTransform> statePose[2], layerPose, pose, scratch;
     ozz::vector<ozz::math::SimdFloat4> weightsA, weightsB;
     ozz::vector<ozz::math::Float4x4> models;
     std::vector<glm::mat4> modelMatrices;

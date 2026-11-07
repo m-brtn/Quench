@@ -10,7 +10,9 @@
 #include <ozz/animation/runtime/track_sampling_job.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <span>
 
 namespace quench::animation::detail {
 
@@ -20,41 +22,71 @@ using Character = AnimationSystem::Character;
 using ozz::math::SoaTransform;
 using Pose = ozz::vector<SoaTransform>;
 
-// The clips of a state that contribute, at most two (a 1D blend tree is linear between neighbouring points).
+// The clips of a state that contribute (a 1D blend tree is linear between neighbouring points, a blend space has its
+// gradient band weights), weights summing to 1.
 struct Active {
-    int slot[2] = {0, 0};
-    float weight[2] = {0.0f, 0.0f};
+    std::array<int, kMaxBlendPoints> slot{};
+    std::array<float, kMaxBlendPoints> weight{};
     int count = 0;
+
+    void add(int s, float w) {
+        slot[std::size_t(count)] = s;
+        weight[std::size_t(count)] = w;
+        ++count;
+    }
 };
 
 Active activeClips(const Character& c, const Character::StateRuntime& s) {
     Active a;
     if (s.clips.empty()) return a;
+    if (!s.points.empty()) {
+        const glm::vec2 p(c.params[std::size_t(s.def->blend2dParameters[0])],
+                          c.params[std::size_t(s.def->blend2dParameters[1])]);
+        std::array<float, kMaxBlendPoints> w{};
+        blendSpaceWeights(s.points, p, std::span(w).first(s.points.size()));
+        // Weights under 1e-4 are dropped (as the blending job's threshold would) and the rest normalized again.
+        float total = 0.0f;
+        for (std::size_t i = 0; i < s.points.size(); ++i)
+            if (w[i] >= 1e-4f) total += w[i];
+        for (std::size_t i = 0; i < s.points.size(); ++i)
+            if (w[i] >= 1e-4f) a.add(int(i), w[i] / total);
+        return a;
+    }
     if (s.def->blend.empty() || s.clips.size() == 1) {
-        a.count = 1;
-        a.weight[0] = 1.0f;
+        a.add(0, 1.0f);
         return a;
     }
     const float p = c.params[std::size_t(s.def->blendParameter)];
     const int last = int(s.clips.size()) - 1;
-    if (p <= s.clips[0].at || last == 0) {
-        a.count = 1;
-        a.weight[0] = 1.0f;
+    if (p <= s.clips[0].at) {
+        a.add(0, 1.0f);
         return a;
     }
     if (p >= s.clips[std::size_t(last)].at) {
-        a.count = 1;
-        a.slot[0] = last;
-        a.weight[0] = 1.0f;
+        a.add(last, 1.0f);
         return a;
     }
     int i = 0;
     while (i + 1 < last && p >= s.clips[std::size_t(i + 1)].at) ++i;
     const float lo = s.clips[std::size_t(i)].at, hi = s.clips[std::size_t(i + 1)].at;
     const float t = hi > lo ? (p - lo) / (hi - lo) : 1.0f;
-    if (t < 1e-4f) return {{i, 0}, {1.0f, 0.0f}, 1};
-    if (t > 1.0f - 1e-4f) return {{i + 1, 0}, {1.0f, 0.0f}, 1};
-    return {{i, i + 1}, {1.0f - t, t}, 2};
+    if (t < 1e-4f) {
+        a.add(i, 1.0f);
+    } else if (t > 1.0f - 1e-4f) {
+        a.add(i + 1, 1.0f);
+    } else {
+        a.add(i, 1.0f - t);
+        a.add(i + 1, t);
+    }
+    return a;
+}
+
+// The clip that delivers a state's events: the heaviest.
+int dominant(const Active& a) {
+    int k = 0;
+    for (int i = 1; i < a.count; ++i)
+        if (a.weight[std::size_t(i)] > a.weight[std::size_t(k)]) k = i;
+    return k;
 }
 
 float clipDuration(const Character::ClipSlot& slot) { return slot.clip ? slot.clip->duration() : 1.0f; }
@@ -62,7 +94,8 @@ float clipDuration(const Character::ClipSlot& slot) { return slot.clip ? slot.cl
 float advanceTime(const Character& c, const Character::StateRuntime& s, const Active& a, float time, float dt) {
     if (a.count == 0) return time + dt; // an empty state: seconds (exit times count in them)
     float duration = 0.0f;
-    for (int k = 0; k < a.count; ++k) duration += a.weight[k] * clipDuration(s.clips[std::size_t(a.slot[k])]);
+    for (int k = 0; k < a.count; ++k)
+        duration += a.weight[std::size_t(k)] * clipDuration(s.clips[std::size_t(a.slot[std::size_t(k)])]);
     float rate = s.def->speed;
     if (s.def->speedParameter >= 0) rate *= std::max(0.0f, c.params[std::size_t(s.def->speedParameter)]);
     return duration > 1e-6f ? time + dt * rate / duration : time;
@@ -94,11 +127,13 @@ void blend2(const Character& c, ozz::span<const SoaTransform> a, float wa, ozz::
 // Samples a state at `time` into `out`; false for an empty state.
 bool sampleState(Character& c, const Character::StateRuntime& s, const Active& a, float time, Pose& out) {
     if (a.count == 0) return false;
-    const float ratio = ratioAt(s.loop, time);
     const auto rest = c.skeleton->impl().skeleton.joint_rest_poses();
+    std::array<ozz::animation::BlendingJob::Layer, kMaxBlendPoints> layers;
     for (int k = 0; k < a.count; ++k) {
-        const Character::ClipSlot& slot = s.clips[std::size_t(a.slot[k])];
-        Pose& target = a.count == 1 ? out : c.sample[k];
+        const Character::ClipSlot& slot = s.clips[std::size_t(a.slot[std::size_t(k)])];
+        Pose& target = a.count == 1 ? out : c.samples[std::size_t(k)];
+        layers[std::size_t(k)].weight = a.weight[std::size_t(k)];
+        layers[std::size_t(k)].transform = ozz::make_span(target);
         if (!slot.clip) {
             copyPose(rest, target);
             continue;
@@ -106,14 +141,21 @@ bool sampleState(Character& c, const Character::StateRuntime& s, const Active& a
         ozz::animation::SamplingJob job;
         job.animation = &slot.clip->impl().animation;
         job.context = c.contexts[std::size_t(slot.context)].get();
-        job.ratio = ratio;
+        job.ratio = ratioAt(s.loop, time + slot.phase);
         job.output = ozz::make_span(target);
         [[maybe_unused]] const bool ok = job.Run();
         QUENCH_ASSERT(ok, "sampling job");
         ++c.clipsSampled;
     }
-    if (a.count == 2)
-        blend2(c, ozz::make_span(c.sample[0]), a.weight[0], ozz::make_span(c.sample[1]), a.weight[1], out);
+    if (a.count > 1) {
+        ozz::animation::BlendingJob job;
+        job.threshold = 1e-4f;
+        job.layers = {layers.data(), std::size_t(a.count)};
+        job.rest_pose = rest;
+        job.output = ozz::make_span(out);
+        [[maybe_unused]] const bool ok = job.Run();
+        QUENCH_ASSERT(ok, "blending job");
+    }
     return true;
 }
 
@@ -129,12 +171,13 @@ std::uint32_t crossings(bool loop, float t0, float t1, float u, bool entered) {
 void collectEvents(Character& c, const Character::StateRuntime& s, const Active& a, float t0, float t1, bool entered,
                    float weight, int layer, float threshold) {
     if (!c.desc.events || a.count == 0 || weight < threshold) return;
-    const int k = a.count == 2 && a.weight[1] > a.weight[0] ? 1 : 0;
-    const Clip* clip = s.clips[std::size_t(a.slot[k])].clip;
+    const std::size_t k = std::size_t(dominant(a));
+    const Character::ClipSlot& slot = s.clips[std::size_t(a.slot[k])];
+    const Clip* clip = slot.clip;
     if (!clip || clip->events().empty()) return;
     const float duration = clip->duration();
     for (const ClipEvent& e : clip->events()) {
-        const std::uint32_t n = crossings(s.loop, t0, t1, e.time / duration, entered);
+        const std::uint32_t n = crossings(s.loop, t0 + slot.phase, t1 + slot.phase, e.time / duration, entered);
         if (n > 0) c.events.push_back({&e, clip, weight * a.weight[k], n, layer});
     }
 }
@@ -194,12 +237,13 @@ void clipMotion(const Clip& clip, bool loop, float t0, float t1, glm::vec3& tran
 
 void addMotion(const Character::StateRuntime& s, const Active& a, float t0, float t1, float weight, MotionSum& sum) {
     for (int k = 0; k < a.count; ++k) {
-        const Clip* clip = s.clips[std::size_t(a.slot[k])].clip;
-        const float w = weight * a.weight[k];
+        const Character::ClipSlot& slot = s.clips[std::size_t(a.slot[std::size_t(k)])];
+        const Clip* clip = slot.clip;
+        const float w = weight * a.weight[std::size_t(k)];
         if (!clip || !clip->hasRootMotion() || w <= 0.0f) continue;
         glm::vec3 translation;
         glm::quat rotation;
-        clipMotion(*clip, s.loop, t0, t1, translation, rotation);
+        clipMotion(*clip, s.loop, t0 + slot.phase, t1 + slot.phase, translation, rotation);
         sum.translation += w * translation;
         if (glm::dot(sum.rotation, rotation) < 0.0f) rotation = -rotation;
         sum.rotation += w * rotation;

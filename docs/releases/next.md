@@ -76,6 +76,14 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   mix when off; about 1.2 µs per HRTF voice and millisecond of audio on the M4 Pro (32 voices through it: 4% of a
   core). The demo's audio section has an HRTF switch, a mix check (`audio_hrtf.txt`) and a check mode item for
   listening in headphones. Nobody has listened to it.
+- 2D blend spaces (stage 8 remaining work): a graph state's `blend2d` blends up to 16 clips placed at points of two
+  float parameters, weighted by gradient band interpolation (freeform Cartesian), the clips in phase with a per-point
+  `phase` offset; also in 1D trees ([Animation](../animation.md#graphs-state-machines)). On a grid of the demo's
+  six points the weights stay in 0..1, sum to 1 within 1.2e-7, change by at most 0.0018 per mm and are mirror
+  symmetric. The demo's mannequin has walk back and strafe clips, and its Animation section a view "2D blend space"
+  with a character steered by its velocity while facing one way (`animation_blend2d.txt`: its root motion within
+  0.3 to 11 degrees of the asked direction; a golden capture; a check mode item). Nobody has looked at it in
+  motion.
 
 ## Fixes
 
@@ -196,3 +204,9 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
 - **Xcode projects** (`quench_add_game` with the Xcode generator): the merged assets are no longer a folder
   reference in the target's resources but are copied by a `CMake PostBuild Rules` script phase; a game's own script
   that expects the folder in `Copy Bundle Resources` needs to change. The `<target>_assets` target stays.
+- **`animation::StateDef`** has `blend2d` and `blend2dParameters` after `blendParameter`, and
+  **`animation::BlendPoint`** has `phase` at its end: designated initializers compile unchanged, a positional
+  aggregate initialization of `StateDef` would fill the members after them one off. **`animation::BlendPoint2D`**,
+  **`kMaxBlendPoints`** and **`blendSpaceWeights()`** are new.
+- **Graphs:** a 1D blend tree takes at most 16 clips (`kMaxBlendPoints`; before, any number), and a state with both
+  `clip` and `blend2d`, or `blend` and `blend2d`, is refused by `parseGraph`.

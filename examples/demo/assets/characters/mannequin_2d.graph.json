@@ -1,0 +1,17 @@
+{
+  "parameters": {"vx": 0, "vz": 0},
+  "layers": [
+    {
+      "name": "base",
+      "states": [
+        {"name": "move", "blend2d": {"parameters": ["vx", "vz"], "clips": [
+          {"clip": "idle", "at": [0, 0]},
+          {"clip": "walk", "at": [0, 1.1]},
+          {"clip": "run", "at": [0, 2.7]},
+          {"clip": "walk_back", "at": [0, -0.9]},
+          {"clip": "strafe_l", "at": [0.75, 0]},
+          {"clip": "strafe_r", "at": [-0.75, 0]}]}}
+      ]
+    }
+  ]
+}

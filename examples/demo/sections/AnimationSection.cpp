@@ -4,7 +4,9 @@
 // trigger with cross-fades (the wave on a layer masked to the right arm), an additive lean, its head turned toward
 // the camera, a torch held in its left hand and a footstep sound at each contact event. Two characters stand on a
 // slope and across a step, their feet placed on the ground by a ray query into a physics world. Behind them a crowd
-// walks in rings, updated in parallel on the job system and skinned by a compute pass.
+// walks in rings, updated in parallel on the job system and skinned by a compute pass. A showcase away from them
+// (the views other than the hero's) has a character steered in 2D through a blend space over its velocity (idle,
+// walk, run, walk back, strafes), facing one way while it walks in every direction.
 
 #include "Demo.h"
 
@@ -21,9 +23,11 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 
+#include <glm/common.hpp>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/geometric.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/mat3x3.hpp>
 #include <glm/trigonometric.hpp>
 #include <imgui.h>
 
@@ -67,6 +71,25 @@ const glm::vec2 kSlopeAt(-2.6f, 0.0f);
 const glm::vec3 kStepAt(-1.2f, 0.0f, 2.5f);
 constexpr float kSlopeHalf = 1.2f; // m: half the ramp's length
 constexpr float kStepHeight = 0.2f;
+// The showcase, out of the hero's view: the 2D blend space's character walks inside a circle there.
+const glm::vec2 kSpaceCenter(-18.0f, 0.0f);
+constexpr float kSpaceRadius = 2.4f; // m: velocity out of the circle fades over its last kSpaceEdge
+constexpr float kSpaceEdge = 0.6f;
+constexpr float kSteerSpeed = 0.8f; // m/s of the steering by itself, whose direction turns at kSteerTurn
+constexpr float kSteerTurn = 0.45f; // rad/s
+const glm::vec2 kSteerMin(-0.75f, -0.9f), kSteerMax(0.75f, 2.7f); // the blend space's extent (m/s)
+
+// The camera's places: the hero's stage and the showcase's spots (`set view ID`).
+struct View {
+    const char* id;
+    const char* label;
+    glm::vec3 target;
+    float yaw, pitch, distance; // degrees, m
+};
+const std::array kViews{
+    View{"hero", "Hero", {0.0f, 0.5f, -0.6f}, 2.0f, 22.0f, 9.0f},
+    View{"blend2d", "2D blend space", {-18.0f, 0.6f, 0.0f}, 18.0f, 26.0f, 7.5f},
+};
 
 glm::mat4 yawed(const glm::vec3& position, float yaw) {
     return glm::rotate(glm::translate(glm::mat4(1.0f), position), yaw, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -104,7 +127,8 @@ public:
     std::string_view about() const override {
         return "Cooked glTF clips on quench::animation: speed blend, jump and wave with cross-fades, a masked arm "
                "layer, an additive lean, root motion, footstep events with sound, look-at, foot placement on a slope "
-               "and a step (ray queries into Jolt), a held torch; a crowd updated on jobs and skinned on the GPU.";
+               "and a step (ray queries into Jolt), a held torch; a crowd updated on jobs and skinned on the GPU; a "
+               "character steered through a 2D blend space (View).";
     }
 
     Result<void> init(Context& c) override {
@@ -130,6 +154,11 @@ public:
         s.addInstance({.mesh = *path,
                        .material = s.addMaterial({.baseColor = glm::vec4(0.25f, 0.27f, 0.3f, 1.0f), .roughness = 0.6f}),
                        .transform = placed(glm::vec3(kHeroCenter.x, 0.005f, kHeroCenter.y)),
+                       .castsShadows = false});
+        static_assert(kSpaceRadius == kHeroRadius, "the steered character's circle uses the hero's path mesh");
+        s.addInstance({.mesh = *path,
+                       .material = s.addMaterial({.baseColor = glm::vec4(0.2f, 0.3f, 0.45f, 1.0f), .roughness = 0.6f}),
+                       .transform = placed(glm::vec3(kSpaceCenter.x, 0.005f, kSpaceCenter.y)),
                        .castsShadows = false});
         m_stick = s.addInstance(
             {.mesh = *stick,
@@ -169,6 +198,7 @@ public:
         m_skeleton = m_anim->loadSkeleton(mannequin::kSkeleton);
         m_clips = m_anim->loadClips(mannequin::kClips);
         m_graph = m_anim->loadGraph(mannequin::kGraph);
+        m_graph2d = m_anim->loadGraph(mannequin::kGraph2d);
         m_step = c.app.audio().load(kStep);
 
         app::Input& input = c.app.input();
@@ -188,7 +218,9 @@ public:
         m_anim->setFloat(m_hero.id, "speed", m_speed);
         m_anim->setFloat(m_hero.id, "lean", m_lean);
         m_anim->setLookAt(m_hero.id, m_lookAt ? std::optional<glm::vec3>(camera.eye()) : std::nullopt);
-        for (const CharacterId id : {m_hero.id, m_slopeStand.id, m_stepStand.id}) m_anim->setFootPlacement(id, m_feet);
+        for (const CharacterId id : {m_hero.id, m_slopeStand.id, m_stepStand.id, m_strafer.id})
+            m_anim->setFootPlacement(id, m_feet);
+        steer(dt);
 
         bindSkins();
         m_manager->update();
@@ -207,6 +239,7 @@ public:
             m_assets->setTransform(w.model, w.transform, m_teleport);
             walk(w);
         });
+        moveStrafer(dt);
         m_teleport = false;
         const glm::mat4 hand = m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, "hand_l"));
         const bool holding = m_anim->findJoint(m_hero.id, "hand_l") >= 0;
@@ -245,6 +278,17 @@ public:
         if (ImGui::SliderFloat("Slope", &slope, 0.0f, 30.0f, "%.0f deg")) setSlope(slope);
         int crowd = m_crowdSize;
         if (ImGui::SliderInt("Crowd", &crowd, 0, kMaxCrowd)) setCrowd(crowd);
+        if (ImGui::BeginCombo("View", kViews[std::size_t(m_view)].label)) {
+            for (std::size_t i = 0; i < kViews.size(); ++i)
+                if (ImGui::Selectable(kViews[i].label, int(i) == m_view)) setView(int(i));
+            ImGui::EndCombo();
+        }
+        ImGui::SeparatorText("2D blend space");
+        ImGui::Checkbox("Steer by itself", &m_autoSteer);
+        ImGui::BeginDisabled(m_autoSteer);
+        ImGui::SliderFloat("To the left", &m_steerVelocity.x, kSteerMin.x, kSteerMax.x, "%.2f m/s");
+        ImGui::SliderFloat("Ahead", &m_steerVelocity.y, kSteerMin.y, kSteerMax.y, "%.2f m/s");
+        ImGui::EndDisabled();
     }
 
     void stats(Context& c) override {
@@ -253,6 +297,8 @@ public:
         ImGui::Text("Characters %u, joints %u", stats.characters, stats.joints);
         ImGui::Text("Samples %u, rays %u, events %u", stats.clipsSampled, stats.groundQueries, stats.events);
         ImGui::Text("Skinned %u (%u vertices)", r.skinnedInstances, r.skinnedVertices);
+        ImGui::Text("Steered: asked %.2f %.2f, moves %.2f %.2f m/s", m_steerInput.x, m_steerInput.y, m_strafeMotion.x,
+                    m_strafeMotion.y);
         if (c.app.deterministic()) {
             ImGui::TextUnformatted("Times hidden (fixed clock)");
         } else {
@@ -307,6 +353,20 @@ public:
             const glm::mat4 hand = m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, "hand_l"));
             return double(glm::length(glm::vec3(m_stickTransform[3]) - glm::vec3(hand[3])));
         }
+        if (name == "view") return double(m_view);
+        // The steered character: the velocity asked for (after the circle's edge), the one its clips move it by
+        // (smoothed over 0.2 s), the angle between the two (degrees) and its distance from the circle's center.
+        if (name == "steer_vx") return double(m_steerInput.x);
+        if (name == "steer_vz") return double(m_steerInput.y);
+        if (name == "strafer_vx") return double(m_strafeMotion.x);
+        if (name == "strafer_vz") return double(m_strafeMotion.y);
+        if (name == "strafer_heading_error") {
+            if (glm::length(m_steerInput) < 0.2f || glm::length(m_strafeMotion) < 0.1f) return 0.0;
+            const float c = glm::dot(glm::normalize(m_steerInput), glm::normalize(m_strafeMotion));
+            return double(glm::degrees(std::acos(std::clamp(c, -1.0f, 1.0f))));
+        }
+        if (name == "strafer_radius")
+            return double(glm::length(glm::vec2(m_strafer.position.x, m_strafer.position.z) - kSpaceCenter));
         if (name == "slope_pelvis") return double(m_anim->state(m_slopeStand.id).pelvisOffset);
         if (name.starts_with("slope_leg") || name.starts_with("step_leg")) {
             // slope_leg0_offset, step_leg1_reached, ...: the stands' legs (0 left, 1 right).
@@ -344,6 +404,16 @@ public:
             setSlope(std::clamp(*number, 0.0f, 30.0f));
         } else if (name == "crowd" && number) {
             setCrowd(std::clamp(int(*number), 0, kMaxCrowd));
+        } else if (name == "view") {
+            const auto it = std::ranges::find_if(kViews, [&](const View& v) { return v.id == value; });
+            if (it == kViews.end()) return false;
+            setView(int(it - kViews.begin()));
+        } else if (name == "steer_auto" && flag) {
+            m_autoSteer = *flag;
+        } else if (name == "steer_vx" && number) {
+            m_steerVelocity.x = std::clamp(*number, kSteerMin.x, kSteerMax.x);
+        } else if (name == "steer_vz" && number) {
+            m_steerVelocity.y = std::clamp(*number, kSteerMin.y, kSteerMax.y);
         } else {
             return false;
         }
@@ -364,6 +434,7 @@ public:
         m_skeleton = {};
         m_clips = {};
         m_graph = {};
+        m_graph2d = {};
         m_step = {};
         m_anim.reset();
         m_assets.reset();
@@ -427,29 +498,30 @@ private:
 
     template <class F>
     void forEachWalker(F&& f) {
-        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand}) f(*w);
+        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer}) f(*w);
         for (Walker& w : m_crowd) f(w);
     }
 
     bool allSkinned() const {
-        if (m_hero.skin < 0 || m_slopeStand.skin < 0 || m_stepStand.skin < 0) return false;
+        if (m_hero.skin < 0 || m_slopeStand.skin < 0 || m_stepStand.skin < 0 || m_strafer.skin < 0) return false;
         return std::ranges::all_of(m_crowd, [](const Walker& w) { return w.skin >= 0; });
     }
 
     int failedAssets() const {
         int n = 0;
         for (const assets::AssetState s :
-             {m_model.state(), m_skeleton.state(), m_clips.state(), m_graph.state(), m_step.state()})
+             {m_model.state(), m_skeleton.state(), m_clips.state(), m_graph.state(), m_graph2d.state(), m_step.state()})
             n += s == assets::AssetState::Failed ? 1 : 0;
         return n;
     }
 
     // The hero also turns its head and reports its events (only its footsteps are heard).
-    CharacterId addCharacter(const glm::mat4& transform, bool feet, bool hero) {
+    CharacterId addCharacter(const glm::mat4& transform, bool feet, bool hero,
+                             const assets::AssetRef<animation::GraphAsset>& graph) {
         animation::CharacterDesc desc;
         desc.skeleton = m_skeleton;
         desc.clips.push_back(m_clips);
-        desc.graph = m_graph;
+        desc.graph = graph;
         desc.transform = transform;
         if (feet) {
             animation::FootPlacementDesc f;
@@ -465,11 +537,15 @@ private:
     }
 
     Walker makeWalker(const glm::vec3& position, float yaw, bool feet, bool hero) {
+        return makeWalker(position, yaw, feet, hero, m_graph);
+    }
+    Walker makeWalker(const glm::vec3& position, float yaw, bool feet, bool hero,
+                      const assets::AssetRef<animation::GraphAsset>& graph) {
         Walker w;
         w.position = position;
         w.yaw = yaw;
         w.transform = yawed(position, yaw);
-        w.id = addCharacter(w.transform, feet, hero);
+        w.id = addCharacter(w.transform, feet, hero, graph);
         w.model = m_assets->addModel(m_model, w.transform);
         return w;
     }
@@ -492,13 +568,18 @@ private:
 
     // Every character from the start: new state machines, phases and foot placement, the same on every run.
     void restart() {
-        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand}) removeWalker(*w);
+        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer}) removeWalker(*w);
         m_hero = makeCircleWalker(kHeroCenter, kHeroRadius, kHeroStart, 1.0f, true, true);
         m_slopeStand = makeWalker(slopeTop(), 0.0f, true, false);
         // Across the step's edge: the left foot (+X) above the step, the right one on the floor.
         m_stepStand = makeWalker(kStepAt, 0.0f, true, false);
         m_anim->setPhase(m_slopeStand.id, 0.3f);
         m_anim->setPhase(m_stepStand.id, 0.65f);
+        // Steering by itself walks a circle of radius kSteerSpeed / kSteerTurn, first ahead (+Z) and then to the left.
+        const glm::vec2 start = kSpaceCenter - glm::vec2(kSteerSpeed / kSteerTurn, 0.0f);
+        m_strafer = makeWalker(glm::vec3(start.x, 0.0f, start.y), 0.0f, true, false, m_graph2d);
+        m_steerAngle = 0.0f;
+        m_steerInput = m_strafeMotion = glm::vec2(0.0f);
         setCrowd(m_crowdSize);
         m_footsteps = 0;
         m_landings = 0;
@@ -550,6 +631,50 @@ private:
         m_anim->setTransform(w.id, w.transform);
     }
 
+    void setView(int view) {
+        m_view = view;
+        const View& v = kViews[std::size_t(view)];
+        camera.target = v.target;
+        camera.yaw = glm::radians(v.yaw);
+        camera.pitch = glm::radians(v.pitch);
+        camera.distance = v.distance;
+        cameraCut = true;
+    }
+
+    // The 2D blend space's parameters: the velocity in the character's frame (it faces +Z, its left is +X), by
+    // itself a direction that turns around the circle. The part leaving the circle fades out at its edge.
+    void steer(float dt) {
+        glm::vec2 v = m_steerVelocity;
+        if (m_autoSteer) {
+            v = kSteerSpeed * glm::vec2(std::sin(m_steerAngle), std::cos(m_steerAngle));
+            m_steerAngle = std::fmod(m_steerAngle + kSteerTurn * dt, 2.0f * kPi);
+        }
+        const glm::vec2 from = glm::vec2(m_strafer.position.x, m_strafer.position.z) - kSpaceCenter;
+        const float r = glm::length(from);
+        if (r > 1e-4f) {
+            const glm::vec2 out = from / r;
+            const float leaving = glm::dot(v, out);
+            const float edge = glm::smoothstep(kSpaceRadius - kSpaceEdge, kSpaceRadius, r);
+            if (leaving > 0.0f) v -= out * leaving * edge;
+        }
+        m_steerInput = v;
+        m_anim->setFloat(m_strafer.id, "vx", v.x);
+        m_anim->setFloat(m_strafer.id, "vz", v.y);
+    }
+
+    // Moves the steered character on by the root motion of the last update, its facing unchanged.
+    void moveStrafer(float dt) {
+        if (!m_strafer.id) return;
+        const glm::vec3 t = glm::mat3(m_strafer.transform) * m_anim->rootMotion(m_strafer.id).translation;
+        m_strafer.position += glm::vec3(t.x, 0.0f, t.z);
+        m_strafer.transform = yawed(m_strafer.position, m_strafer.yaw);
+        m_anim->setTransform(m_strafer.id, m_strafer.transform);
+        if (dt > 0.0f) {
+            const float k = 1.0f - std::exp(-dt / 0.2f);
+            m_strafeMotion = glm::mix(m_strafeMotion, glm::vec2(t.x, t.z) / dt, k);
+        }
+    }
+
     void footsteps(Context& c) {
         audio::AudioSystem& a = c.app.audio();
         for (const animation::Event& e : m_anim->events()) {
@@ -581,15 +706,19 @@ private:
     assets::AssetRef<ModelAsset> m_model;
     assets::AssetRef<animation::SkeletonAsset> m_skeleton;
     assets::AssetRef<animation::ClipSetAsset> m_clips;
-    assets::AssetRef<animation::GraphAsset> m_graph;
+    assets::AssetRef<animation::GraphAsset> m_graph, m_graph2d;
     assets::AssetRef<audio::SoundAsset> m_step;
-    Walker m_hero, m_slopeStand, m_stepStand;
+    Walker m_hero, m_slopeStand, m_stepStand, m_strafer;
     std::vector<Walker> m_crowd;
     app::ActionId m_jumpAction = 0, m_waveAction = 0;
     float m_speed = 1.1f, m_lean = 0.0f, m_slopeDegrees = 16.0f;
     int m_crowdSize = 48;
     bool m_feet = true, m_lookAt = true, m_footstepSound = true, m_teleport = true;
     int m_footsteps = 0, m_landings = 0;
+    int m_view = 0;
+    bool m_autoSteer = true;
+    float m_steerAngle = 0.0f;
+    glm::vec2 m_steerVelocity{0.0f}, m_steerInput{0.0f}, m_strafeMotion{0.0f};
     std::array<float, kRecentFrames> m_recentUpdateMs{}, m_recentSkinningMs{};
     std::size_t m_recentNext = 0, m_recentCount = 0;
     Random m_random;

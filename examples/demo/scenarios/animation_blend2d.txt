@@ -1,0 +1,46 @@
+# Animation, 2D blend space (ctest: demo_animation_blend2d_<backend>, a part of batch.txt): a character steered by
+# its velocity through a blend space of idle, walk, run, walk back and the two strafes walks in every direction by
+# its clips' root motion while it faces one way: by itself around a circle (ahead first, then to its left), then
+# backward and to its right at velocities set directly. The capture is taken at 3.5 s, strafing to its left.
+section animation
+
+set dither 0
+until anim_ready == 1 3
+expect anim_failed == 0
+expect time < 0.4
+until time >= 0.5 1
+set restart 1
+set crowd 0
+set view blend2d
+wait 0.05
+expect anim_characters == 4
+until anim_bound == 4 1
+
+# By itself: the clips' root motion follows the velocity asked for, ahead and then to the left. Between the points
+# it is slower than asked (idle's longer cycle slows the shared phase, as in the 1D blend).
+until time >= 1.5 1
+expect strafer_vz > 0.4
+expect strafer_heading_error < 15
+until time >= 4.0 3
+expect strafer_vx > 0.5
+expect strafer_heading_error < 15
+windows off
+capture demo_animation_blend2d.png
+windows on
+
+# Set directly: backward, then to the right; it stays inside its circle.
+set steer_auto 0
+set steer_vx 0
+set steer_vz -0.9
+wait 1
+expect strafer_vz < -0.7
+expect strafer_heading_error < 10
+set steer_vx -0.75
+set steer_vz 0
+wait 1
+expect strafer_vx < -0.6
+expect strafer_heading_error < 10
+expect strafer_radius < 2.5
+set view hero
+set steer_auto 1
+quit

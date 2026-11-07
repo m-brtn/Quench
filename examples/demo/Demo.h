@@ -184,6 +184,7 @@ constexpr const char* kModel = "characters/mannequin.qmodel";
 constexpr const char* kSkeleton = "characters/mannequin.qskel";
 constexpr const char* kClips = "characters/mannequin.qanim";
 constexpr const char* kGraph = "characters/mannequin.graph.json";
+constexpr const char* kGraph2d = "characters/mannequin_2d.graph.json"; // a 2D blend space over its velocity
 } // namespace mannequin
 
 } // namespace demo

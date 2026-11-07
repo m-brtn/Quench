@@ -217,8 +217,11 @@ the user"). Described in [Animation](animation.md).
 - Done: the demo's "Animation" section (speed blend, jump and wave, additive lean, look-at, a held torch, footstep
   sounds, foot placement on a ramp and a step, a crowd of up to 512 with its update and skinning times) with its
   scripted check and golden captures for Metal and Vulkan through MoltenVK; a benchmark region with 256 characters.
-- Not done, remaining: retargeting (clips bind to the skeleton they were cooked for), 2D blend spaces, animation
-  LOD, dual quaternion skinning, blend shapes; the check in motion by the user (foot sliding, blend pops, IK) and on
+- Done after 0.9.0 (not released): 2D blend spaces (`blend2d` states, gradient band weights, per-point phases) with
+  the demo's steered character (walk back and strafe clips added to the mannequin) and its scripted check and golden
+  captures.
+- Not done, remaining: retargeting (clips bind to the skeleton they were cooked for), animation LOD, dual quaternion
+  skinning, blend shapes; the check in motion by the user (foot sliding, blend pops, IK) and on
   the iPhone. The release went ahead before those checks (decided without the user, 2026-11-06, as recommended);
   the release notes list them as not verified.
 - Done: version 0.6.0 (with the cut-out and translucent shadows), release notes in
@@ -470,7 +473,7 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); retargeting, 2D blend spaces, animation LOD,
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); retargeting, animation LOD,
    dual quaternion skinning and blend shapes (stage 8); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray

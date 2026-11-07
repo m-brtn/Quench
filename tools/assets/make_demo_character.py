@@ -14,6 +14,9 @@ every joint's rest rotation is the identity. The clips:
     jump  1.3 s         crouch, flight, landing (a "land" event)
     wave  2 s           the right arm (for a masked layer)
     lean  0.5 s         a lean to the left, additive (the first frame is the rest pose)
+    walk_back  0.9 s loop    0.9 m/s backward, footstep events      (the 2D blend space's points, at their
+    strafe_l   0.7 s loop    0.75 m/s to the left (+X), footsteps    velocities; the feet land at the same
+    strafe_r   0.7 s loop    0.75 m/s to the right, footsteps        phases as in walk: 0.1 and 0.6)
 The legs of every clip are solved by two-bone IK from foot paths, so feet in contact with the ground stay where they
 are while root motion carries the body (no foot sliding by construction).
 """
@@ -214,10 +217,14 @@ def idle(t):
     return p
 
 
-def gait(speed, period, duty, lift, height, bob, lean, arm_swing, elbow, running):
+def gait(speed, period, duty, lift, height, bob, lean, arm_swing, elbow, running, direction=(0.0, 1.0), width=0.1,
+         twist=1.0):
     """A walk or run cycle: each foot is in contact for `duty` of the period (the left from phase 0.1, the right
-    from 0.6), moving back under the body at `speed` while root motion carries the body forward at `speed`."""
+    from 0.6), moving back under the body at `speed` while root motion carries the body at `speed` along
+    `direction` (x to the character's left, z forward; the character keeps facing +Z). The feet stand `width` to the
+    sides; `twist` scales the hips' and shoulders' turn."""
     stance = speed * duty * period
+    dx, dz = direction
 
     def foot(phase):
         if phase < duty:  # in contact: fixed in the world, so moving back relative to the root
@@ -230,24 +237,24 @@ def gait(speed, period, duty, lift, height, bob, lean, arm_swing, elbow, running
     def pose(t):
         p = Pose()
         phase = t / period
-        p.root = (0.0, 0.0, speed * t)
+        p.root = (dx * speed * t, 0.0, dz * speed * t)
         if running:  # lowest at mid-stance
             y = height - bob * math.cos(TAU * (2.0 * (phase - 0.1) - duty))
         else:  # lowest when both feet are down
             y = height - bob * math.cos(TAU * 2.0 * (phase - 0.1))
         p.pelvis = (0.015 * math.cos(TAU * (phase - 0.1 - 0.5 * duty)), y, 0.0)
         turn = math.cos(TAU * (phase - 0.1))
-        p.rotation["pelvis"] = ry(-0.09 * turn)
+        p.rotation["pelvis"] = ry(-0.09 * twist * turn)
         p.rotation["spine"] = rx(lean)
-        p.rotation["chest"] = ry(0.16 * turn)
-        p.rotation["neck"] = ry(-0.07 * turn)
+        p.rotation["chest"] = ry(0.16 * twist * turn)
+        p.rotation["neck"] = ry(-0.07 * twist * turn)
         p.rotation["head"] = rx(-lean * 0.8)
         swing = math.cos(TAU * (phase - 0.6))
         p.arm("l", arm_swing * swing, 0.08, elbow + 0.15 * elbow * swing)
         p.arm("r", -arm_swing * swing, 0.08, elbow - 0.15 * elbow * swing)
-        for side, offset, x in (("l", 0.1, 0.1), ("r", 0.6, -0.1)):
-            lift_y, z, pitch = foot((phase - offset) % 1.0)
-            p.solve_leg(side, (x, ANKLE_HEIGHT + lift_y, z), pitch)
+        for side, offset, x in (("l", 0.1, width), ("r", 0.6, -width)):
+            lift_y, along, pitch = foot((phase - offset) % 1.0)
+            p.solve_leg(side, (x + dx * along, ANKLE_HEIGHT + lift_y, dz * along), dz * pitch)
         return p
 
     return pose
@@ -257,6 +264,12 @@ WALK = dict(speed=1.1, period=0.9, duty=0.6, lift=0.11, height=0.955, bob=0.025,
             elbow=0.25, running=False)
 RUN = dict(speed=2.7, period=2.0 / 3.0, duty=0.32, lift=0.24, height=0.92, bob=0.03, lean=0.18, arm_swing=0.7,
            elbow=1.4, running=True)
+# For the 2D blend space (velocity x to the left, z forward): a slower walk backward, and side steps with the feet
+# wider apart and a shorter stance, so that they do not cross.
+WALK_BACK = dict(speed=0.9, period=0.9, duty=0.6, lift=0.09, height=0.955, bob=0.02, lean=-0.03, arm_swing=0.22,
+                 elbow=0.25, running=False, direction=(0.0, -1.0), width=0.1, twist=0.6)
+STRAFE = dict(speed=0.75, period=0.7, duty=0.55, lift=0.08, height=0.95, bob=0.02, lean=0.02, arm_swing=0.1,
+              elbow=0.2, running=False, width=0.22, twist=0.3)
 
 
 def jump(t):
@@ -302,19 +315,30 @@ CLIPS = [
     ("jump", jump, 1.3),
     ("wave", wave, 2.0),
     ("lean", lean, 0.5),
+    ("walk_back", gait(**WALK_BACK), WALK_BACK["period"]),
+    ("strafe_l", gait(**STRAFE, direction=(1.0, 0.0)), STRAFE["period"]),
+    ("strafe_r", gait(**STRAFE, direction=(-1.0, 0.0)), STRAFE["period"]),
 ]
+
+
+def steps(period):
+    """Root motion and the footstep events of a gait clip (the left foot lands at phase 0.1, the right at 0.6)."""
+    return {"loop": True, "rootMotion": {"joint": "root"},
+            "events": [{"time": round(0.1 * period, 4), "name": "footstep", "value": 0},
+                       {"time": round(0.6 * period, 4), "name": "footstep", "value": 1}]}
+
+
 SETTINGS = {
     "clips": {
         "idle": {"loop": True},
-        "walk": {"loop": True, "rootMotion": {"joint": "root"},
-                 "events": [{"time": round(0.1 * WALK["period"], 4), "name": "footstep", "value": 0},
-                            {"time": round(0.6 * WALK["period"], 4), "name": "footstep", "value": 1}]},
-        "run": {"loop": True, "rootMotion": {"joint": "root"},
-                "events": [{"time": round(0.1 * RUN["period"], 4), "name": "footstep", "value": 0},
-                           {"time": round(0.6 * RUN["period"], 4), "name": "footstep", "value": 1}]},
+        "walk": steps(WALK["period"]),
+        "run": steps(RUN["period"]),
         "jump": {"loop": False, "events": [{"time": 0.9, "name": "land", "value": 0}]},
         "wave": {"loop": False},
         "lean": {"loop": False, "additive": True},
+        "walk_back": steps(WALK_BACK["period"]),
+        "strafe_l": steps(STRAFE["period"]),
+        "strafe_r": steps(STRAFE["period"]),
     }
 }
 

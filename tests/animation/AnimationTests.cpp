@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -345,6 +346,174 @@ QUENCH_TEST(blend_tree_weights_and_phase_sync) {
     CHECK(near(rig.anim.state(id).normalizedTime, 0.5f, 1e-5f), "normalized time %.5f after 0.75 s",
           rig.anim.state(id).normalizedTime);
     CHECK(rig.anim.stats().clipsSampled == 2, "two clips sampled: %u", rig.anim.stats().clipsSampled);
+}
+
+namespace {
+
+// A locomotion space: idle in the middle, walk ahead, a slower walk back, strafes to the sides, run far ahead.
+const std::vector<glm::vec2> kSpace = {{0.0f, 0.0f},  {0.0f, 1.1f},   {0.0f, -0.9f},
+                                       {0.75f, 0.0f}, {-0.75f, 0.0f}, {0.0f, 2.7f}};
+enum SpacePoint { kIdle, kWalk, kBack, kLeft, kRight, kRun };
+
+std::vector<float> spaceWeights(glm::vec2 p, const std::vector<glm::vec2>& points = kSpace) {
+    std::vector<float> w(points.size());
+    blendSpaceWeights(points, p, w);
+    return w;
+}
+
+} // namespace
+
+QUENCH_TEST(blend_space_weights) {
+    // Over a grid well beyond the points: every weight in 0..1, the sum 1.
+    float worstSum = 0.0f, worstStep = 0.0f;
+    bool inRange = true;
+    for (float y = -4.0f; y <= 4.0f; y += 0.05f)
+        for (float x = -4.0f; x <= 4.0f; x += 0.05f) {
+            const std::vector<float> w = spaceWeights({x, y});
+            float sum = 0.0f;
+            for (const float v : w) {
+                sum += v;
+                inRange = inRange && v >= 0.0f && v <= 1.0f;
+            }
+            worstSum = std::max(worstSum, std::abs(sum - 1.0f));
+            // Continuity: a step of 1 mm changes no weight by more than a few thousandths.
+            for (const glm::vec2 d : {glm::vec2(1e-3f, 0.0f), glm::vec2(0.0f, 1e-3f)}) {
+                const std::vector<float> n = spaceWeights(glm::vec2(x, y) + d);
+                for (std::size_t i = 0; i < w.size(); ++i) worstStep = std::max(worstStep, std::abs(n[i] - w[i]));
+            }
+        }
+    CHECK(inRange, "every weight in 0..1");
+    CHECK(worstSum < 1e-5f, "the weights sum to 1 (worst %.2g)", double(worstSum));
+    CHECK(worstStep < 0.01f, "continuous: at most %.5f per mm", double(worstStep));
+
+    // Exact at the points.
+    for (std::size_t i = 0; i < kSpace.size(); ++i) {
+        const std::vector<float> w = spaceWeights(kSpace[i]);
+        for (std::size_t j = 0; j < w.size(); ++j)
+            CHECK(w[j] == (i == j ? 1.0f : 0.0f), "at point %zu: weight %zu is %.6f", i, j, double(w[j]));
+    }
+    // Half way between idle and walk only those two, half each; beyond run only run.
+    std::vector<float> w = spaceWeights({0.0f, 0.55f});
+    CHECK(near(w[kIdle], 0.5f, 1e-6f) && near(w[kWalk], 0.5f, 1e-6f) && w[kLeft] == 0.0f && w[kRun] == 0.0f,
+          "half way to walk: idle %.4f walk %.4f", double(w[kIdle]), double(w[kWalk]));
+    w = spaceWeights({0.3f, 6.0f});
+    CHECK(w[kRun] == 1.0f, "far ahead: run %.4f", double(w[kRun]));
+    // Two points: linear along the line between them.
+    const std::vector<glm::vec2> line = {{-1.0f, 2.0f}, {3.0f, 0.0f}};
+    for (const float t : {0.0f, 0.2f, 0.5f, 0.9f, 1.0f}) {
+        w = spaceWeights(glm::mix(line[0], line[1], t), line);
+        CHECK(near(w[1], t, 1e-6f), "two points at %.1f: %.6f", double(t), double(w[1]));
+    }
+    // Mirror symmetry: the space is symmetric in x, so are its weights; on x = 0 left and right weigh the same.
+    float worstMirror = 0.0f;
+    for (float y = -3.0f; y <= 3.0f; y += 0.1f)
+        for (float x = -3.0f; x <= 3.0f; x += 0.1f) {
+            const std::vector<float> a = spaceWeights({x, y}), b = spaceWeights({-x, y});
+            for (const int i : {kIdle, kWalk, kBack, kRun}) worstMirror = std::max(worstMirror, std::abs(a[i] - b[i]));
+            worstMirror = std::max(worstMirror, std::abs(a[kLeft] - b[kRight]));
+            const std::vector<float> c = spaceWeights({0.0f, y});
+            worstMirror = std::max(worstMirror, std::abs(c[kLeft] - c[kRight]));
+        }
+    CHECK(worstMirror < 1e-6f, "mirrored inputs, mirrored weights (worst %.2g)", double(worstMirror));
+    std::printf("blend space: sum error %.2g, largest change per mm %.5f, mirror error %.2g\n", double(worstSum),
+                double(worstStep), double(worstMirror));
+    // A diagonal between walk and the left strafe shares between them (and idle), not the run or the right strafe.
+    w = spaceWeights({0.5f, 0.6f});
+    CHECK(w[kWalk] > 0.2f && w[kLeft] > 0.2f && w[kRight] == 0.0f && w[kRun] == 0.0f && w[kBack] == 0.0f,
+          "diagonal: walk %.3f left %.3f idle %.3f", double(w[kWalk]), double(w[kLeft]), double(w[kIdle]));
+}
+
+QUENCH_TEST(blend_space_pose_phase_and_root_motion) {
+    Rig rig("anim_blend2d");
+    std::vector<ClipDesc> clips = testClips();
+    ClipDesc ahead = clip("ahead", 1.0f); // pelvis 1 m ahead
+    translate(ahead, kPelvis, {{0.0f, {0, 1, 1}}});
+    clips.push_back(ahead);
+    ClipDesc behind = clip("behind", 1.0f);
+    translate(behind, kPelvis, {{0.0f, {0, 1, -1}}});
+    clips.push_back(behind);
+    ClipDesc cycle = clip("cycle", 1.0f); // pelvis x: 0, 2, 1 at 0, 0.5, 1 s, looping
+    translate(cycle, kPelvis, {{0.0f, {0, 1, 0}}, {0.5f, {2, 1, 0}}, {1.0f, {1, 1, 0}}});
+    clips.push_back(cycle);
+    rig.writeData(clips);
+    const CharacterId id = rig.add(R"({"parameters": {"x": 0, "z": 0}, "layers": [{"states": [{"name": "move",
+        "blend2d": {"parameters": ["x", "z"], "clips": [{"clip": "a", "at": [0, 0]}, {"clip": "b", "at": [1, 0]},
+        {"clip": "ahead", "at": [0, 1]}, {"clip": "behind", "at": [0, -1]}]}}]}]})");
+    const CharacterId shifted = rig.add(R"({"parameters": {"x": 0, "z": 0}, "layers": [{"states": [{"name": "s",
+        "blend2d": {"parameters": ["x", "z"], "clips": [{"clip": "cycle", "at": [0, 0], "phase": 0.25}]}}]}]})");
+    const CharacterId walker = rig.add(R"({"parameters": {"x": 0, "z": 1}, "layers": [{"states": [{"name": "s",
+        "blend2d": {"parameters": ["x", "z"], "clips": [{"clip": "a", "at": [0, 0]}, {"clip": "move",
+        "at": [0, 1]}]}}]}]})");
+    rig.load();
+    struct Case {
+        glm::vec2 p;
+        glm::vec3 pelvis;
+    };
+    const Case cases[] = {{{0, 0}, {0, 1, 0}},   {{1, 0}, {2, 1, 0}},       {{0, 1}, {0, 1, 1}},
+                          {{0, -1}, {0, 1, -1}}, {{0, 0.5f}, {0, 1, 0.5f}}, {{0.5f, 0}, {1, 1, 0}}};
+    for (const Case& k : cases) {
+        rig.anim.setFloat(id, "x", k.p.x);
+        rig.anim.setFloat(id, "z", k.p.y);
+        rig.step(0.0f);
+        CHECK(near(rig.joint(id, "pelvis"), k.pelvis), "at (%.1f %.1f): pelvis (%.4f %.4f %.4f)", double(k.p.x),
+              double(k.p.y), double(rig.joint(id, "pelvis").x), double(rig.joint(id, "pelvis").y),
+              double(rig.joint(id, "pelvis").z));
+    }
+    // Phase sync: a (1 s) and b (2 s) at half each play as one clip of 1.5 s.
+    rig.anim.setFloat(id, "x", 0.5f);
+    rig.anim.setFloat(id, "z", 0.0f);
+    rig.anim.setPhase(id, 0.0f);
+    rig.step(0.0f);
+    rig.step(0.75f);
+    CHECK(near(rig.anim.state(id).normalizedTime, 0.5f, 1e-5f), "normalized time %.5f after 0.75 s",
+          double(rig.anim.state(id).normalizedTime));
+    // A phase of 0.25: the clip a quarter cycle ahead of the state's time.
+    rig.anim.setPhase(shifted, 0.0f);
+    rig.step(0.0f);
+    CHECK(near(rig.joint(shifted, "pelvis").x, 1.0f), "phase 0.25 at time 0: x %.4f",
+          double(rig.joint(shifted, "pelvis").x));
+    rig.step(0.5f);
+    CHECK(near(rig.joint(shifted, "pelvis").x, 1.5f), "at time 0.5: x %.4f", double(rig.joint(shifted, "pelvis").x));
+    // Root motion of the space: the move clip's at its point.
+    rig.step(0.5f);
+    CHECK(near(rig.anim.rootMotion(walker).translation, {0.0f, 0.0f, 0.5f}, 1e-4f), "root motion z %.5f",
+          double(rig.anim.rootMotion(walker).translation.z));
+}
+
+QUENCH_TEST(blend_space_parse_errors) {
+    const auto space = [](const char* body) {
+        return parseGraph(std::format(R"({{"parameters": {{"x": 0, "z": 0, "on": false}}, "layers": [{{"states": [
+            {{"name": "s", {}}}]}}]}})",
+                                      body));
+    };
+    CHECK(space(R"("blend2d": {"parameters": ["x", "z"], "clips": [{"clip": "a", "at": [0, 0]}]})"), "good");
+    CHECK(!space(R"("blend2d": {"parameters": ["x"], "clips": [{"clip": "a", "at": [0, 0]}]})"), "one parameter");
+    CHECK(!space(R"("blend2d": {"parameters": ["x", "x"], "clips": [{"clip": "a", "at": [0, 0]}]})"),
+          "the same parameter twice");
+    CHECK(!space(R"("blend2d": {"parameters": ["x", "on"], "clips": [{"clip": "a", "at": [0, 0]}]})"),
+          "a bool parameter");
+    CHECK(!space(R"("blend2d": {"parameters": ["x", "y"], "clips": [{"clip": "a", "at": [0, 0]}]})"),
+          "an unknown parameter");
+    CHECK(!space(R"("blend2d": {"parameters": ["x", "z"], "clips": []})"), "no clips");
+    CHECK(!space(R"("blend2d": {"parameters": ["x", "z"], "clips": [{"clip": "a", "at": 0}]})"), "at not a pair");
+    CHECK(!space(R"("blend2d": {"parameters": ["x", "z"], "clips": [{"clip": "a", "at": [0, 1]},
+        {"clip": "b", "at": [0, 1]}]})"),
+          "two points at one place");
+    CHECK(!space(R"("clip": "a", "blend2d": {"parameters": ["x", "z"], "clips": [{"clip": "a", "at": [0, 0]}]})"),
+          "a clip and a blend space");
+    std::string many;
+    for (int i = 0; i <= kMaxBlendPoints; ++i)
+        many += std::format(R"({}{{"clip": "c{}", "at": [{}, 0]}})", i ? ", " : "", i, i);
+    CHECK(!space(std::format(R"("blend2d": {{"parameters": ["x", "z"], "clips": [{}]}})", many).c_str()),
+          "more than %d points", kMaxBlendPoints);
+    Result<GraphDef> g = space(R"("blend2d": {"parameters": ["z", "x"], "clips": [{"clip": "w", "at": [0, 1.5],
+        "phase": 0.5}, {"clip": "i", "at": [0, 0]}]})");
+    REQUIRE(g, "parse: %s", g ? "" : g.error().c_str());
+    const StateDef& s = g->layers[0].states[0];
+    CHECK(s.blend2dParameters[0] == g->findParameter("z") && s.blend2d.size() == 2 && s.blend2d[0].phase == 0.5f &&
+              s.blend2d[0].at == glm::vec2(0.0f, 1.5f),
+          "parameters, points and phase");
+    CHECK(g->clipNames() == (std::vector<std::string>{"i", "w"}), "clip names");
 }
 
 QUENCH_TEST(masked_override_and_additive_layers) {

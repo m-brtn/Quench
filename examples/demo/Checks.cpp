@@ -88,6 +88,11 @@ constexpr std::array kItems{
               "camera -40 15 5"},
     CheckItem{"animation.crowd", "animation", "Crowd",
               "With Crowd at 512 the crowd walks smoothly, without pops between clips.", "set crowd 512"},
+    CheckItem{"animation.blend2d", "animation", "2D blend space",
+              "View 2D blend space: the character walks ahead, to its left, backward and to its right while it faces "
+              "the camera, blending smoothly between them without pops; its feet stay planted and do not cross. "
+              "Untick Steer by itself and move the sliders: it follows them.",
+              "set view blend2d"},
     CheckItem{"raytracing.noise", "raytracing", "Ray-traced noise",
               "Native Metal backend: with Shadow rays 1 and then 2 the soft shadows stay calm while the sun turns "
               "(little crawling noise).",

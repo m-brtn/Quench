@@ -49,21 +49,69 @@ Result<StateDef> parseState(const GraphDef& graph, const Value& v, std::string_v
     if (s.name.empty()) return fail(std::format("{}: a state without a name", where));
     const std::string what = std::format("{} state '{}'", where, s.name);
     s.clip = v["clip"].stringOr("");
+    if (int(!s.clip.empty()) + int(v.has("blend")) + int(v.has("blend2d")) > 1)
+        return fail(std::format("{}: one of clip, blend and blend2d", what));
+    const auto phaseOf = [&](const Value& point) -> Result<float> {
+        const float phase = float(point["phase"].numberOr(0.0));
+        if (!std::isfinite(phase)) return fail(std::format("{}: a blend point's phase is a number", what));
+        return phase;
+    };
     if (v.has("blend")) {
         const Value& blend = v["blend"];
-        if (!s.clip.empty()) return fail(std::format("{}: a clip or a blend tree, not both", what));
         Result<int> p = parameterRef(graph, blend["parameter"], what + " blend", {ParameterType::Float});
         if (!p) return Error{p.error()};
         s.blendParameter = *p;
-        if (!blend["clips"].isArray() || blend["clips"].array.empty())
-            return fail(std::format("{}: blend.clips is a list of {{\"clip\", \"at\"}}", what));
+        if (!blend["clips"].isArray() || blend["clips"].array.empty() ||
+            blend["clips"].array.size() > std::size_t(kMaxBlendPoints))
+            return fail(
+                std::format("{}: blend.clips is a list of 1 to {} {{\"clip\", \"at\"}}", what, kMaxBlendPoints));
         for (const Value& point : blend["clips"].array) {
             BlendPoint bp{point["clip"].stringOr(""), float(point["at"].numberOr(NAN))};
             if (bp.clip.empty() || !std::isfinite(bp.at))
                 return fail(std::format("{}: a blend point needs \"clip\" and \"at\"", what));
+            Result<float> phase = phaseOf(point);
+            if (!phase) return Error{phase.error()};
+            bp.phase = *phase;
             s.blend.push_back(std::move(bp));
         }
         std::ranges::stable_sort(s.blend, {}, &BlendPoint::at);
+    }
+    if (v.has("blend2d")) {
+        const Value& space = v["blend2d"];
+        const Value& params = space["parameters"];
+        if (!params.isArray() || params.array.size() != 2)
+            return fail(std::format("{}: blend2d.parameters names two float parameters", what));
+        for (int axis = 0; axis < 2; ++axis) {
+            Result<int> p =
+                parameterRef(graph, params.array[std::size_t(axis)], what + " blend2d", {ParameterType::Float});
+            if (!p) return Error{p.error()};
+            s.blend2dParameters[axis] = *p;
+        }
+        if (s.blend2dParameters[0] == s.blend2dParameters[1])
+            return fail(std::format("{}: blend2d.parameters are two different parameters", what));
+        if (!space["clips"].isArray() || space["clips"].array.empty() ||
+            space["clips"].array.size() > std::size_t(kMaxBlendPoints))
+            return fail(std::format("{}: blend2d.clips is a list of 1 to {} {{\"clip\", \"at\": [x, y]}}", what,
+                                    kMaxBlendPoints));
+        for (const Value& point : space["clips"].array) {
+            const Value& at = point["at"];
+            BlendPoint2D bp;
+            bp.clip = point["clip"].stringOr("");
+            if (at.isArray() && at.array.size() == 2)
+                bp.at = glm::vec2(float(at.array[0].numberOr(NAN)), float(at.array[1].numberOr(NAN)));
+            else
+                bp.at = glm::vec2(NAN);
+            if (bp.clip.empty() || !std::isfinite(bp.at.x) || !std::isfinite(bp.at.y))
+                return fail(std::format("{}: a blend2d point needs \"clip\" and \"at\": [x, y]", what));
+            for (const BlendPoint2D& other : s.blend2d)
+                if (std::abs(other.at.x - bp.at.x) + std::abs(other.at.y - bp.at.y) < 1e-4f)
+                    return fail(std::format("{}: blend2d points '{}' and '{}' are at the same place", what, other.clip,
+                                            bp.clip));
+            Result<float> phase = phaseOf(point);
+            if (!phase) return Error{phase.error()};
+            bp.phase = *phase;
+            s.blend2d.push_back(std::move(bp));
+        }
     }
     s.speed = float(v["speed"].numberOr(1.0));
     if (!std::isfinite(s.speed) || s.speed < 0.0f) return fail(std::format("{}: speed must be at least 0", what));
@@ -151,8 +199,28 @@ std::vector<std::string> GraphDef::clipNames() const {
         for (const StateDef& state : layer.states) {
             if (!state.clip.empty()) names.insert(state.clip);
             for (const BlendPoint& p : state.blend) names.insert(p.clip);
+            for (const BlendPoint2D& p : state.blend2d) names.insert(p.clip);
         }
     return {names.begin(), names.end()};
+}
+
+void blendSpaceWeights(std::span<const glm::vec2> points, glm::vec2 p, std::span<float> weights) {
+    const std::size_t n = std::min(points.size(), weights.size());
+    float total = 0.0f;
+    for (std::size_t i = 0; i < n; ++i) {
+        const glm::vec2 toP = p - points[i];
+        float h = 1.0f;
+        for (std::size_t j = 0; j < n && h > 0.0f; ++j) {
+            if (j == i) continue;
+            const glm::vec2 toJ = points[j] - points[i];
+            const float lengthSquared = toJ.x * toJ.x + toJ.y * toJ.y;
+            h = std::min(h, 1.0f - (toP.x * toJ.x + toP.y * toJ.y) / lengthSquared);
+        }
+        weights[i] = std::max(h, 0.0f);
+        total += weights[i];
+    }
+    // The nearest point keeps at least 0.5 (its term against every other point is), so the total is not 0.
+    for (std::size_t i = 0; i < n; ++i) weights[i] = total > 0.0f ? weights[i] / total : (i == 0 ? 1.0f : 0.0f);
 }
 
 Result<GraphDef> parseGraph(std::string_view text) {

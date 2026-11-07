@@ -44,7 +44,7 @@ first visit. Leaving a section removes its render passes; its scene stays.
 | 7 | `input` | Named actions over every device, shown live: a character that walks, runs, jumps and fires | WASD, left stick or a finger on the left half: walk; Left Shift or the left stick button: run; J, gamepad A or a tap on the right half: jump; F, gamepad X, a click or a tap: fire |
 | 8 | `assets` | Cooked assets loaded through the app's asset manager ([Jobs, assets and the cook](assets.md)): a row of models (a crate from a glTF with an external texture, a pillar from a GLB with embedded JPEG and PNG textures, a vertex-colored ball, a corrupt file and a missing one) shows the load states: gray boxes while loading, magenta on failure. Behind it a 6 x 5 grid of tiles, each with one of eight BC7 textures and a model, streams around a moving focus point | simulated latency, texture cache budget (unlimited, 64, 16, 4 KB), uploads per frame (8 MB, 16 KB, 1 byte), focus angle, moving focus, models on and off, hot reload, reload all; counts of ready, loading, failed, queued and in-flight assets, reloads, evictions, memory per type against its budget, streamed cells |
 | 9 | `audio` | The mixer and 3D sound ([Audio](audio.md)): a head with ears at the listener, facing the way the camera looks; an orange emitter circling it at ear height (a motor loop), a blue fly-by passing at speed (a siren, with Doppler), a green box that plays a tone the demo computes (a generator); streamed music A and B with a crossfade; all sounds procedural | emitters on and off, orbit and fly-by speed, tone frequency and position, attenuation model, minimum and maximum distance, Doppler scale; music off, A or B; per bus volume, mute and a peak meter; pause effects; the reverb on or off (the 3D sounds send to a reverb bus under the effects) and its room size; the HRTF for headphones on or off (the panel then shows the HRTF voices); a ping, a burst of 40 pings (voice stealing), a click or tap on the ground plays a ping there; voices, stolen and rejected sounds, underruns, clipped samples, mix time and the output device |
-| 10 | `animation` | Skeletal animation ([Animation](animation.md)) of a procedural mannequin: the hero walks a circle by root motion with a speed blend of idle, walk and run, jumps, waves (a layer masked to the right arm), leans (an additive layer), turns its head toward the camera (look-at), holds a torch on its left hand (an attachment) and plays a step sound at each footstep event (a louder one at the jump's landing); two characters stand with foot placement on a ramp and across a 0.2 m step (rays into a Jolt world); a crowd walks in rings | speed, lean, jump (J, gamepad A), wave (K, gamepad X), restart; foot IK, look-at and footstep sound on and off; ramp angle (0 to 30 degrees), crowd size (0 to 512); the hero's state and transition, characters, joints, clip samples, ground rays, events, skinned instances and vertices, the update time and threads, the skinning GPU time |
+| 10 | `animation` | Skeletal animation ([Animation](animation.md)) of a procedural mannequin: the hero walks a circle by root motion with a speed blend of idle, walk and run, jumps, waves (a layer masked to the right arm), leans (an additive layer), turns its head toward the camera (look-at), holds a torch on its left hand (an attachment) and plays a step sound at each footstep event (a louder one at the jump's landing); two characters stand with foot placement on a ramp and across a 0.2 m step (rays into a Jolt world); a crowd walks in rings; in the view "2D blend space", away from them, a character steered by its velocity through a 2D blend space of idle, walk, run, walk back and the two strafes walks ahead, sideways and backward inside a ring while it faces one way | speed, lean, jump (J, gamepad A), wave (K, gamepad X), restart; foot IK, look-at and footstep sound on and off; ramp angle (0 to 30 degrees), crowd size (0 to 512); the view (the hero's stage or the 2D blend space); the steered character by itself (around a circle) or by two velocity sliders; the velocity it is asked for and the one its clips move it by; the hero's state and transition, characters, joints, clip samples, ground rays, events, skinned instances and vertices, the update time and threads, the skinning GPU time |
 | 11 | `raytracing` | Ray tracing where `gpu::Caps` allow it ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)), on the native Metal backend (`--gpu-backend metal`): soft ray-traced sun shadows through a fence's diamond holes (cut-out), tinted amber by a spinning glass torus (translucent) and cast by the animation section's mannequin walking a circle (skinned, refitted every frame), ambient occlusion under a crate and a column; since stage 11 ([Ray-traced lighting](render.md#ray-traced-lighting)) a framed mirror and five gold spheres from roughness 0.02 to 0.48 (traced reflections), a red and green corner with a white block (light bounced by the probe grid), a lamp in the corner and a spot behind the fence (lamp shadows, the spot throws the fence's holes forward), a warm emissive panel that lights the ground through the probes; MetalFX temporal upscaling with the engine's temporal denoiser at render scale 0.67 where the device has MetalFX (MetalFX denoising costs about three times as much on the M4 Pro and is a choice in the panel); on phones and tablets that trace (`App::mobile()`) render scale 0.5 with MetalFX spatial upscaling, no probe grid and 60 frames per second ([Performance](performance.md#stage-11-on-the-iphone)); MetalFX spatial upscaling, the engine's denoisers, and the path tracer as a reference (it stops the sun, the torus and the walk). On SDL GPU (Metal or Vulkan through MoltenVK) the same scene with the fallbacks and a line saying why | sun shadows (shadow maps or ray traced), shadow rays, softness, ambient occlusion with its rays and radius, lamp shadows, reflections, indirect light (sky, probes, rays), the denoiser, upscaling (bilinear, MetalFX spatial, temporal, denoising) and render scale, the path tracer, each with the fallback it got; turn the sun, walk, sun elevation, 60 Hz (on by default on phones and tablets; while the section is current); the top level's instances, builds, refits and compactions (or the shadow draws), the hit textures, probes and path samples, and outside deterministic runs the GPU time of the rays, denoising, probes, reflections, indirect light, the path tracer, the shadow maps, MetalFX and the frame |
 | 12 | `tunnel` | Area lights and anisotropic GGX ([Area lights](render.md#area-lights), stage 12): a 27 m tunnel at night lit only by its lamps, eight area lights (two cyan strips in the floor, two warm squares in the ceiling, a magenta panel on a wall, an orange and a violet neon tube, a round blue portal at the end) and two spots; metal wall panels with color, normal and metallic-roughness maps, wet asphalt with a near-mirror puddle, a rubber mat and wheel stops, embossed plastic crates, brushed aluminium (anisotropic: kick plates, ribs, the sphere). The textures are procedural, written at build time. The lamps move on a clock of their own: the violet tube rides two ceiling rails along the tunnel, the orange tube slides in its bay, the amber spot turns its cone, the white one circles a sphere and the portal breathes, their hangers, brackets and spot housings with them (instance transforms, refitted in the top level). The camera drives a loop through the tunnel by default, eased, looking down the tunnel; a drag, Reset camera or a script's camera hands it to the free camera, and everything stands still while the path tracer runs. Where `gpu::Caps` allow it (the native Metal backend) four lamps cast soft traced shadows, reflections are traced and the probe grid lights the rest, at render scale 0.67 with MetalFX temporal; on phones and tablets that trace half size with MetalFX spatial, two lamp shadows, no traced reflections and the sky's light; phones that do not trace at three quarters of the size; every phone at 60 frames per second ([Performance](performance.md#the-tunnel-on-the-iphone)); the path tracer as a reference. On SDL GPU the lamps light and shine (LTC) without shadows and reflect only the night sky | ray traced or path traced, lamp shadows, traced reflections, each lamp group on or off, the aluminium's anisotropy (0 to 1), the puddle, 60 Hz; Pause all, Lamps move, the camera's Drive or Free, Stop and Drive speed; the lamps and area lights in the frame and outside deterministic runs the GPU time of the shading, the rays, the denoiser, the reflections, the path tracer and the frame |
 
@@ -181,7 +181,7 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
 
 - **Tour** (`--tour [SECONDS]`, default 8; the Tour button takes the Tour time of the settings): every section in turn for
   SECONDS each, round and round, from the current one. Any key, click, touch, button or stick stops it.
-- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 35
+- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 36
   items, one at a time: it switches to the item's section, sets it up (a camera, a setting) and says what to look at
   or listen to. OK, Problem or Skip, with a note, marks the item and goes to the next; the arrows go back and
   forward, End stops. Every mark is written to `checks.json` in the user directory at once, with the backend and the
@@ -190,7 +190,7 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
   cascades (shadows), the day and fog (sky), anti-aliasing (post), HDR on an HDR display (hdr), the bodies
   (physics), the devices (input), loading and streaming (assets), panning, Doppler, the tone without clicks, the
   music's crossfade, the buses and the pings, the reverb, the HRTF in headphones (audio, by ear), feet that do not slide, footsteps in sync, layers and
-  look-at, foot placement and the crowd (animation), noise, MetalFX ghosting and the fallback, and since stage 11
+  look-at, foot placement, the crowd and the 2D blend space (animation), noise, MetalFX ghosting and the fallback, and since stage 11
   the reflections, the bounced light, the lamp shadows, MetalFX denoising in motion and the path tracer against the
   real-time frame (raytracing), since stage 12 the area lights and their shadows, the brushed aluminium, the
   puddle and the lamps and the camera in motion (tunnel), the frame rate and the layout on the device.
@@ -306,10 +306,12 @@ therefore needs Python 3.
 
 The animation section's character is not in git either: `tools/assets/make_demo_character.py` (Python standard
 library, procedural, CC0) writes `characters/mannequin.gltf` and `.bin` (one skin of 20 joints, 836 vertices, clips
-idle, walk, run, jump, wave and lean, the legs solved by IK from foot paths so planted feet stay put) and
+idle, walk, run, jump, wave, lean, walk_back, strafe_l and strafe_r, the legs solved by IK from foot paths so
+planted feet stay put) and
 `mannequin.anim.json` (loops, the additive lean, footstep and landing events, root motion on `root`) at build time;
 `quench_cook_assets(quench_demo_character ... MODELS ... SKELETONS ... ANIMATIONS ...)` cooks the model, the
-skeleton and the clips. The graph, `examples/demo/assets/characters/mannequin.graph.json`, is in git. The section has
+skeleton and the clips. The graphs, `examples/demo/assets/characters/mannequin.graph.json` and
+`mannequin_2d.graph.json` (the steered character's blend space), are in git. The section has
 its own asset manager on the app's job system (one `SceneAssets` per manager, [Jobs, assets and the
 cook](assets.md#textures-and-models-in-a-scene)) and its own `AnimationSystem`; it restarts on `set restart 1`,
 which makes its capture independent of when the loads finished.
@@ -341,9 +343,10 @@ per GPU backend, `--window 960x540 --gpu-debug --hdr-headroom 4`, runs every che
 
 `batch.txt` includes, in this order: materials, shadows, sky, post, hdr, hdr_on, physics, input, assets, audio,
 animation, raytracing_fallback, tunnel_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone,
-audio_flyby, audio_music, audio_reverb, audio_hrtf, tunnel_motion_fallback, cycle. The parts that move (the tunnel's motion) come last, before
-the cycle, which has no capture: TAA's jitter follows the frame count, so a part inserted earlier would move every
-capture after it.
+audio_flyby, audio_music, audio_reverb, audio_hrtf, tunnel_motion_fallback, animation_blend2d, cycle. The parts that
+move (the tunnel's motion) and the parts added later come last, before the cycle, which has no capture: TAA's jitter
+follows the frame count, so a part inserted earlier would move every capture after it. `batch_native.txt` ends with
+animation_blend2d after tunnel_motion.
 Every part selects its section first (and resets it where it needs the defaults), so it does not depend on the parts
 before it, and its `time` starts at 0. A test per part and backend, `demo_<part>_<backend>`, checks the part's line
 in the batch's log (`part <file>: N passed, 0 failed`) and compares its capture with
@@ -364,6 +367,7 @@ elements stay where they are what is checked. The menu and the layouts have capt
 | `assets` | below | `demo_assets.png` at 1.5 s: the scene with the section's overlay (each model's load state, the streaming rings, the reload note), which is what the section shows |
 | `audio` | every emitter, the tone, the crossfade to music B and a burst of 40 pings, no underruns or clipped samples (the mix runs offline on the frame clock, as in every offscreen run) | `demo_audio.png` at 1.65 s: the scene |
 | `animation` | below | `demo_animation.png` at 2.4 s: the scene |
+| `animation_blend2d` | the steered character (crowd 0, 4 characters): by itself its root motion goes ahead and then to its left within 15 degrees of the asked velocity; set directly, backward at -0.9 m/s and to its right at -0.75 m/s within 10 degrees, inside its ring (17 checks) | `demo_animation_blend2d.png` at 3.5 s after the restart, strafing to its left: the scene |
 | `raytracing` (native batch) | the section's defaults run: ray-traced sun shadows and occlusion, 2 lamp shadows, reflections, the probe grid (2048 probes), the temporal denoiser, MetalFX temporal at scale 0.67 in TAA's place (no cascades, no shadow draws, at least 19 instances in the top level, the character skinned, a material texture in the hit arrays, no fallbacks); MetalFX denoising runs when asked; shadow maps come back when asked; MetalFX temporal at scale 0.5 resolves in TAA's place, spatial runs; per-pixel indirect light runs; the path tracer adds samples in TAA's place; bilinear at scale 1 again | `demo_raytracing_native.png` at 2.5 s (every traced effect at full size with the engine's temporal denoiser, the sun and the character moving): the scene |
 | `raytracing_fallback` (Metal, Vulkan) | every request falls back (cascades, no occlusion, no top level, unshadowed lamps, the sky's reflections and light, no probes, bilinear for MetalFX denoising and spatial at scale 0.5, the real-time frame for the path tracer), and the renderer lists the fallbacks (at least 5, then 6) | `demo_raytracing.png` at 2.5 s: the scene |
 | `tunnel` (native batch) | the section's defaults run: 10 lamps, 8 of them area lights, 4 lamp shadows, reflections, the probe grid, MetalFX temporal at 0.67, no shadow draws (no sun), at least 46 instances in the top level, no fallbacks; lamp groups off and on change the counts; the anisotropy changes; the path tracer adds samples; bilinear at scale 1 again | `demo_tunnel_native.png` at 2.5 s (every traced effect at full size, the lamps at their time 0, standing still, the camera free): the scene |
@@ -409,7 +413,7 @@ side of the grid and waits for cells to unload and the cache to evict. It runs w
 real time, and with TAA the history of the frames before a load arrived made two runs differ.
 
 The animation check (`scenarios/animation.txt`, 21 checks) waits for the character to load, restarts the section at
-0.5 s of app time with a crowd of 24 at 1.6 m/s (27 characters, all bound), triggers a jump (the state changes, the
+0.5 s of app time with a crowd of 24 at 1.6 m/s (28 characters with the steered one, all bound), triggers a jump (the state changes, the
 landing event comes, the state returns to the blend), checks the footstep events, the foot placement (both legs of
 the ramp stand reach, the step stand's raised leg is grounded about 0.2 m up and the other on the floor, the ramp
 stand's pelvis moves down), that the torch stays in the hand (`held_distance`) and the look-at, then waves and is
@@ -466,7 +470,8 @@ section's own (for example `bodies`, `blasts`,
 `anim_ready`, `anim_failed`, `anim_characters`, `anim_bound`, `anim_ground_rays`, `hero_state` (0 the blend, 1 the
 jump), `hero_transition`, `hero_look_at`, `hero_angle`, `footsteps`, `landings`, `crowd`, `held_distance`,
 `slope_pelvis`, and per stand and leg `slope_leg0_offset` (also `_reached`, `_grounded`; `slope` or `step`, leg 0
-or 1); the ray tracing section's `rt_ready`, `sun_azimuth`). Game commands: `section ID`, `reset_section`, `reset_camera`,
+or 1), `view`, the steered character's `steer_vx`, `steer_vz` (asked), `strafer_vx`, `strafer_vz` (moved, over
+0.2 s), `strafer_heading_error` (degrees) and `strafer_radius`; the ray tracing section's `rt_ready`, `sun_azimuth`). Game commands: `section ID`, `reset_section`, `reset_camera`,
 `sheet none|sections|controls|about|settings|graphics`, `mode off|tour|checks|benchmark [SECONDS]`,
 `check ok|problem|skip [NOTE]`, `check next|prev`, `job_test`, `settings_save` (now, not half a second later),
 `settings_corrupt` (overwrites the settings file with text that is not JSON),
@@ -480,7 +485,7 @@ or 1); the ray tracing section's `rt_ready`, `sun_azimuth`). Game commands: `sec
 `tone_x`, `tone_z`, `orbit_speed`, `flyby_speed`, `attenuation none|inverse|linear|exponential`, `min_distance`,
 `max_distance`, `doppler`, `music 0|1|2`, `bus_<name>` (volume), `mute_<name>`, `pause_effects`, `ping`,
 `burst N`, `reverb`, `room_size`, `hrtf`; for the animation section `restart`, `speed`, `lean`, `jump`, `wave`, `foot_ik`, `look_at`,
-`footstep_sound`, `slope DEGREES`, `crowd N`; for the ray tracing section `turn_sun`, `walk`, `sun_azimuth`,
+`footstep_sound`, `slope DEGREES`, `crowd N`, `view hero|blend2d`, `steer_auto`, `steer_vx`, `steer_vz`; for the ray tracing section `turn_sun`, `walk`, `sun_azimuth`,
 `sun_elevation`).
 
 ## Benchmark
@@ -489,7 +494,7 @@ or 1); the ray tracing section's `rt_ready`, `sun_azimuth`). Game commands: `sec
 physics, assets, audio, animation and ray tracing sections for 5 s each in real time (budgets and numbers:
 [Performance](performance.md)); the assets region streams with the moving focus and the default budgets, after the
 first loads have finished; the audio region plays the three emitters, the tone and the music; the animation region
-has a crowd of 256 (259 characters), and its perf line ends with the section's own times over its last 240 frames:
+has a crowd of 256 (260 characters), and its perf line ends with the section's own times over its last 240 frames:
 `anim_update_ms` (mean) and `anim_update_max_ms` of `AnimationSystem::update`, `anim_threads`, and
 `skinning_gpu_ms`, the mean of the skinning pass's GPU time (-1 without GPU timing). It runs in a window on the
 screen (`--onscreen`: scripted runs are offscreen otherwise, where frames are not presented) with `--audio-device

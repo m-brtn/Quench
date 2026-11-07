@@ -274,9 +274,8 @@ void AnimationSystem::bind(Character& c) {
         }
         if (skeleton) {
             const auto soa = std::size_t(skeleton->impl().skeleton.num_soa_joints());
-            for (auto* pose :
-                 {&c.sample[0], &c.sample[1], &c.statePose[0], &c.statePose[1], &c.layerPose, &c.pose, &c.scratch})
-                pose->resize(soa);
+            for (auto* pose : {&c.statePose[0], &c.statePose[1], &c.layerPose, &c.pose, &c.scratch}) pose->resize(soa);
+            for (auto& pose : c.samples) pose.resize(soa);
             c.weightsA.resize(soa);
             c.weightsB.resize(soa);
             c.models.resize(std::size_t(skeleton->jointCount()));
@@ -385,17 +384,23 @@ void AnimationSystem::bind(Character& c) {
         for (const StateDef& state : def.states) {
             Character::StateRuntime s;
             s.def = &state;
-            const auto addSlot = [&](const std::string& clipName, float at) {
+            const auto addSlot = [&](const std::string& clipName, float at, float phase) {
                 const Clip* clip = findClip(clipName);
-                s.clips.push_back({clip, at, int(c.contexts.size())});
+                s.clips.push_back({clip, at, phase, int(c.contexts.size())});
                 c.contexts.push_back(std::make_unique<ozz::animation::SamplingJob::Context>(jointCount));
                 if (clip && (def.blend == LayerBlend::Additive) != clip->additive())
                     log::warning("animation", "character {}: clip '{}' is {}additive in the {} layer '{}'", c.id.index,
                                  clipName, clip->additive() ? "" : "not ",
                                  def.blend == LayerBlend::Additive ? "additive" : "override", def.name);
             };
-            if (!state.clip.empty()) addSlot(state.clip, 0.0f);
-            for (const BlendPoint& p : state.blend) addSlot(p.clip, p.at);
+            if (!state.clip.empty()) addSlot(state.clip, 0.0f, 0.0f);
+            for (const BlendPoint& p : state.blend) addSlot(p.clip, p.at, p.phase);
+            for (const BlendPoint2D& p : state.blend2d) {
+                addSlot(p.clip, 0.0f, p.phase);
+                s.points.push_back(p.at);
+            }
+            if (s.clips.size() > 1 && c.samples.size() < s.clips.size())
+                c.samples.resize(s.clips.size(), ozz::vector<ozz::math::SoaTransform>(soa));
             bool loops = !s.clips.empty();
             for (const Character::ClipSlot& slot : s.clips) loops = loops && (!slot.clip || slot.clip->loops());
             s.loop = state.loop.value_or(s.clips.empty() || loops);

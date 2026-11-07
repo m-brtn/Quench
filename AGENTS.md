@@ -71,7 +71,8 @@ type (WAV, FLAC, MP3, Ogg Vorbis), streamed music with crossfades, game-generate
 panned or through an HRTF for headphones (off by default, after 0.9.0, not released), WAV writing
 and signal analysis), `quench_audio_device` (output through miniaudio, the iOS audio session; `App::audio()`,
 `--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`), `quench_animation`
-(headless, on ozz-animation: skeletons, clips and graphs as assets, blend trees, JSON state machines with
+(headless, on ozz-animation: skeletons, clips and graphs as assets, blend trees, 2D blend spaces (after 0.9.0, not
+released), JSON state machines with
 cross-fades, events, root motion, masked and additive layers, two-bone and aim IK, look-at, foot placement, bone
 attachments, the update in parallel on the job system) and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons and clips).
@@ -111,7 +112,7 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
-work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
+work), retargeting, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
 work), the native backend as the default, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
 ray tracing (stage 9 and 11 remaining work) or shadows of area lights without ray tracing (stage 12 remaining work)
