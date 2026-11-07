@@ -303,7 +303,12 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   64 x 64 file with mips 0.03 to 0.10 ms (0.02 to 0.18 ms as WebAssembly under Node.js), the transcoder's tables
   once per process 17 to 34 ms. `assets.basis_*` (also under Node.js), `cook.cook_basis_*`,
   `render.scene_assets_basis_textures` on SDL GPU's Metal driver, the native backend (ETC1S to ETC2 RGB8) and
-  Vulkan through MoltenVK (ASTC), the demo's `assets_basis` part on all three; the golden captures unchanged.
+  Vulkan through MoltenVK (ASTC), the demo's `assets_basis` part on all three; the golden captures unchanged. In
+  the iOS Simulator the same cases and targets (ETC2 on the native backend, ASTC on SDL GPU).
+- **Gates with Basis Universal:** `tools/check.sh full` (2026-11-07, 1335.7 s, fresh `asan`, `tsan` and iOS trees):
+  format; `debug` 521 tests; `release` 638 (the captures of every backend, Vulkan through MoltenVK included); `asan`
+  521; `tsan` 521; `wasm-node` 146 (under Node.js); `ios-sim-tests` 389 in the iOS Simulator; `ios-xcode`
+  generated; a new game built and started. All passed.
 
 ## What was not verified
 

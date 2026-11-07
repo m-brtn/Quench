@@ -144,8 +144,10 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   `gpu::Caps` allow. On the Mac SDL GPU's Metal driver and Vulkan through MoltenVK report BC7 and ASTC but no ETC2
   (SDL GPU 3.4.18 has no ETC2 formats; MoltenVK exposes ASTC on Apple silicon), so both codecs become ASTC 4x4; the
   native Metal backend reports ETC2 too (Apple7 GPUs and later on macOS, every GPU on iOS), so ETC1S becomes ETC2
-  RGB8 there (`render.scene_assets_basis_textures` and the demo's `assets_basis` part on all three). Not run on an
-  iPhone yet.
+  RGB8 there (`render.scene_assets_basis_textures` and the demo's `assets_basis` part on all three). The same in
+  the iOS Simulator (`ios-sim-tests`: the `assets.basis_*` cases and `render.scene_assets_basis_textures` on SDL GPU,
+  ASTC 4x4 for both codecs, and on the native backend, ETC1S to ETC2 RGB8; the first transcode of a process, with
+  the transcoder's tables, about 115 ms there against about 20 ms on the Mac). Not run on an iPhone yet.
 - Asset hot reload (2026-11-07): development builds read assets from `asset_overlay/` in the user directory
   first, and `tools/push_assets.sh` copies changed files there with `devicectl`
   ([Hot reload on a device](assets.md#hot-reload-on-a-device)). On the iPhone 17 a pushed texture was reloaded
