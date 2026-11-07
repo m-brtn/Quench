@@ -284,6 +284,24 @@ the denoising upscaler's cost from the frame interval (unpaced): 11.317 ms at 0.
 6.912 ms with MetalFX temporal at 0.67. Its CPU p50 at 0.67 was low again (0.496 ms; 0.446 on 2026-11-06) with 26%
 of the process's CPU time on performance cores, not explained by the share alone.
 
+**MetalFX denoising offscreen, and the hypothesis tested** (2026-11-07 05:58-06:00, Release, offscreen, native
+backend, 1920 x 1080, the ray tracing section with everything traced, 4 s regions). `bloom` at render scale 0.5,
+0.6, 0.67 and 0.75: 0.269, 0.242, 0.266 and 0.245 ms (`upscale` 4.307, 4.885, 6.744, 7.769 ms; frame p50 9.01,
+9.35, 12.91, 14.03 ms); MetalFX temporal at 0.5 and 0.67: 0.221 ms. So the anomaly does not show offscreen at any of
+the four scales. To test the hypothesis that MetalFX runs work after its output is written, a temporary build put a
+full barrier (a command buffer event signalled and waited for) between MetalFX's passes and the `upscale` end
+marker, so the marker could not start before every earlier command had finished. Measured in one process each, with
+one frame's ranges logged every 97 frames: `upscale` 4.312 against 4.300 ms with the barrier at 0.5, 6.825 against
+6.933 ms at 0.67; `bloom` 0.269 against 0.230 and 0.266 against 0.252 ms, the same drop as with MetalFX temporal
+(0.221 against 0.192 ms), where it comes from `bloom`'s vertex stage no longer starting before the upscaler's end
+(without the barrier `bloom` starts about 0.5 ms before `upscale` ends with both scalers; with it, at its end). So
+MetalFX's denoising upscaler leaves no measurable work behind the marker, the markers attribute it correctly, and the
+engine's timing was not changed (the barrier was removed). What is left happens only in a window on the screen, in
+one GPU-bound denoising region per run, and moves between runs; a guess, not checked: in a GPU-bound frame paced to
+the display, other GPU work of the system (the window server compositing the window) runs at the same point of
+every frame and lands in whichever range runs then. A Metal System Trace in Instruments on the screen would show it
+(a profiler the user has not allowed yet). Read MetalFX denoising's cost from offscreen regions.
+
 ### The tunnel
 
 Stage 12 (area lights and anisotropic GGX, the demo's tunnel section), 2026-11-06 20:30-20:54, Release, the code of
@@ -662,7 +680,8 @@ denoiser, 1.7 ms here, and TAA): on the M4 Pro it is the dearest way to the same
 MetalFX temporal with the engine's denoiser (the MetalFX denoising row at 0.67 also read 2.9 ms of `bloom` against
 0.2 ms elsewhere and 0.45 ms of CPU p50, the row at 0.5 clean. Offscreen after stage 12, three regions of MetalFX
 denoising at 0.67 read `bloom` 0.231 and 0.317 ms, `upscale` 6.29 to 7.50 ms: not reproduced there. In a window
-again on 2026-11-07 the region at 0.5 read it instead: [On the screen after the bug
+again on 2026-11-07 the region at 0.5 read it instead, and offscreen at four scales it did not, also not when a
+barrier made the upscaler's end marker wait for all its work: [On the screen after the bug
 packages](#on-the-screen-after-the-bug-packages)). MetalFX temporal costs 1.25 to 1.76 ms at a 1080p output, spatial 0.39 ms. The path tracer takes 10.9 ms
 per frame. The temporal denoiser also filtered hard shadows without occlusion (0.82 ms in `rt_hard_shadows`); it no
 longer does (`19d9a6f`, not measured again). The frame's GPU time (its command buffer's start to end) is not in the
