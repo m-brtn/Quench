@@ -428,6 +428,16 @@ missing from it on 2026-11-06, and the app crashed at its first pipeline); the n
 CMake change, run `cmake --preset ios-xcode` before `xcodebuild` (`tools/package_demo.sh` does) or build twice.
 `tools/package_demo.sh` compares the bundle's `assets/` with the merged folder after its build.
 
+The gates generate this project without building it: `tools/check.sh step xcode` (a step of `full`) builds
+`host-tools` (the preset takes `quench_shaderc` and `quench_cook` from it) and configures `ios-xcode` into
+`build/ios-xcode-check` with `QUENCH_IOS_TEAM` empty: the preset configures without a team, and nothing is built or
+signed. The Xcode generator refuses things the Ninja builds accept: the 0.10.0 iOS package failed because the demo's
+project no longer generated (a custom command's output attached to two targets, neither depending on the other;
+fixed in `81fe747`), and with that fix taken out the step fails with the same "CMake Error" (2026-11-07). The log
+is `build/ios-xcode-check/configure.log`. On the M4 Pro the step takes about 11 to 13 s with the directory in
+place, about 4 minutes the first time (254.5 s: the configure downloads the pinned dependencies into it).
+`tools/check.sh quick` names the step when the changed files include CMake files.
+
 The bundle ids are the `BUNDLE_ID` of each target plus `QUENCH_IOS_BUNDLE_ID_SUFFIX`: with the default suffix,
 `org.quench.hello.<login name>`. Team ids are listed in Xcode's accounts, or with
 `defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier` (`isFreeProvisioningTeam = 1` marks a Personal

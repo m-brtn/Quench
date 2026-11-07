@@ -245,8 +245,10 @@ decision, 2026-11-06); `tools/check.sh` runs them, offscreen:
   the template, the game skill).
 - **Shared foundations (core, the job system and threads, the GPU layer, the app loop, the build and CMake) and the
   end of a stage: `tools/check.sh full`.** format; `debug`, `release`, `asan` and `tsan` (build and ctest each; the
-  captures of every backend in `release`); `wasm-node`; `host-tools`, `ios-sim-release` and `ios-sim-tests`;
-  `tools/new_game.py` into a temporary directory. `quick` says when a change touches a shared foundation.
+  captures of every backend in `release`); `wasm-node`; `host-tools`, `ios-sim-release` and `ios-sim-tests`; the
+  `ios-xcode` project generated into `build/ios-xcode-check` (`step xcode`: configure only, no build, no signing, no
+  team; about 11 s, the first time about 4 minutes); `tools/new_game.py` into a temporary directory. `quick` says
+  when a change touches a shared foundation, and when it touches other CMake files (then `step xcode`).
 - **The end of a stage and a release: `tools/check.sh release`.** `full`, then `tools/package_demo.sh` (it reuses
   the release ctest's demo checks). The stage adds its section to the demo (`examples/demo`, with its part in the
   batches and golden captures for Metal and Vulkan through MoltenVK), and the package goes to `dist/` (user decision,

@@ -8,13 +8,16 @@
 #       (or of the LABELs given): core physics assets audio animation cook gpu app render hello demo, without the
 #       variants on Vulkan through MoltenVK (label vulkan; full and release run them). The changed files are those
 #       that differ from HEAD (from REF with --base) and the untracked ones. A change to a shared foundation (core,
-#       gpu, app, the build) is reported: it needs the full gate.
-#   tools/check.sh full         the steps format debug release asan tsan wasm ios new-game: the gate at the end of a
-#                               stage and for a change to a shared foundation
+#       gpu, app, the build) is reported: it needs the full gate; so is a change to other CMake files: it needs the
+#       step xcode.
+#   tools/check.sh full         the steps format debug release asan tsan wasm ios xcode new-game: the gate at the end
+#                               of a stage and for a change to a shared foundation
 #   tools/check.sh release      full, then the step package (tools/package_demo.sh, macOS): before a release
 #   tools/check.sh step NAME... single steps, in the order given: format, debug, release, asan and tsan (build and
 #                               ctest of the preset), wasm (wasm-node), ios (host-tools, ios-sim-release,
-#                               ios-sim-tests), new-game (tools/new_game.py into a temporary directory), package
+#                               ios-sim-tests), xcode (host-tools, then the ios-xcode preset generated into
+#                               build/ios-xcode-check: no build, no signing, no team), new-game (tools/new_game.py
+#                               into a temporary directory), package
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -81,6 +84,27 @@ run_step() {
         [[ $status -eq 0 ]] || fail "ios-sim-tests"
         echo "ios: $(elapsed "$t") s"
         ;;
+    xcode)
+        # The Xcode generator refuses what Ninja accepts (a custom command's output shared by two targets, 0.10.0's
+        # package): generating the project catches it without a build, a signing identity or the user's team.
+        local t dir=build/ios-xcode-check status=0
+        t="$(now)"
+        step "ios-xcode: generate the Xcode project into $dir (no build, no signing, no team)"
+        configure host-tools
+        cmake --build --preset host-tools
+        mkdir -p "$dir"
+        cmake --preset ios-xcode -B "$dir" -DQUENCH_IOS_TEAM= >"$dir/configure.log" 2>&1 || status=$?
+        if [[ $status -ne 0 ]]; then
+            if grep -q "CMake Error" "$dir/configure.log"; then
+                grep -A12 "CMake Error" "$dir/configure.log" | head -80 || true
+            else
+                tail -40 "$dir/configure.log"
+            fi
+            fail "ios-xcode generation (log: $dir/configure.log)"
+        fi
+        grep -E "^-- (Configuring|Generating) done" "$dir/configure.log" || true
+        echo "xcode: $(elapsed "$t") s"
+        ;;
     new-game)
         local t dir
         t="$(now)"
@@ -104,7 +128,7 @@ run_step() {
             tools/package_demo.sh
         fi
         ;;
-    *) fail "unknown step: $1 (format, debug, release, asan, tsan, wasm, ios, new-game, package)" ;;
+    *) fail "unknown step: $1 (format, debug, release, asan, tsan, wasm, ios, xcode, new-game, package)" ;;
     esac
 }
 
@@ -150,8 +174,9 @@ quick() {
     )
     echo "changed files (against $base): ${#changed[@]}"
 
-    local labels="" shared=0 f l
+    local labels="" shared=0 cmake=0 f l
     for f in ${changed[@]+"${changed[@]}"}; do
+        [[ $f == *CMakeLists.txt || $f == *.cmake || $f == CMakePresets.json || $f == cmake/* ]] && cmake=1
         for l in $(labels_for "$f"); do
             if [[ $l == shared ]]; then
                 shared=1
@@ -193,17 +218,21 @@ quick() {
         echo
         echo "NOTE: the change touches a shared foundation (core, gpu, app or the build): run tools/check.sh full"
         echo "before committing it."
+    elif [[ $cmake -eq 1 ]]; then
+        echo
+        echo "NOTE: the change touches CMake files: run tools/check.sh step xcode (it generates the ios-xcode project,"
+        echo "which refuses some things Ninja accepts) before committing it."
     fi
 }
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
 STEPS=()
 case "${1:-}" in
 -h | --help) usage; exit 0 ;;
 quick) shift; quick "$@" ;;
 full | release)
     [[ $# -eq 1 ]] || fail "$1 takes no arguments"
-    STEPS=(format debug release asan tsan wasm ios new-game)
+    STEPS=(format debug release asan tsan wasm ios xcode new-game)
     [[ $1 == full ]] || STEPS+=(package)
     ;;
 step)
