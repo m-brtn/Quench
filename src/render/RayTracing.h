@@ -56,7 +56,8 @@ struct RayTargets {
     bool local = false;   // local light shadows
     bool reflections = false;
     bool indirect = false;
-    bool probes = false;        // the probe grid's atlases
+    int probeCascades = 0;      // the probe grid's atlases for this many cascades (0: no grid)
+    bool probeData = false;     // with each probe's data (relocation, classification)
     bool temporal = false;      // the histories of RayDenoiser::Temporal
     bool denoiseInputs = false; // the albedos and roughness of the denoising upscaler (with gbuffer)
     friend bool operator==(const RayTargets&, const RayTargets&) = default;
@@ -81,9 +82,12 @@ enum class RayFiltering : std::uint8_t {
 
 // The probe grid's layout this frame (FrameUniforms probeGrid, probeCounts, probeAtlas).
 struct ProbeGridState {
-    glm::ivec3 first{0};
-    glm::ivec3 counts{16, 8, 16};
-    float spacing = 2.0f;
+    std::array<glm::ivec3, QUENCH_MAX_PROBE_CASCADES> first{}; // per cascade
+    glm::ivec3 counts{16, 8, 16};                              // per cascade
+    float spacing = 2.0f;                                      // of cascade 0; each next one twice the one before
+    int cascades = 1;
+    std::uint32_t flags = 0; // FrameUniforms::probeAtlas.w: 1 relocation, 2 classification
+    friend bool operator==(const ProbeGridState&, const ProbeGridState&) = default;
 };
 
 class RayTracing {
@@ -150,9 +154,9 @@ public:
     // The prepass depth traced into the mask and, with uniforms.local.x > 0, the local light shadows; then filtered.
     void traceShadows(gpu::CommandBuffer& commands, const shader::RayTracingUniforms& uniforms,
                       const shader::LightUniforms& lights, const FilterInputs& inputs, RayFiltering filtering);
-    // The probe grid's rays, then its irradiance and distance maps (a grid that moved keeps the probes it still
-    // holds). reset: drop the history of every probe; turns: trace the probes in that many turns, one per frame
-    // (RenderSettings::probeUpdatePeriod). Returns the probes traced.
+    // The probe grid's rays, then its probes' data (with relocation or classification), irradiance and distance
+    // maps (a grid that moved keeps the probes it still holds). reset: drop the history of every probe; turns: trace
+    // the probes in that many turns, one per frame (RenderSettings::probeUpdatePeriod). Returns the probes traced.
     std::uint32_t updateProbes(gpu::CommandBuffer& commands, shader::RayHitUniforms uniforms,
                                const shader::LightUniforms& lights, bool reset, int turns);
     void traceReflections(gpu::CommandBuffer& commands, const shader::RayHitUniforms& uniforms,
@@ -170,10 +174,9 @@ public:
     Result<gpu::GraphicsPipeline> hitPipeline(const char* entry, gpu::TextureFormat format, const char* name,
                                               bool surfaces = false);
 
-    // The probe grid around a camera position for this frame (FrameUniforms probeGrid, probeCounts, probeAtlas).
-    ProbeGridState placeProbes(const glm::vec3& camera, float spacing);
-    // The first cell of the grid the probes hold (the previous frame's placement until updateProbes()).
-    glm::ivec3 probeHistoryFirst() const { return m_previousFirst; }
+    // The probe grid's cascades around a point for this frame (FrameUniforms probeGrid, probeCounts, probeAtlas);
+    // flags as ProbeGridState::flags. Another spacing, count of cascades or flags restarts the grid.
+    ProbeGridState placeProbes(const glm::vec3& center, float spacing, int cascades, std::uint32_t flags);
     bool probesValid() const { return m_probesValid; }
     std::uint64_t memoryBytes() const;
 
@@ -225,7 +228,7 @@ private:
     bool m_available = false;
     bool m_lighting = false;
     gpu::GraphicsPipeline m_tracePipeline, m_traceLocalPipeline, m_denoisePipeline, m_denoiseInputsPipeline;
-    gpu::GraphicsPipeline m_probeIrradiancePipeline, m_probeDistancePipeline;
+    gpu::GraphicsPipeline m_probeDataPipeline, m_probeIrradiancePipeline, m_probeDistancePipeline;
     HitVariants m_reflectPipelines, m_indirectPipelines, m_probeTracePipelines;
     bool m_normalMaps = false; // an instance in this frame's tables has a normal map
     const ShaderTable* m_surfaceTable = nullptr;
@@ -264,14 +267,14 @@ private:
     std::uint32_t m_skinnedBuilds = 0; // staggers the periodic builds of skinned bottom levels made together
 
     // The probe grid
-    std::array<gpu::Texture, 2> m_probeIrradiance, m_probeDistance;
+    std::array<gpu::Texture, 2> m_probeIrradiance, m_probeDistance, m_probeData;
     gpu::Texture m_probeRays;
     int m_probeIndex = 0;
     std::uint32_t m_probeTurn = 0; // counts the updates; this frame's turn is its remainder
     int m_probeTurns = 1;          // of the last update
     bool m_probesValid = false;    // the atlases hold a grid
     ProbeGridState m_grid;
-    glm::ivec3 m_previousFirst{0};
+    std::array<glm::ivec3, QUENCH_MAX_PROBE_CASCADES> m_previousFirst{};
 };
 
 } // namespace quench::render::detail

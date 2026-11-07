@@ -108,10 +108,10 @@ enum class Reflections : std::uint8_t {
 // The light that reaches surfaces from other surfaces and the sky (the diffuse part; reflections are separate).
 enum class IndirectLight : std::uint8_t {
     Sky, // Environment::skyAmbient and groundAmbient by the normal's direction
-    // A grid of 16 x 8 x 16 probes around View::probeCenter (probeSpacing apart), traced every frame or in turns
-    // (probeUpdatePeriod): one bounce from the surfaces around them and more through the grid's history, with
-    // visibility so light does not leak through walls (DDGI). Smooth, some frames behind changes.
-    // gpu::Caps::rayTracing; else Sky.
+    // A grid of 16 x 8 x 16 probes around View::probeCenter (probeSpacing apart; in probeCascades cascades, each
+    // twice as far apart as the one before), traced every frame or in turns (probeUpdatePeriod): one bounce from the
+    // surfaces around them and more through the grid's history, with visibility so light does not leak through walls
+    // (DDGI). Smooth, some frames behind changes. gpu::Caps::rayTracing; else Sky.
     Probes,
     // One ray per pixel over the hemisphere, its hits lit with the probe grid (also running): contact detail the grid
     // is too coarse for. gpu::Caps::rayTracing; else Sky.
@@ -120,6 +120,8 @@ enum class IndirectLight : std::uint8_t {
 
 // Ray-traced shadows of at most this many local lights per frame (RenderSettings::localLightShadows).
 inline constexpr int kMaxRayLocalShadows = 4;
+// Cascades of the probe grid (RenderSettings::probeCascades).
+inline constexpr int kMaxProbeCascades = 4;
 
 struct RenderSettings {
     float renderScale = 1.0f; // 3D resolution relative to the target, 0.25..1 (scaled up by `upscaling`)
@@ -152,7 +154,19 @@ struct RenderSettings {
     Reflections reflections = Reflections::Sky;
     float reflectionRoughness = 0.5f; // traced (or screen-space) reflections up to this roughness, the sky's above
     IndirectLight indirectLight = IndirectLight::Sky;
-    float probeSpacing = 2.0f; // m between the probes of the grid
+    float probeSpacing = 2.0f; // m between the probes of the grid (its first cascade)
+    // 1..kMaxProbeCascades grids of 16 x 8 x 16 probes around the same point, each twice the spacing of the one
+    // before: a surface takes the finest one around it (dense light near the point, coarse light far), blended into
+    // the next over a cell. Each costs as much as the first.
+    int probeCascades = 1;
+    // Probes inside geometry move out through the nearest back face, probes nearer than a fifth of the spacing to a
+    // surface move away from it, at most 45 % of the spacing from their place (DDGI relocation): fewer dark probes
+    // in walls and floors that a grid's fixed places put there.
+    bool probeRelocation = false;
+    // Probes with no surface near them (or stuck in geometry) for 8 updates in a row trace a quarter of their rays and
+    // are left out of the shading until a ray finds a surface near them again (DDGI classification): the grid's
+    // empty air and solid ground cost less.
+    bool probeClassification = false;
     // The probe grid traces 1 / probeUpdatePeriod of its probes per frame (1, 2, 4 or 8; other values round down to
     // one of them), every probe once in that many frames: the grid's cost falls about as much, and it follows a
     // change of light that many times more slowly. A probe that comes into the grid as it scrolls is left out of the
@@ -333,7 +347,7 @@ struct RenderStats {
     std::uint32_t hitTextures = 0; // material textures in the hit texture arrays
     // Instances in the top level whose hits run their surface's function (SurfaceDesc::rayHit) this frame.
     std::uint32_t rayHitSurfaces = 0;
-    std::uint32_t probes = 0;      // probes traced this frame (IndirectLight::Probes and RayTraced)
+    std::uint32_t probes = 0;      // probes traced this frame, in every cascade (IndirectLight::Probes and RayTraced)
     std::uint32_t pathSamples = 0; // samples in the path tracer's mean
 };
 

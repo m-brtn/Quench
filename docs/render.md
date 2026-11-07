@@ -338,6 +338,37 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   times 18), keeps its light in the frame a grid scroll brings new probes next to it in every turn (at least 0.2627
   against 0.2637 before; with the new probes taken as black 0.1259), and is lit at once after a jump (2048 probes
   traced).
+- **Probe cascades** (`RenderSettings::probeCascades`, 1 to `kMaxProbeCascades` = 4, default 1; 2026-11-07): grids
+  of the same 16 x 8 x 16 probes around the same point, each twice the spacing of the one before, so the probes are
+  dense near `View::probeCenter` and the grid reaches far (three cascades from 1 m cover 64 x 32 x 64 m). Each
+  cascade has its own rows of the atlases and of the probe ray target, scrolls on its own and is traced in the same
+  turns. A surface takes the finest cascade whose 8 probes surround it, blended into the next one over the last cell
+  before that cascade's edge (`Probes.hlsli`); a cascade whose probes around the point have no value (all left out,
+  or not traced yet) passes the point on to the next one, and beyond the last one surfaces have the sky's ambient
+  light, as beyond one grid. The sampling bias and the distance cap double with the spacing. One cascade runs its own path in
+  the shading, without the cascade loop. `RenderStats::probes` counts every cascade's traced probes.
+- **Probe relocation** (`probeRelocation`, default off; 2026-11-07): each traced probe moves inside its cell out of
+  geometry (Majercik et al. 2021, "Scaling Probe-Based Real-Time Dynamic Global Illumination for Production"): a
+  probe whose rays see more than a quarter back faces is inside and moves through the nearest one, a probe nearer than
+  0.2 spacings to a surface moves away from it, otherwise it moves back toward the middle of its cell; a move that
+  would take it further than 0.45 spacings from the middle is not made. A probe data pass (`rt_probe_data_fs`, a
+  texel per probe, before the irradiance and distance passes) keeps each probe's offset and state; the irradiance
+  atlas gets a copy of it in rows below its tiles, which the shading and the next frame's rays read (the rays start
+  from the moved probe, the shading weighs the probe where it is). New probes and a restart start from the middle.
+- **Probe classification** (`probeClassification`, default off; 2026-11-07): a probe whose rays have hit no front
+  face within 1.5 spacings of its cell's middle (along every axis), or that is inside geometry, for 8 updates in a
+  row is left out: it traces only every fourth ray (to notice a surface coming near), its irradiance alpha is 0 so it
+  lights nothing, and its distance map is the cap; a quarter-traced probe that finds a surface traces fully again from
+  the next update, its first update from its quarter of the rays. Probes in open air above a scene and inside walls
+  are left out. `RenderStats::probes` still counts them as traced.
+- **Tests** (native backend): `renderer_probe_cascades`: the tile strip of the turns test, 12 m from the grid's
+  center, is outside a 1 m grid (0.0334, its direct light without the grid also 0.0334) and lit by the second, 2 m
+  cascade (0.2826); near the center 2 cascades give 0.3552 against 0.3556 with one, 2 cascades in 4 turns hold within
+  5 % (1024 probes traced), and classification changes it by 0.5 % (0.3568), 3 cascades with classification far away
+  by 2.8 % (0.2747). The existing probe tests give the numbers they gave before these options. `renderer_probe_relocation`: two corridors 0.8 m wide between grey walls 0.9 m thick, their white
+  floors in the walls' shadow and lit only by the other wall's sunlit face; the 1 m grid puts corridor A's probes in
+  the walls and the ground, corridor B's in its middle. A's floor is 0.0000 without relocation and 0.2380 with it, B's
+  0.2716; with classification on top A 0.2431 (the means of 8 frames after 250).
 - **Per-pixel indirect light** (`IndirectLight::RayTraced`): one cosine-weighted ray per pixel, its hit lit as above
   with the probe grid (which runs too); contact detail the grid is too coarse for (sampler 8, bit 16).
 - **Tests.** `renderer_indirect_light_bounces`: the ground next to a red wall turns red with the grid and the
@@ -769,8 +800,9 @@ sun shadows (shadow maps or ray traced), cascades (0..4), shadow map size, shado
 traced or screen space) with its rays, radius and strength, the screen-space fallbacks of the traced effects
 (`screenSpaceFallbacks`), local light shadows (0..4) and the size of their shadow maps where
 they are not traced (`localShadowMapSize`, 0: none), reflections (sky, ray traced or screen space) and
-their roughness limit, indirect light (sky, probe grid or ray traced), the probe spacing and the probe updates
-(every probe per frame, 1/2, 1/4 or 1/8), the ray denoiser
+their roughness limit, indirect light (sky, probe grid or ray traced), the probe spacing, the probe updates
+(every probe per frame, 1/2, 1/4 or 1/8), the probe cascades (1..4), probe relocation and classification, the ray
+denoiser
 (spatial or temporal), the path tracer with its bounces and samples, anti-aliasing (none, FXAA, TAA) and sharpening,
 bloom (strength, threshold), sky on or off and the clear color, tone curve (ACES, AgX), vignette, dither.
 `setSettings` can be called every frame; the targets are recreated only when a size, the shadow map size or the set
@@ -888,10 +920,15 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   `quench_add_ray_hits()` set (textures at level 0, no derivatives), never `surface_shadow_fs`; `QUENCH_SURFACE_VERTEX`
   deformations are not in the acceleration structures. Skinned casters further than `shadowDistance` are not in
   them. Hits are lit by local lights without shadow rays. Reflections are one bounce (a mirror in a mirror shows the
-  second one lit, not reflecting); rough surfaces above `reflectionRoughness` keep the sky's reflection (SSR has the same cut-off). The probe grid is one fixed size around one point (no cascades of grids), a few frames
+  second one lit, not reflecting); rough surfaces above `reflectionRoughness` keep the sky's reflection (SSR has the same cut-off). The probe grid's cascades are around one point (the finest one does not follow
+  what is near the camera when `View::probeCenter` is elsewhere), each of the same counts; it is a few frames
   behind changes of light (n times more with `probeUpdatePeriod` n: halfway in about 18 n frames, within 10 % in
-  about 70 n), and its probes are not moved out of walls (a probe inside a wall is dark and its neighbours'
-  visibility hides it). Turns are a fixed round-robin, not chosen by priority (a probe near the camera or in changing
+  about 70 n). Without `probeRelocation` its probes stay in walls (a probe inside a wall is dark and its
+  neighbours' visibility hides it); relocation is a heuristic from 64 rays a frame (a thin wall between rays can be
+  missed, and the offset moves a little from frame to frame as the rays turn), and a probe that cannot get out
+  within 0.45 spacings stays. Classification leaves out a probe after 8 updates without a surface near it, so a
+  surface that appears in open air gets the grid's light only after the left-out probes' quarter of rays find it.
+  Turns are a fixed round-robin, not chosen by priority (a probe near the camera or in changing
   light is not traced sooner), and the hysteresis does not shorten with n. The temporal denoiser has no variance estimate and no disocclusion boost: newly
   visible areas are noisy for a few frames. Without ray tracing local lights are unshadowed unless
   `localShadowMapSize` is set; the point and spot lights' shadow maps are hard (a 4 x 4 filter, not softened by

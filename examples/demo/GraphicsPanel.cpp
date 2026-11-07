@@ -146,6 +146,11 @@ constexpr std::array<OptionInfo, kGraphicsOptions> kOptions{{
      3,
      {"1", "2", "4", "8"},
      {"Every probe per frame", "1/2 per frame", "1/4 per frame", "1/8 per frame"}},
+    {O::ProbeCascades, "probe_cascades", "probe cascades", "Probe cascades", Kind::Integer, 1,
+     render::kMaxProbeCascades},
+    {O::ProbeRelocation, "probe_relocation", "probe relocation", "Move out of geometry", Kind::Flag, 0, 1},
+    {O::ProbeClassification, "probe_classification", "probe classification", "Leave out probes in the open", Kind::Flag,
+     0, 1},
     {O::RayDenoiser,
      "denoiser",
      "ray denoiser",
@@ -202,6 +207,9 @@ void setValue(RenderSettings& s, GraphicsOption option, double v) {
     case O::IndirectLight: s.indirectLight = render::IndirectLight(int(v)); break;
     case O::ProbeSpacing: s.probeSpacing = float(v); break;
     case O::ProbeUpdates: s.probeUpdatePeriod = 1 << std::clamp(int(v), 0, 3); break;
+    case O::ProbeCascades: s.probeCascades = int(v); break;
+    case O::ProbeRelocation: s.probeRelocation = v != 0.0; break;
+    case O::ProbeClassification: s.probeClassification = v != 0.0; break;
     case O::RayDenoiser: s.rayDenoiser = render::RayDenoiser(int(v)); break;
     case O::PathTracer: s.pathTracer = v != 0.0; break;
     case O::PathBounces: s.pathBounces = int(v); break;
@@ -400,6 +408,9 @@ double graphicsValue(const RenderSettings& s, GraphicsOption option) {
     case O::ProbeSpacing: return double(s.probeSpacing);
     case O::ProbeUpdates:
         return s.probeUpdatePeriod >= 8 ? 3.0 : s.probeUpdatePeriod >= 4 ? 2.0 : s.probeUpdatePeriod >= 2 ? 1.0 : 0.0;
+    case O::ProbeCascades: return double(s.probeCascades);
+    case O::ProbeRelocation: return s.probeRelocation ? 1.0 : 0.0;
+    case O::ProbeClassification: return s.probeClassification ? 1.0 : 0.0;
     case O::RayDenoiser: return double(int(s.rayDenoiser));
     case O::PathTracer: return s.pathTracer ? 1.0 : 0.0;
     case O::PathBounces: return double(s.pathBounces);
@@ -763,15 +774,26 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
                                              : whyNot),
                  true);
         else if (e.indirectLight != render::IndirectLight::Sky)
-            note(
-                std::format("{} of 2048 probes traced this frame, 16 x 8 x 16 around the camera's focus", stats.probes),
-                false);
+            note(std::format("{} of {} probes traced this frame, 16 x 8 x 16 per cascade around the camera's focus",
+                             stats.probes, 2048 * std::clamp(s.probeCascades, 1, render::kMaxProbeCascades)),
+                 false);
         rows.row(O::ProbeSpacing, [&] { return slider(s.probeSpacing, 0.5f, 8.0f, "%.2f m"); });
         rows.row(O::ProbeUpdates, [&] { return combo(O::ProbeUpdates, int(graphicsValue(s, O::ProbeUpdates))); });
         if (e.indirectLight != render::IndirectLight::Sky && s.probeUpdatePeriod > 1)
             note(std::format("Every probe once in {} frames: the light follows changes {} times more slowly",
                              s.probeUpdatePeriod, s.probeUpdatePeriod),
                  false);
+        rows.row(O::ProbeCascades, [&] { return sliderInt(s.probeCascades, 1, render::kMaxProbeCascades); });
+        if (e.indirectLight != render::IndirectLight::Sky && s.probeCascades > 1) {
+            const int cascades = std::clamp(s.probeCascades, 1, render::kMaxProbeCascades);
+            note(std::format("Spacing doubles per cascade: {:.0f} m of grid around the focus, {:.2f} m apart near it",
+                             16.0f * s.probeSpacing * float(1 << (cascades - 1)), s.probeSpacing),
+                 false);
+        }
+        rows.row(O::ProbeRelocation, [&] { return checkbox(s.probeRelocation); });
+        rows.row(O::ProbeClassification, [&] { return checkbox(s.probeClassification); });
+        if (e.indirectLight != render::IndirectLight::Sky && s.probeClassification)
+            note("Probes with no surface near them trace a quarter of their rays and light nothing", false);
         rows.row(O::RayDenoiser, [&] { return combo(O::RayDenoiser, int(s.rayDenoiser)); });
         if (e.upscaling == render::Upscaling::TemporalDenoised)
             note("Not used: MetalFX denoises (Upscaling)", false);

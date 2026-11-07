@@ -430,8 +430,16 @@ scaler.
   scrolling grid left out until traced, a jump traces all; on the M4 Pro the probes cost 1.16 ms every frame and
   0.68, 0.43, 0.32 ms in turns, and light settles to within 10 % in 70, 166, 276, 629 frames
   ([Performance](performance.md#probe-grid-in-turns)). Open: the run on the iPhone 17
-  (`scenarios/raytracing_phone_probes.txt`) and the phone default chosen from it; priority by distance or change,
-  relocation of probes out of walls, cascades.
+  (`scenarios/raytracing_phone_probes.txt`) and the phone default chosen from it; priority by distance or change.
+- [x] Probe cascades, relocation and classification (stage 11's remaining work; 2026-11-07, after 0.10.0, on the
+  Mac): `RenderSettings::probeCascades` (1 to 4 grids of 16 x 8 x 16 around the same point, each twice the spacing
+  of the one before, blended over the last cell), `probeRelocation` (probes move out of geometry within their cell)
+  and `probeClassification` (probes with no surface near them left out: a quarter of their rays, no light), all off
+  by default; on the M4 Pro a cascade costs about 1 ms of probes, classification takes 40 to 45 % off them,
+  relocation 0.06 to 0.07 ms; native batch part `raytracing_probes` (1 m in 3 cascades: the ground lit out to the
+  horizon); tests `renderer_probe_cascades`, `renderer_probe_relocation` ([Render module](render.md#ray-traced-lighting),
+  [Performance](performance.md#probe-cascades-relocation-and-classification)). Open: the iPhone
+  (`raytracing_phone_probes.txt`, proposed phone default: classification in 4 turns), a look in motion.
 - [x] MetalFX temporal denoised scaler (`Caps::denoisedUpscaling`, `UpscalerType::TemporalDenoised`,
   `Upscaling::TemporalDenoised`); exposure passed to the MetalFX temporal scalers.
 - [x] Demo: the ray tracing scene grew (mirror, roughness strip, colored corner, emissive panel, shadowed lamps), the
@@ -658,9 +666,9 @@ What else stays open, in the order it is useful (not scheduled; the user decides
    request, and does not change settings on its own. Open: its defaults on a hot phone (the iPhone 17 missed
    intervals at fair, a minute before serious; check mode item `tunnel.heat`). The probe grid on phones:
    traced in turns since 2026-11-07 (`probeUpdatePeriod`, measured on the Mac only); its phone default waits for
-   `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns at half size, 60 Hz).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); a denser or
-   cascaded probe grid (stage 11).
+   `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns with classification at half size,
+   60 Hz).
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. The

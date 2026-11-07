@@ -1637,6 +1637,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     int localShadows = pathTracing ? 0 : effects.localLightShadows;
     bool rayReflections = !pathTracing && effects.reflections == Reflections::RayTraced;
     bool probes = !pathTracing && effects.indirectLight != IndirectLight::Sky;
+    const int probeCascades = std::clamp(settings.probeCascades, 1, kMaxProbeCascades);
+    const std::uint32_t probeFlags = (settings.probeRelocation ? 1u : 0u) | (settings.probeClassification ? 2u : 0u);
     bool rayIndirect = !pathTracing && effects.indirectLight == IndirectLight::RayTraced;
     const auto anyTraced = [&] {
         return rayShadows || rayOcclusion || localShadows > 0 || rayReflections || probes || pathTracing;
@@ -2040,7 +2042,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                                  .local = localShadows > 0,
                                  .reflections = rayReflections,
                                  .indirect = rayIndirect,
-                                 .probes = probes,
+                                 .probeCascades = probes ? probeCascades : 0,
+                                 .probeData = probes && probeFlags != 0,
                                  .temporal = rayTemporal,
                                  .denoiseInputs = denoisedUpscale};
         commands.beginTiming("accel");
@@ -2067,11 +2070,14 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         rayBits = (rayShadows ? 1u : 0u) | (rayOcclusion ? 2u : 0u) | (localShadows > 0 ? 4u : 0u) |
                   (rayReflections ? 8u : 0u) | (rayIndirect ? 16u : 0u) | (probes ? 32u : 0u);
         if (probes) {
-            const ProbeGridState grid =
-                rayTracing.placeProbes(view.probeCenter.value_or(cameraPos), settings.probeSpacing);
-            fu.probeGrid = glm::vec4(glm::vec3(grid.first), grid.spacing);
+            const ProbeGridState grid = rayTracing.placeProbes(view.probeCenter.value_or(cameraPos),
+                                                               settings.probeSpacing, probeCascades, probeFlags);
+            float spacing = grid.spacing;
+            for (std::size_t c = 0; c < std::size_t(grid.cascades); ++c, spacing *= 2.0f)
+                fu.probeGrid[c] = glm::vec4(glm::vec3(grid.first[c]), spacing);
             fu.probeCounts = glm::vec4(glm::vec3(grid.counts), float(RayTracing::kIrradianceTile));
-            fu.probeAtlas = glm::vec4(float(RayTracing::kDistanceTile), kProbeBias * grid.spacing, 0.0f, 0.0f);
+            fu.probeAtlas = glm::vec4(float(RayTracing::kDistanceTile), kProbeBias * grid.spacing, float(grid.cascades),
+                                      float(grid.flags));
         }
         fu.rayLighting = glm::vec4(std::clamp(settings.reflectionRoughness, 0.05f, 1.0f), 0.0f, 0.0f, 0.0f);
     }

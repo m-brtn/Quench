@@ -426,7 +426,8 @@ if(NOT QUENCH_HEADLESS)
             # Vulkan through MoltenVK, batch_native.txt (ray tracing itself instead of its fallbacks, and cycle.txt) on
             # the native Metal backend, which compares with the Metal golden images except for ray tracing's and the
             # tunnel's own (demo_raytracing_native, demo_tunnel_native, demo_tunnel_motion_native: the tunnel in motion,
-            # demo_raytracing_mirror_native: the checker's own function in the mirror; parts added later come last,
+            # demo_raytracing_mirror_native: the checker's own function in the mirror, demo_raytracing_probes_native:
+            # the probe grid's cascades, relocation and classification; parts added later come last,
             # so that no other capture moves in the frame sequence). The tunnel's path tracer part
             # (tunnel_path) writes its capture without a golden image: 1.3 MB of noise at 256 samples; the render tests
             # check the path tracer's area lights by numbers.
@@ -453,7 +454,8 @@ if(NOT QUENCH_HEADLESS)
                         BACKEND metal GPU metal:metal ARGS ${demo_args} --gpu-backend metal
                         ENVIRONMENT MTL_DEBUG_LAYER=1
                         PARTS ${demo_parts} raytracing:demo_raytracing_native tunnel:demo_tunnel_native tunnel_path
-                        cycle tunnel_motion:demo_tunnel_motion_native raytracing_mirror:demo_raytracing_mirror_native)
+                        cycle tunnel_motion:demo_tunnel_motion_native raytracing_mirror:demo_raytracing_mirror_native
+                        raytracing_probes:demo_raytracing_probes_native)
                 endif()
                 if(QUENCH_TEST_VULKAN_LOADER)
                     quench_add_batch(demo vulkan APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND vulkan

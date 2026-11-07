@@ -9,7 +9,7 @@ system, `quench_assets`, `quench_cook` and shader hot reload (see "Threads and j
 [Audio](audio.md)), and stage 9: the native Metal backend, GPU timestamps per pass, acceleration structures,
 ray-traced sun shadows and ambient occlusion, MetalFX upscaling (see "Native Metal backend" and "Ray tracing"), and
 stage 11: ray-traced local light shadows, reflections and indirect light, a probe grid (also traced in turns since
-0.10.0), the engine's temporal
+0.10.0, and in cascades, with probes moved out of geometry or left out in the open, since 2026-11-07), the engine's temporal
 denoiser, MetalFX's denoising upscaler and a reference path tracer (see "Ray tracing"), and stage 12: area lights
 and anisotropic GGX (see "Rendering");
 everything else here

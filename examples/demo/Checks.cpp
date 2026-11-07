@@ -141,6 +141,15 @@ constexpr std::array kItems{
               "wall and green toward the green one; the glowing panel lights the ground in front of it. Move the sun "
               "elevation: the light follows within a second, without blotches, leaks through the walls or flicker.",
               "set turn_sun 0"},
+    CheckItem{"raytracing.probes", "raytracing", "Probe cascades",
+              "Native Metal backend: this sets the probe grid at 1 m in 3 cascades, moved out of geometry, probes in "
+              "the open left out. Orbit and zoom out: the ground stays lit out to the horizon without a step or a "
+              "seam where a cascade ends, the corner block and the walls without dark blotches or light leaking "
+              "through; turn the sun: the light follows within a second. Then Probe cascades 1, Probe spacing 2, "
+              "Move out of geometry off and Probe updates 4 (the proposed phone setting): no flicker or lag you "
+              "would notice.",
+              "set indirect probes\nset probe_spacing 1\nset probe_cascades 3\nset probe_relocation 1\n"
+              "set probe_classification 1"},
     CheckItem{"raytracing.lamps", "raytracing", "Lamp shadows",
               "Native Metal backend, low sun: the spot behind the fence throws its diamonds onto the ground in front "
               "of it, and the white block shadows the corner from the lamp. Lamp shadows 0: a plain glow.",

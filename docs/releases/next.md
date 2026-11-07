@@ -6,7 +6,7 @@ heat for games, with the demo's Adapt to heat; an agent skill on building a game
 new game; the demo's dual quaternion skinning showcase made readable after a user
 report, and its characters' wrists closed; the Xcode project's generation in the full gate; soft shadows of area
 lights from shadow maps where the device cannot trace (stage 12's remaining work); a game's surface shaders in ray
-hits (stage 11's remaining work). This file becomes
+hits and the probe grid's cascades, relocation and classification (stage 11's remaining work). This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
 
@@ -74,6 +74,30 @@ hits (stage 11's remaining work). This file becomes
   the pass, the lowest of alternated runs under other agents' load): traced reflections 0.93 to 0.97 ms, the probe
   grid's rays 1.24 to 1.27, per-pixel indirect light 3.98 to 4.09, the path tracer 11.7 to 12.7 (6 to 8 % more);
   the tunnel (no such surface) unchanged ([Performance](../performance.md#surface-functions-in-ray-hits)).
+
+### Rendering: probe cascades, relocation and classification
+
+- **`RenderSettings::probeCascades`** (1 to `render::kMaxProbeCascades` = 4, default 1; stage 11's remaining work;
+  [Render module](../render.md#ray-traced-lighting)): grids of 16 x 8 x 16 probes around `View::probeCenter`, each
+  twice the spacing of the one before, so the probes are dense near it and reach far (three from 1 m cover
+  64 x 32 x 64 m). A surface takes the finest cascade around it, blended into the next over its last cell; each
+  cascade scrolls and is traced in turns on its own rows of the atlases. `RenderStats::probes` counts all of them.
+- **`probeRelocation`** (default off): each traced probe moves out of geometry within its cell (through the nearest
+  back face when more than a quarter of its rays hit back faces, away from a surface nearer than 0.2 spacings, back
+  toward its cell's middle otherwise, at most 0.45 spacings), kept by a probe data pass (`rt_probe_data_fs`) and
+  read by the shading and the next frame's rays.
+- **`probeClassification`** (default off): a probe with no surface within 1.5 spacings, or inside geometry, for 8
+  updates is left out: a quarter of its rays, no light; it comes back when its rays find a surface.
+- **The demo:** the Graphics panel's Probe cascades, Move out of geometry and Leave out probes in the open
+  (`probe_cascades`, `probe_relocation`, `probe_classification`); a native batch part `raytracing_probes` with its
+  golden image (1 m in 3 cascades, moved and classified); `raytracing_phone_probes.txt` measures classification and
+  cascades on a phone.
+- **Cost** on the M4 Pro (offscreen, the sections' Mac defaults otherwise, GPU p50): a cascade about 1 ms of probes
+  (1.20 ms for the ray tracing section's grid, 2.20 with 2 cascades, 3.16 with 3) and 0.1 to 0.3 ms more in the main
+  pass, in the tunnel about 0.8 ms more in the reflections; classification takes 40 to 45 % off the probes (1.20 to
+  0.72 ms, the tunnel's 1.21 to 0.67), relocation adds 0.06 to 0.07 ms; with neither and one cascade the probes are
+  1 to 2 % slower than before and the main pass the same
+  ([Performance](../performance.md#probe-cascades-relocation-and-classification)).
 
 ### The app: a reaction to heat
 
@@ -232,6 +256,19 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 - **Gates with surface shaders in ray hits:** `tools/check.sh full` (2026-11-07, 547.3 s): format; `debug` 512
   tests; `release` 627; `asan` 512; `tsan` 512; `wasm-node` 140 (under Node.js); `ios-sim-tests` 383 in the iOS
   Simulator; `ios-xcode` generated; a new game built and started. All passed.
+- **Probe cascades, relocation and classification** (native Metal backend, offscreen): `renderer_probe_cascades`: a
+  strip 12 m from the grid's center gets no bounce light from a 1 m grid (0.0334, its direct light) and 0.2826 from
+  the same grid's second cascade; near the center 0.3552 with 2 cascades against 0.3556 with one; 2 cascades in 4
+  turns hold within 5 %; classification within 0.5 % there and 2.8 % far away with 3 cascades.
+  `renderer_probe_relocation`: a corridor whose probes sit in its walls has a dark floor (0.0000) and 0.2380 with
+  relocation, against 0.2716 in a corridor whose probes are in its middle; 0.2431 with classification on top. The
+  existing probe tests give the numbers they gave before. The demo's `demo_raytracing_probes_native.png` looked at
+  (the ground lit out to the horizon; the grey band of the one-grid frame gone), and against the path tracer's 512
+  samples the frame with 1 m in 3 cascades is closer (mean difference 4.62 against 5.24 levels, pixels more than 16
+  off 5.2 % against 10.1 %); the other captures of the batches are unchanged.
+- **Gates with probe cascades:** `tools/check.sh full` (2026-11-07, 423.9 s): format; `debug` 518 tests; `release`
+  634; `asan` 518; `tsan` 518; `wasm-node` 140 (under Node.js); `ios-sim-tests` 387 in the iOS Simulator;
+  `ios-xcode` generated; a new game built and started. All passed.
 
 ## What was not verified
 
@@ -260,6 +297,10 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   demo.
 - The xcode step generates the project only: a build or signing problem in `xcodebuild` is still found only by a
   device build or `tools/package_demo.sh --ios`.
+- Probe cascades, relocation and classification on a phone: built into the iOS presets, not run on an iPhone (the
+  device tests include the two new render cases); the phone costs are estimates from the iPhone 17's ratio, and the
+  proposed phone default (classification in 4 turns) is not set. Nobody has looked at them on a screen in motion
+  (a cascade's edge passing over a surface as the camera moves, a probe's relocation changing as the rays turn).
 
 ## Changes for games
 
@@ -283,6 +324,14 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   not clash with another listed surface's. `Surface.hlsli` declares its bindings and lighting only where
   `QUENCH_SURFACE_HIT` is 0, so shader code of a game's own that defines `QUENCH_SURFACE_HIT` for another purpose
   breaks.
+- **The probe grid's frame uniforms** (`quench/SceneUniforms.h`, read through `quench/Probes.hlsli`):
+  `FrameUniforms::probeGrid` is an array of `QUENCH_MAX_PROBE_CASCADES` (4), one per cascade, and `probeAtlas.z` and
+  `.w` hold the cascades and the relocation and classification bits; the struct grew by 48 bytes. A game shader that
+  reads `quenchFrame.probeGrid` itself reads `probeGrid[0]` for the finest cascade. `Probes.hlsli`'s helpers take a
+  cascade: `quenchProbePosition(cell, cascade)`, `quenchProbeUv(slot, cascade, dir, tile, rows)`,
+  `quenchProbeAtlasSize(tile, rows)`; `quenchProbeIrradiance` is unchanged. New and optional:
+  `RenderSettings::probeCascades`, `probeRelocation`, `probeClassification` and `render::kMaxProbeCascades`; a game
+  that sets none keeps one grid as before.
 - **New:** `gpu::defaultBackend()` (`quench/gpu/Device.h`). `Device::create` no longer returns an error when only
   the native device fails to start: it returns an SDL GPU device (check `caps().backend` where it matters).
 - **iOS presets of games made from the template before this release:** a game that cooks assets

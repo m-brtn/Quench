@@ -1,0 +1,34 @@
+# The probe grid's cascades, relocation and classification on the native Metal backend (ctest:
+# demo_raytracing_probes_native, a part of batch_native.txt): 1 m probes around the focus in three cascades (1, 2 and
+# 4 m apart, 64 m across), so that the ground is lit by the grid out to the horizon (with the section's one 2 m grid,
+# 32 m across, the ground beyond it has the sky's ambient light: the grey band behind the scene in
+# demo_raytracing_native.png); probes moved out of geometry, those with no surface near them left out. Every traced
+# effect at full size (bilinear, the engine's temporal denoiser); the capture at 2.5 s, the sun and the character
+# moving.
+section raytracing
+
+set dither 0
+until rt_ready == 1 5
+reset_camera
+set upscaling bilinear
+set scale 1
+set probe_spacing 1
+set probe_cascades 3
+set probe_relocation 1
+set probe_classification 1
+wait 0.1
+expect indirect == 1
+expect probes == 6144
+expect render_scale == 1
+expect fallbacks == 0
+until time >= 2.5 3
+windows off
+capture demo_raytracing_probes_native.png
+windows on
+set probe_spacing 2
+set probe_cascades 1
+set probe_relocation 0
+set probe_classification 0
+wait 0.05
+expect probes == 2048
+quit

@@ -499,6 +499,70 @@ and 1/2 to about 1.9 ms; that is an estimate. Proposed for the ray tracing secti
 probe grid on in 4 turns at half size, at 60 Hz, if `scenarios/raytracing_phone_probes.txt` shows it fits the
 16.7 ms frame with room (light then settles within 10 % in about 4.6 s); else 2 turns or off as now.
 
+### Probe cascades, relocation and classification
+
+`RenderSettings::probeCascades`, `probeRelocation`, `probeClassification` ([Render module](render.md#ray-traced-lighting)).
+2026-11-07 17:23-17:32, Release, Mac (Apple M4 Pro), the native Metal backend, **offscreen** at 1920 x 1080,
+unpaced, the sections' Mac defaults otherwise (MetalFX temporal at 0.67: 1286 x 724), 4 s regions after a second
+each, two runs of each; other agents' builds and runs loaded the Mac (load average 10 to 47). GPU busy time p50 of
+the range, ms (the two runs); the tunnel from its overview with the drive stopped (`reset_camera`), since what the
+drive passes changes the other ranges:
+
+| Region | `probes` | `hdr` | `reflections` | frame GPU p50 |
+|---|---|---|---|---|
+| ray tracing section, its grid (2 m, 1 cascade) | 1.195, 1.202 | 0.779, 0.778 | 0.518, 0.522 | 7.90, 8.32 |
+| the same, classification | 0.714, 0.722 | 0.775, 0.779 | 0.501, 0.505 | 7.31, 7.75 |
+| the same, relocation | 1.271, 1.272 | 0.808, 0.809 | 0.510, 0.512 | 7.95, 8.14 |
+| the same, 2 cascades | 2.204, 2.210 | 0.891, 0.891 | 0.518, 0.515 | 8.92, 9.10 |
+| the same, 3 cascades | 3.154, 3.160 | 0.894, 0.890 | 0.512, 0.513 | 9.84, 9.84 |
+| 1 m, 3 cascades | 3.352, 3.339 | 0.964, 0.962 | 0.532, 0.536 | 10.19, 10.23 |
+| 1 m, 3 cascades, relocation and classification (the demo's `raytracing_probes`) | 1.824, 1.821 | 0.998, 1.003 | 0.538, 0.542 | 8.70, 8.70 |
+| 1 m, 2 cascades, relocation and classification | 1.365, 1.355 | 0.941, 0.939 | 0.549, 0.550 | 8.50, 8.31 |
+| 2 m, 4 turns | 0.442, 0.442 | 0.776, 0.777 | 0.501, 0.503 | 7.07, 7.11 |
+| 2 m, 4 turns, classification | 0.333, 0.332 | 0.777, 0.777 | 0.500, 0.492 | 6.98, 6.92 |
+| 1 m, 2 cascades, relocation and classification, 4 turns | 0.667, 0.667 | 0.939, 0.939 | 0.517, 0.515 | 7.50, 7.49 |
+| tunnel, its grid (2 m, 1 cascade) | 1.212, 1.213 | 1.852, 1.840 | 4.186, 4.060 | 12.85, 12.36 |
+| the same, classification | 0.667, 0.669 | 1.892, 1.891 | 3.986, 3.939 | 11.71, 11.52 |
+| the same, relocation | 1.269, 1.266 | 1.938, 1.938 | 4.184, 4.123 | 12.71, 12.43 |
+| the same, relocation and classification | 0.656, 0.655 | 1.860, 1.859 | 4.075, 4.033 | 11.80, 11.61 |
+| 1 m, 2 cascades | 2.350, 2.343 | 2.124, 2.114 | 4.925, 4.817 | 14.55, 14.30 |
+| 1 m, 2 cascades, relocation and classification | 1.288, 1.293 | 2.106, 2.103 | 4.982, 4.978 | 13.45, 13.41 |
+
+A cascade costs what a grid does (about 1 ms of probes each), and sampling more than one adds 0.1 to 0.3 ms in the
+main pass and, in the tunnel, about 0.8 ms in the reflections (their hits read the grid), where points near a
+cascade's edge read two. Classification takes 40 % off the ray tracing section's probes and 45 % off the tunnel's
+(open air above the scene and around the tunnel; the irradiance and distance passes over every probe stay): 0.48
+and 0.55 ms less, and with 1 m probes in 3 cascades it takes the probes from 3.35 to 1.82 ms with relocation.
+Relocation adds 0.06 to 0.07 ms to the probes (the data pass) and 0.03 to 0.09 ms to the main pass (a probe's
+offset read per sample). With 4 turns classification still
+saves a quarter (0.442 to 0.333 ms). Against the path tracer's 512 samples (the same frames, one run, mean
+difference of the 1280 x 720 captures, levels; pixels more than 16 levels off): the ray tracing section's 2 m grid
+5.24 (10.1 %), a single 0.5 m grid 13.10 (57.5 %: it covers 8 m, beyond it the sky's ambient light), 0.5 m in
+3 cascades 4.66 (8.0 %), 1 m in 3 cascades 4.64 (5.1 %), with relocation and classification 4.62 (5.2 %): the
+ground beyond the 2 m grid's 16 m is grey in the one-grid frame and lit as in the reference with the cascades. In the
+tunnel every configuration is 10.3 to 10.5 from the reference (its indirect light is a small part of the frame);
+relocation changes the frame by a mean of 0.79 levels, mostly the crates' sides by the magenta panel.
+
+The defaults (one cascade, neither option) against the commit before (`3d530ee`), the sections' defaults, four
+pairs alternating (17:23-17:27): `probes` 1.184, 1.184, 1.189, 1.188 before and 1.205, 1.206, 1.200, 1.198 after in
+the ray tracing section (+1 to 2 %), 1.206, 1.208, 1.210, 1.243 and 1.219, 1.220, 1.215, 1.213 in the tunnel; `hdr`
+0.769, 0.770, 0.771, 0.770 and, with one cascade's own path in the shading (the last two pairs), 0.775, 0.778
+(0.806 and 0.808 in the first two pairs, before that path); the tunnel's `hdr` 1.995, 1.991, 2.005, 2.065 and 2.042,
+2.056 with it. CPU p50 is the same within the runs' noise (0.46 to 0.51 ms in the ray tracing section and the
+tunnel in the first two pairs, both binaries; the last two pairs ran under a load average of 47).
+The captures of every other part of the batches are unchanged (their golden images pass).
+
+On a phone (not run yet): the iPhone 17's probes cost about 2.85 times the M4 Pro's (3.3 ms against 1.16;
+[Stage 11 on the iPhone](#stage-11-on-the-iphone)), so by the Mac's ratios classification would take the ray tracing
+section's grid to about 2.1 ms, 4 turns with classification to about 0.95 ms, and 1 m in two cascades with
+relocation, classification and 4 turns to about 1.9 ms plus about 0.35 ms more in the main pass at half size (the
+phone's per-pixel sampling cost about 2.5 times the Mac's per pixel); those are estimates. Proposed for the ray
+tracing section's phone defaults, not set: the probe grid on with classification in 4 turns, one 2 m cascade, at
+half size and 60 Hz, if `scenarios/raytracing_phone_probes.txt` (its `probes_4_class` and `probes_4_class_60hz`
+regions) shows it fits the 16.7 ms frame with room; the same for the tunnel's (its grid classifies 45 % away, not
+measured on a phone either); relocation where a scene's walls hold probes (about 0.2 ms more by the same ratio); no
+second cascade on phones until a run shows the reflections' and the main pass's sampling cost there.
+
 ### Local light shadow maps
 
 `RenderSettings::localShadowMapSize` ([Render module](render.md#local-light-shadow-maps)). 2026-11-07 07:28-07:33,

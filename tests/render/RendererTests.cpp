@@ -2517,6 +2517,174 @@ QUENCH_TEST(renderer_probe_grid_updates_in_turns) {
     CHECK(std::abs(back / low - 1.0f) < 0.3f, "back: lit at once, %.4f vs %.4f", double(back), double(low));
 }
 
+// RenderSettings::probeCascades: the scene of the turns above, 1 m toward +x (so that the probes of a 2 m cascade,
+// at odd coordinates, are outside the wall and the roof). With the grid's center 12 m away the strip is outside a
+// 1 m grid (no bounce light) and inside the second, 2 m cascade of the same grid, which lights it. Near the center
+// the first cascade lights the strip as one grid does, and classification (probes without surfaces near them left
+// out) changes none of it.
+QUENCH_TEST(renderer_probe_cascades) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.indirectLight = IndirectLight::Probes;
+    settings.probeSpacing = 1.0f;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "the probe grid: ")) QUENCH_SKIP("no ray tracing: the sky's ambient light");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MaterialId white = scene.addMaterial({.baseColor = glm::vec4(0.9f, 0.9f, 0.9f, 1), .roughness = 1});
+    const MaterialId black = scene.addMaterial({.baseColor = glm::vec4(0.0f, 0.0f, 0.0f, 1), .roughness = 1});
+    const auto place = [&](glm::vec3 half, glm::vec3 at, MaterialId material) {
+        scene.addInstance({.mesh = addMesh(scene, boxMesh(half)),
+                           .material = material,
+                           .transform = glm::translate(glm::mat4(1.0f), at)});
+    };
+    scene.addInstance({.mesh = addMesh(scene, planeMesh(glm::vec2(40.0f))), .material = black});
+    place({0.5f, 0.01f, 1.5f}, {3.1f, 0.01f, 0}, white);
+    place({0.1f, 1.5f, 3.0f}, {4.0f, 1.5f, 0}, white);
+    place({0.6f, 0.05f, 1.6f}, {2.1f, 1.0f, 0}, black);
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    View view = lookAt(glm::vec3(1.0f, 9.0f, 0), glm::vec3(1.0f, 0, 0), glm::vec3(0, 0, -1));
+    const glm::ivec2 from = pixelOf(view, {3.0f, 0, -1.2f}), to = pixelOf(view, {3.4f, 0, 1.2f});
+    const auto light = [&](int frames) {
+        const std::vector<Rgba8> pixels = settle(device, *renderer, scene, view, *target, frames);
+        float v = 0.0f;
+        int count = 0;
+        for (int y = std::min(from.y, to.y); y <= std::max(from.y, to.y); ++y)
+            for (int x = std::min(from.x, to.x); x <= std::max(from.x, to.x); ++x, ++count)
+                v += sceneValue(at(pixels, {x, y})).g;
+        return v / float(std::max(count, 1));
+    };
+    const auto use = [&](int cascades, bool classification) {
+        settings.probeCascades = cascades;
+        settings.probeClassification = classification;
+        renderer->setSettings(settings);
+    };
+    settings.indirectLight = IndirectLight::Sky;
+    renderer->setSettings(settings);
+    const float direct = light(1);
+    settings.indirectLight = IndirectLight::Probes;
+    view.probeCenter = glm::vec3(1.0f, 2.0f, 0.0f);
+    use(1, false);
+    const float near1 = light(150);
+    use(2, false);
+    const float near2 = light(150);
+    CHECK(renderer->stats().probes == 2u * 16u * 8u * 16u, "2 cascades: %u probes traced", renderer->stats().probes);
+    settings.probeUpdatePeriod = 4;
+    renderer->setSettings(settings);
+    const float turns = light(8);
+    CHECK(renderer->stats().probes == 2u * 16u * 8u * 16u / 4u, "2 cascades in 4 turns: %u probes traced",
+          renderer->stats().probes);
+    CHECK(std::abs(turns / near2 - 1.0f) < 0.05f, "2 cascades in 4 turns: the light holds, %.4f vs %.4f", double(turns),
+          double(near2));
+    settings.probeUpdatePeriod = 1;
+    use(2, true);
+    const float nearClassified = light(150);
+    view.probeCenter = glm::vec3(-9.0f, 2.0f, 0.0f);
+    use(1, false);
+    const float far1 = light(150);
+    use(2, false);
+    const float far2 = light(150);
+    use(3, true);
+    const float far3 = light(150);
+    CHECK(renderer->stats().probes == 3u * 16u * 8u * 16u, "3 cascades: %u probes traced", renderer->stats().probes);
+    std::printf("  near the center: %.4f with 1 cascade, %.4f with 2, %.4f classified; 12 m away: %.4f with 1, %.4f "
+                "with 2, %.4f with 3 classified (%.4f without the grid)\n",
+                double(near1), double(near2), double(nearClassified), double(far1), double(far2), double(far3),
+                double(direct));
+    REQUIRE(near1 > 0.1f && direct < 0.2f * near1, "the shadowed strip has bounce light: %.4f (%.4f without the grid)",
+            double(near1), double(direct));
+    CHECK(std::abs(near2 / near1 - 1.0f) < 0.05f, "near the center the first cascade lights it: %.4f vs %.4f",
+          double(near2), double(near1));
+    CHECK(std::abs(nearClassified / near2 - 1.0f) < 0.05f, "classified: %.4f vs %.4f", double(nearClassified),
+          double(near2));
+    CHECK(std::abs(far1 - direct) < 0.02f * near1, "outside one grid: no bounce light (%.4f, %.4f without the grid)",
+          double(far1), double(direct));
+    CHECK(far2 > 0.5f * near1 && far2 < 1.5f * near1, "the second cascade lights it: %.4f (%.4f near the center)",
+          double(far2), double(near1));
+    CHECK(std::abs(far3 / far2 - 1.0f) < 0.1f, "a third cascade, classified: %.4f vs %.4f", double(far3), double(far2));
+}
+
+// RenderSettings::probeRelocation: two corridors 0.8 m wide between 2 m walls 0.9 m thick, along z, in the shadow of
+// their walls toward the sun; their white floors are lit only by the sunlit faces of the other walls. The 1 m grid
+// puts the probes of corridor A (at x -2) inside its walls and the ground, those of corridor B (at x 1.5) in its
+// middle. Without relocation A's floor is dark; with the probes moved out of the walls it gets about the light B's
+// probes give B's floor, and classification on top leaves it as it is.
+QUENCH_TEST(renderer_probe_relocation) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = shadowSettings();
+    settings.indirectLight = IndirectLight::Probes;
+    settings.probeSpacing = 1.0f;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "the probe grid: ")) QUENCH_SKIP("no ray tracing: the sky's ambient light");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MaterialId white = scene.addMaterial({.baseColor = glm::vec4(0.9f, 0.9f, 0.9f, 1), .roughness = 1});
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1), .roughness = 1});
+    const MaterialId black = scene.addMaterial({.baseColor = glm::vec4(0.0f, 0.0f, 0.0f, 1), .roughness = 1});
+    const auto place = [&](glm::vec3 half, glm::vec3 at, MaterialId material) {
+        scene.addInstance({.mesh = addMesh(scene, boxMesh(half)),
+                           .material = material,
+                           .transform = glm::translate(glm::mat4(1.0f), at)});
+    };
+    scene.addInstance({.mesh = addMesh(scene, planeMesh(glm::vec2(20.0f))), .material = black});
+    for (const float x : {-2.0f, 1.5f}) {
+        place({0.45f, 1.0f, 2.0f}, {x - 0.85f, 1.0f, 0}, grey);
+        place({0.45f, 1.0f, 2.0f}, {x + 0.85f, 1.0f, 0}, grey);
+        place({0.38f, 0.01f, 2.0f}, {x, 0.01f, 0}, white);
+    }
+    scene.addLight({.type = LightType::Directional, .color = glm::vec3(15.0f), .direction = kSunDown});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // From high above with a narrow view, so that the camera sees both floors past the walls.
+    View view = lookAt(glm::vec3(-0.25f, 20.0f, 0), glm::vec3(-0.25f, 0, 0), glm::vec3(0, 0, -1));
+    view.fovY = 0.25f;
+    view.probeCenter = glm::vec3(0.0f, 1.0f, 0.0f);
+    std::vector<Rgba8> pixels;
+    const auto floorLight = [&](float x) {
+        const glm::ivec2 from = pixelOf(view, {x - 0.15f, 0, -1.2f}), to = pixelOf(view, {x + 0.15f, 0, 1.2f});
+        float v = 0.0f;
+        int count = 0;
+        for (int y = std::min(from.y, to.y); y <= std::max(from.y, to.y); ++y)
+            for (int px = std::min(from.x, to.x); px <= std::max(from.x, to.x); ++px, ++count)
+                v += sceneValue(at(pixels, {px, y})).g;
+        return v / float(std::max(count, 1));
+    };
+    const auto use = [&](bool relocation, bool classification) {
+        settings.probeRelocation = relocation;
+        settings.probeClassification = classification;
+        renderer->setSettings(settings);
+        // Settled, then the mean of 8 frames (each frame's rays turn: the light varies by a few percent).
+        settle(device, *renderer, scene, view, *target, 250);
+        glm::vec2 v(0.0f);
+        for (int frame = 0; frame < 8; ++frame) {
+            pixels = settle(device, *renderer, scene, view, *target, 1);
+            v += glm::vec2(floorLight(-2.0f), floorLight(1.5f)) / 8.0f;
+        }
+        return v;
+    };
+    const glm::vec2 plain = use(false, false);
+    const glm::vec2 moved = use(true, false);
+    const glm::vec2 both = use(true, true);
+    settings.indirectLight = IndirectLight::Sky;
+    const glm::vec2 direct = use(false, false);
+    std::printf("  floor light of A and B: %.4f %.4f in place, %.4f %.4f moved, %.4f %.4f moved and classified "
+                "(%.4f %.4f without the grid)\n",
+                double(plain.x), double(plain.y), double(moved.x), double(moved.y), double(both.x), double(both.y),
+                double(direct.x), double(direct.y));
+    REQUIRE(plain.y > 0.05f && direct.y < 0.2f * plain.y, "B's floor has bounce light: %.4f (%.4f without the grid)",
+            double(plain.y), double(direct.y));
+    CHECK(plain.x < 0.25f * plain.y, "A's probes in the walls: its floor dark, %.4f (B %.4f)", double(plain.x),
+          double(plain.y));
+    CHECK(moved.x > 0.6f * plain.y && moved.x < 1.6f * plain.y, "moved out: A's floor lit, %.4f (B %.4f)",
+          double(moved.x), double(plain.y));
+    CHECK(std::abs(both.x / moved.x - 1.0f) < 0.1f, "moved and classified: %.4f vs %.4f", double(both.x),
+          double(moved.x));
+}
+
 // The temporal denoiser: a soft sun shadow traced with one ray per pixel, settled over frames, is closer to the same
 // shadow traced with eight rays than the spatial filter's, and steadier from frame to frame.
 QUENCH_TEST(renderer_temporal_ray_denoiser) {

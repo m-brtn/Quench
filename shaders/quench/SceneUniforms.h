@@ -22,6 +22,7 @@
 #define QUENCH_MAX_CASCADES 4
 #define QUENCH_MAX_LIGHTS 16
 #define QUENCH_MAX_AREA_LIGHTS 8 // of QUENCH_MAX_LIGHTS
+#define QUENCH_MAX_PROBE_CASCADES 4
 
 // LocalLight::color.w of the area lights.
 #define QUENCH_LIGHT_RECT 3
@@ -69,11 +70,14 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // (bit n: cascade n; 0: none, the maps are not read), y: 1 / transmittance map size, zw: unused.
     float4 shadowTransmittance;
     float4 transmittanceBias; // per cascade: how far (shadow depth) a receiver lies behind a caster before it is tinted
-    // The probe grid (quench/Probes.hlsli): xyz: the cell of its first probe (a probe sits at cell * spacing), w:
-    // spacing (m).
-    float4 probeGrid;
-    float4 probeCounts; // xyz: probes per axis, w: irradiance texels per probe side (with a one-texel border)
-    float4 probeAtlas;  // x: distance texels per probe side (with the border), y: the sampling bias (m), zw: unused
+    // The probe grid (quench/Probes.hlsli), per cascade (probeAtlas.z of them): xyz: the cell of its first probe (a
+    // probe sits at (cell + 0.5) * spacing), w: spacing (m; each cascade twice the one before).
+    float4 probeGrid[QUENCH_MAX_PROBE_CASCADES];
+    float4 probeCounts; // xyz: probes per axis in each cascade, w: irradiance texels per probe side (with the border)
+    // x: distance texels per probe side (with the border), y: the sampling bias of cascade 0 (m; it doubles with the
+    // spacing), z: cascades (1..QUENCH_MAX_PROBE_CASCADES), w: bit 0: probes moved out of geometry, bit 1: probes
+    // without surfaces near them left out (with either, the irradiance atlas has a row of data per probe row).
+    float4 probeAtlas;
     // x: the roughness above which surfaces reflect the sky instead of the traced (or screen-space) reflections,
     // yzw: unused
     float4 rayLighting;

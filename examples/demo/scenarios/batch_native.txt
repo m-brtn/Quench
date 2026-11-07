@@ -1,5 +1,6 @@
 # Every check of the demo in one run on the native Metal backend (ctest: demo_batch_metal_native): batch.txt with ray
-# tracing itself (raytracing.txt, tunnel.txt, tunnel_path.txt and raytracing_mirror.txt) instead of its fallbacks,
+# tracing itself (raytracing.txt, tunnel.txt, tunnel_path.txt, raytracing_mirror.txt and raytracing_probes.txt)
+# instead of its fallbacks,
 # section switching (cycle.txt) and the tunnel in motion (tunnel_motion.txt). Run with
 # --gpu-backend metal --hdr-headroom 4.
 include materials.txt
@@ -35,4 +36,5 @@ include animation_retarget.txt
 include animation_blendshapes.txt
 include heat.txt
 include raytracing_mirror.txt
+include raytracing_probes.txt
 quit

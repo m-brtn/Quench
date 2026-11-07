@@ -4,6 +4,7 @@
 // Uniform and storage structs of the renderer's ray-traced passes (raytrace.hlsl, raylight.hlsl, raydenoise.hlsl,
 // pathtrace.hlsl), read by src/render/RayTracing.cpp and the classes around it.
 
+#include "quench/SceneUniforms.h"
 #include "quench/Shared.h"
 
 #define QUENCH_RT_ALPHA_TEXTURES 8
@@ -67,13 +68,13 @@ struct QUENCH_ALIGN16 RayHitUniforms {
     // x: reflection roughness cutoff, y: origin offset along the normal per meter of view distance, z: ray length
     // (m), w: 1 when hits read the probe grid for their indirect light (else the sky's ambient)
     float4 params;
-    // Probe rays: x: rays per probe, y: the longest distance the distance maps keep (m), z: hysteresis (0..1), w: 1
-    // to restart the grid (no history)
+    // Probe rays: x: rays per probe, y: the longest distance the distance maps keep in cascade 0 (m; it doubles with
+    // the spacing), z: hysteresis (0..1), w: 1 to restart the grid (no history)
     float4 probes;
-    // Probe update: xyz: the cell of the grid's first probe in the previous frame, w: unused
-    float4 previousGrid;
+    // Probe update, per cascade: xyz: the cell of its first probe in the previous frame, w: unused
+    float4 previousGrid[QUENCH_MAX_PROBE_CASCADES];
     // x: the probes are traced in this many turns (1, 2, 4 or 8), y: this frame's turn, z: 1 where a probe can have
-    // no value (this or the previous frame in turns), w: unused
+    // no value (this or the previous frame in turns, or classification), w: unused
     float4 probeTurns;
     // The path tracer: x: bounces, y: samples so far, z: 1 on the first sample, w: unused
     float4 path;

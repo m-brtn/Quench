@@ -459,6 +459,12 @@ bool DemoGame::setRenderSetting(std::string_view name, std::string_view value) {
         s.probeSpacing = std::clamp(*number, 0.25f, 16.0f);
     } else if (name == "probe_updates" && (value == "1" || value == "2" || value == "4" || value == "8")) {
         s.probeUpdatePeriod = value[0] - '0';
+    } else if (name == "probe_cascades" && number) {
+        s.probeCascades = std::clamp(int(*number), 1, render::kMaxProbeCascades);
+    } else if (name == "probe_relocation" && flag) {
+        s.probeRelocation = *flag;
+    } else if (name == "probe_classification" && flag) {
+        s.probeClassification = *flag;
     } else if (name == "denoiser") {
         if (value == "spatial")
             s.rayDenoiser = render::RayDenoiser::Spatial;
@@ -916,6 +922,13 @@ std::string DemoGame::perfDetails(App& app) {
                                                             : "sky",
         e.rayDenoiser == render::RayDenoiser::Temporal ? "temporal" : "spatial", e.pathTracer ? 1 : 0,
         double(s.rayMemoryBytes) / (1024.0 * 1024.0));
+    if (e.indirectLight == render::IndirectLight::Probes) {
+        const render::RenderSettings& rs = m_renderer->settings();
+        details += std::format(" probe_spacing={:.2f} probe_updates={} probe_cascades={} probe_relocation={} "
+                               "probe_classification={}",
+                               rs.probeSpacing, rs.probeUpdatePeriod, rs.probeCascades, rs.probeRelocation ? 1 : 0,
+                               rs.probeClassification ? 1 : 0);
+    }
     const std::string section = currentReady() ? current().perfDetails() : std::string();
     if (!section.empty()) details += ' ' + section;
     return details;
