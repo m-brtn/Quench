@@ -48,6 +48,8 @@ look and listen.
   MP3 and Ogg Vorbis.
 - **Animation:** blend trees and blend spaces, state machines, layers, IK and foot placement, look-at, root motion,
   retargeting, blend shapes, GPU skinning.
+- **Navigation:** Recast & Detour navmeshes built in the background or cooked ahead, costly areas, jumps and ladders,
+  moving obstacles, crowds that walk around each other.
 - **Assets:** a build-time cooker for glTF models and images (BC7 on the Mac, ASTC on the iPhone, or Basis Universal
   for every device, transcoded at load time), loading in the background, streaming, hot reload.
 - **Input and UI:** keyboard, mouse, gamepad and touch through named actions; Dear ImGui for tools.

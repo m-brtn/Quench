@@ -241,6 +241,19 @@ GPU skinning is a compute pass through SDL GPU, which has compute on all its bac
 | Web | `animation.*` under Node.js (`wasm-node`, single-threaded); no rendering |
 | Windows, Linux, Android | nothing |
 
+## Navigation
+
+`quench_navigation` is headless and portable C++ on Recast & Detour, with no platform code; its tile builds run on
+the job system, and inside `NavMesh::update()` where there are no worker threads ([Navigation](navigation.md)).
+
+| Where | Run so far |
+|---|---|
+| Mac | `navigation.*` and the navmesh cook cases in `headless`, `debug`, `release`, `asan` and `tsan`; the demo's Navigation section and its capture on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK (offscreen) |
+| iOS Simulator | `ios-sim-tests`: `navigation.*` |
+| iPhone | nothing. Needs the user: the section in motion, the touch controls of its compact layout |
+| Web | `navigation.*` under Node.js (`wasm-node`, single-threaded: the builds run inside `update()`); no rendering |
+| Windows, Linux, Android | nothing |
+
 ## Windows and Linux
 
 - Shader formats: SPIR-V (Vulkan) on both, DXIL (D3D12) on Windows. Today DXIL is compiled only on Windows hosts,

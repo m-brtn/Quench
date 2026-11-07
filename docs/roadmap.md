@@ -649,17 +649,19 @@ The queue the user set on 2026-11-07, in this order:
 1. The native Metal backend as the default on Apple platforms (done 2026-11-07).
 2. A game-level reaction to the thermal state (built 2026-11-07, item 2 below; its phone run is open).
 3. The stages' remaining work (item 3 below).
-4. Navigation and Tracy profiling ([Other modules](#other-modules-when-a-game-needs-them)).
+4. Navigation (built 2026-11-07, [Navigation](navigation.md)) and Tracy profiling
+   ([Other modules](#other-modules-when-a-game-needs-them)).
 5. Stage 13, weather (above).
 
 What else stays open, in the order it is useful (not scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (44 items: the
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (45 items: the
    cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the input
    devices, loading and streaming, the Basis Universal tiles, the audio by ear, animation in motion, ray tracing noise,
    MetalFX ghosting and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the
    path tracer, the probe cascades, the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, its lamp
-   shadow maps on SDL GPU, the tunnel for 10 minutes with Adapt to heat, the frame rate and the layout on the phone;
+   shadow maps on SDL GPU, the tunnel for 10 minutes with Adapt to heat, the navigation crowd in motion, the frame
+   rate and the layout on the phone;
    [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.10.0 code (on the
    iPhone 17 last with the stage 11 code), on the iPhone 18 Pro Max the stage 11 and 12 runs (done on the iPhone 17),
    Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes, background).
@@ -688,7 +690,10 @@ What else stays open, in the order it is useful (not scheduled; the user decides
 
 ## Other modules (when a game needs them)
 
-Navigation (Recast & Detour: navmesh building, paths, crowds), Tracy profiling, Flecs as an optional ECS module.
+Navigation is built (2026-11-07, Recast & Detour: [Navigation](navigation.md)). Its remaining work: crossings of
+off-mesh links that a game drives (Detour moves agents along a straight line), navmesh tiles streamed by distance,
+compressed layers, the crowd's update on jobs, a cooked level in the demo, and a look in motion and a run on the
+iPhone. Tracy profiling, Flecs as an optional ECS module.
 
 ## Later platforms
 

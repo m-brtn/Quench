@@ -14,9 +14,10 @@ reference path tracer, with shadow maps, screen-space occlusion and reflections,
 as the fallbacks; ray tracing and the area lights run on the iPhone 17 only), audio (the mixer, 3D sound with an
 optional HRTF, reverb buses, Ogg Vorbis, device output, offline captures; not yet run on the iPhone or listened to),
 animation (skeletons and clips, state machines, 1D and 2D blending, events, root motion, IK and foot placement, LOD,
-retargeting, blend shape weights from clips; not yet run on the iPhone or looked at in motion by the user), the
-sample, the engine demo (finished in stage 10, with a tour, a check mode and a benchmark of every section) and the
-game template. Where a document describes something planned, it says so. [Migration](migration.md) describes the
+retargeting, blend shape weights from clips; not yet run on the iPhone or looked at in motion by the user),
+navigation (navmeshes built on jobs or cooked, obstacles, paths and crowds; not yet run on the iPhone or looked at in
+motion), the sample, the engine demo (finished in stage 10, with a tour, a check mode and a benchmark of every
+section) and the game template. Where a document describes something planned, it says so. [Migration](migration.md) describes the
 engine code in the two games, what has moved and what is not moved yet.
 
 It has run on a Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator and on two iPhones (device tests and
@@ -26,7 +27,7 @@ platform: [Platforms](platforms.md).
 
 Stack: SDL3, SDL GPU (Metal) and Metal directly, HLSL shaders compiled at build time (glslang; DXC for ray queries),
 Jolt Physics, Dear ImGui, GLM, enkiTS, meshoptimizer, fastgltf and astc-encoder (build time), miniaudio,
-ozz-animation; pins and licences: [Dependencies](dependencies.md).
+ozz-animation, Recast & Detour; pins and licences: [Dependencies](dependencies.md).
 
 Building and testing: the commands of every preset (debug, release, the sanitizers, headless, iOS, WebAssembly under
 Node.js) and the gates are in [AGENTS.md](../AGENTS.md), "Build and test"; a new game starts with
@@ -40,6 +41,7 @@ in `images/`.
 | [Jobs, assets and the cook](assets.md) | The job system, asset IDs and the manager, budgets and placeholders, textures and models in a scene, streaming by distance, hot reload, the cooked formats (skins, skeletons and clip sets included), `quench_cook` and `quench_cook_assets()`, limitations |
 | [Audio](audio.md) | The mixer, buses, sounds and streams, generators, 3D sound, voice limit, the audio thread, device output and the iOS audio session, offline mixing and captures, `audio_measure`, the demo section and tests, platforms, limitations |
 | [Animation](animation.md) | Skeletons and clip sets, graphs (state machines), events, root motion, IK, foot placement and attachments, cooking glTF skins and animations, the file formats, GPU skinning, budgets and failures, the demo section and tests, platforms, limitations |
+| [Navigation](navigation.md) | Navmeshes built at run time on jobs or cooked (`.qnav`), area types, off-mesh links, obstacles and rebuilds, queries, crowds and their link events, debug geometry, cooking, threads, cost, the demo section and tests, platforms, limitations |
 | [Render module](render.md) | The retained scene, the standard frame, sky and sun, tone mapping and HDR output, fallbacks, game passes, surface shaders, the shader library, skinned meshes, limitations |
 | [Engine demo](demo.md) | The demo's code, sections, coverage, layouts and controls, its modes (tour, check mode, benchmark of every section), flags and files, About and settings, the check mode on the iPhone, its checks and golden images, its benchmark, packaged builds (`tools/package_demo.sh`) |
 | [Performance](performance.md) | The benchmark, how to run and compare it, GPU time per pass, budgets per device, the thermal state |

@@ -29,7 +29,7 @@ src/<module>/              sources and internal headers, per module:
   physics/    PhysicsWorld (Jolt), character controller, ray queries, streamed terrain tiles
   assets/     asset IDs, asset manager and cache, cooked format readers, streaming
   animation/  ozz runtime, state machines, blending, events, IK, attachments
-  nav/        Recast navmesh building, Detour queries and crowds
+  navigation/ Recast navmesh building (tiles on jobs, obstacles), Detour queries and crowds, debug geometry
   audio/      mixer, sounds, streams, 3D sound, WAV writer, analysis (headless); the playback device and the
               iOS audio session (miniaudio)
   gpu/        the GPU layer (resources, pipelines, command recording, captures, timing) and its backends:
@@ -61,7 +61,7 @@ docs/releases/        release notes per version
 | `quench_physics` | Jolt wrapper, character controller, terrain tiles | core, Jolt, GLM | yes |
 | `quench_assets` | IDs, manager, cache, cooked formats (KTX2, `.qmodel`), BC7 decoding, streaming grid | core, GLM, xxHash, meshoptimizer, bc7decomp | yes |
 | `quench_animation` | skeletons and clip sets (the `"skeleton"`, `"animation"`, `"animgraph"` asset types), sampling, blending, state machines, events, root motion, IK, foot placement | core, assets, GLM, ozz-animation (`quench_ozz`; `quench_ozz_offline` for the build functions) | yes |
-| `quench_nav` | navmesh and crowds | core, Recast & Detour | yes |
+| `quench_navigation` | navmeshes built on jobs or cooked (the `"navmesh"` asset type, `.qnav`), obstacles, queries, crowds, debug geometry | core, assets, GLM, Recast & Detour (`quench_recast`) | yes |
 | `quench_audio` | mixer, buses, sounds (the `"sound"` asset type), streams, generators, 3D sound, WAV writer, signal analysis | core, assets, GLM, miniaudio (decoders) | yes |
 | `quench_audio_device` | playback device, iOS audio session | audio, miniaudio (device API), Core Audio, AVFoundation on iOS | no |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
@@ -69,7 +69,7 @@ docs/releases/        release notes per version
 | `quench_render` | retained scene, standard frame, render modules, GPU skinning, `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, GLM | no |
 | `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log, the app's job system and asset manager | core, assets, audio, audio_device, gpu, GLM, ImGui, SDL3 | no |
 | `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
-| `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files (also skins, skeletons and clips), sounds checked or converted to WAV; `quench_cook_assets()` | assets, audio, animation, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
+| `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files (also skins, skeletons, clips and navmeshes), sounds checked or converted to WAV; `quench_cook_assets()` | assets, audio, animation, navigation, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
 
 The `QUENCH_HEADLESS` option (the `headless` preset, forced on for Emscripten) builds only the headless targets and
 does not fetch SDL.
@@ -575,6 +575,23 @@ skeletons at cook time (not in ozz: a bone map by name, rest pose and bone direc
 hips translations; [Animation](animation.md#retargeting)), and blend shapes, applied in the skinning compute pass
 before the joints (weights per instance; [Render module](render.md#blend-shapes)), their weights from the clips'
 float channels (cooked from glTF `weights` animations, blended like the pose; [Animation](animation.md#skeletons-and-clips)).
+
+## Navigation
+
+As built on 2026-11-07 ([Navigation](navigation.md)). Recast voxelizes level triangles, DetourTileCache's builder
+functions turn the voxels into layers (one per floor above another) and the layers, with obstacles marked in, into
+navmesh tiles; Detour answers queries and DetourCrowd moves agents. Recast and Detour stay out of the public headers
+(handles, GLM vectors and plain structs). The engine adds:
+
+- tiles built in parallel on the job system and added across frames by `NavMesh::update()`, which never waits (not
+  `dtTileCache`, which rebuilds on the calling thread one tile at a time); obstacles and geometry changes queue
+  rebuilds of the tiles they touch, and each tile keeps a fixed slot, so references do not depend on the order
+  tiles finish in;
+- cooked navmeshes: `quench_cook navmesh` writes the layers of a glTF, GLB or `.qmodel` level with its area types,
+  surfaces, boxes and links (`.qnav`), read as an asset type on the asset manager's jobs;
+- crowd events for off-mesh links (start, finish, the link's id) and arrivals, and area costs kept by crowd agents
+  (Detour's straight-line shortcut ignores them; the engine leaves it off where costs differ);
+- debug geometry as plain vertex lists for any renderer.
 
 ## Coordinate system and units
 

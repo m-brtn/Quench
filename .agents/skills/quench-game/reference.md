@@ -12,6 +12,7 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 - Audio
 - Input and ImGui
 - Animation
+- Navigation
 - Jobs
 - Heat
 - Scenario checks, captures and golden images
@@ -328,6 +329,60 @@ m_animation->update(frameDt);                           // Game::update, after s
 
 Characters, graphs, skins, root motion, IK and blend shapes: `docs/animation.md`, "Use";
 `examples/demo/sections/AnimationSection.cpp`.
+
+## Navigation
+
+Link `quench_navigation`. The mesh is built on the app's jobs, tile by tile across frames; crowds and queries keep a
+reference to it:
+
+```cpp
+#include <quench/navigation/Crowd.h>
+#include <quench/navigation/NavMesh.h>
+#include <quench/navigation/NavQuery.h>
+
+// members, in this order (destroyed in reverse): the mesh, then what uses it
+std::optional<navigation::NavMesh> m_navMesh;
+std::optional<navigation::Crowd> m_crowd;
+
+// init: the level's walkable triangles (counter-clockwise from above), area types with costs, links
+navigation::Geometry level = levelTriangles();               // vertices, indices, an area id per triangle
+level.boxes.push_back({.min = {-3, -0.5f, 2}, .max = {4, 0.5f, 7}, .area = 1}); // mud
+level.links.push_back({.start = {-6.5f, 2.4f, -3.8f}, .end = {-6.5f, 0, -1.6f}, .id = 1}); // a jump down
+navigation::BuildSettings settings;
+settings.agent = {.radius = 0.35f, .height = 1.8f, .maxClimb = 0.4f, .maxSlope = 45};
+settings.areas = {{"ground", 1.0f}, {"mud", 5.0f}};
+Result<navigation::NavMesh> mesh = navigation::NavMesh::build(std::move(level), settings, app.jobs());
+if (!mesh) return false; // mesh.error() says why
+m_navMesh.emplace(std::move(*mesh));
+m_crowd.emplace(*m_navMesh);
+m_guard = *m_crowd->addAgent({0, 0, 5}, {.radius = 0.35f, .maxSpeed = 2.0f});
+m_crowd->setTarget(m_guard, {8, 0, 7});
+
+// Game::update, every frame: adds finished tiles and starts queued builds; never waits
+m_navMesh->update();
+// Game::fixedStep
+m_crowd->update(float(dt));
+for (const navigation::CrowdEvent& e : m_crowd->events())
+    if (e.type == navigation::CrowdEvent::Type::LinkStarted) startJump(e.agent, e.start, e.end); // e.link: Link::id
+```
+
+An agent placed before its tiles are in is `AgentMove::Lost` and stands until they are. Moving crates and doors are
+obstacles (`addObstacle`, `setObstacle`, `removeObstacle`: only their tiles are rebuilt); paths, raycasts and random
+points come from a `navigation::NavQuery` (one per thread); `navigation::DebugGeometry` draws the mesh, paths and
+agents with any renderer. A level cooked ahead (`NAVMESHES` in `quench_cook_assets()`, a `.json` of model files and
+settings, `docs/assets.md`) loads as an asset:
+
+```cpp
+#include <quench/navigation/NavMeshAsset.h>
+
+navigation::registerNavMeshAsset(app.assets());                               // init, once
+m_levelNav = app.assets().load<navigation::NavMeshAsset>("levels/yard.qnav"); // loads on jobs
+if (!m_navMesh && m_levelNav->data())                                         // a later frame
+    if (Result<navigation::NavMesh> mesh = navigation::NavMesh::create(m_levelNav->data(), app.jobs()))
+        m_navMesh.emplace(std::move(*mesh));
+```
+
+`docs/navigation.md`; `examples/demo/sections/NavigationSection.cpp` (two groups, links, obstacles, debug lines).
 
 ## Jobs
 

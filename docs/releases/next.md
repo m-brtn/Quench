@@ -8,7 +8,8 @@ report, and its characters' wrists closed; the Xcode project's generation in the
 lights from shadow maps where the device cannot trace (stage 12's remaining work); a game's surface shaders in ray
 hits and the probe grid's cascades, relocation and classification (stage 11's remaining work); Basis Universal
 textures, one cooked set for every device (stage 6's remaining work); the per-pixel ray-traced
-indirect light settles in a still scene instead of staying grainy (a user report). This file becomes
+indirect light settles in a still scene instead of staying grainy (a user report); navigation on Recast & Detour,
+a new module with the demo's Navigation section (the user's queue, item 4). This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
 
@@ -163,6 +164,36 @@ indirect light settles in a still scene instead of staying grainy (a user report
 - **The template** has the same setting as an example (`"adapt_to_heat": false` in `assets/settings.json`, a
   checkbox, the scenario command `adapt_to_heat on|off`), and its smoke scenario checks it with `thermal_state`.
 
+### Navigation
+
+- **`quench_navigation`** (headless; Recast & Detour 1.6.0, zlib; [Navigation](../navigation.md)): navmeshes built
+  from a level's triangles tile by tile on the job system across frames, or cooked into `.qnav` assets; up to 16
+  area types with costs (`BuildSettings::areas`, `AreaBox`), off-mesh links (`Link`: jumps, ladders, teleporters,
+  with the game's id), cylinder and box obstacles that rebuild only the tiles they touch, `NavMesh::rebuild` for
+  changed geometry; `NavQuery` (paths with partial results, nearest points, raycasts, random points, `Filter`s with
+  area costs and excluded areas); `Crowd` (DetourCrowd: avoidance levels, separation, arrival distance, filters,
+  `setVelocity` for steering by input, `LinkStarted`, `LinkFinished` and `Arrived` events, agents that wait while
+  their tiles are missing); `DebugGeometry` (triangles and lines of the mesh, obstacles, paths and agents for any
+  renderer). Public headers `quench/navigation/NavMesh.h`, `NavQuery.h`, `Crowd.h`, `DebugGeometry.h`,
+  `NavMeshAsset.h`; log category `navigation`; written for the engine, not moved from a game.
+- **Deterministic tiles:** every layer of a tile column has a fixed tile slot and a rebuilt tile takes the slot's
+  next salt, so a build gives the same polygon references whatever order its jobs finish in, and
+  `NavMesh::contentHash()` is the same with 0 or 4 worker threads.
+- **Area costs in crowds:** Detour's visibility shortcut (`DT_CROWD_OPTIMIZE_VIS`) takes a straight way through any
+  area the filter lets through, whatever it costs; the engine enables it only for filters whose areas all cost the
+  same, so agents walk around costly areas as their paths do.
+- **Detour patched:** with 64-bit polygon references a `dtLink` needs 8-byte alignment that Detour's 4-byte tile
+  layout does not give (UndefinedBehaviorSanitizer; upstream issue #669); `cmake/patches/DetourAlign8.cmake` makes
+  its `dtAlign4` round up to 8 bytes in that mode ([Dependencies](../dependencies.md#added-for-navigation)).
+- **Cooked navmeshes:** `quench_cook navmesh IN OUT [--settings FILE] [--depfile FILE]` (a glTF, GLB or `.qmodel`
+  and a `<stem>.nav.json` of agent, cell, area, surface, box and link settings) and `NAVMESHES` in
+  `quench_cook_assets()`; the same input gives the same bytes. At run time `NavMeshAsset` loads `.qnav` files on the
+  asset manager's jobs (magic, version, size and an XXH64 checksum checked), and `NavMesh::create` makes a mesh of
+  them.
+- **Cost** on the M4 Pro (Release): a 40 x 40 m level of two floors, 5 x 5 tiles, 120 polygons, built in 1.3 to
+  3.4 ms on the job system; a path 7 to 15 µs; a crowd update 0.02 to 0.05 ms for 25 agents and 0.13 to 0.20 ms for
+  100 ([Navigation](../navigation.md#cost)).
+
 ### Building games
 
 - **The agent skill `quench-game`** (`.agents/skills/quench-game/`: `SKILL.md` and `reference.md`): how a coding
@@ -173,6 +204,9 @@ indirect light settles in a still scene instead of staying grainy (a user report
   `AGENTS.md` points to it. `AGENTS.md`: a change to what games build on (public API, `quench_add_game()`, the
   template, common flags, scenario commands, asset cooking) updates the skill in the same commit. Linked from the
   README.
+- **The skill's navigation:** `SKILL.md` names the module and `NAVMESHES`, `reference.md` has a section on
+  building a navmesh, a crowd and loading a cooked one; `tools/check_skill.py` checks the names after
+  `navigation::`.
 - **The template's iOS presets cook assets:** `ios-base` passes `QUENCH_HOST_COOK` and the `host-tools` build
   preset builds `quench_cook` too; before, a template game that called `quench_cook_assets()` stopped at its iOS
   configure (`cmake/QuenchCook.cmake` needs the host cooker in a cross build). See "Changes for games".
@@ -214,6 +248,16 @@ indirect light settles in a still scene instead of staying grainy (a user report
   phone defaults on phones; `--gpu-backend sdl` shows their fallbacks. About names the platform's default backend and
   says when a run is not on it; the Graphics panel's relaunch buttons mark the default. The settings (version 1)
   store no backend, so nothing is migrated. The `*_phone` scenarios measured on SDL GPU say `--gpu-backend sdl`.
+
+- **Navigation** (section 13; [Engine demo](../demo.md#sections)): a level of two floors joined by a ramp, stairs
+  and a narrow bridge, a mud field whose cost a slider sets (1 to 10), one-way jumps down the ledges, two crates and
+  a barrel that move as obstacles, and two groups of mannequins (1 to 12 each) that patrol their rounds or go where a
+  click or tap on a floor sends them, walking or running by their speed, lifted on an arc with the jump clip over a
+  link; the navmesh, paths and agents as overlays (a demo shader, `shaders/debug.hlsl`). The section builds its
+  level at run time and shows the build's and the crowd step's times. A batch part `navigation` with golden
+  captures (the same image on SDL GPU's Metal driver and the native backend; Vulkan through MoltenVK), a benchmark
+  region, a check mode item `navigation.crowd` (45 items now) and `Section::prepare` (uploads before the frame) for
+  sections with their own passes. The menu has 13 entries (`demo_ui.png` changed in both golden sets).
 
 ### Gates
 
@@ -332,6 +376,18 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   demo's captures trace the probe grid, not per-pixel indirect light). On the iPhone 17's screen (an interim build, the ray tracing
   section with Indirect light "Ray traced"), the user: "the grain is fine now" (2026-11-07 17:47).
 
+- **Navigation** (M4 Pro): `navigation.*` (16 cases), `cook.cook_navmesh`, `cook.cook_navmesh_errors` and the
+  navmesh in `cook_cli` in `headless`, `debug`, `release`, `asan` and `tsan`, as WebAssembly under Node.js and in
+  the iOS Simulator. A crowd keeps area costs (0 steps in the mud at cost 5; 86 with Detour's visibility shortcut
+  left on); a tiled build gives the same bytes and tile hashes with 0 and 4 workers. Timings in Release: a 120
+  polygon level built in 1.3 to 3.4 ms, a path 7 to 15 µs, crowd updates 0.02 to 0.05 ms (25 agents) and 0.13 to
+  0.20 ms (100). The demo's `navigation` part, 26 checks on SDL GPU's Metal driver, the native backend and Vulkan
+  through MoltenVK (offscreen); `demo_navigation.png` looked at, the native capture equal to Metal's; `demo_ui.png`
+  replaced (the 13th menu entry: mean 3.00 and 3.02, 5.0 % of the pixels over 16, all inside the menu).
+- **Gates with navigation:** `tools/check.sh full` (2026-11-07, 508.0 s): format; `debug` 551 tests; `release` 673;
+  `asan` 551; `tsan` 551; `wasm-node` 162 (under Node.js); `ios-sim-tests` 413 in the iOS Simulator; `ios-xcode`
+  generated; a new game built and started. All passed.
+
 ## What was not verified
 
 - **The per-pixel indirect light's denoiser on a phone:** measured offscreen on the Mac only, no numbers from a
@@ -370,6 +426,12 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 - Basis Universal has not run on an iPhone (the transcode time there, ETC2 on the native backend) and nobody has
   looked at the ETC1S and UASTC tiles on a screen; the numbers are of the demo's procedural textures on the M4 Pro.
   No ETC1S quality option and no rate-distortion optimization for smaller UASTC files yet.
+
+- **Navigation in motion and on a phone:** nobody has looked at the crowds moving (avoidance, turns, the walk and
+  run blend, the link arcs, the moving obstacles); the check mode's `navigation.crowd` asks for it. Not run on an
+  iPhone, not benchmarked on the screen. Link crossings are Detour's straight line at half speed; tiles have no
+  detail meshes; the demo builds its level at run time (the cooked path is tested, not shown). Detour carries an
+  alignment patch until upstream fixes it.
 
 ## Changes for games
 
@@ -437,6 +499,11 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `Etc2Rgba8` and their sRGB variants, the four `gpu::TextureFormat::Etc2*`, `gpu::Caps::etc2Textures`; a game
   that switches over these enums without a default gets a `-Wswitch` warning. `TextureAsset::decodedOnCpu()` is
   also true for a Basis Universal file transcoded to RGBA8. Neither game uses these.
+- **Navigation (optional):** the new library `quench_navigation` (`target_link_libraries(my_game PRIVATE
+  quench_navigation)`), `NAVMESHES` in `quench_cook_assets()`, the `navmesh` command of `quench_cook` and `.qnav`
+  files. The first configure of a game downloads recastnavigation's archive (1.3 MB, pinned with its SHA256) with the
+  other runtime pins, because the engine defines the library whether a game links it or not. A game that does not
+  use it changes nothing.
 - **The skill:** a game made before this release has no copy; copy `.agents/skills/quench-game/` from the engine
   at the pinned commit if its agents should use it (and again when the pin moves).
 - The rest is in the demo and the engine's own test and gate scripts; `quench_add_batch()` in

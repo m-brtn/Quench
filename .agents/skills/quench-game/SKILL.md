@@ -4,9 +4,9 @@ description: >-
   Builds, extends and verifies a game on the Quench C++20 engine: tools/new_game.py and templates/game, the pinned
   engine (FetchContent and the local override), the quench::app::Game interface and fixed-step loop,
   quench_add_game, input actions, ImGui, the retained render::Scene, cooked assets (quench_cook_assets,
-  SceneAssets), physics, audio, animation, jobs, quench::fs, iOS builds, and scripted offscreen checks with captures
-  and golden images. Use when creating a game on Quench, working in a repository whose CMakeLists.txt fetches Quench
-  or calls quench_add_game, or when the user asks how to make a game with the engine.
+  SceneAssets), physics, audio, animation, navigation, jobs, quench::fs, iOS builds, and scripted offscreen checks
+  with captures and golden images. Use when creating a game on Quench, working in a repository whose CMakeLists.txt
+  fetches Quench or calls quench_add_game, or when the user asks how to make a game with the engine.
 ---
 
 # Building a game on Quench
@@ -23,16 +23,16 @@ is in [reference.md](reference.md).
 - Paths below (`docs/`, `include/quench/`, `cmake/`, `tools/`, `templates/`, `examples/`) are in that engine source.
   The headers are the truth for names and signatures: read the header before using a call.
 - Depth: `docs/app.md` (game interface, flags, scenarios, captures, `quench_add_game()`, iOS runs), `docs/render.md`,
-  `docs/assets.md`, `docs/audio.md`, `docs/animation.md`, `docs/performance.md`, `docs/platforms.md`. Working code:
-  `templates/game/src/Game.cpp` and `examples/hello/Hello.cpp` (drawing with `quench::gpu`),
-  `examples/demo/sections/` (renderer, physics, audio, animation, assets).
+  `docs/assets.md`, `docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/performance.md`,
+  `docs/platforms.md`. Working code: `templates/game/src/Game.cpp` and `examples/hello/Hello.cpp` (drawing with
+  `quench::gpu`), `examples/demo/sections/` (renderer, physics, audio, animation, assets, navigation).
 
 ## Workflow
 
 ```
 - [ ] 1. Create the game, build it, run its smoke check
 - [ ] 2. Shape the Game: simulation in fixedStep, drawing in render
-- [ ] 3. Add the modules it needs (render, assets, physics, audio, animation)
+- [ ] 3. Add the modules it needs (render, assets, physics, audio, animation, navigation)
 - [ ] 4. A scenario with checks and a capture for every feature, run by ctest
 - [ ] 5. Gates: debug and release builds, ctest, captures looked at, devlog
 ```
@@ -114,21 +114,25 @@ Link what the game uses beside `quench_add_game()`:
   `SurfaceDesc::rayHitShaders`, [reference.md](reference.md), "Own surface shading") and game passes
   (`Renderer::addPass`).
 - **Assets.** Sources are cooked at build time by `quench_cook_assets()` (`cmake/QuenchCook.cmake`: `TEXTURES`,
-  `DATA_TEXTURES`, `MODELS`, `SOUNDS`, `SKELETONS`, `ANIMATIONS`, `FILES`) and merged into the game's assets by
-  `quench_add_game(... COOKED_ASSETS <name>)`; `ASSETS <dir>` copies files as they are. The runtime path is the path
-  under `SOURCE_DIR` with the cooked extension: `models/crate.gltf` becomes `models/crate.qmodel`, textures `.ktx2`,
-  sounds keep theirs. Load through `render::SceneAssets` (textures, models), `app.audio()` (sounds) or
-  `animation::AnimationSystem`: loads run on jobs and show placeholders until ready (`AssetRef::ready()`); never
-  wait for them. `--hot-reload` loads changed cooked files again. Textures are BC7 on the Mac and ASTC 4x4 in iOS
-  builds by default (`TEXTURE_FORMAT auto`); `TEXTURE_FORMAT basis` cooks one Basis Universal set for every device,
-  transcoded at load time (smaller with `BASIS_CODEC etc1s`, lower quality; slower to cook). `docs/assets.md`,
-  "Basis Universal".
+  `DATA_TEXTURES`, `MODELS`, `SOUNDS`, `SKELETONS`, `ANIMATIONS`, `NAVMESHES`, `FILES`) and merged into the game's
+  assets by `quench_add_game(... COOKED_ASSETS <name>)`; `ASSETS <dir>` copies files as they are. The runtime path is
+  the path under `SOURCE_DIR` with the cooked extension: `models/crate.gltf` becomes `models/crate.qmodel`, textures
+  `.ktx2`, navmeshes `.qnav`, sounds keep theirs. Load through `render::SceneAssets` (textures, models),
+  `app.audio()` (sounds), `animation::AnimationSystem` or `navigation::NavMeshAsset`: loads run on jobs and show
+  placeholders until ready (`AssetRef::ready()`); never wait for them. `--hot-reload` loads changed cooked files
+  again. Textures are BC7 on the Mac and ASTC 4x4 in iOS builds by default (`TEXTURE_FORMAT auto`);
+  `TEXTURE_FORMAT basis` cooks one Basis Universal set for every device, transcoded at load time (smaller with
+  `BASIS_CODEC etc1s`, lower quality; slower to cook). `docs/assets.md`, "Basis Universal".
 - **Physics.** `quench::PhysicsWorld` on `&app.jobs()` (Jolt, its jobs on the engine's pool); bodies through
   `bodies()` with `PhysicsLayers::kStatic` or `kMoving`; `step(float(dt))` in `fixedStep`.
 - **Audio.** `app.audio()`: `load`, `play` with `PlayParams` (buses `"music"`, `"effects"`, `"ui"` by default;
   `spatial` with an `Emitter`), `setListener`, `playMusic`. The app calls its `update()`. `docs/audio.md`.
 - **Animation.** The game owns an `animation::AnimationSystem` on `app.assets()` and `app.jobs()` and calls its
   `update(dt)` in `Game::update`; skinned models come through `SceneAssets`. `docs/animation.md`, "Use".
+- **Navigation.** Link `quench_navigation`. `navigation::NavMesh::build` on `app.jobs()` from the level's triangles
+  (or a cooked `.qnav` through `navigation::NavMeshAsset`), `update()` every frame (it never waits; tiles appear as
+  their jobs finish), `navigation::Crowd` stepped in `fixedStep`, `navigation::NavQuery` for paths. The mesh
+  outlives its crowds and queries (declare it first). `docs/navigation.md`, "Use".
 - **Jobs.** `app.jobs()`: `run`, `parallelFor`; poll `Job::done()` across frames for long work, `wait` only for work
   the frame needs now. Jobs must not throw. `docs/assets.md`, "Job system".
 - **Input.** `app.input().addAction(name, {bindings})` with `Binding::key("Space")` (returns an optional:
