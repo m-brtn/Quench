@@ -5,7 +5,7 @@
 <h1 align="center">Quench</h1>
 
 <p align="center">
-  A C++20 game engine designed for making games entirely with AI coding agents.<br>
+  A game engine designed for making games entirely with AI coding agents.<br>
   Version 0.10.0, early · macOS and iOS · MIT
 </p>
 
@@ -123,8 +123,9 @@ WebAssembly under Node.js.
 
 ## Getting started
 
-On a Mac with Xcode and its command line tools, CMake 3.28 or newer, Ninja and Python 3. The first configure
-downloads the pinned dependencies and builds the shader compiler for ray tracing once (a few minutes).
+The engine and its games are C++20; they build on a Mac with Xcode and its command line tools, CMake 3.28 or newer,
+Ninja and Python 3. The first configure downloads the pinned dependencies and builds the shader compiler for ray
+tracing once (a few minutes).
 
 ```sh
 cmake --preset release && cmake --build --preset release
