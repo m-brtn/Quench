@@ -90,6 +90,9 @@ float4 QUENCH_SURFACE_FS(QuenchVaryings v, bool front : SV_IsFrontFace) : SV_Tar
 #ifndef QUENCH_SURFACE_NO_RAIN
     quenchApplyRain(s, i);
 #endif
+#ifndef QUENCH_SURFACE_NO_SNOW
+    quenchApplySnow(s, i);
+#endif
     const float3 lit = quenchShade(s, i);
     const float4 fog = fogAt(v.world, quenchFrame.cameraPos.xyz);
     return float4(lerp(lit, fog.rgb, fog.a), saturate(s.opacity));
@@ -110,6 +113,9 @@ QuenchGbuffer surface_gbuffer_fs(QuenchVaryings v, bool front : SV_IsFrontFace) 
     if (quenchMaterial.surface.z > 0.0 && s.opacity < quenchMaterial.surface.z) discard;
 #ifndef QUENCH_SURFACE_NO_RAIN
     quenchApplyRain(s, i);
+#endif
+#ifndef QUENCH_SURFACE_NO_SNOW
+    quenchApplySnow(s, i);
 #endif
     QuenchGbuffer o;
     o.normal = float4(s.normal, saturate(s.roughness));

@@ -44,7 +44,8 @@
 //
 // With rain (RenderSettings::rain) the entries make the surface wet after its function by its material's wetness,
 // puddles and water (quenchApplyRain below; not in ray hits); a file that defines QUENCH_SURFACE_NO_RAIN before
-// including quench/SurfaceEntries.hlsli keeps its surface as the function makes it.
+// including quench/SurfaceEntries.hlsli keeps its surface as the function makes it. With snow (RenderSettings::snow)
+// they then lay the snow cover on it by its material's snow (quenchApplySnow); QUENCH_SURFACE_NO_SNOW keeps it bare.
 
 #ifndef QUENCH_SURFACE_HIT
 #define QUENCH_SURFACE_HIT 0
@@ -250,7 +251,7 @@ float3 quenchTransmittance(QuenchSurface s) { return quenchTransmittanceOf(s.alb
 // screen-space reflections see the wet surface); a surface file that defines QUENCH_SURFACE_NO_RAIN before including
 // quench/SurfaceEntries.hlsli keeps its surface as it is, and one that calls it itself may change what it gets.
 void quenchApplyRain(inout QuenchSurface s, QuenchSurfaceInput i) {
-    [branch] if (quenchFrame.rain.x <= 0.0 || quenchMaterial.shading.w > 0.5) return;
+    [branch] if (quenchFrame.rain.x <= 0.0 || quenchFrame.rain.w <= 0.0 || quenchMaterial.shading.w > 0.5) return;
     const float3 m = quenchMaterial.weather.xyz;
     [branch] if (m.x <= 0.0 && m.y <= 0.0 && m.z <= 0.0) return;
     const float exposed =
@@ -275,13 +276,37 @@ void quenchApplyRain(inout QuenchSurface s, QuenchSurfaceInput i) {
             s.normal = normalize(lerp(s.normal, i.normal, water));
         }
     }
-    const float rain = w.b * exposed;
-    [branch] if (water > 0.0 && rain > 0.02 && quenchFrame.rain.w > 0.0) {
+    const float rain = w.b * w.a * exposed;
+    [branch] if (water > 0.0 && rain > 0.02) {
         const float near = saturate(1.0 - distance(i.world, quenchFrame.cameraPos.xyz) / 60.0);
-        const float2 slope =
-            quenchRipples(i.world.xz, quenchFrame.cameraPos.w, rain) * (water * near * quenchFrame.rain.w);
+        const float2 slope = quenchRipples(i.world.xz, quenchFrame.cameraPos.w, rain) * (water * near);
         s.normal = normalize(s.normal - float3(slope.x, 0.0, slope.y));
     }
+}
+
+// The snow on a surface (docs/weather.md, "Snow"): the weather's snow cover where the snow reaches it (the rain
+// occlusion map) on its up-facing parts (quenchSnowAmount, by its geometric normal), by its material's
+// MaterialUniforms::weather.w: white, rough and matte, its normal map and emission hidden. Water takes none. The
+// surface entries call it after quenchApplyRain (also for the G-buffer); a surface file that defines
+// QUENCH_SURFACE_NO_SNOW before including quench/SurfaceEntries.hlsli keeps its surface as it is, and one that calls it
+// itself may change what it gets.
+void quenchApplySnow(inout QuenchSurface s, QuenchSurfaceInput i) {
+    [branch] if (quenchFrame.snow.x <= 0.0 || quenchMaterial.shading.w > 0.5) return;
+    const float m = quenchMaterial.weather.w;
+    [branch] if (m <= 0.0) return;
+    const float cover = quenchSnowAt(quenchCloudShadowMap, quenchCloudShadowSampler, i.world.xz) * m;
+    [branch] if (cover <= 0.0) return;
+    const float exposed =
+        quenchRainExposure(quenchCloudShadowMap, quenchCloudShadowSampler, i.world + i.normal * 0.3);
+    const float amount =
+        quenchSnowAmount(i.world, i.normal, cover * exposed, distance(i.world, quenchFrame.cameraPos.xyz));
+    [branch] if (amount <= 0.0) return;
+    s.albedo = lerp(s.albedo, float3(0.82, 0.85, 0.9), amount);
+    s.roughness = lerp(s.roughness, 0.7, amount);
+    s.metallic = lerp(s.metallic, 0.0, amount);
+    s.normal = normalize(lerp(s.normal, i.normal, amount));
+    s.emissive *= 1.0 - amount;
+    s.anisotropy *= 1.0 - amount;
 }
 
 // Diffuse irradiance from the sky hemisphere, blended with the ground bounce by the normal.

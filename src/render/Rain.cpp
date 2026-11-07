@@ -40,9 +40,18 @@ constexpr float kStreakWidth = 0.006f;
 constexpr float kStreakOpacity = 0.8f;
 constexpr float kSkyShare = 0.7f;
 constexpr float kSunForward = 0.06f;
-// The splashes: each lives this long, this big.
+// The splashes: each lives this long, this big (half their width and their height, give or take 30 %).
 constexpr float kSplashLife = 0.25f;
-constexpr float kSplashSize = 0.12f;
+constexpr float kSplashSize = 0.15f;
+// The flakes: this big (give or take 40 %), white diffuse scatterers that send this share of the sky's and the
+// ground's light (kFlakeSkyShare of it the sky's) and kFlakeSun of the sun's irradiance toward the camera. The
+// occlusion map under snow looks along a direction at most kSnowSlant (horizontal / vertical) from the vertical:
+// flakes drift almost sideways in a wind, which would hide the ground for metres behind every wall.
+constexpr float kFlakeSize = 0.02f;
+constexpr float kFlakeAlbedo = 0.85f;
+constexpr float kFlakeSkyShare = 0.6f;
+constexpr float kFlakeSun = 0.18f;
+constexpr float kSnowSlant = 0.3f;
 // The shafts: the extinction of rain at precipitation 1 (a visibility of about 2.5 km, 5 km at 0.5), marched from
 // this distance (nearer is the streaks'); the rainbow's strength against the sun's light the drops scatter evenly.
 constexpr float kShaftExtinction = 0.0012f;
@@ -61,15 +70,37 @@ struct Quality {
     float splashRadius; // m
     int shaftSteps;
     std::uint32_t shaftScale; // render pixels per shaft texel along each axis
+    std::uint32_t flakes;
+    float flakeBox; // half side (m)
 };
 constexpr Quality kQualities[] = {
-    {0, 0.0f, 0, 0.0f, 0, 1},           // Off
-    {8192, 9.0f, 0, 0.0f, 12, 4},       // Low
-    {24576, 12.0f, 1024, 10.0f, 20, 2}, // Medium
-    {49152, 15.0f, 3072, 15.0f, 32, 2}, // High
+    {0, 0.0f, 0, 0.0f, 0, 1, 0, 0.0f},               // Off
+    {8192, 9.0f, 0, 0.0f, 12, 4, 6144, 4.5f},        // Low
+    {24576, 12.0f, 1536, 10.0f, 20, 2, 16384, 6.0f}, // Medium
+    {49152, 15.0f, 4096, 15.0f, 32, 2, 32768, 7.0f}, // High
 };
 
 const Quality& qualityOf(Rain rain) { return kQualities[std::size_t(rain)]; }
+const Quality& qualityOf(Snow snow) { return kQualities[std::size_t(snow)]; }
+
+// The most rain (x) and snow (y) falling in the wetness grid's cells within `reach` of a point and the cells next to
+// them (the drops and flakes read the grid filtered between cell centres); both 1 where that leaves the grid (its
+// edge is read clamped).
+glm::vec2 fallNear(const weather::Weather& weather, glm::vec2 xz, float reach) {
+    constexpr int kGrid = int(weather::Weather::kWetnessGrid);
+    const glm::vec2 cell = (xz - weather.wetnessOrigin()) / weather::Weather::kWetnessCell;
+    const float margin = reach / weather::Weather::kWetnessCell + 1.0f;
+    const glm::ivec2 lo(glm::floor(cell - margin)), hi(glm::floor(cell + margin));
+    if (lo.x < 0 || lo.y < 0 || hi.x >= kGrid || hi.y >= kGrid) return glm::vec2(1.0f);
+    const std::span<const weather::WetnessCell> grid = weather.wetnessGrid();
+    glm::vec2 most(0.0f);
+    for (int z = lo.y; z <= hi.y; ++z)
+        for (int x = lo.x; x <= hi.x; ++x) {
+            const weather::WetnessCell& c = grid[std::size_t(z) * std::size_t(kGrid) + std::size_t(x)];
+            most = glm::max(most, glm::vec2(c.precipitation * (1.0f - c.snowShare), c.precipitation * c.snowShare));
+        }
+    return most;
+}
 
 } // namespace
 
@@ -123,11 +154,12 @@ bool RainRenderer::init(gpu::Device& device, TextureFormat hdrFormat, TextureFor
              "render rain streaks") &&
         make(m_splashPipeline, rain.find("rain_splash_vs"), "rain_splash_fs", {hdrFormat, drops},
              "render rain splashes") &&
+        make(m_flakePipeline, rain.find("rain_flake_vs"), "rain_flake_fs", {hdrFormat, drops}, "render snow flakes") &&
         make(m_shaftsPipeline, fullscreen, "rain_shafts_fs", {kWeatherMapsFormat}, "render rain shafts") &&
         make(m_shaftsUpPipeline, fullscreen, "rain_shafts_up_fs", {hdrFormat, shafts}, "render rain shafts upsample");
     if (ok) {
         Result<gpu::TransferBuffer> grid = device.createTransferBuffer(
-            {.size = QUENCH_WETNESS_GRID * QUENCH_WETNESS_GRID * 8, .name = "render wetness grid"});
+            {.size = 2 * QUENCH_WETNESS_GRID * QUENCH_WETNESS_GRID * 8, .name = "render wetness grid"});
         ok = static_cast<bool>(grid);
         if (grid)
             m_gridTransfer = std::move(*grid);
@@ -151,12 +183,17 @@ void RainRenderer::release() {
     m_readSerial = m_readbackSerial; // results still on their way are left unread
     m_cover = -1.0f;
     m_quality = Rain::Off;
+    m_snow = Snow::Off;
+    m_dropsNear = m_flakesNear = false;
 }
 
 bool RainRenderer::prepare(const Frame& frame, shader::FrameUniforms& fu, RenderStats& stats) {
     fu.rain = glm::vec4(0.0f);
+    fu.snow = glm::vec4(0.0f);
     m_quality = Rain::Off;
-    if (!frame.weather || frame.quality == Rain::Off || !ready()) {
+    m_snow = Snow::Off;
+    m_dropsNear = m_flakesNear = false;
+    if (!frame.weather || (frame.quality == Rain::Off && frame.snow == Snow::Off) || !ready()) {
         if (m_occlusion) release();
         return false;
     }
@@ -178,8 +215,26 @@ bool RainRenderer::prepare(const Frame& frame, shader::FrameUniforms& fu, Render
     const glm::vec3 camera = frame.camera;
     m_camera = camera;
     m_quality = frame.quality;
-    // Along the rain at the camera, on the map's texel grid (it does not swim as the camera moves).
-    m_velocity = weather.rainVelocity({camera.x, kWindHeight, camera.z});
+    m_snow = frame.snow;
+    m_field = weather.uniforms();
+    const float share = weather.snowShare(camera);
+    m_snowShare = m_snow != Snow::Off ? share : 0.0f;
+    // Along the rain at the camera (toward the snow's direction as much as it snows there), on the map's texel grid
+    // (it does not swim as the camera moves).
+    const glm::vec3 wind(camera.x, kWindHeight, camera.z);
+    const glm::vec3 rainVelocity = weather.rainVelocity(wind);
+    const glm::vec3 snowVelocity = weather.snowVelocity(wind);
+    m_velocity = rainVelocity;
+    if (m_snowShare > 0.0f) {
+        glm::vec3 slanted = snowVelocity;
+        const float across = glm::length(glm::vec2(slanted.x, slanted.z));
+        const float most = -slanted.y * kSnowSlant;
+        if (across > most) {
+            slanted.x *= most / across;
+            slanted.z *= most / across;
+        }
+        m_velocity = glm::mix(m_velocity, slanted, m_snowShare);
+    }
     const glm::mat4 view = glm::lookAtRH(glm::vec3(0.0f), glm::normalize(m_velocity), glm::vec3(0.0f, 0.0f, -1.0f));
     const glm::vec3 c(view * glm::vec4(camera, 1.0f));
     const float texel = kMapExtent / float(kMapSize);
@@ -190,20 +245,33 @@ bool RainRenderer::prepare(const Frame& frame, shader::FrameUniforms& fu, Render
         glm::orthoRH_ZO(centre.x - half, centre.x + half, centre.y - half, centre.y + half, near, near + kMapDepth) *
         view;
     fu.rainViewProj = m_viewProj;
-    fu.rain = glm::vec4(1.0f, kMapDepth, weather.precipitation(camera), 1.0f);
+    const float precipitation = weather.precipitation(camera);
+    fu.rain = glm::vec4(1.0f, kMapDepth, precipitation, m_quality != Rain::Off ? 1.0f : 0.0f);
     fu.rainGrid = glm::vec4(weather.wetnessOrigin(),
                             1.0f / (float(weather::Weather::kWetnessGrid) * weather::Weather::kWetnessCell), 0.0f);
+    fu.snow = glm::vec4(m_snow != Snow::Off ? 1.0f : 0.0f, share, 0.0f, 0.0f);
 
     const Quality& q = qualityOf(frame.quality);
+    const Quality& s = qualityOf(frame.snow);
+    const glm::vec2 falling =
+        fallNear(weather, glm::vec2(camera.x, camera.z), std::max({q.box, q.splashRadius, s.flakeBox}));
+    m_dropsNear = m_quality != Rain::Off && falling.x > 0.0f;
+    m_flakesNear = m_snow != Snow::Off && falling.y > 0.0f;
     m_uniforms = {};
     m_uniforms.invRainViewProj = glm::inverse(m_viewProj);
     m_uniforms.box = glm::vec4(camera + glm::vec3(0.0f, q.box * 0.3f, 0.0f), q.box);
-    m_uniforms.fall = glm::vec4(m_velocity, float(std::fmod(frame.time, 4096.0)));
+    m_uniforms.fall = glm::vec4(rainVelocity, float(std::fmod(frame.time, 4096.0)));
     m_uniforms.streaks = glm::vec4(float(q.streaks), kStreakExposure, kStreakWidth, kStreakOpacity);
     m_uniforms.splashes = glm::vec4(float(q.splashes), q.splashRadius, kSplashLife, kSplashSize);
+    m_uniforms.snowFall = glm::vec4(snowVelocity, m_snow != Snow::Off ? 1.0f : 0.0f);
+    m_uniforms.flakes = glm::vec4(float(s.flakes), s.flakeBox, kFlakeSize, kFlakeSun * kFlakeAlbedo);
+    m_uniforms.flakeLight.w = m_quality != Rain::Off ? 1.0f : 0.0f;
     stats.rain = frame.quality;
-    stats.rainAtCamera = fu.rain.z;
+    stats.rainAtCamera = m_quality != Rain::Off ? precipitation * (1.0f - share) : 0.0f;
     stats.rainCover = m_cover;
+    stats.snow = frame.snow;
+    stats.snowAtCamera = m_snow != Snow::Off ? precipitation * share : 0.0f;
+    stats.snowShareAtCamera = m_snow != Snow::Off ? share : 0.0f;
     return true;
 }
 
@@ -289,16 +357,22 @@ void RainRenderer::updateMaps(gpu::CommandBuffer& commands, const gpu::Texture& 
     m_lastCameraDepth = c.z;
     m_lastMapValid = true;
 
-    // The wetness grid into its region when the weather has changed it.
+    // The wetness grid and the snow cover beside it into their region when the weather has changed them: rows of
+    // 2 * QUENCH_WETNESS_GRID texels.
     if (weather.wetnessVersion() != m_gridVersion) {
         const std::span<const weather::WetnessCell> grid = weather.wetnessGrid();
         const std::span<std::byte> mapped = m_gridTransfer.map(true);
-        if (mapped.size() >= grid.size() * 8) {
+        constexpr std::size_t n = QUENCH_WETNESS_GRID;
+        if (mapped.size() >= grid.size() * 16 && grid.size() == n * n) {
             for (std::size_t i = 0; i < grid.size(); ++i) {
-                const std::uint16_t texel[4] = {glm::packHalf1x16(grid[i].wetness.ground),
-                                                glm::packHalf1x16(grid[i].wetness.water),
-                                                glm::packHalf1x16(grid[i].precipitation), glm::packHalf1x16(1.0f)};
-                std::memcpy(mapped.data() + i * 8, texel, 8);
+                const weather::WetnessCell& c = grid[i];
+                const std::uint16_t wet[4] = {glm::packHalf1x16(c.wetness.ground), glm::packHalf1x16(c.wetness.water),
+                                              glm::packHalf1x16(c.precipitation),
+                                              glm::packHalf1x16(1.0f - c.snowShare)};
+                const std::uint16_t snow[4] = {glm::packHalf1x16(c.wetness.snow), 0, 0, glm::packHalf1x16(1.0f)};
+                const std::size_t row = (i / n) * 2 * n, column = i % n;
+                std::memcpy(mapped.data() + (row + column) * 8, wet, 8);
+                std::memcpy(mapped.data() + (row + n + column) * 8, snow, 8);
             }
         }
         m_gridTransfer.unmap();
@@ -307,7 +381,7 @@ void RainRenderer::updateMaps(gpu::CommandBuffer& commands, const gpu::Texture& 
                     {.texture = maps,
                      .x = 0,
                      .y = QUENCH_WETNESS_ROW,
-                     .width = QUENCH_WETNESS_GRID,
+                     .width = 2 * QUENCH_WETNESS_GRID,
                      .height = QUENCH_WETNESS_GRID});
         m_gridVersion = weather.wetnessVersion();
     }
@@ -318,13 +392,14 @@ void RainRenderer::lightUniforms(const shader::FrameUniforms& fu) {
     m_uniforms.light = glm::vec4(glm::mix(ground, sky, kSkyShare), m_uniforms.light.w);
     m_uniforms.sun =
         fu.sunDir.w > 0.0f && fu.sunDir.y > 0.0f ? glm::vec4(glm::vec3(fu.sunColor), kSunForward) : glm::vec4(0.0f);
+    m_uniforms.flakeLight = glm::vec4(glm::mix(ground, sky, kFlakeSkyShare) * kFlakeAlbedo, m_uniforms.flakeLight.w);
 }
 
 void RainRenderer::drawShafts(gpu::CommandBuffer& commands, const Shafts& shafts, const gpu::Texture& maps,
                               const gpu::Sampler& pointSampler, const gpu::Sampler& linearSampler,
                               const shader::FrameUniforms& fu) {
-    if (m_quality == Rain::Off || !shafts.depth) return;
-    const Quality& q = qualityOf(m_quality);
+    if ((m_quality == Rain::Off && m_snow == Snow::Off) || !shafts.depth) return;
+    const Quality& q = kQualities[std::max(std::size_t(m_quality), std::size_t(m_snow))];
     const std::uint32_t w = (shafts.width + q.shaftScale - 1) / q.shaftScale;
     const std::uint32_t h = (shafts.height + q.shaftScale - 1) / q.shaftScale;
     if (!m_shafts || m_shafts.desc().width != w || m_shafts.desc().height != h) {
@@ -341,7 +416,9 @@ void RainRenderer::drawShafts(gpu::CommandBuffer& commands, const Shafts& shafts
         m_shafts = std::move(*t);
     }
     lightUniforms(fu);
-    m_uniforms.shafts = glm::vec4(float(q.shaftSteps), shafts.cloudBase, kShaftExtinction, kShaftNear);
+    // Where it snows at the camera the shafts begin where the flakes end.
+    const float near = glm::mix(kShaftNear, qualityOf(m_snow).flakeBox, m_snowShare);
+    m_uniforms.shafts = glm::vec4(float(q.shaftSteps), shafts.cloudBase, kShaftExtinction, near);
     m_uniforms.weatherMap = shafts.weatherMapUv;
     m_uniforms.rainbow = glm::vec4(shafts.rainbow ? 1.0f : 0.0f, kRainbowStrength,
                                    float(std::fmod(double(shafts.sequence) * 0.6180339887, 1.0)), float(q.shaftScale));
@@ -354,6 +431,7 @@ void RainRenderer::drawShafts(gpu::CommandBuffer& commands, const Shafts& shafts
         pass.bindPipeline(m_shaftsPipeline);
         pass.pushUniforms(kFragment, 0, fu);
         pass.pushUniforms(kFragment, 1, m_uniforms);
+        pass.pushUniforms(kFragment, 2, m_field);
         pass.bindSamplers(kFragment, 0, bindings);
         pass.draw(3);
         pass.end();
@@ -374,7 +452,7 @@ gpu::TextureRef RainRenderer::drawDrops(gpu::CommandBuffer& commands, const Drop
                                         const gpu::Sampler& pointSampler, const gpu::Sampler& linearSampler,
                                         const shader::FrameUniforms& fu, RenderStats& stats) {
     gpu::TextureRef image = drops.image;
-    if (m_quality == Rain::Off || !drops.depth || !image) return image;
+    if ((!m_dropsNear && !m_flakesNear) || !drops.depth || !image) return image;
     const std::uint32_t w = image.desc.width, h = image.desc.height;
     if (drops.keepImage) {
         if (!m_image || m_image.desc().width != w || m_image.desc().height != h) {
@@ -386,7 +464,8 @@ gpu::TextureRef RainRenderer::drawDrops(gpu::CommandBuffer& commands, const Drop
                                          .height = h,
                                          .name = "render rain image"});
             if (!t) {
-                log::error("render", "rain image {} x {}: {}; no streaks", w, h, t.error());
+                log::error("render", "rain image {} x {}: {}; no streaks or flakes", w, h, t.error());
+                m_flakesNear = false;
                 return image;
             }
             m_image = std::move(*t);
@@ -399,6 +478,7 @@ gpu::TextureRef RainRenderer::drawDrops(gpu::CommandBuffer& commands, const Drop
     } else {
         m_image = {};
     }
+    if (!m_dropsNear) return image;
     const Quality& q = qualityOf(m_quality);
     lightUniforms(fu);
     m_uniforms.light.w = drops.proj[1][1] * float(h) * 0.5f;
@@ -424,6 +504,31 @@ gpu::TextureRef RainRenderer::drawDrops(gpu::CommandBuffer& commands, const Drop
     stats.rainStreaks = q.streaks;
     stats.rainSplashes = q.splashes;
     return image;
+}
+
+void RainRenderer::drawFlakes(gpu::CommandBuffer& commands, const Drops& drops, const gpu::Texture& maps,
+                              const gpu::Sampler& pointSampler, const gpu::Sampler& linearSampler,
+                              const shader::FrameUniforms& fu, RenderStats& stats) {
+    if (!m_flakesNear || !drops.depth || !drops.image) return;
+    const std::uint32_t w = drops.image.desc.width, h = drops.image.desc.height;
+    const Quality& q = qualityOf(m_snow);
+    lightUniforms(fu);
+    m_uniforms.light.w = drops.proj[1][1] * float(h) * 0.5f;
+    m_uniforms.viewProjStable = drops.viewProjStable;
+    m_uniforms.target = glm::vec4(float(w), float(h), 1.0f / float(w), 1.0f / float(h));
+    gpu::RenderPass pass =
+        commands.beginRenderPass(gpu::ColorTarget{.texture = drops.image, .load = gpu::LoadOp::Load});
+    if (!pass) return;
+    pass.pushUniforms(kVertex, 0, fu);
+    pass.pushUniforms(kFragment, 0, fu);
+    pass.pushUniforms(kVertex, 1, m_uniforms);
+    pass.pushUniforms(kFragment, 1, m_uniforms);
+    pass.bindPipeline(m_flakePipeline);
+    pass.bindSampler(kVertex, 0, {maps, linearSampler});
+    pass.bindSampler(kFragment, 0, {*drops.depth, pointSampler});
+    pass.draw(6, q.flakes);
+    pass.end();
+    stats.snowFlakes = q.flakes;
 }
 
 } // namespace quench::render::detail

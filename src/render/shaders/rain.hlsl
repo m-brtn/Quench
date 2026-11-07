@@ -1,17 +1,20 @@
-// The rain (src/render/Rain.cpp, docs/weather.md, "Rain"): the rain occlusion map copied into the weather maps, the
-// streaks and splashes of the drops near the camera (drawn after TAA and upscaling into the output-size image, tested
-// against the scene's depth here), and the rain shafts with the rainbow (marched at half or a quarter of the render
-// size after the HDR pass, then blended into the render-size HDR image).
+// The rain and snow (src/render/Rain.cpp, docs/weather.md, "Rain" and "Snow"): the rain occlusion map copied into
+// the weather maps, the streaks and splashes of the drops and the snow's flakes near the camera (drawn after TAA and
+// upscaling into the output-size image, tested against the scene's depth here), and the shafts of rain and snow with
+// the rainbow (marched at half or a quarter of the render size after the HDR pass, then blended into the render-size
+// HDR image).
 //
 // The streaks are procedural: a fixed set of drops in a box around the camera, each falling with the rain's velocity
 // from a place of its own and wrapped around the box, so nothing is simulated or stored. A drop is drawn where the
-// weather's precipitation there is above its own random threshold and the rain occlusion map lets the rain reach it.
-// Its streak is the distance it falls during an exposure, at least one pixel wide (its opacity scaled by its width
-// below that), lit by the sky and the ground it refracts and the sun it sends forward. The splashes land on the
-// highest surface the occlusion map has at a random place near the camera, for a short lifetime each.
+// weather's rain there (its precipitation times the share that falls as rain) is above its own random threshold and
+// the rain occlusion map lets the rain reach it. Its streak is the distance it falls during an exposure, at least one
+// pixel wide (its opacity scaled by its width below that), lit by the sky and the ground it refracts and the sun it
+// sends forward. The splashes land on the highest surface the occlusion map has at a random place near the camera,
+// for a short lifetime each. The flakes are the same with the snow's velocity, a flutter of their own and the
+// snowfall's share: small soft discs, drawn out a little along their motion, lit as white diffuse scatterers.
 //
 // Bindings: uniform slot 0 FrameUniforms (quench/Frame.hlsli), slot 1 RainUniforms (RainUniforms.h), vertex and
-// fragment; textures per entry below.
+// fragment; rain_shafts_fs also slot 2 WeatherUniforms (quench/WeatherField.h); textures per entry below.
 
 #include "quench/Bindings.hlsli"
 #include "quench/Clouds.hlsli"
@@ -78,7 +81,7 @@ RainDropOut rainCulled() {
     return o;
 }
 
-#if defined(QUENCH_ENTRY_rain_streak_vs) || defined(QUENCH_ENTRY_rain_splash_vs)
+#if defined(QUENCH_ENTRY_rain_streak_vs) || defined(QUENCH_ENTRY_rain_splash_vs) || defined(QUENCH_ENTRY_rain_flake_vs)
 Texture2D<float4> mapsTex : QUENCH_TEXTURE(0);
 SamplerState mapsSampler : QUENCH_SAMPLER(0);
 #endif
@@ -96,7 +99,7 @@ RainDropOut rain_streak_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     const float fade = saturate(1.0 - dist * dist / (rain.box.w * rain.box.w)) * saturate((dist - 0.3) * 2.0);
     if (fade <= 0.0) return rainCulled();
     const float4 weather = quenchWetnessAt(mapsTex, mapsSampler, head.xz);
-    if (rainRandom(id + 4u) >= weather.b) return rainCulled();
+    if (rainRandom(id + 4u) >= weather.b * weather.a) return rainCulled();
     if (quenchRainExposure(mapsTex, mapsSampler, head) < 0.5) return rainCulled();
 
     const float3 tail = head - velocity * rain.streaks.y;
@@ -127,6 +130,10 @@ RainDropOut rain_streak_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
 #endif
 
 #if defined(QUENCH_ENTRY_rain_splash_vs)
+// The share of the sun's irradiance a splash's droplets send toward the camera (a white diffuse surface facing the sun
+// sends 1 / pi of it).
+static const float kSplashSun = 0.1;
+
 RainDropOut rain_splash_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     // A splash lives for a lifetime at a place of its own, then starts again elsewhere.
     const float phase = rain.fall.w / rain.splashes.z + rainRandom(iid * 4u);
@@ -143,7 +150,7 @@ RainDropOut rain_splash_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     const float4 h = mul(rain.invRainViewProj, float4(m.x * 2.0 - 1.0, 1.0 - m.y * 2.0, top, 1.0));
     const float3 ground = h.xyz / h.w;
     const float4 weather = quenchWetnessAt(mapsTex, mapsSampler, ground.xz);
-    if (rainRandom(seed + 2u) >= weather.b) return rainCulled();
+    if (rainRandom(seed + 2u) >= weather.b * weather.a) return rainCulled();
     const float3 toCamera = quenchFrame.cameraPos.xyz - ground;
     const float dist = length(toCamera);
     const float fade = saturate(1.0 - dist / rain.splashes.y) * saturate(dist - 0.5);
@@ -152,19 +159,87 @@ RainDropOut rain_splash_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     // An upright quad facing the camera, a little toward it so that the ground does not cut it.
     const float3 V = toCamera / dist;
     const float3 right = normalize(cross(float3(0.0, 1.0, 0.0), V) + float3(1e-4, 0.0, 0.0));
-    const float size = rain.splashes.w * (0.6 + 0.4 * age);
+    const float size = rain.splashes.w * lerp(0.7, 1.3, rainRandom(seed + 3u)) * (0.6 + 0.4 * age);
     const float2 corner = kRainCorners[vid];
-    const float3 world = ground + V * 0.05 + right * (corner.x * size) + float3(0.0, corner.y * size * 0.7, 0.0);
+    const float3 world = ground + V * 0.05 + right * (corner.x * size) + float3(0.0, corner.y * size, 0.0);
     RainDropOut o;
     o.position = mul(rain.viewProjStable, float4(world, 1.0));
     o.coord = float3(corner.x, corner.y, age);
-    const float opacity = 0.8 * (1.0 - age) * (1.0 - age) * fade;
-    o.color = float4(rainDropLight(mapsTex, mapsSampler, ground) * opacity, opacity);
+    // Water against the wet ground: brighter than the light it refracts alone (the sky's sheen on the crown), and
+    // glinting in the sun from every side, which the puddles' mirror of the sky around it does not.
+    const float opacity = 0.9 * (1.0 - age * age) * fade;
+    float3 light = rainDropLight(mapsTex, mapsSampler, ground) * 2.0;
+    [branch] if (rain.sun.w > 0.0) {
+        light += rain.sun.rgb * quenchCloudShadow(mapsTex, mapsSampler, ground + float3(0.0, size, 0.0)) * kSplashSun;
+    }
+    o.color = float4(light * opacity, opacity);
     return o;
 }
 #endif
 
-#if defined(QUENCH_ENTRY_rain_streak_fs) || defined(QUENCH_ENTRY_rain_splash_fs)
+#if defined(QUENCH_ENTRY_rain_flake_vs)
+// Flakes are drawn out along their motion over this long (s), and at least this many pixels across.
+static const float kFlakeExposure = 0.012;
+static const float kFlakeMinPixels = 1.5;
+
+RainDropOut rain_flake_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
+    const uint id = iid * 16u + 2654435769u;
+    const float extent = rain.flakes.y;
+    const float side = extent * 2.0;
+    const float3 centre = quenchFrame.cameraPos.xyz + float3(0.0, extent * 0.3, 0.0);
+    // Each flake falls at a speed of its own with the wind, and flutters on a small loop as it falls.
+    const float t = rain.fall.w;
+    const float3 velocity =
+        float3(rain.snowFall.x, rain.snowFall.y * lerp(0.7, 1.3, rainRandom(id + 3u)), rain.snowFall.z);
+    const float rate = lerp(1.2, 2.6, rainRandom(id + 5u));
+    const float phase = rainRandom(id + 6u) * 6.2831853;
+    const float reach = lerp(0.08, 0.3, rainRandom(id + 7u));
+    const float3 flutter = float3(sin(t * rate + phase), 0.0, cos(t * rate * 0.8 + phase * 1.3)) * reach;
+    const float3 start = float3(rainRandom(id), rainRandom(id + 1u), rainRandom(id + 2u)) * side;
+    const float3 moved = start + velocity * t + flutter - centre;
+    const float3 P = centre + (frac(moved / side) - 0.5) * side;
+    const float dist = length(P - quenchFrame.cameraPos.xyz);
+    const float fade = saturate(1.0 - dist * dist / (extent * extent)) * saturate((dist - 0.2) * 3.0);
+    if (fade <= 0.0) return rainCulled();
+    const float4 weather = quenchWetnessAt(mapsTex, mapsSampler, P.xz);
+    if (rainRandom(id + 4u) >= weather.b * (1.0 - weather.a)) return rainCulled();
+    if (quenchRainExposure(mapsTex, mapsSampler, P) < 0.5) return rainCulled();
+
+    // Its motion now (the fall, the wind and the flutter's) over the exposure, in pixels on the screen.
+    const float3 now = velocity + float3(cos(t * rate + phase), 0.0, -0.8 * sin(t * rate * 0.8 + phase * 1.3)) *
+                                      (reach * rate);
+    const float4 c0 = mul(rain.viewProjStable, float4(P, 1.0));
+    const float4 c1 = mul(rain.viewProjStable, float4(P - now * kFlakeExposure, 1.0));
+    if (c0.w < 0.1 || c1.w < 0.1) return rainCulled();
+    const float2 halfSize = 0.5 * rain.target.xy;
+    float2 axis = (c1.xy / c1.w - c0.xy / c0.w) * halfSize;
+    const float streak = sqrt(dot(axis, axis));
+    axis = streak > 1e-3 ? axis / streak : float2(0.0, -1.0);
+    const float2 across = float2(-axis.y, axis.x);
+    const float pixels = rain.flakes.z * lerp(0.6, 1.4, rainRandom(id + 8u)) * rain.light.w / c0.w;
+    const float radius = max(pixels, kFlakeMinPixels) * 0.5;
+
+    // A capsule from the flake back along its motion: x across (-1..1 of its radius), y along (in radii, 0 at the
+    // flake, z at the end of its motion).
+    const float2 corner = kRainCorners[vid];
+    const float along = lerp(-radius, streak + radius, corner.y);
+    float4 position = c0;
+    position.xy += (across * (corner.x * radius) + axis * along) / halfSize * position.w;
+    RainDropOut o;
+    o.position = position;
+    o.coord = float3(corner.x, along / radius, streak / radius);
+    // Opaque, thinned below its least size by its area and spread along its motion.
+    const float small = min(pixels / kFlakeMinPixels, 1.0);
+    const float spread = sqrt(2.0 * radius / (2.0 * radius + streak));
+    const float opacity = 0.9 * small * small * spread * fade;
+    float3 light = rain.flakeLight.rgb;
+    [branch] if (rain.sun.w > 0.0) light += rain.sun.rgb * quenchCloudShadow(mapsTex, mapsSampler, P) * rain.flakes.w;
+    o.color = float4(light * opacity, opacity);
+    return o;
+}
+#endif
+
+#if defined(QUENCH_ENTRY_rain_streak_fs) || defined(QUENCH_ENTRY_rain_splash_fs) || defined(QUENCH_ENTRY_rain_flake_fs)
 Texture2D<float> depthTex : QUENCH_TEXTURE(0);
 SamplerState depthSampler : QUENCH_SAMPLER(0);
 
@@ -184,16 +259,33 @@ float4 rain_streak_fs(RainDropOut vin) : SV_Target0 {
 #endif
 
 #if defined(QUENCH_ENTRY_rain_splash_fs)
-// A crown: a thin rim rising and spreading with age, broken into droplets.
+// A crown: a rim rising and spreading with age, broken into droplets, and droplets thrown up and out of it that fall
+// back as it fades. The quad is as high as it is half wide: coord is (x -1..1, y 0..1) in units of that.
 float4 rain_splash_fs(RainDropOut vin) : SV_Target0 {
     if (rainHidden(vin.position)) discard;
     const float age = vin.coord.z;
-    const float2 p = float2(vin.coord.x, vin.coord.y * 1.4);
+    const float2 p = float2(vin.coord.x, vin.coord.y * 1.6);
     const float r = length(p);
-    const float rim = saturate(1.0 - abs(r - lerp(0.35, 0.95, age)) * 7.0);
-    const float droplets = 0.55 + 0.45 * cos(atan2(p.y, p.x) * 11.0);
-    const float a = rim * droplets * saturate(vin.coord.y * 6.0);
-    return vin.color * a;
+    const float rim = saturate(1.0 - abs(r - lerp(0.3, 0.85, age)) * 5.0);
+    const float lobes = 0.6 + 0.4 * cos(atan2(p.y, p.x) * 11.0);
+    float a = rim * lobes * saturate(vin.coord.y * 8.0);
+    [unroll] for (int k = 0; k < 4; ++k) {
+        const float outward = (float(k) - 1.5) * 0.4;
+        const float2 c = float2(outward * (0.6 + age), 0.06 + 2.4 * age * (1.0 - age) * (1.0 - abs(outward) * 0.6));
+        a += saturate(1.0 - length(vin.coord.xy - c) * 14.0) * 1.5;
+    }
+    return vin.color * saturate(a);
+}
+#endif
+
+#if defined(QUENCH_ENTRY_rain_flake_fs)
+// A soft disc drawn out into a capsule along the flake's motion.
+float4 rain_flake_fs(RainDropOut vin) : SV_Target0 {
+    if (rainHidden(vin.position)) discard;
+    const float y = vin.coord.y;
+    const float dy = y < 0.0 ? y : max(y - vin.coord.z, 0.0);
+    const float d = saturate(1.0 - sqrt(vin.coord.x * vin.coord.x + dy * dy));
+    return vin.color * (d * d * (3.0 - 2.0 * d));
 }
 #endif
 
@@ -219,10 +311,33 @@ float shaftDistance(float2 uv) {
 #endif
 
 #if defined(QUENCH_ENTRY_rain_shafts_fs)
+#include "quench/WeatherField.h"
+
 Texture2D<float4> weatherTex : QUENCH_TEXTURE(1);
 SamplerState weatherSampler : QUENCH_SAMPLER(1);
 Texture2D<float4> mapsTex : QUENCH_TEXTURE(2);
 SamplerState mapsSampler : QUENCH_SAMPLER(2);
+cbuffer WeatherBlock : QUENCH_UNIFORM(2) {
+    WeatherUniforms field;
+};
+
+// quenchWeatherSnow read from the block in place: passed to it by value, the field is copied whole in every step,
+// which makes the march about three times slower. Keep the two the same.
+float shaftSnow(float3 P) {
+    const float t = field.climate.x - field.climate.y * max(P.y, 0.0);
+    float snow = saturate((QUENCH_RAIN_ABOVE - t) / (QUENCH_RAIN_ABOVE - QUENCH_SNOW_BELOW));
+    [branch] if (field.climate.z > 0.0) {
+        const int count = int(field.layer.w);
+        for (int i = 0; i < count; ++i) {
+            const float4 a = field.cells[i * 2];
+            const float own = field.cells[i * 2 + 1].w;
+            if (own < 0.0) continue;
+            const float2 d = (P.xz - a.xy) / a.z;
+            snow = lerp(snow, own, 1.0 - smoothstep(0.35, 1.0, sqrt(dot(d, d))));
+        }
+    }
+    return snow;
+}
 
 // The colors of a rainbow's band at t (0 its violet inner edge, 1 its red outer edge).
 float3 rainbowColor(float t) {
@@ -239,11 +354,13 @@ float3 rainbow(float theta) {
     return (primary + secondary) * rain.rainbow.y;
 }
 
-// The veil of the rain falling under the clouds, marched from rain.shafts.w metres to the scene or the cloud base:
-// single scattering of the sky's and the ground's light (and the sun's, with the rainbow where it is on) by the
-// precipitation of the clouds' weather map. Drawn at a reduced size (rain.rainbow.w target pixels per texel), each
-// texel for the target pixel at its block's centre; rain_shafts_up_fs blends it as color + destination *
-// transmittance.
+// The veil of the rain and snow falling under the clouds, marched from rain.shafts.w metres to the scene or the cloud
+// base: single scattering of the sky's and the ground's light (and the sun's, with the rainbow where it is on) by the
+// precipitation of the clouds' weather map. Snow (its share by the field's temperature at each step) hides more than
+// rain does (a heavy snowfall's visibility is about 800 m against the rain's 2.5 km), falls in smoother curtains and
+// sends more of the sun's light toward the camera; the part of the precipitation whose kind is not drawn (rain or
+// snow off) is left out. Drawn at a reduced size (rain.rainbow.w target pixels per texel), each texel for the target
+// pixel at its block's centre; rain_shafts_up_fs blends it as color + destination * transmittance.
 float4 rain_shafts_fs(FullscreenOut vin) : SV_Target0 {
     const float2 pixel = shaftPixel(floor(vin.position.xy));
     const float2 uv = pixel * rain.target.zw;
@@ -273,6 +390,8 @@ float4 rain_shafts_fs(FullscreenOut vin) : SV_Target0 {
     // sky the clouds above each step hide against how much they hide above the camera.
     const float openHere =
         1.0 - 0.65 * weatherTex.SampleLevel(weatherSampler, (camera.xz - rain.weatherMap.xy) * rain.weatherMap.z, 2.0).r;
+    // Snow where it can fall: a cell's own, or the air colder than rain at the cloud base.
+    const bool snowy = field.climate.z > 0.0 || field.climate.x - field.climate.y * base < QUENCH_RAIN_ABOVE;
     float3 color = float3(0.0, 0.0, 0.0);
     float T = 1.0;
     float previous = t0;
@@ -290,16 +409,28 @@ float4 rain_shafts_fs(FullscreenOut vin) : SV_Target0 {
         // a shaft; the jitter over frames covers the rest.
         const float4 weather =
             weatherTex.SampleLevel(weatherSampler, uv, max(log2(max(dt * rain.weatherMap.w, 1.0)) - 1.0, 0.0));
-        const float p = weather.b;
+        float p = weather.b;
         if (p <= 0.01) continue;
-        // Fall streaks: the rain is denser in curtains a few hundred metres apart, the same at every height.
-        const float streaks = valueNoise(P.xz / 220.0) * 0.65 + valueNoise(P.xz / 70.0 + 7.3) * 0.35;
-        const float sigma = rain.shafts.z * p * lerp(0.25, 1.75, streaks) * saturate((base - P.y) / 150.0);
+        // Fall streaks: the rain is denser in curtains a few hundred metres apart, the same at every height; snow in
+        // wider, smoother ones.
+        const float large = valueNoise(P.xz / 220.0);
+        float snow = 0.0;
+        [branch] if (snowy) snow = shaftSnow(P);
+        float density = lerp(3.0, 5.0, large);
+        [branch] if (snow < 1.0) {
+            const float streaks = large * 0.65 + valueNoise(P.xz / 70.0 + 7.3) * 0.35;
+            density = lerp(lerp(0.25, 1.75, streaks), density, snow);
+        }
+        const float3 phase = lerp(sunShare + bow, (float3)(sunShare * 1.5), snow);
+        p *= lerp(rain.flakeLight.w, rain.snowFall.w, snow);
+        const float sigma = rain.shafts.z * p * density * saturate((base - P.y) / 150.0);
         float3 light = rain.light.rgb * ((1.0 - 0.65 * weather.r) / openHere);
-        if (sun) light += rain.sun.rgb * quenchCloudShadow(mapsTex, mapsSampler, P) * (sunShare + bow);
+        if (sun) light += rain.sun.rgb * quenchCloudShadow(mapsTex, mapsSampler, P) * phase;
         const float stepT = exp(-sigma * dt);
         color += T * light * (1.0 - stepT);
         T *= stepT;
+        // Beyond this the rest adds less than one part in 200 (a heavy snowfall's veil is opaque within kilometres).
+        if (T < 0.005) break;
     }
     return float4(color, T);
 }

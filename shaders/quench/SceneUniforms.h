@@ -26,7 +26,9 @@
 // QUENCH_WEATHER_MAPS_WIDTH x QUENCH_WEATHER_MAPS_HEIGHT texels in three regions. Rows 0 to QUENCH_RAIN_MAP_ROW - 1:
 // the clouds' shadow (r); rows QUENCH_RAIN_MAP_ROW to QUENCH_WETNESS_ROW - 1: the rain occlusion map (r: the depth of
 // the highest surface along the rain, 0..1 over FrameUniforms::rain.y); rows QUENCH_WETNESS_ROW on, columns 0 to
-// QUENCH_WETNESS_GRID - 1: the weather's wetness grid (r: ground wetness, g: standing water, b: precipitation).
+// QUENCH_WETNESS_GRID - 1: the weather's wetness grid (r: ground wetness, g: standing water, b: precipitation, a: the
+// share of it that falls as rain), and columns QUENCH_WETNESS_GRID to 2 * QUENCH_WETNESS_GRID - 1 beside it: the
+// snow cover in the same cells (r).
 #define QUENCH_WEATHER_MAPS_WIDTH 512
 #define QUENCH_WEATHER_MAPS_HEIGHT 1040
 #define QUENCH_RAIN_MAP_ROW 512
@@ -112,11 +114,14 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // The rain (render::RenderSettings::rain; quench/Rain.hlsli). World -> the rain occlusion map: an orthographic
     // view down the direction the rain falls, xy -1..1 over the map, z 0..1 from its top to its bottom.
     float4x4 rainViewProj;
-    // x: 1 when the rain's maps are read (sampler 14), y: the occlusion map's depth range (m), z: the precipitation
-    // at the camera (0..1), w: the wet surfaces' ripples (0: none, 1: as the rain falls)
+    // x: 1 when the rain's maps are read (sampler 14: with rain or snow), y: the occlusion map's depth range (m), z:
+    // the precipitation at the camera (0..1), w: 1 when the rain is drawn (wet surfaces and their ripples)
     float4 rain;
     // The wetness grid (sampler 14's last rows): xy its corner (world xz, m), z: 1 / its size (m), w: unused.
     float4 rainGrid;
+    // The snow (render::RenderSettings::snow): x: 1 when it is drawn (the snow cover on surfaces), y: the share of the
+    // precipitation at the camera that falls as snow, zw: unused.
+    float4 snow;
 };
 
 // One registered instance in the frame's instance buffer.
@@ -141,8 +146,9 @@ struct QUENCH_ALIGN16 MaterialUniforms {
     // x: anisotropy (0: isotropic), yz: cos and sin of its rotation, w: the shape of an area light, shown with its
     // emissive radiance only: 1 on the front face (the back is black), 2 on both
     float4 shading;
-    // The rain on it (quench/Rain.hlsli): x: how wet it gets (MaterialDesc::wetness), y: how much standing water it
-    // collects (MaterialDesc::puddles), z: 1 for water (MaterialDesc::water), w: unused
+    // The rain and snow on it (quench/Rain.hlsli): x: how wet it gets (MaterialDesc::wetness), y: how much standing
+    // water it collects (MaterialDesc::puddles), z: 1 for water (MaterialDesc::water), w: how much snow lies on it
+    // (MaterialDesc::snow; 0 for water)
     float4 weather;
 };
 

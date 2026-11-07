@@ -134,8 +134,11 @@ ShadowMode shadowModeOf(const MaterialDesc& m) {
 }
 
 // Casters in the cascades' depth: standard depth with a slope bias; with depth clamp, casters in front of the
-// cascade are flattened onto its near plane instead of clipped.
-gpu::RasterizerState shadowRasterizer(const gpu::Caps& caps) {
+// cascade are flattened onto its near plane instead of clipped. The rain's occluders take no bias: the splashes stand
+// on the depth they leave, which a slope bias would sink by decimetres under slanted rain (surfaces look the map up
+// off themselves, so they need none against their own depth).
+gpu::RasterizerState shadowRasterizer(const gpu::Caps& caps, bool biased = true) {
+    if (!biased) return {.depthClip = !caps.depthClamp};
     return {.depthBias = true,
             .depthBiasConstant = 1.0f,
             .depthBiasSlope = 1.75f,
@@ -156,10 +159,11 @@ struct SurfaceEntry {
     std::string name;
     std::array<gpu::GraphicsPipeline, kVariants> pipelines;
     std::array<bool, kVariants> failed{};
-    std::array<gpu::GraphicsPipeline, 2> shadowPipelines; // with shadowVertex: single / double sided
-    std::array<bool, 2> shadowFailed{};
-    gpu::GraphicsPipeline maskPipeline; // cut-out and dithered casters in the depth
-    bool maskFailed = false;
+    // With shadowVertex: single / double sided, then the same for the rain's occluders.
+    std::array<gpu::GraphicsPipeline, 4> shadowPipelines;
+    std::array<bool, 4> shadowFailed{};
+    std::array<gpu::GraphicsPipeline, 2> maskPipelines; // cut-out and dithered casters in the depth; the rain's
+    std::array<bool, 2> maskFailed{};
     std::array<gpu::GraphicsPipeline, 2> transmittancePipelines; // single / double sided
     std::array<bool, 2> transmittanceFailed{};
     // The ray tracing prepass (camera depth): [doubleSided]; with shadowVertex, and of cut-out materials.
@@ -315,8 +319,9 @@ struct RendererImpl {
     std::vector<PassId> passOrder;
     std::uint32_t pipelineCount = 0;
 
-    gpu::GraphicsPipeline shadowPipeline, skyPipeline, velocityPipeline, velocityObjPipeline, velocitySkinPipeline,
-        velocityCutoutPipeline, velocitySkinCutoutPipeline, taaPipeline, bloomDownPipeline, bloomUpPipeline;
+    gpu::GraphicsPipeline shadowPipeline, rainOccluderPipeline, skyPipeline, velocityPipeline, velocityObjPipeline,
+        velocitySkinPipeline, velocityCutoutPipeline, velocitySkinCutoutPipeline, taaPipeline, bloomDownPipeline,
+        bloomUpPipeline;
     std::array<gpu::GraphicsPipeline, 2> depthPipelines; // the ray tracing prepass of plain surfaces: [doubleSided]
     std::array<bool, 2> depthFailed{};
     gpu::ComputePipeline skinPipeline;      // empty: skinned instances are drawn in their bind pose (logged at init)
@@ -421,8 +426,8 @@ struct RendererImpl {
     void applySettings();
     Result<gpu::GraphicsPipeline> createPipeline(const gpu::GraphicsPipelineDesc& desc);
     const gpu::GraphicsPipeline* surfacePipeline(SurfaceEntry& surface, std::uint32_t variant);
-    const gpu::GraphicsPipeline* surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided);
-    const gpu::GraphicsPipeline* surfaceMaskPipeline(SurfaceEntry& surface);
+    const gpu::GraphicsPipeline* surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided, bool rain = false);
+    const gpu::GraphicsPipeline* surfaceMaskPipeline(SurfaceEntry& surface, bool rain = false);
     const gpu::GraphicsPipeline* surfaceTransmittancePipeline(SurfaceEntry& surface, bool doubleSided);
     const gpu::GraphicsPipeline* surfaceDepthPipeline(SurfaceEntry& surface, bool doubleSided, bool cutOut);
     const gpu::GraphicsPipeline* surfaceGbufferPipeline(SurfaceEntry& surface, bool doubleSided);
@@ -633,6 +638,17 @@ Result<void> RendererImpl::init() {
                                       .name = "render shadow"});
             !r)
             return r;
+        if (Result<void> r = make(rainOccluderPipeline,
+                                  {.vertexShader = frame.find("shadow_vs"),
+                                   .fragmentShader = frame.find("shadow_fs"),
+                                   .vertexBuffers = {&kVertexLayout, 1},
+                                   .vertexAttributes = kPositionAttribute,
+                                   .rasterizer = shadowRasterizer(caps, false),
+                                   .depth = {.test = true, .write = true, .compare = gpu::CompareOp::LessOrEqual},
+                                   .depthFormat = shadowFormat,
+                                   .name = "render rain occluder"});
+            !r)
+            return r;
     }
     const ShaderBlob* fullscreen = frame.find("fullscreen_vs");
     if (Result<void> r = make(skyPipeline, {.vertexShader = fullscreen,
@@ -826,7 +842,11 @@ void RendererImpl::applySettings() {
         fallbacks.emplace_back(next.pathTracer ? "rain: not in the path tracer's frame; none"
                                                : "rain: no Rgba16Float target and 2D depth texture to sample, or its "
                                                  "pipelines failed; none");
-    if (next.rain != Rain::Off && settings.rainShafts && !next.rainShafts)
+    if (settings.snow != Snow::Off && next.snow == Snow::Off)
+        fallbacks.emplace_back(next.pathTracer ? "snow: not in the path tracer's frame; none"
+                                               : "snow: no Rgba16Float target and 2D depth texture to sample, or its "
+                                                 "pipelines failed; none");
+    if ((next.rain != Rain::Off || next.snow != Snow::Off) && settings.rainShafts && !next.rainShafts)
         fallbacks.emplace_back("rain shafts: they read the clouds' weather map (RenderSettings::clouds); none");
     if (next == effects && effectsChosen) return;
     for (const std::string& line : fallbacks) log::warning("render", "{}", line);
@@ -867,19 +887,19 @@ const gpu::GraphicsPipeline* RendererImpl::surfacePipeline(SurfaceEntry& surface
     return &surface.pipelines[variant];
 }
 
-const gpu::GraphicsPipeline* RendererImpl::surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided) {
-    if (!surface.shadowVertex) return &shadowPipeline;
-    const int i = doubleSided ? 1 : 0;
+const gpu::GraphicsPipeline* RendererImpl::surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided, bool rain) {
+    if (!surface.shadowVertex) return rain ? &rainOccluderPipeline : &shadowPipeline;
+    const int i = (rain ? 2 : 0) + (doubleSided ? 1 : 0);
     if (surface.shadowPipelines[std::size_t(i)]) return &surface.shadowPipelines[std::size_t(i)];
     if (surface.shadowFailed[std::size_t(i)]) return nullptr;
     const gpu::Caps& caps = device->caps();
-    const std::string name = std::format("surface {} shadow", surface.name);
+    const std::string name = std::format("surface {} {}", surface.name, rain ? "rain occluder" : "shadow");
     Result<gpu::GraphicsPipeline> p = createPipeline({
         .vertexShader = surface.shadowVertex,
         .fragmentShader = shaders::render_frame.find("shadow_fs"),
         .vertexBuffers = {&kVertexLayout, 1},
         .vertexAttributes = kVertexAttributes,
-        .rasterizer = shadowRasterizer(caps),
+        .rasterizer = shadowRasterizer(caps, !rain),
         .depth = {.test = true, .write = true, .compare = gpu::CompareOp::LessOrEqual},
         .depthFormat = shadowFormat,
         .name = name,
@@ -894,27 +914,28 @@ const gpu::GraphicsPipeline* RendererImpl::surfaceShadowPipeline(SurfaceEntry& s
 }
 
 // Cut-out and dithered casters: the surface function runs to discard, so they take the full vertex and the material.
-const gpu::GraphicsPipeline* RendererImpl::surfaceMaskPipeline(SurfaceEntry& surface) {
-    if (surface.maskPipeline) return &surface.maskPipeline;
-    if (surface.maskFailed) return nullptr;
-    const std::string name = std::format("surface {} shadow mask", surface.name);
+const gpu::GraphicsPipeline* RendererImpl::surfaceMaskPipeline(SurfaceEntry& surface, bool rain) {
+    const std::size_t i = rain ? 1 : 0;
+    if (surface.maskPipelines[i]) return &surface.maskPipelines[i];
+    if (surface.maskFailed[i]) return nullptr;
+    const std::string name = std::format("surface {} {} mask", surface.name, rain ? "rain occluder" : "shadow");
     Result<gpu::GraphicsPipeline> p = createPipeline({
         .vertexShader = surface.vertex,
         .fragmentShader = surface.shadowFragment ? surface.shadowFragment : standard.shadowFragment,
         .vertexBuffers = {&kVertexLayout, 1},
         .vertexAttributes = kVertexAttributes,
-        .rasterizer = shadowRasterizer(device->caps()),
+        .rasterizer = shadowRasterizer(device->caps(), !rain),
         .depth = {.test = true, .write = true, .compare = gpu::CompareOp::LessOrEqual},
         .depthFormat = shadowFormat,
         .name = name,
     });
     if (!p) {
         log::error("render", "pipeline '{}': {}", name, p.error());
-        surface.maskFailed = true;
+        surface.maskFailed[i] = true;
         return nullptr;
     }
-    surface.maskPipeline = std::move(*p);
-    return &surface.maskPipeline;
+    surface.maskPipelines[i] = std::move(*p);
+    return &surface.maskPipelines[i];
 }
 
 // Translucent casters in the transmittance map, without depth: rgb is multiplied (the light left after every caster
@@ -1536,8 +1557,8 @@ void RendererImpl::bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, c
                   material.light == 0      ? 0.0f
                   : material.lightTwoSided ? 2.0f
                                            : 1.0f);
-    u.weather =
-        glm::vec4(std::clamp(m.wetness, 0.0f, 1.0f), std::clamp(m.puddles, 0.0f, 1.0f), m.water ? 1.0f : 0.0f, 0.0f);
+    u.weather = glm::vec4(std::clamp(m.wetness, 0.0f, 1.0f), std::clamp(m.puddles, 0.0f, 1.0f), m.water ? 1.0f : 0.0f,
+                          m.water ? 0.0f : std::clamp(m.snow, 0.0f, 1.0f));
     pass.pushUniforms(kFragment, 2, u);
     pass.bindSamplers(kFragment, 1, bindings);
 }
@@ -1763,20 +1784,29 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         cloudsTried = true;
         if (!clouds.ready()) cloudMode = Clouds::Off;
     }
-    // The rain of the scene's weather: its pipelines when it first falls; where its occlusion map is this frame.
+    // The rain and snow of the scene's weather: their pipelines when they first fall; where the occlusion map is this
+    // frame.
     Rain rainMode = scene.weather && !pathTracing ? effects.rain : Rain::Off;
-    if (rainMode != Rain::Off && !rain.ready()) {
+    Snow snowMode = scene.weather && !pathTracing ? effects.snow : Snow::Off;
+    if ((rainMode != Rain::Off || snowMode != Snow::Off) && !rain.ready()) {
         if (!rainTried && !rain.init(*device, hdrFormat, shadowFormat, pipelineCount)) {
             support.rain = false; // logged
             applySettings();
         }
         rainTried = true;
-        if (!rain.ready()) rainMode = Rain::Off;
+        if (!rain.ready()) {
+            rainMode = Rain::Off;
+            snowMode = Snow::Off;
+        }
     }
-    if ((rainMode != Rain::Off || (cloudMode != Clouds::Off && settings.cloudShadows)) && !ensureWeatherMaps())
+    if ((rainMode != Rain::Off || snowMode != Snow::Off || (cloudMode != Clouds::Off && settings.cloudShadows)) &&
+        !ensureWeatherMaps()) {
         rainMode = Rain::Off;
+        snowMode = Snow::Off;
+    }
     const bool raining = rain.prepare({.weather = scene.weather ? &*scene.weather : nullptr,
                                        .quality = rainMode,
+                                       .snow = snowMode,
                                        .camera = cameraPos,
                                        .time = view.time},
                                       fu, stats);
@@ -2034,11 +2064,11 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (raining && sphereVisible(rainPlanes, center, radius)) {
             Item item{0, 0.0f, i, nullptr, true};
             if (m.alphaCutoff > 0.0f) {
-                item.pipeline = surfaceMaskPipeline(*surface);
+                item.pipeline = surfaceMaskPipeline(*surface, true);
                 item.key =
                     (std::uint64_t(1) << 62) | (std::uint64_t(surfaceIndex & 0xfff) << 48) | materialKey | meshKey;
             } else {
-                item.pipeline = surfaceShadowPipeline(*surface, m.doubleSided);
+                item.pipeline = surfaceShadowPipeline(*surface, m.doubleSided, true);
                 item.key = (std::uint64_t(surface->shadowVertex ? surfaceIndex : 0) << 49) |
                            (std::uint64_t(m.doubleSided ? 1 : 0) << 48) | meshKey;
                 item.material = false;
@@ -2760,17 +2790,23 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         commands.endTiming();
         image = upscaled;
     }
-    // ---- 3b. The rain's streaks and splashes, after TAA and upscaling (TAA's history is kept as it is)
+    // ---- 3b. The rain's streaks and splashes and the snow's flakes, after TAA and upscaling (TAA's history is kept
+    // as it is)
     if (raining && !pathFrame) {
+        const RainRenderer::Drops drops{.image = image,
+                                        .keepImage = taaResolve && !upscaling,
+                                        .depth = &depth,
+                                        .viewProjStable = viewProjStable,
+                                        .proj = proj};
         commands.beginTiming("rain");
-        image = rain.drawDrops(commands,
-                               {.image = image,
-                                .keepImage = taaResolve && !upscaling,
-                                .depth = &depth,
-                                .viewProjStable = viewProjStable,
-                                .proj = proj},
-                               weatherMaps, pointClamp, linearClamp, fu, stats);
+        image = rain.drawDrops(commands, drops, weatherMaps, pointClamp, linearClamp, fu, stats);
         commands.endTiming();
+        if (rain.snowing()) {
+            commands.beginTiming("snow");
+            rain.drawFlakes(commands, {.image = image, .depth = &depth, .viewProjStable = viewProjStable, .proj = proj},
+                            weatherMaps, pointClamp, linearClamp, fu, stats);
+            commands.endTiming();
+        }
     }
 
     // ---- 4. Game passes on the HDR image

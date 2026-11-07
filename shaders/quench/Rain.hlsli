@@ -12,14 +12,38 @@
 // A point this far (m) below the highest surface along the rain is under cover.
 static const float QUENCH_RAIN_COVER_DEPTH = 0.4;
 
-// The wetness grid at a world xz: float4(ground wetness, standing water, precipitation, 1), bilinear between the
-// cells' centres (beyond the grid its edge cells').
+// The wetness grid at a world xz: float4(ground wetness, standing water, precipitation, the share of it that falls as
+// rain), bilinear between the cells' centres (beyond the grid its edge cells').
 float4 quenchWetnessAt(Texture2D<float4> maps, SamplerState s, float2 xz) {
     const float n = float(QUENCH_WETNESS_GRID);
     const float2 cell = clamp((xz - quenchFrame.rainGrid.xy) * quenchFrame.rainGrid.z * n, 0.5, n - 0.5);
     const float2 uv = float2(cell.x / float(QUENCH_WEATHER_MAPS_WIDTH),
                              (float(QUENCH_WETNESS_ROW) + cell.y) / float(QUENCH_WEATHER_MAPS_HEIGHT));
     return maps.SampleLevel(s, uv, 0.0);
+}
+
+// The snow cover at a world xz (the weather's Wetness::snow: 0 bare .. 1 covered), from the cells beside the wetness
+// grid's.
+float quenchSnowAt(Texture2D<float4> maps, SamplerState s, float2 xz) {
+    const float n = float(QUENCH_WETNESS_GRID);
+    const float2 cell = clamp((xz - quenchFrame.rainGrid.xy) * quenchFrame.rainGrid.z * n, 0.5, n - 0.5);
+    const float2 uv = float2((n + cell.x) / float(QUENCH_WEATHER_MAPS_WIDTH),
+                             (float(QUENCH_WETNESS_ROW) + cell.y) / float(QUENCH_WEATHER_MAPS_HEIGHT));
+    return maps.SampleLevel(s, uv, 0.0).r;
+}
+
+// How much of a surface at P (its geometric normal N, `distance` m from the camera) a snow cover of `cover` (0..1)
+// hides: none on walls and overhangs, less on slopes, and a thin cover as a dusting with patches (value noise at
+// 0.8 m and 0.2 m, the finer one faded out with the distance) that close as it deepens; from 20 m to 100 m away the
+// patches, smaller than a pixel there, give way to the share of the ground they cover.
+float quenchSnowAmount(float3 P, float3 N, float cover, float distance) {
+    const float depth = cover * smoothstep(0.3, 0.8, N.y) * 1.2;
+    if (depth <= 0.0) return 0.0;
+    const float fine = lerp(valueNoise(P.xz / 0.2 + P.y * 0.37 + 5.1), 0.5, saturate(distance / 40.0));
+    const float n = valueNoise(P.xz / 0.8 + P.y * 0.53) * 0.65 + fine * 0.35;
+    const float patches = lerp(smoothstep(n - 0.06, n + 0.06, depth), smoothstep(0.15, 0.85, depth),
+                               saturate(distance / 80.0 - 0.25));
+    return max(patches, saturate(depth) * 0.3);
 }
 
 // A world point in the rain occlusion map: xy its uv (0..1, top left 0, 0), z its depth (0..1, 0 at the map's top).
@@ -52,8 +76,12 @@ float quenchPuddleHeight(float2 xz) { return valueNoise(xz / 6.0) * 0.7 + valueN
 
 // The rings of rain drops on standing water: the slope of its surface (d height / dx, d height / dz) at a world xz,
 // at time t (s) for precipitation 0..1. Two grids of cells 0.4 m across, offset; a drop falls in a cell every 0.8 s at
-// a place of its own, in a share of the cells that grows with the rain, and its ring spreads and fades.
+// a place of its own, in a share of the cells that grows with the rain, and its ring spreads and fades. Each drop has
+// a size of its own (its ring's width, wavelength and reach), and the drops fall more densely and strike harder in
+// some puddles than in others (value noise at 3 m, as gusts and drips do).
 float2 quenchRipples(float2 xz, float t, float rain) {
+    const float place = valueNoise(xz / 3.0 + 41.7);
+    const float density = rain * lerp(0.55, 1.45, place);
     float2 slope = float2(0.0, 0.0);
     [unroll] for (int layer = 0; layer < 2; ++layer) {
         const float2 p = xz / 0.4 + float(layer) * float2(0.37, 0.71);
@@ -63,18 +91,19 @@ float2 quenchRipples(float2 xz, float t, float rain) {
                 const float2 id = base + float2(float(k), float(j));
                 const float phase = t / 0.8 + hash12(id + float(layer) * 17.0);
                 const float drop = floor(phase);
-                if (hash12(id * 1.37 + drop * 3.1 + float(layer) * 7.0) > rain) continue;
+                if (hash12(id * 1.37 + drop * 3.1 + float(layer) * 7.0) > density) continue;
                 const float age = phase - drop;
+                const float size = lerp(0.6, 1.4, hash12(id * 0.73 + drop * 5.7 + float(layer) * 3.0));
                 const float2 d = p - (id + 0.15 + 0.7 * hash22(id * 2.11 + drop + 5.0));
                 const float r = length(d);
-                const float front = age * 0.6;
-                const float band = saturate(1.0 - abs(r - front) * 4.0);
+                const float front = age * 0.6 * size;
+                const float band = saturate(1.0 - abs(r - front) * 4.0 / size);
                 const float fade = (1.0 - age) * (1.0 - age);
-                slope -= d / max(r, 1e-3) * sin((r - front) * 25.0) * band * fade;
+                slope -= d / max(r, 1e-3) * sin((r - front) * 25.0 / size) * band * fade * size;
             }
         }
     }
-    return slope * 0.3;
+    return slope * (0.3 * lerp(0.7, 1.3, place));
 }
 
 #endif

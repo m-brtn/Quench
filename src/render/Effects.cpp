@@ -76,9 +76,12 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
     if (settings.sky && settings.clouds != Clouds::Off && support.cloudLayer)
         e.clouds = settings.clouds == Clouds::Volumetric && support.cloudVolume ? Clouds::Volumetric : Clouds::Layer;
     e.skyCube = e.clouds != Clouds::Off && settings.skyCubeSize > 0 && support.skyCube;
-    // The path tracer's frame has no rain: it is the reference of the real-time lighting.
-    if (support.rain && !e.pathTracer) e.rain = settings.rain;
-    e.rainShafts = e.rain != Rain::Off && settings.rainShafts && e.clouds != Clouds::Off;
+    // The path tracer's frame has no rain or snow: it is the reference of the real-time lighting.
+    if (support.rain && !e.pathTracer) {
+        e.rain = settings.rain;
+        e.snow = settings.snow;
+    }
+    e.rainShafts = (e.rain != Rain::Off || e.snow != Snow::Off) && settings.rainShafts && e.clouds != Clouds::Off;
     return e;
 }
 

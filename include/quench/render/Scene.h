@@ -139,6 +139,10 @@ struct MaterialDesc {
     float wetness = 1.0f;
     float puddles = 0.0f;
     bool water = false;
+    // The snow on it (RenderSettings::snow; docs/weather.md, "Snow"), where the snow reaches it: how much of the
+    // weather's snow cover lies on its up-facing parts (0: none, a surface that is warm or moves; 1: as on open
+    // ground). Water takes none.
+    float snow = 1.0f;
 };
 
 // How a skinned mesh's vertices follow their joints. Linear blends the joints' matrices: cheap and exact for one joint,

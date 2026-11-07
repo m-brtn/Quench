@@ -25,6 +25,11 @@ struct QUENCH_ALIGN16 RainUniforms {
     float4 rainbow;    // x: 1 to draw it, y: its strength, z: the shafts' jitter this frame (0..1), w: the shafts'
                        // scale (target pixels per shaft texel along each axis)
     float4 target;     // xy: the size of the target drawn (pixels), zw: 1 / it; for the shafts the HDR image's
+    float4 snowFall;   // xyz: the snow's velocity (m/s), w: 1 when the snow is drawn
+    float4 flakes;     // x: count, y: the half side of their box around the camera (m), z: a flake's size (m), w: the
+                       // share of the sun's irradiance a flake sends toward the camera
+    float4 flakeLight; // rgb: the sky's and the ground's light a flake sends toward the camera, w: 1 when the rain is
+                       // drawn
 };
 
 QUENCH_SHARED_END

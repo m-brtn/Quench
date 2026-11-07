@@ -137,6 +137,13 @@ enum class Clouds : std::uint8_t {
 // steps; Low has no splashes.
 enum class Rain : std::uint8_t { Off, Low, Medium, High };
 
+// The snow of the scene's weather (docs/weather.md, "Snow"), where its precipitation falls as snow
+// (weather::Weather::snowShare): flakes near the camera that flutter and drift with the wind, the snow cover the
+// weather remembers on surfaces that face up and that the snow reaches (the rain occlusion map), and (with clouds and
+// RenderSettings::rainShafts) the shafts of snow from afar, denser and softer than the rain's. The levels differ in how
+// many flakes there are and how far around the camera, and in the shafts' steps.
+enum class Snow : std::uint8_t { Off, Low, Medium, High };
+
 // Ray-traced shadows of at most this many local lights per frame (RenderSettings::localLightShadows).
 inline constexpr int kMaxRayLocalShadows = 4;
 // Cascades of the probe grid (RenderSettings::probeCascades).
@@ -222,8 +229,11 @@ struct RenderSettings {
     // shafts need clouds (they read the clouds' weather map) and can be left out; the rainbow shows where the sun
     // shines on rain in front of a viewer with the sun behind them (it rarely does).
     Rain rain = Rain::Off;
-    bool rainShafts = true;
+    bool rainShafts = true; // also the snow's shafts
     bool rainbow = false;
+    // The snow of the scene's weather. Off by default (then the weather's snow is not drawn: neither as snow nor as
+    // rain). The snow cover on surfaces comes with any level.
+    Snow snow = Snow::Off;
     ToneCurve toneCurve = ToneCurve::Aces;
     float vignette = 0.28f;
     bool dither = true;
@@ -259,10 +269,11 @@ struct ActiveEffects {
     // scene has a weather.
     Clouds clouds = Clouds::Off;
     bool skyCube = false; // needs an Rgba16Float cube the device can render to and sample
-    // Rain needs Rgba16Float targets the device can sample (the weather maps) and a depth texture to sample (the
-    // occlusion map, as the cascades); its shafts also clouds. Drawn in frames whose scene has a weather.
+    // Rain and snow need Rgba16Float targets the device can sample (the weather maps) and a depth texture to sample
+    // (the occlusion map, as the cascades); their shafts also clouds. Drawn in frames whose scene has a weather.
     Rain rain = Rain::Off;
     bool rainShafts = false;
+    Snow snow = Snow::Off;
 
     friend bool operator==(const ActiveEffects&, const ActiveEffects&) = default;
 };
@@ -402,11 +413,13 @@ struct RenderStats {
     std::uint32_t cloudHeight = 0;
     float cloudCover = 0.0f;
     std::uint32_t skyCubeFaces = 0;
-    // The rain drawn this frame (Off: none, or no weather), the precipitation at the camera, the streaks and splashes
-    // drawn (where it rains: every instance runs, most are empty), the casters drawn into the occlusion map, whether
-    // the shafts (and the rainbow) were drawn, and how much of the sky above the camera is covered (0 open .. 1 under
-    // a roof: the occlusion map around the camera, read back a few frames late; -1 before the first reading or
-    // without rain): what weather audio takes for its roof layer (audio::WeatherSoundState::cover).
+    // The rain drawn this frame (Off: none, or no weather), the rain at the camera (the precipitation there less its
+    // snow), the streaks and splashes drawn (none where no rain falls near the camera; where some does every instance
+    // runs and most are empty), the casters drawn
+    // into the occlusion map (with rain or snow), whether the shafts (and the rainbow) were drawn, and how much of the
+    // sky above the camera is covered (0 open .. 1 under a roof: the occlusion map around the camera, read back a few
+    // frames late; -1 before the first reading or without rain and snow): what weather audio takes for its roof
+    // layer (audio::WeatherSoundState::cover).
     Rain rain = Rain::Off;
     float rainAtCamera = 0.0f;
     std::uint32_t rainStreaks = 0;
@@ -415,6 +428,14 @@ struct RenderStats {
     bool rainShafts = false;
     bool rainbow = false;
     float rainCover = -1.0f;
+    // The snow drawn this frame (Off: none, or no weather), the snowfall at the camera (the precipitation there times
+    // its snow share), its share and the flakes drawn (none where no snow falls near the camera; where some does every
+    // instance runs and most are empty where little falls);
+    // the snowfall and its share are 0 while the snow is not drawn, as the rain at the camera is without rain.
+    Snow snow = Snow::Off;
+    float snowAtCamera = 0.0f;
+    float snowShareAtCamera = 0.0f;
+    std::uint32_t snowFlakes = 0;
 };
 
 class Renderer {

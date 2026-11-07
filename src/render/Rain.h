@@ -1,11 +1,12 @@
 #pragma once
 
-// The rain (RenderSettings::rain, docs/weather.md, "Rain"): every frame with a weather and the rain on, the rain
-// occlusion map around the camera (the depth along the rain of the highest surfaces: the renderer draws its shadow
-// casters into occlusion() with viewProj()), copied with the weather's wetness grid into the weather maps that
-// surfaces read; the shafts of rain under the raining clouds and the rainbow in the HDR image before TAA; the streaks
-// and splashes of the drops near the camera after TAA and upscaling; and the cover over the camera, read back a few
-// frames late for the weather's sound (RenderStats::rainCover).
+// The rain and snow (RenderSettings::rain and snow, docs/weather.md, "Rain" and "Snow"): every frame with a weather
+// and either on, the rain occlusion map around the camera (the depth along the rain, or the snow, of the highest
+// surfaces: the renderer draws its shadow casters into occlusion() with viewProj()), copied with the weather's wetness
+// grid and snow cover into the weather maps that surfaces read; the shafts of rain and snow under the clouds and the
+// rainbow in the HDR image before TAA; the streaks and splashes of the drops and the snow's flakes near the camera
+// after TAA and upscaling; and the cover over the camera, read back a few frames late for the weather's sound
+// (RenderStats::rainCover).
 
 #include "shaders/RainUniforms.h"
 
@@ -38,15 +39,18 @@ public:
     struct Frame {
         const weather::Weather* weather = nullptr;
         Rain quality = Rain::Off;
+        Snow snow = Snow::Off;
         glm::vec3 camera{0.0f};
         double time = 0.0; // View::time: the drops' fall and the ripples
     };
-    // Before the frame's draw lists: places this frame's occlusion map and fills the rain's fields of `fu` (rain.x 0
-    // without rain) and of `stats`. True when it rains this frame: the renderer then draws its casters into
-    // occlusion() with viewProj() and calls the passes below.
+    // Before the frame's draw lists: places this frame's occlusion map and fills the rain's and snow's fields of `fu`
+    // (rain.x 0 without either) and of `stats`. True when rain or snow is drawn this frame: the renderer then draws
+    // its casters into occlusion() with viewProj() and calls the passes below.
     bool prepare(const Frame& frame, shader::FrameUniforms& fu, RenderStats& stats);
     const glm::mat4& viewProj() const { return m_viewProj; }
     const gpu::Texture& occlusion() const { return m_occlusion; }
+    // The snow's flakes are drawn this frame (drawFlakes): the snow is on and some falls near the camera.
+    bool snowing() const { return m_flakesNear; }
 
     // Outside passes, after the casters were drawn: the occlusion map and the wetness grid into their regions of
     // `maps`, and the cover over the camera read back.
@@ -76,10 +80,15 @@ public:
         glm::mat4 viewProjStable{1.0f};
         glm::mat4 proj{1.0f};
     };
-    // Outside passes, after TAA and upscaling: the streaks and splashes; returns the image they were drawn into.
+    // Outside passes, after TAA and upscaling: the streaks and splashes; returns the image they were drawn into (the
+    // flakes' too, also without rain).
     gpu::TextureRef drawDrops(gpu::CommandBuffer& commands, const Drops& drops, const gpu::Texture& maps,
                               const gpu::Sampler& pointSampler, const gpu::Sampler& linearSampler,
                               const shader::FrameUniforms& fu, RenderStats& stats);
+    // Then the snow's flakes into drawDrops' image (drops.keepImage is not read).
+    void drawFlakes(gpu::CommandBuffer& commands, const Drops& drops, const gpu::Texture& maps,
+                    const gpu::Sampler& pointSampler, const gpu::Sampler& linearSampler,
+                    const shader::FrameUniforms& fu, RenderStats& stats);
 
     // Frees the targets (rain off).
     void release();
@@ -91,7 +100,8 @@ private:
     gpu::Device* m_device = nullptr;
     gpu::TextureFormat m_depthFormat = gpu::TextureFormat::Invalid;
     gpu::TextureFormat m_hdrFormat = gpu::TextureFormat::Invalid;
-    gpu::GraphicsPipeline m_mapPipeline, m_streakPipeline, m_splashPipeline, m_shaftsPipeline, m_shaftsUpPipeline;
+    gpu::GraphicsPipeline m_mapPipeline, m_streakPipeline, m_splashPipeline, m_flakePipeline, m_shaftsPipeline,
+        m_shaftsUpPipeline;
     gpu::Texture m_occlusion;
     gpu::Texture m_image;  // the copy drawn into when the image must stay as it is
     gpu::Texture m_shafts; // the shafts at a reduced size (color, transmittance)
@@ -116,6 +126,11 @@ private:
     std::uint64_t m_frame = 0;
 
     Rain m_quality = Rain::Off;
+    Snow m_snow = Snow::Off;
+    float m_snowShare = 0.0f; // of the precipitation at the camera, where the snow is drawn
+    // The streaks and splashes, and the flakes, are drawn: on, and some of their kind falls near the camera.
+    bool m_dropsNear = false, m_flakesNear = false;
+    shader::WeatherUniforms m_field{};
     glm::vec3 m_camera{0.0f};
     glm::mat4 m_viewProj{1.0f};
     glm::vec3 m_velocity{0.0f};

@@ -26,7 +26,7 @@ until time >= 1.5 3
 expect rain == 2
 expect rain_at_camera > 0.3
 expect rain_streaks == 24576
-expect rain_splashes == 1024
+expect rain_splashes == 1536
 expect rain_occluders > 8
 expect rain_cover < 0.1
 expect rain_shafts == 1

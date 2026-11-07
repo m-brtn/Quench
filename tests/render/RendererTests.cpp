@@ -888,6 +888,126 @@ QUENCH_TEST(renderer_rain_shafts_from_afar) {
     CHECK(veiled > 20, "the shaft shows: %d pixels", veiled);
 }
 
+// Snow (docs/weather.md, "Snow"): the weather's snow cover whitens the open ground, not the ground under a roof nor a
+// material without snow; the flakes drawn only when asked; snow is not drawn as rain; its shafts from afar are drawn
+// only with the snow on, and veil more than the rain's.
+QUENCH_TEST(renderer_snow_covers_the_open_ground) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(100.0f)));
+    const MeshId roof = addMesh(scene, boxMesh(glm::vec3(25.0f, 0.2f, 40.0f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.3f, 0.3f, 0.3f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance(
+        {.mesh = roof, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {-25.0f, 20.0f, 0})});
+    Environment e = sunOnly();
+    e.skyAmbient = e.groundAmbient = glm::vec3(1.0f);
+    scene.setEnvironment(e);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    View view = lookAt(glm::vec3(2.0f, 10.0f, 0), glm::vec3(2.0f, 0, 0), glm::vec3(0, 0, -1));
+    const glm::ivec2 open = pixelOf(view, glm::vec3(5.0f, 0, 0)), covered = pixelOf(view, glm::vec3(-2.0f, 0, 0));
+
+    weather::Weather w(
+        weather::Settings{.coverage = 0.0f, .cirrus = 0.0f, .wind = {.speed = 0.0f}, .temperature = -3.0f});
+    w.addCell({.position = {0.0f, 0.0f}, .radius = 8000.0f, .precipitation = 1.0f, .drifts = false});
+    w.setTime(4000.0);
+    scene.setWeather(w);
+    const std::vector<Rgba8> bare = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().snow == Snow::Off && renderer->effects().snow == Snow::Off, "snow is off by default");
+
+    settings.snow = Snow::Medium;
+    renderer->setSettings(settings);
+    std::vector<Rgba8> white;
+    for (int frame = 0; frame < 6; ++frame) white = renderOnce(device, *renderer, scene, view, *target);
+    const RenderStats s = renderer->stats();
+    CHECK(s.snow == Snow::Medium && renderer->effects().snow == Snow::Medium, "snow drawn as %d", int(s.snow));
+    CHECK(s.snowAtCamera > 0.9f && s.snowShareAtCamera == 1.0f && s.rainAtCamera == 0.0f,
+          "snowfall %.3f (share %.3f), rain %.3f at the camera", double(s.snowAtCamera), double(s.snowShareAtCamera),
+          double(s.rainAtCamera));
+    CHECK(s.rain == Rain::Off && s.rainOccluders >= 2 && s.snowFlakes > 0, "rain %d, %u objects in the map, %u flakes",
+          int(s.rain), s.rainOccluders, s.snowFlakes);
+    const float openBare = sceneValue(at(bare, open)).g, openWhite = sceneValue(at(white, open)).g;
+    const float coveredBare = sceneValue(at(bare, covered)).g, coveredWhite = sceneValue(at(white, covered)).g;
+    std::printf("  open ground %.3f bare, %.3f under snow; under the roof %.3f bare, %.3f\n", double(openBare),
+                double(openWhite), double(coveredBare), double(coveredWhite));
+    CHECK(openWhite > openBare * 1.8f, "the open ground whitens: %.3f against %.3f", double(openWhite),
+          double(openBare));
+    CHECK(std::abs(coveredWhite - coveredBare) < coveredBare * 0.05f, "under the roof it stays bare: %.3f against %.3f",
+          double(coveredWhite), double(coveredBare));
+    scene.setMaterial(grey, {.baseColor = glm::vec4(0.3f, 0.3f, 0.3f, 1.0f), .roughness = 0.9f, .snow = 0.0f});
+    const std::vector<Rgba8> optedOut = renderOnce(device, *renderer, scene, view, *target);
+    const float openOut = sceneValue(at(optedOut, open)).g;
+    CHECK(std::abs(openOut - openBare) < openBare * 0.05f, "snow on a material without it: %.3f against %.3f",
+          double(openOut), double(openBare));
+
+    // The flakes only (the ground keeps no snow), with and without them; with the rain on too, no streaks fall.
+    view = lookAt(glm::vec3(10.0f, 2.0f, 0), glm::vec3(10.0f, 2.0f, -10.0f));
+    view.time = 2.0;
+    const std::vector<Rgba8> flakes = renderOnce(device, *renderer, scene, view, *target);
+    settings.snow = Snow::Off;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> none = renderOnce(device, *renderer, scene, view, *target);
+    int flaked = 0;
+    for (std::size_t i = 0; i < flakes.size(); ++i) flaked += std::abs(sum(flakes[i]) - sum(none[i])) > 6 ? 1 : 0;
+    std::printf("  %d of %u pixels with flakes\n", flaked, kSize * kSize);
+    CHECK(flaked > 10, "the flakes show: %d pixels", flaked);
+    settings.rain = Rain::Medium;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> asRain = renderOnce(device, *renderer, scene, view, *target);
+    int streaked = 0;
+    for (std::size_t i = 0; i < asRain.size(); ++i) streaked += std::abs(sum(asRain[i]) - sum(none[i])) > 6 ? 1 : 0;
+    CHECK(streaked == 0, "snow drawn as rain: %d pixels", streaked);
+}
+
+// The snow's shafts from afar (with clouds): denser than the rain's under the same cell, and not drawn as rain.
+QUENCH_TEST(renderer_snow_shafts_from_afar) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.clouds = Clouds::Volumetric;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(20000.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(0.3f, 0.3f, 0.3f, 1.0f)})});
+    addSun(scene, glm::normalize(glm::vec3(0.0f, -0.4f, -1.0f)));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    weather::Settings ws{.coverage = 0.0f, .cirrus = 0.0f, .wind = {.speed = 0.0f}};
+    weather::Weather w(ws);
+    w.addCell({.position = {0.0f, -6000.0f}, .radius = 3000.0f, .precipitation = 0.5f, .drifts = false});
+    scene.setWeather(w);
+    const View view = lookAt(glm::vec3(0, 50.0f, 0), glm::vec3(0, 400.0f, -6000.0f));
+    const auto veil = [&](Rain rain, Snow snow, float temperature) {
+        ws.temperature = temperature;
+        w.setSettings(ws);
+        scene.setWeather(w);
+        settings.rain = rain;
+        settings.snow = snow;
+        settings.rainShafts = false;
+        renderer->setSettings(settings);
+        const std::vector<Rgba8> without = renderOnce(device, *renderer, scene, view, *target);
+        settings.rainShafts = true;
+        renderer->setSettings(settings);
+        const std::vector<Rgba8> with = renderOnce(device, *renderer, scene, view, *target);
+        double change = 0.0;
+        for (std::size_t i = 0; i < with.size(); ++i) change += std::abs(sum(with[i]) - sum(without[i]));
+        return change / double(with.size());
+    };
+    const double rain = veil(Rain::Medium, Snow::Off, 15.0f);
+    const double snow = veil(Rain::Off, Snow::Medium, -5.0f);
+    const double hidden = veil(Rain::Medium, Snow::Off, -5.0f);
+    std::printf("  mean change by the shaft: rain %.3f, snow %.3f, snow with only the rain drawn %.3f\n", rain, snow,
+                hidden);
+    CHECK(renderer->stats().snowAtCamera == 0.0f, "snow at the camera: %.3f", double(renderer->stats().snowAtCamera));
+    CHECK(snow > rain * 1.5, "the snow's shaft %.3f against the rain's %.3f", snow, rain);
+    CHECK(hidden < rain * 0.1, "snow drawn as rain from afar: %.3f", hidden);
+}
+
 QUENCH_TEST(renderer_taa_motion_vectors_and_render_scale) {
     QUENCH_GPU_DEVICE(device);
     RenderSettings settings = plainSettings();
