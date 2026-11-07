@@ -16,7 +16,8 @@ the architecture, the code rules, the checks each kind of change needs, and what
 built so that a change can be verified without a person at the screen: tests for every module, apps that run
 scripted scenarios offscreen, captures compared with golden images per GPU backend, perf regions with CPU and GPU
 timings, and a [devlog](devlog/) of what was done and verified each day. One command starts a new game from the
-template, so agents and people can build, run and check a game end to end. What still needs eyes and ears (motion,
+template, so agents and people can build, run and check a game end to end, and every new game gets the agent skill
+[quench-game](.agents/skills/quench-game/SKILL.md) on how to build on the engine. What still needs eyes and ears (motion,
 sound, a phone's screen) waits for a person in the demo's check mode.
 
 <p align="center">
