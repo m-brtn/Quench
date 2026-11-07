@@ -881,6 +881,8 @@ quench::Result<std::unique_ptr<quench::app::Game>> quench::app::createGame(AppDe
     desc.name = QUENCH_GAME_NAME;
     desc.organization = "Quench";
     desc.version = QUENCH_GAME_VERSION;
+    // The audio section's reverb, under the effects bus: muting or pausing the effects also silences their reverb.
+    desc.audio.buses.push_back({.name = "reverb", .parent = "effects", .reverb = audio::ReverbDesc{.roomSize = 0.6f}});
     demo::DemoFlags flags;
     const auto name = [&](std::size_t& i, std::string& out) {
         if (i + 1 >= args.size() || args[i + 1].empty() || args[i + 1].starts_with("--")) return false;

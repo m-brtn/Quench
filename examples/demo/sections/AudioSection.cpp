@@ -2,6 +2,7 @@
 // emitter circling in front of it, a fly-by passing at speed (Doppler) and a tone the demo computes on the audio thread
 // (a Generator) at a position the sliders set. Music streams from a file and crossfades between two tracks; the bus
 // sliders, mute and pause boxes and the meters show the bus tree. A click or tap on the ground plays a ping there.
+// With the reverb on, the 3D sounds send to the demo's reverb bus (under the effects bus, DemoGame's AppDesc).
 
 #include "Demo.h"
 
@@ -38,6 +39,8 @@ constexpr float kEmitterPriority = 5.0f; // above the pings, so a burst of pings
 constexpr float kCrossfade = 2.0f;
 constexpr float kMusicVolume = 0.3f;
 constexpr const char* kTracks[] = {"sounds/music_a.wav", "sounds/music_b.wav"};
+constexpr float kReverbSend = 0.4f;
+constexpr float kRoomSize = 0.6f;
 
 // A sine the demo computes on the audio thread; its frequency glides (about 10 ms) to the one the game thread sets.
 class Tone final : public audio::Generator {
@@ -77,7 +80,8 @@ public:
     std::string_view about() const override {
         return "3D sound around the head (it faces the way the camera looks): the orange emitter circles, the blue "
                "one passes at speed (Doppler), the green box is a tone the demo computes. Music streams and "
-               "crossfades; the buses have volume, mute and pause. Tap the ground for a ping.";
+               "crossfades; the buses have volume, mute and pause; the reverb puts the sounds in a room. Tap the "
+               "ground for a ping.";
     }
 
     Result<void> init(Context& c) override {
@@ -122,6 +126,8 @@ public:
             const audio::BusInfo& info = a.busInfo(audio::BusId{std::uint8_t(i)});
             m_savedBuses.push_back({info.volume, info.muted});
         }
+        m_reverbBus = a.findBus("reverb").value_or(audio::BusId{});
+        if (m_reverbBus.index != 0) a.setReverb(m_reverbBus, {.roomSize = m_roomSize});
         place(c);
         return {};
     }
@@ -178,6 +184,13 @@ public:
         if (ImGui::Button("Ping")) ping(c);
         ImGui::SameLine();
         if (ImGui::Button("40 pings")) burst(c, 40);
+
+        if (m_reverbBus.index != 0) {
+            ImGui::SeparatorText("Reverb");
+            if (ImGui::Checkbox("Reverb", &m_reverbOn)) setSends(c);
+            if (ImGui::SliderFloat("Room size", &m_roomSize, 0.0f, 1.0f, "%.2f"))
+                a.setReverb(m_reverbBus, {.roomSize = m_roomSize});
+        }
 
         ImGui::SeparatorText("Music");
         int track = m_track;
@@ -247,8 +260,10 @@ public:
     void click(Context& c, glm::vec2 point) override {
         const std::optional<glm::vec3> hit = groundPoint(c, camera, point);
         if (!hit) return;
-        c.app.audio().play(
-            m_ping, {.bus = c.app.audio().bus("effects"), .spatial = true, .emitter = emitter(*hit, glm::vec3(0.0f))});
+        audio::PlayParams p{.bus = c.app.audio().bus("effects"), .spatial = true};
+        p.emitter = emitter(*hit, glm::vec3(0.0f));
+        withSend(p);
+        c.app.audio().play(m_ping, p);
         ++m_pings;
     }
 
@@ -260,6 +275,8 @@ public:
         if (name == "flyby_x") return double(m_flybyX);
         if (name == "flyby_pitch") return double(flybyPitch());
         if (name == "pings") return double(m_pings);
+        if (name == "reverb") return m_reverbOn ? 1.0 : 0.0;
+        if (name == "room_size") return double(m_roomSize);
         return std::nullopt;
     }
 
@@ -315,6 +332,14 @@ public:
         } else if (name == "burst" && number && *number >= 1.0f) {
             burst(c, int(*number));
             return true;
+        } else if (name == "reverb" && flag && m_reverbBus.index != 0) {
+            m_reverbOn = *flag;
+            setSends(c);
+            return true;
+        } else if (name == "room_size" && number && m_reverbBus.index != 0) {
+            m_roomSize = std::clamp(*number, 0.0f, 1.0f);
+            a.setReverb(m_reverbBus, {.roomSize = m_roomSize});
+            return true;
         } else {
             return false;
         }
@@ -331,6 +356,7 @@ public:
             a.setBusMuted(bus, m_savedBuses[i].second);
         }
         if (m_pauseEffects) a.setBusPaused(a.bus("effects"), false);
+        if (m_reverbBus.index != 0) a.setReverb(m_reverbBus, {.roomSize = kRoomSize});
         m_motor = {};
         m_siren = {};
         m_ping = {};
@@ -375,8 +401,9 @@ private:
                 handle = {};
             }
         };
-        const audio::PlayParams loop{
+        audio::PlayParams loop{
             .bus = effects, .loop = true, .priority = kEmitterPriority, .fadeIn = 0.05f, .spatial = true};
+        withSend(loop);
         keep(m_orbitSound, m_orbitOn, [&] {
             audio::PlayParams p = loop;
             p.volume = 0.4f;
@@ -417,13 +444,26 @@ private:
         for (int i = 0; i < count; ++i) {
             const float angle = 2.0f * std::numbers::pi_v<float> * float(i) / float(count);
             const glm::vec3 at = kHead + 3.0f * glm::vec3(std::sin(angle), 0.0f, -std::cos(angle));
-            a.play(m_ping, {.bus = a.bus("effects"),
-                            .volume = 0.1f,
-                            .pitch = 0.75f + 0.5f * float(i % 5) / 4.0f,
-                            .spatial = true,
-                            .emitter = emitter(at, glm::vec3(0.0f))});
+            audio::PlayParams p{.bus = a.bus("effects"),
+                                .volume = 0.1f,
+                                .pitch = 0.75f + 0.5f * float(i % 5) / 4.0f,
+                                .spatial = true,
+                                .emitter = emitter(at, glm::vec3(0.0f))};
+            withSend(p);
+            a.play(m_ping, p);
         }
         m_pings += count;
+    }
+
+    // The 3D sounds' send to the reverb bus: kReverbSend with the reverb on, 0 with it off.
+    void withSend(audio::PlayParams& p) const {
+        p.sendBus = m_reverbBus;
+        p.sendLevel = m_reverbOn ? kReverbSend : 0.0f;
+    }
+    void setSends(Context& c) {
+        audio::AudioSystem& a = c.app.audio();
+        for (audio::SoundHandle h : {m_orbitSound, m_flybySound, m_toneSound})
+            a.setSend(h, m_reverbBus, m_reverbOn ? kReverbSend : 0.0f);
     }
 
     void place(Context& c) {
@@ -456,6 +496,9 @@ private:
     audio::SoundHandle m_orbitSound, m_flybySound, m_toneSound;
     bool m_active = false;
     bool m_orbitOn = true, m_flybyOn = true, m_toneOn = false, m_pauseEffects = false;
+    audio::BusId m_reverbBus; // master (index 0): the app has no reverb bus
+    bool m_reverbOn = false;
+    float m_roomSize = kRoomSize;
     float m_orbitAngle = 0.0f, m_orbitSpeed = 8.0f;
     float m_flybyX = -kFlybyHalfLength, m_flybyDirection = 1.0f, m_flybySpeed = 30.0f;
     float m_toneHz = 660.0f;

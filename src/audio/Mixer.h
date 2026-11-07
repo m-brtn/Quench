@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -35,6 +36,8 @@ struct VoiceParams {
     bool paused = false;
     bool spatial = false;
     Emitter emitter;
+    std::uint8_t sendBus = 0;
+    float sendLevel = 0.0f;
 };
 
 struct PlayCommand {
@@ -66,7 +69,11 @@ struct ListenerCommand {
     float speedOfSound = 343.0f;
     float dopplerScale = 1.0f;
 };
-using Command = std::variant<PlayCommand, StopCommand, ParamsCommand, BusCommand, ListenerCommand>;
+struct ReverbCommand {
+    std::uint8_t index = 0; // the bus
+    ReverbDesc reverb;
+};
+using Command = std::variant<PlayCommand, StopCommand, ParamsCommand, BusCommand, ListenerCommand, ReverbCommand>;
 
 struct EndEvent {
     std::uint32_t slot = 0, generation = 0;
@@ -79,8 +86,12 @@ struct MixerConfig {
     std::uint32_t maxSounds = 256;
     std::vector<std::uint8_t> busParents; // per bus; bus 0 is the master (its entry is ignored)
     std::vector<float> busVolumes;
-    std::uint32_t monitorFrames = 0; // capacity of the output tap (0: none)
+    std::vector<std::optional<ReverbDesc>> busReverbs; // per bus
+    std::uint32_t monitorFrames = 0;                   // capacity of the output tap (0: none)
 };
+
+// verblib's sample rates (its buffers are sized for up to 4 x 44100 Hz).
+inline constexpr std::uint32_t kMinReverbRate = 22050, kMaxReverbRate = 176400;
 
 inline constexpr std::uint32_t kBlockFrames = 64;
 inline constexpr float kMinStopFade = 0.003f; // seconds
@@ -91,6 +102,7 @@ inline constexpr double kMinStep = 1.0 / 16.0, kMaxStep = 16.0; // source frames
 class Mixer {
 public:
     explicit Mixer(const MixerConfig& config);
+    ~Mixer();
     Mixer(const Mixer&) = delete;
     Mixer& operator=(const Mixer&) = delete;
 
@@ -137,13 +149,17 @@ private:
         EndReason stopReason = EndReason::Stopped;
         float pauseGain = 1.0f;
         float audibility = 0.0f;
+        float send = 0.0f; // smoothed send level
     };
+    struct Reverb; // verblib's state, about 400 KB
 
     void apply(const PlayCommand& c);
     void apply(const StopCommand& c);
     void apply(const ParamsCommand& c);
     void apply(const BusCommand& c);
     void apply(const ListenerCommand& c);
+    void apply(const ReverbCommand& c);
+    void processReverb(Reverb& reverb, float* samples, std::uint32_t frames);
     Voice* voiceOf(std::uint32_t slot, std::uint32_t generation);
     void beginStop(Voice& voice, float fade, EndReason reason);
     void release(std::uint32_t voiceIndex, EndReason reason);
@@ -171,8 +187,10 @@ private:
         bool paused = false;
         float gain = 1.0f; // smoothed
         float meter[2] = {};
+        Reverb* reverb = nullptr; // in m_reverbs
     };
     std::vector<Bus> m_buses;
+    std::vector<std::unique_ptr<Reverb>> m_reverbs;
     std::vector<float> m_busBuffers; // per bus kBlockFrames stereo frames
     std::vector<float> m_scratch;    // source frames of one voice for one block
     Listener m_listener;

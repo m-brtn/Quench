@@ -23,6 +23,7 @@ include menu.txt
 include audio_tone.txt
 include audio_flyby.txt
 include audio_music.txt
+include audio_reverb.txt
 include cycle.txt
 include tunnel_motion.txt
 quit

@@ -58,6 +58,14 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   streamed Vorbis loop needs no length (miniaudio reports none for it there) and gives exactly the frames of the file
   decoded in memory every time round; the test loop decodes to its 48000 frames at 38 to 39 dB signal to error
   against its source; also under Node.js.
+- Reverb buses with sends (stage 7 remaining work): `BusDesc::reverb` makes a bus a Freeverb reverb (verblib 0.5
+  from miniaudio's archive, MIT-0 or public domain; no new download) whose output replaces its input; sounds send
+  to it with `PlayParams::sendBus` and `sendLevel` or `AudioSystem::setSend`, and `setReverb` changes the room size,
+  damping and width ([Audio](../audio.md#reverb)). Rendered on the audio thread without allocating (counted: 0 in
+  600 renders), bit for bit the dry mix when nothing reaches it, idle under -100 dB; RT60 0.67, 1.08 and 2.43 s at
+  room sizes 0.2, 0.5 and 0.8; about 1 µs per millisecond of audio for one reverb on the M4 Pro. The demo's audio
+  section has a reverb switch and a room size slider, a mix check (`audio_reverb.txt`) and a check mode item for
+  listening.
 
 ## Fixes
 
@@ -156,7 +164,11 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
 - **`.ogg` files play:** a sound or stream that is an Ogg Vorbis file decoded to `Failed` before and plays now. The
   decoder's error for a file of no known format reads "not a WAV, FLAC, MP3 or Ogg Vorbis file". `quench_miniaudio`
   (for a game that links it) is built from the engine's `src/audio/Miniaudio.c` with stb_vorbis inside, instead of
-  `miniaudio.c`; its configuration is unchanged.
+  `miniaudio.c`; its configuration is unchanged. It also holds verblib's implementation (`verblib_*` symbols).
+- **`audio::PlayParams`** has `sendBus` and `sendLevel` at its end (default: no send), **`audio::BusDesc`** and
+  **`audio::BusInfo`** have `reverb` (`std::optional<ReverbDesc>`) at theirs: designated initializers and positional
+  ones that stop before them compile unchanged. **`audio::ReverbDesc`**, **`AudioSystem::setSend`** and
+  **`AudioSystem::setReverb`** are new. Without a reverb bus and sends the mix is bit for bit what it was.
 - **Xcode projects** (`quench_add_game` with the Xcode generator): the merged assets are no longer a folder
   reference in the target's resources but are copied by a `CMake PostBuild Rules` script phase; a game's own script
   that expects the folder in `Copy Bundle Resources` needs to change. The `<target>_assets` target stays.

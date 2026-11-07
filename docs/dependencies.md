@@ -81,6 +81,7 @@ Audio ([Audio](audio.md)). One library, in `cmake/Dependencies.cmake`, listed wi
 |---|---|---|---|---|---|
 | miniaudio | 0.11.25 | `9634bedb5b5a2ca38c1ee7108a9358a4e233f14d` (TrailForge's), SHA256 `1a3a79b80fc6f0b0cc155e28b954a598e0ddfa2db64e2afa8466be88c476fa55` | public domain (Unlicense) or MIT-0 | `quench_audio` (decoders), `quench_audio_device` (device API), `quench_cook` (through `quench_audio`) | WAV, FLAC, MP3 and Ogg Vorbis decoding; the playback device (Core Audio on Apple platforms, a null backend for tests) |
 | stb_vorbis (in miniaudio's archive) | 1.22 (2021-07-11) | the same archive, `extras/stb_vorbis.c` | MIT or public domain (Unlicense), the reader's choice | `quench_audio` (through miniaudio's Vorbis backend) | Ogg Vorbis decoding (since 2026-11-07) |
+| verblib (in miniaudio's archive) | 0.5 (2022-10-25) | the same archive, `extras/nodes/ma_reverb_node/verblib.h` | MIT-0 or public domain (Unlicense), the reader's choice | `quench_audio` (the mixer) | the reverb of reverb buses, Freeverb (since 2026-11-07) |
 
 How it is built (`quench_miniaudio`, a static library from `src/audio/Miniaudio.c`, which includes `miniaudio.h`
 with `MINIAUDIO_IMPLEMENTATION` between the declarations of `extras/stb_vorbis.c` and its definitions, in the order of
@@ -105,6 +106,17 @@ pull mode (`audio.stream_vorbis_loop`, bit for bit). The decoder opens a file th
 Vorbis directly, since miniaudio's trial order puts MP3 before Vorbis. stb_vorbis allocates with `malloc` and
 `alloca` while it decodes; that runs on jobs, never on the audio thread. The null backend runs a device thread that discards the mix
 (`audio_device.null_device`).
+
+verblib's implementation is compiled into the same unit (`VERBLIB_IMPLEMENTATION`); miniaudio's own `ma_reverb_node`
+around it is not (no node graph). Checked in its source: Freeverb's eight combs and four allpasses per channel with
+their buffers inside the `verblib` struct (407960 bytes with the default `VERBLIB_MAXIMUM_SAMPLE_RATE` of 4 x 44100;
+the engine allocates one per reverb bus when the mixer is created), so `verblib_process` and the parameter setters
+allocate nothing (`audio.mixer_render_allocates_nothing` counts it); `verblib_initialize` fails outside 22050 to
+176400 Hz and only fills the struct and clears the buffers (the mixer calls it again to clear an idle reverb). Its
+tail does not decay to exact zeros: with only exact zeros counted as silence, an impulse's tail still had non-zero
+samples after 10 s at room sizes 0.2, 0.5 and 0.8. The likely cause is its `undenormalise`, which adds and subtracts
+1 and so rounds the filters to steps of about 2^-23, enough to keep a small cycle going with feedback above 0.5 (not
+traced further). The mixer therefore treats a reverb under -100 dB as silent ([Audio](audio.md#reverb)).
 
 **Games.** TrailForge builds its own `miniaudio_lib` from the same commit with another configuration (encoder on,
 FLAC off, every backend). When it moves to an engine with `quench_audio` (0.5.0), both libraries end up in its link

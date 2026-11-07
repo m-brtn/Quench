@@ -12,8 +12,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <new>
 #include <numbers>
 #include <span>
 #include <string>
@@ -25,6 +28,27 @@
 #else
 #define QUENCH_TEST_THREADS 0
 #endif
+
+// The global operator new and delete of this test program, counting the calls of a thread while it has an
+// AllocationCounter (the audio thread's rule: render() allocates and frees nothing).
+namespace {
+thread_local bool g_countAllocations = false;
+thread_local std::uint64_t g_allocations = 0;
+} // namespace
+
+void* operator new(std::size_t size) {
+    if (g_countAllocations) ++g_allocations;
+    if (void* p = std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc();
+}
+void* operator new[](std::size_t size) { return operator new(size); }
+void operator delete(void* p) noexcept {
+    if (p && g_countAllocations) ++g_allocations;
+    std::free(p);
+}
+void operator delete[](void* p) noexcept { operator delete(p); }
+void operator delete(void* p, std::size_t) noexcept { operator delete(p); }
+void operator delete[](void* p, std::size_t) noexcept { operator delete(p); }
 
 using namespace quench;
 using namespace quench::audio;
@@ -117,6 +141,50 @@ std::vector<float> channelOf(std::span<const float> stereo, std::uint32_t channe
 
 // tests/audio/data/loop.ogg: 1 s at 48 kHz, 0.5 * sin of 440 Hz on the left and 880 Hz on the right.
 constexpr float kLoopOggHz[2] = {440.0f, 880.0f};
+
+// Allocations and frees of this thread while it lives.
+class AllocationCounter {
+public:
+    AllocationCounter() : m_start(g_allocations) { g_countAllocations = true; }
+    ~AllocationCounter() { g_countAllocations = false; }
+    std::uint64_t count() const { return g_allocations - m_start; }
+
+private:
+    std::uint64_t m_start;
+};
+
+// One stereo frame of 1, then the sound ends.
+class Impulse final : public Generator {
+public:
+    Impulse() : Generator({2, kRate}) {}
+    std::uint32_t generate(float* out, std::uint32_t frames) override {
+        if (m_done || frames == 0) return 0;
+        out[0] = out[1] = 1.0f;
+        m_done = true;
+        return 1;
+    }
+
+private:
+    bool m_done = false;
+};
+
+// The reverberation time of an impulse response (interleaved stereo): the time from -5 to -35 dB of its energy decay
+// curve (Schroeder's backward integration of both channels), doubled (T30). 0 if it does not fall that far.
+double reverberationTime(std::span<const float> stereo) {
+    const std::size_t frames = stereo.size() / 2;
+    std::vector<double> remaining(frames + 1, 0.0);
+    for (std::size_t f = frames; f-- > 0;)
+        remaining[f] =
+            remaining[f + 1] + double(stereo[2 * f]) * stereo[2 * f] + double(stereo[2 * f + 1]) * stereo[2 * f + 1];
+    if (remaining[0] <= 0.0) return 0.0;
+    std::size_t at5 = 0, at35 = 0;
+    for (std::size_t f = 0; f < frames && at35 == 0; ++f) {
+        const double db = 10.0 * std::log10(std::max(remaining[f], 1e-300) / remaining[0]);
+        if (at5 == 0 && db <= -5.0) at5 = f;
+        if (db <= -35.0) at35 = f;
+    }
+    return at35 > at5 ? 2.0 * double(at35 - at5) / kRate : 0.0;
+}
 
 // Asset files for one case, read through quench::fs; restores the default backend at the end.
 struct AssetDir {
@@ -542,7 +610,9 @@ QUENCH_TEST(mixer_thread_stress) {
     AudioSettings settings;
     settings.maxVoices = 8;
     settings.streamBufferSeconds = 0.1;
+    settings.buses.push_back({.name = "reverb", .reverb = ReverbDesc{}});
     AudioSystem audio(jobs, nullptr, settings);
+    const BusId reverb = audio.bus("reverb");
     auto data = std::make_shared<const SoundData>(SoundData{{1, 22050}, sineSamples(880.0f, 0.1f, 0.05, 1)});
     std::atomic<bool> stop{false};
     // The "device": renders as fast as it can, like a callback that never sleeps.
@@ -554,15 +624,17 @@ QUENCH_TEST(mixer_thread_stress) {
     std::vector<SoundHandle> handles;
     int i = 0;
     while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(300)) {
-        if (i % 5 == 0) handles.push_back(audio.play(data, {.spatial = true}));
+        if (i % 5 == 0) handles.push_back(audio.play(data, {.spatial = true, .sendBus = reverb, .sendLevel = 0.5f}));
         if (i % 17 == 0) handles.push_back(audio.playGenerator(std::make_shared<Sine>(500.0f + float(i))));
         if (i % 41 == 0) handles.push_back(audio.playStream("loop.wav", {.loop = true}));
         for (SoundHandle h : handles) audio.setPosition(h, {float(i % 7), 0.0f, -2.0f}, {1.0f, 0.0f, 0.0f});
+        for (SoundHandle h : handles) audio.setSend(h, reverb, float(i % 3) / 3.0f);
         if (handles.size() > 12) {
             audio.stop(handles.front(), 0.01f);
             handles.erase(handles.begin());
         }
         audio.setBusVolume(audio.bus("effects"), float(i % 10) / 10.0f);
+        if (i % 7 == 0) audio.setReverb(reverb, {.roomSize = float(i % 10) / 10.0f, .damping = 0.5f});
         audio.update();
         ++i;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -577,6 +649,164 @@ QUENCH_TEST(mixer_thread_stress) {
     CHECK(audio.stats().sounds == 0, "every sound ended: %u left", audio.stats().sounds);
     CHECK(audio.stats().played > 10, "played %llu", (unsigned long long)audio.stats().played);
 #endif
+}
+
+// render() as the device calls it, between the game thread's updates, with sounds, a stream, generators, 3D sound,
+// sends into a reverb and changes of every kind in flight: no allocation and no free on its thread.
+QUENCH_TEST(mixer_render_allocates_nothing) {
+    {
+        AllocationCounter counter;
+        auto probe = std::make_unique<int>(1);
+        probe.reset();
+        REQUIRE(counter.count() == 2, "the counter sees new and delete: %llu", (unsigned long long)counter.count());
+    }
+    AssetDir assets("audio_mixer_render_allocates_nothing");
+    assets.write("loop.ogg", quench::test::loopOgg());
+    JobSystem jobs(JobSystemDesc{.workerThreads = 0});
+    AudioSettings settings;
+    settings.streamBufferSeconds = 0.05;
+    settings.buses.push_back({.name = "reverb", .reverb = ReverbDesc{}});
+    AudioSystem audio(jobs, nullptr, settings);
+    const BusId reverb = audio.bus("reverb");
+    auto data = std::make_shared<const SoundData>(SoundData{{1, 22050}, sineSamples(880.0f, 0.3f, 0.05, 1)});
+    std::vector<SoundHandle> handles;
+    handles.push_back(audio.playStream("loop.ogg", {.loop = true, .sendBus = reverb, .sendLevel = 0.3f}));
+    std::vector<float> buffer(256 * 2);
+    std::uint64_t allocations = 0, mixed = 0;
+    for (int i = 0; i < 600; ++i) {
+        if (i % 9 == 0) handles.push_back(audio.play(data, {.pitch = 1.3f, .spatial = true, .sendBus = reverb}));
+        if (i % 50 == 0) handles.push_back(audio.playGenerator(std::make_shared<Sine>(300.0f), {.fadeIn = 0.05f}));
+        for (SoundHandle h : handles) {
+            audio.setPosition(h, {float(i % 7) - 3.0f, 0.0f, -2.0f}, {2.0f, 0.0f, 0.0f});
+            audio.setSend(h, reverb, float(i % 4) / 4.0f);
+        }
+        if (handles.size() > 10) {
+            audio.stop(handles[1], 0.01f);
+            handles.erase(handles.begin() + 1);
+        }
+        if (i % 25 == 0) audio.setReverb(reverb, {.roomSize = float(i % 100) / 100.0f});
+        if (i % 30 == 0) audio.setBusPaused(audio.bus("effects"), i % 60 == 0);
+        audio.setBusVolume(BusId{}, 0.5f + float(i % 5) / 10.0f);
+        audio.update();
+        jobs.waitAll();
+        AllocationCounter counter;
+        audio.render(buffer.data(), 256);
+        allocations += counter.count();
+        mixed += audio.stats().voices;
+    }
+    CHECK(allocations == 0, "render() allocated or freed %llu times", (unsigned long long)allocations);
+    CHECK(mixed > 600 * 3, "voices mixed per render: %.1f", double(mixed) / 600.0);
+}
+
+// Opt-in (QUENCH_TEST_AUDIO_COST=1): the time render() takes on this machine for 32 looping 3D voices, without and
+// with effects, called as the device calls it (512 frames at 48 kHz). Prints the numbers; checks none of them.
+QUENCH_TEST(mix_cost) {
+    if (!std::getenv("QUENCH_TEST_AUDIO_COST")) QUENCH_SKIP("set QUENCH_TEST_AUDIO_COST=1 to time the mix");
+    struct Case {
+        const char* name;
+        bool reverbBus = false;
+        float send = 0.0f;
+    };
+    const Case cases[] = {
+        {"32 voices"}, {"32 voices, a reverb bus, no sends", true}, {"32 voices, sends 0.3 into a reverb", true, 0.3f}};
+    auto data = std::make_shared<const SoundData>(SoundData{{1, kRate}, sineSamples(440.0f, 0.02f, 1.0, 1)});
+    constexpr std::uint32_t kFrames = 512;
+    constexpr int kCalls = int(20 * kRate / kFrames);
+    for (const Case& c : cases) {
+        JobSystem jobs(JobSystemDesc{.workerThreads = 0});
+        AudioSettings settings;
+        if (c.reverbBus) settings.buses.push_back({.name = "reverb", .reverb = ReverbDesc{}});
+        AudioSystem audio(jobs, nullptr, settings);
+        const BusId reverb = c.reverbBus ? audio.bus("reverb") : BusId{};
+        for (int i = 0; i < 32; ++i) {
+            const float angle = float(i) * 0.2f;
+            audio.play(data, {.pitch = 0.8f + 0.01f * float(i),
+                              .loop = true,
+                              .spatial = true,
+                              .emitter = {.position = {5.0f * std::cos(angle), 0.0f, 5.0f * std::sin(angle)}},
+                              .sendBus = reverb,
+                              .sendLevel = c.send});
+        }
+        std::vector<float> buffer(kFrames * 2);
+        double seconds = 0.0;
+        for (int i = 0; i < kCalls; ++i) {
+            if (i % 2 == 0) audio.update();
+            const auto start = std::chrono::steady_clock::now();
+            audio.render(buffer.data(), kFrames);
+            seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        }
+        const double audioSeconds = double(kCalls) * kFrames / kRate;
+        std::printf("mix cost, %s: %.2f us per ms of audio (%.3f%% of one core)\n", c.name,
+                    seconds * 1e3 / audioSeconds, 100.0 * seconds / audioSeconds);
+        CHECK(audio.stats().voices == 32, "%s: %u voices mixed", c.name, audio.stats().voices);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------- reverb
+
+// A reverb bus adds nothing when nothing reaches it: the mix is bit for bit the same as without the bus, with sends
+// at 0, and with sends into a reverb bus at volume 0.
+QUENCH_TEST(reverb_wet_zero_is_dry) {
+    auto mix = [](bool reverbBus, float sendLevel, float reverbVolume) {
+        AudioSettings settings;
+        if (reverbBus) settings.buses.push_back({.name = "reverb", .volume = reverbVolume, .reverb = ReverbDesc{}});
+        Rig rig(settings);
+        AudioSystem& a = rig.audio;
+        const BusId send = reverbBus ? a.bus("reverb") : BusId{};
+        a.playGenerator(std::make_shared<Sine>(440.0f, 0.3f),
+                        {.bus = a.bus("effects"), .sendBus = send, .sendLevel = sendLevel});
+        a.playGenerator(
+            std::make_shared<Sine>(660.0f, 0.2f),
+            {.spatial = true, .emitter = {.position = {2.0f, 0.0f, -1.0f}}, .sendBus = send, .sendLevel = sendLevel});
+        auto data = std::make_shared<const SoundData>(SoundData{{2, 44100}, sineSamples(220.0f, 0.2f, 0.1)});
+        a.play(data, {.pitch = 0.9f, .loop = true, .sendBus = send, .sendLevel = sendLevel});
+        return rig.run(1.0);
+    };
+    const std::vector<float> dry = mix(false, 0.0f, 1.0f);
+    const auto same = [&](const std::vector<float>& other) {
+        return other.size() == dry.size() && std::memcmp(other.data(), dry.data(), dry.size() * sizeof(float)) == 0;
+    };
+    CHECK(same(mix(true, 0.0f, 1.0f)), "a reverb bus without sends changed the mix");
+    CHECK(same(mix(true, 0.7f, 0.0f)), "sends into a reverb bus at volume 0 changed the mix");
+    const std::vector<float> wet = mix(true, 0.7f, 1.0f);
+    std::vector<float> difference(dry.size());
+    for (std::size_t i = 0; i < dry.size(); ++i) difference[i] = wet[i] - dry[i];
+    const float reverbRms = measureLevels(difference, 2).rmsMono();
+    std::printf("reverb: %.4f RMS of reverb on %.4f RMS of dry signal (sends 0.7)\n", reverbRms,
+                measureLevels(dry, 2).rmsMono());
+    CHECK(reverbRms > 0.01f, "the reverb is audible with sends: %f RMS", reverbRms);
+}
+
+// An impulse on a reverb bus: the reverberation time (T30) grows with the room size, and the tail ends in exact
+// zeros (after which the reverb is skipped).
+QUENCH_TEST(reverb_decay_grows_with_room_size) {
+    double previous = 0.0;
+    for (float room : {0.2f, 0.5f, 0.8f}) {
+        AudioSettings settings;
+        settings.buses.push_back({.name = "reverb", .reverb = ReverbDesc{.roomSize = room}});
+        Rig rig(settings);
+        rig.audio.playGenerator(std::make_shared<Impulse>(), {.bus = rig.audio.bus("reverb")});
+        const std::vector<float> out = rig.run(10.0, 0.1);
+        const double rt60 = reverberationTime(out);
+        std::size_t lastSound = 0;
+        for (std::size_t i = 0; i < out.size(); ++i)
+            if (out[i] != 0.0f) lastSound = i / 2;
+        const std::size_t cutFrom = lastSound > kRate / 10 ? lastSound - kRate / 10 : 0;
+        const auto peakOf = [](std::span<const float> samples) {
+            const Levels levels = measureLevels(samples, 2);
+            return std::max(levels.peak[0], levels.peak[1]);
+        };
+        const float beforeCut = peakOf(std::span(out).subspan(cutFrom * 2, (lastSound + 1 - cutFrom) * 2));
+        std::printf("reverb room size %.1f: RT60 %.3f s, peak %.4f, zeros from %.2f s (peak %.2g in the 100 ms "
+                    "before)\n",
+                    room, rt60, peakOf(out), double(lastSound + 1) / kRate, beforeCut);
+        CHECK(rt60 > previous * 1.2, "room size %.1f: RT60 %.3f s after %.3f s", room, rt60, previous);
+        CHECK(lastSound + kRate / 2 < out.size() / 2, "room size %.1f: the tail lasts to %.2f s", room,
+              double(lastSound) / kRate);
+        CHECK(beforeCut < 1e-4f, "room size %.1f: %g before the reverb goes idle", room, beforeCut);
+        previous = rt60;
+    }
+    CHECK(previous > 1.0, "a large room rings for more than a second: %.3f s", previous);
 }
 
 // ---------------------------------------------------------------------------------------------------- streams

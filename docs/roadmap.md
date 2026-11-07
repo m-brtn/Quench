@@ -179,9 +179,13 @@ the user was away: the decisions are in the devlog of 2026-11-06 ("decided witho
 - Done after 0.9.0 (2026-11-07, not released): Ogg Vorbis sounds and streams through miniaudio's stb_vorbis (no new
   archive), in the cook too; streamed Vorbis loops and crossfades without a length (checked by measurement, also
   under Node.js).
+- Done after 0.9.0 (2026-11-07, not released): reverb buses with per-sound sends (Freeverb through miniaudio's
+  verblib, no new archive), on the audio thread without allocation; the demo's reverb switch and room size, a mix
+  check and a check mode item (checked by measurement: decay times by room size, bit-exact when unused, also under
+  Node.js and ThreadSanitizer; not listened to).
 - Not done, remaining: listening (the Mac's output, headphones, the iPhone), the iPhone run of the stage 7 code
   (silent switch, interruptions, route changes, background and foreground), browser output (Web Audio), HRTF,
-  occlusion, reverb and filters, virtual voices, Opus, gapless MP3 (encoder delay and padding are not trimmed). The release went ahead before the checks by ear and on the iPhone (decided without the user,
+  occlusion and filters, reverb zones and early reflections, virtual voices, Opus, gapless MP3 (encoder delay and padding are not trimmed). The release went ahead before the checks by ear and on the iPhone (decided without the user,
   2026-11-06, as recommended); they are listed as not verified in the release notes.
 - Done: version 0.5.0, release notes in [docs/releases/v0.5.0.md](releases/v0.5.0.md).
 
@@ -459,7 +463,7 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio, HRTF and reverb (stage 7); retargeting, 2D blend spaces, animation LOD,
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio and HRTF (stage 7); retargeting, 2D blend spaces, animation LOD,
    dual quaternion skinning and blend shapes (stage 8); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray

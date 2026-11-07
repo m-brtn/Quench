@@ -1,0 +1,70 @@
+# Audio mix check (ctest: demo_audio_reverb_<backend>, a part of batch.txt): the reverb bus. A tone 2 m in front
+# stops (it fades out in 0.1 s); without the reverb the mix is silent after the fade, with it a tail rings on, longer
+# in a larger room. Offscreen runs mix offline on the frame clock, so audio_measure analyses the mix of exactly these
+# frames.
+section audio
+reset_section
+
+set orbit 0
+set flyby 0
+set music 0
+set dither 0
+until sounds_ready == 1 3
+# The loads finish in a frame that varies between runs; from here on every step is on the fixed frame clock.
+expect time < 0.25
+until time >= 0.3 1
+
+set tone_hz 1000
+set tone_x 0
+set tone_z -2
+expect reverb == 0
+
+# Without the reverb: 0.1 to 0.2 s after the fade, silence.
+set tone 1
+wait 0.3
+set tone 0
+wait 0.2
+audio_measure 0.1
+expect audio_rms < 0.0001
+
+# With the reverb, room size 0.8: the tone (0.0625 RMS dry) with its reverb added, then its tail after the fade.
+set reverb 1
+set room_size 0.8
+set tone 1
+wait 0.5
+audio_measure 0.25 500 2000
+expect audio_freq > 998
+expect audio_freq < 1002
+expect audio_rms > 0.068
+expect audio_rms < 0.080
+set tone 0
+wait 0.2
+audio_measure 0.1
+expect audio_rms > 0.008
+# A second later the large room still rings, 20 to 30 dB lower (RT60 about 2.4 s).
+wait 1.0
+audio_measure 0.1
+expect audio_rms > 0.0004
+expect audio_rms < 0.0015
+
+# Room size 0.2 (RT60 about 0.7 s): a second after the fade the tail is gone.
+set room_size 0.2
+set tone 1
+wait 0.5
+set tone 0
+wait 1.2
+audio_measure 0.1
+expect audio_rms < 0.0001
+
+# Off again: no sends, and the reverb bus stays quiet.
+set reverb 0
+set tone 1
+wait 0.3
+set tone 0
+wait 0.2
+audio_measure 0.1
+expect audio_rms < 0.0001
+
+expect audio_underruns == 0
+expect audio_clipped == 0
+quit

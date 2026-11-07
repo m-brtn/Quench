@@ -1,7 +1,7 @@
 # Audio
 
-Stage 7 of the [Roadmap](roadmap.md): `quench_audio`, a headless mixer (buses, sounds in memory, streamed music with
-crossfades, sources the game computes, 3D sound with a voice limit), and `quench_audio_device`, the playback device
+Stage 7 of the [Roadmap](roadmap.md): `quench_audio`, a headless mixer (buses, reverb buses with sends, sounds in
+memory, streamed music with crossfades, sources the game computes, 3D sound with a voice limit), and `quench_audio_device`, the playback device
 on miniaudio with the iOS audio session. The app shell owns one of each ([App shell](app.md)); the engine demo's
 "Audio" section shows them ([Engine demo](demo.md)). What was run where is under [Platforms](#platforms); nothing in
 this stage was listened to by the user yet. All documentation: [index](README.md).
@@ -48,6 +48,43 @@ own in `AudioSettings::buses` (each names a parent declared before it). A bus ha
 pause (`setBusPaused` freezes every sound on the bus and its children after a 5 ms ramp, and they resume where they
 stopped) and a peak meter per channel with a falling hold (0.3 s time constant; `busInfo(bus).peak`). `bus(name)`
 returns the master bus and logs a warning for an unknown name; `findBus` returns nothing instead.
+
+## Reverb
+
+A bus with `BusDesc::reverb` set is a reverb bus: Freeverb through verblib ([Dependencies](dependencies.md), eight
+combs and four allpasses per channel). Its input (what plays on it, its child buses and the sends to it) is replaced
+by the reverb's wet signal, so it is an aux bus that sounds send to; its volume is the reverb's level and its parent
+decides where the reverb goes (the demo puts it under `effects`, so muting or pausing the effects also silences
+their reverb).
+
+```cpp
+settings.buses.push_back({.name = "reverb", .parent = "effects", .reverb = audio::ReverbDesc{.roomSize = 0.6f}});
+audio.play(step, {.bus = audio.bus("effects"), .spatial = true, .sendBus = audio.bus("reverb"), .sendLevel = 0.4f});
+audio.setSend(engine, audio.bus("reverb"), 0.2f);       // smoothed like the volume (10 ms)
+audio.setReverb(audio.bus("reverb"), {.roomSize = 0.9f}); // a cave; damping and width as well
+```
+
+- **Sends**: `PlayParams::sendBus` and `sendLevel` (or `setSend`) add the sound to a second bus after its volume,
+  pan, attenuation, fades and pause, at `sendLevel` times that (one send per sound; any bus can be sent to, a reverb
+  bus is the use). A send is taken from the sound, before its own bus: the volume and mute of the sound's bus do not
+  change it, those of the reverb bus and its parents do.
+- **`ReverbDesc`**: `roomSize` 0..1 (verblib's feedback, 0.7 to 0.98), `damping` 0..1 (how much faster high
+  frequencies decay), `width` 0..1 (the stereo width of the tail). Measured on an impulse at 48 kHz
+  (`audio.reverb_decay_grows_with_room_size`, T30 of the energy decay): RT60 0.67 s at room size 0.2, 1.08 s at 0.5,
+  2.43 s at 0.8 (damping 0.25). The wet level is verblib's: an impulse of 1 peaks at about 0.05; 0.7 sends of the
+  test's three sounds (0.21 RMS) gave 0.084 RMS of reverb.
+- **Cost**: the reverb runs on the audio thread in the mixer's blocks and allocates nothing (its delay lines, about
+  400 KB per reverb bus, are allocated when the `AudioSystem` is created). It is idle while its delay lines are
+  cleared and its input is under -100 dB: then it costs only a check of its input. It becomes idle once its input
+  and output have stayed under -100 dB for twice its longest delay path (7173 frames, 0.15 s at 48 kHz); the delay lines are
+  then cleared (verblib's tail does not decay to exact zeros by itself; the step to silence is under 1e-5, 8.8e-6 at
+  most in the test). Offline on the M4 Pro (`audio.mix_cost`, opt-in with `QUENCH_TEST_AUDIO_COST=1`, three runs):
+  32 looping 3D voices 2.28 µs of render time per millisecond of audio with an idle reverb bus, 3.24 µs with every
+  voice sending into it, so about 1 µs per millisecond (0.1% of a core) for one reverb.
+- **Rates**: verblib takes 22050 to 176400 Hz. At another `AudioSettings::sampleRate` a reverb bus is silent, with a
+  warning when the `AudioSystem` is created.
+- **Bit-exact when unused**: a mix with a reverb bus and no sends, or with sends into a reverb bus at volume 0, is
+  bit for bit the mix without the bus (`audio.reverb_wet_zero_is_dry`).
 
 ## Sounds
 
@@ -126,8 +163,11 @@ buses, listener) through a lock-free single-producer single-consumer queue in `u
 the same way; statistics are atomics. Data a playing sound uses (decoded sounds, stream rings, generators) stays
 alive on the game side until the audio thread reports its end. Decoding (sound loads, stream refills) runs on the
 job system, which also works without worker threads (the single-threaded web build: the jobs run in `update()`).
-`audio.mixer_thread_stress` plays, changes and stops sounds from the game thread while another thread renders, also
-under ThreadSanitizer.
+`audio.mixer_thread_stress` plays, changes and stops sounds from the game thread while another thread renders (with
+sends and reverb changes), also under ThreadSanitizer. `audio.mixer_render_allocates_nothing` counts the calls of
+the test program's replaced global `operator new` and `operator delete` on the rendering thread during 600 renders
+with sounds, a Vorbis stream, generators, 3D sound, sends, reverb changes and bus pauses in flight: 0 (a direct
+`malloc` would not be counted; the mixer and verblib have none).
 
 ## Output
 
@@ -179,21 +219,25 @@ audio). The demo's panel shows them (the mix time is hidden in deterministic run
 The demo's "Audio" section ([Engine demo](demo.md#sections)): a head with ears at the listener (it faces the way the
 camera looks), an emitter circling it at ear height (a motor loop), a fly-by at 30 m/s (a siren, with Doppler), a
 tone the demo computes (a `Generator`), music A and B with a 2 s crossfade, bus sliders with mute and meters, pause
-of the effects bus, a ping on the ground where it is clicked and a burst of 40 pings for the voice limit. Its sounds
+of the effects bus, a ping on the ground where it is clicked, a burst of 40 pings for the voice limit, and a reverb
+(off by default; a `reverb` bus under `effects` that the 3D sounds send to at 0.4, and a room size slider). Its sounds
 are procedural: `tools/assets/make_demo_sounds.py` (Python standard library, CC0) writes `motor`, `siren`, `ping`,
 `music_a` and `music_b` as WAV files into the build tree at build time, and `quench_cook_assets(... SOUNDS ...)`
-checks and copies them. Its mix checks (`examples/demo/scenarios/audio_tone.txt`, `audio_flyby.txt` and
-`audio_music.txt`, run in parallel on the default backend) run with `--audio-capture` and measure levels and
+checks and copies them. Its mix checks (`examples/demo/scenarios/audio_tone.txt`, `audio_flyby.txt`,
+`audio_music.txt` and `audio_reverb.txt`, parts of the batches) measure levels and
 frequencies of the mix: the tone at 2 m (RMS 0.0625 and 1000 Hz), panned to the right, the three attenuation models
 at 8 m, a pitch glide, the fly-by approaching (481 Hz from a 440 Hz siren fundamental) and receding (405 Hz), both
-music tracks and the crossfade, a muted bus, no underruns or clipping, and stealing. The section's capture check
+music tracks and the crossfade, a muted bus, no underruns or clipping, stealing, and the reverb (silence 0.1 to
+0.2 s after the tone's fade without it; with it at room size 0.8 the tone at 0.0733 RMS, its tail 0.0111 RMS after
+the fade and 0.0006 a second later, -25 dB; at room size 0.2 under 0.0001 a second after the fade). The section's capture check
 (`audio.txt`) runs in the batch of every backend (Metal, the native Metal backend, Vulkan through MoltenVK); the
 batches write no WAV file, so the backends' mixes are no longer compared byte for byte (`demo_audio_wav_match` is
 gone).
 
-Tests (`tests/audio/`): `audio.*` (27 cases, headless, also under Node.js: spatial formulas, bus gains, click-free
+Tests (`tests/audio/`): `audio.*` (31 cases, headless, also under Node.js: spatial formulas, bus gains, click-free
 ramps, resampling and pitch, Doppler, panning and attenuation in the mix, voice stealing, one-shots and loops,
-pause, handles, offline carry and the monitor, `PcmStream`, the thread stress case, streams across chunk
+pause, handles, offline carry and the monitor, `PcmStream`, the thread stress case, no allocation in render, the
+reverb (bit-exact when unused, decay by room size), the opt-in mix cost, streams across chunk
 boundaries, on jobs, gapless loops, crossfades, Vorbis streams, loops and music, missing files, decoders and their
 errors, the sound asset type, the analysis functions) and `audio_device.*` (`null_device`: the null backend renders and suspends;
 `default_output`: plays 0.5 s of a quiet 440 Hz tone through the default output, only with
@@ -222,8 +266,11 @@ the sines it was encoded from.
 
 - **Not listened to**: every check is numeric (levels, frequencies, counters, click steps); how it sounds on the
   Mac's speakers, headphones and the iPhone is for the user to judge.
-- **3D**: stereo panning only (no HRTF, no front and back difference, no occlusion, no reverb or filters); one
-  listener; no virtual voices (a stolen or rejected sound is gone).
+- **3D**: stereo panning only (no HRTF, no front and back difference, no occlusion or filters); one listener; no
+  virtual voices (a stolen or rejected sound is gone).
+- **Reverb**: one algorithm (Freeverb), set by hand per bus: no early reflections from geometry, no zones or
+  automatic blending between rooms, no pre-delay, one send per sound. A reverb bus at a rate outside 22050 to
+  176400 Hz is silent. Checked by numbers only (decay times, levels, bit-exactness); nobody has listened to it.
 - **Formats**: WAV, FLAC, MP3 and Ogg Vorbis; no Opus. The MP3 decoder keeps the encoder's delay and padding (the
   test file decodes to 12672 frames for 11025 encoded), so gapless MP3 loops are not gapless: loop WAV, FLAC or
   Vorbis files. Vorbis: one logical stream per file (stb_vorbis does not decode chained streams), and the

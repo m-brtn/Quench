@@ -44,10 +44,21 @@ struct BusId {
     friend bool operator==(BusId a, BusId b) = default;
 };
 
+// A reverb on a bus: Freeverb (eight combs and four allpasses per channel, through verblib). The bus's input (the
+// sounds on it, its child buses and the sends to it) is replaced by the reverb's wet signal, so it is meant as an aux
+// bus that sounds send to (PlayParams::sendBus and sendLevel); the bus volume is the reverb's level. Rendered on the
+// audio thread without allocating; while its tail and its input are under -100 dB it is skipped.
+struct ReverbDesc {
+    float roomSize = 0.5f; // 0..1: the decay time (docs/audio.md has the measured RT60s)
+    float damping = 0.25f; // 0..1: how much faster high frequencies decay
+    float width = 1.0f;    // 0..1: the stereo width of the tail
+};
+
 struct BusDesc {
     std::string name{};
     std::string parent = "master"; // declared earlier in the list, or "master"
     float volume = 1.0f;
+    std::optional<ReverbDesc> reverb{}; // set: a reverb bus (22050 to 176400 Hz mixes; silent at other rates)
 };
 
 struct AudioSettings {
@@ -100,6 +111,10 @@ struct PlayParams {
     float fadeIn = 0.0f;   // seconds, equal-power curve
     bool spatial = false;  // 3D: placed by `emitter` around the listener (stereo sources are mixed down to mono)
     Emitter emitter{};
+    // An aux send: `sendLevel` (linear) of the sound, after its volume, pan, attenuation and fades and before its
+    // bus, also goes to `sendBus`, a reverb bus for example. 0: none.
+    BusId sendBus{};
+    float sendLevel = 0.0f;
 };
 
 // A source the game computes, pulled on the audio thread: generate() follows the audio thread's rules (no allocation,
@@ -160,6 +175,7 @@ struct BusInfo {
     bool muted = false;
     bool paused = false;
     float peak[2] = {0.0f, 0.0f}; // output level after the bus volume, with a falling peak hold
+    std::optional<ReverbDesc> reverb{};
 };
 
 struct AudioStats {
@@ -217,6 +233,8 @@ public:
     void setPaused(SoundHandle sound, bool paused);
     void setEmitter(SoundHandle sound, const Emitter& emitter);
     void setPosition(SoundHandle sound, glm::vec3 position, glm::vec3 velocity = glm::vec3(0.0f));
+    // The aux send (PlayParams::sendBus and sendLevel); level changes are smoothed like volume changes.
+    void setSend(SoundHandle sound, BusId bus, float level);
     SoundState state(SoundHandle sound) const;
     bool alive(SoundHandle sound) const { return state(sound) != SoundState::Ended; }
     // Called from update() for every sound that ends (handle, reason).
@@ -237,6 +255,8 @@ public:
     void setBusMuted(BusId bus, bool muted);
     // Freezes every sound on the bus and its children (a pause menu pauses "effects" while "ui" keeps playing).
     void setBusPaused(BusId bus, bool paused);
+    // Changes the reverb of a bus made with one (BusDesc::reverb); other buses are left alone with a warning.
+    void setReverb(BusId bus, const ReverbDesc& reverb);
 
     // ---- listener
     void setListener(const Listener& listener);

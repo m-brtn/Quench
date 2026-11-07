@@ -105,6 +105,8 @@ detail::VoiceParams voiceParams(const PlayParams& p, std::uint32_t busCount) {
     v.paused = p.paused;
     v.spatial = p.spatial;
     v.emitter = p.emitter;
+    v.sendBus = p.sendBus.index < busCount ? p.sendBus.index : 0;
+    v.sendLevel = std::max(p.sendLevel, 0.0f);
     return v;
 }
 
@@ -290,7 +292,14 @@ AudioSystem::AudioSystem(JobSystem& jobs, assets::AssetManager* assets, const Au
             parent = buses.begin();
         }
         const auto parentIndex = std::uint8_t(parent - buses.begin());
-        buses.push_back({.name = desc.name, .parent = BusId{parentIndex}, .volume = std::max(desc.volume, 0.0f)});
+        buses.push_back({.name = desc.name,
+                         .parent = BusId{parentIndex},
+                         .volume = std::max(desc.volume, 0.0f),
+                         .reverb = desc.reverb});
+        if (desc.reverb &&
+            (m_settings.sampleRate < detail::kMinReverbRate || m_settings.sampleRate > detail::kMaxReverbRate))
+            log::warning("audio", "bus '{}': no reverb at {} Hz (verblib takes {} to {} Hz); the bus is silent",
+                         desc.name, m_settings.sampleRate, detail::kMinReverbRate, detail::kMaxReverbRate);
     }
 
     detail::MixerConfig config;
@@ -301,6 +310,7 @@ AudioSystem::AudioSystem(JobSystem& jobs, assets::AssetManager* assets, const Au
     for (const BusInfo& bus : buses) {
         config.busParents.push_back(bus.parent.index);
         config.busVolumes.push_back(bus.volume);
+        config.busReverbs.push_back(bus.reverb);
     }
     m_impl = std::make_unique<Impl>(config);
     m_impl->buses = std::move(buses);
@@ -503,6 +513,13 @@ SoundState AudioSystem::state(SoundHandle sound) const {
     return slot->state == Slot::State::Pending ? SoundState::Pending : SoundState::Playing;
 }
 
+void AudioSystem::setSend(SoundHandle sound, BusId bus, float level) {
+    if (Slot* slot = edit(sound)) {
+        slot->params.sendBus = bus.index < m_impl->buses.size() ? bus.index : 0;
+        slot->params.sendLevel = std::max(level, 0.0f);
+    }
+}
+
 void AudioSystem::setEndCallback(std::function<void(SoundHandle, EndReason)> callback) {
     m_impl->onEnd = std::move(callback);
 }
@@ -573,6 +590,18 @@ void AudioSystem::setBusPaused(BusId bus, bool paused) {
     if (bus.index >= m_impl->buses.size()) return;
     m_impl->buses[bus.index].paused = paused;
     m_impl->busDirty[bus.index] = true;
+}
+
+void AudioSystem::setReverb(BusId bus, const ReverbDesc& reverb) {
+    if (bus.index >= m_impl->buses.size() || !m_impl->buses[bus.index].reverb) {
+        log::warning("audio", "setReverb: bus {} has no reverb (BusDesc::reverb)", bus.index);
+        return;
+    }
+    const ReverbDesc clamped{.roomSize = std::clamp(reverb.roomSize, 0.0f, 1.0f),
+                             .damping = std::clamp(reverb.damping, 0.0f, 1.0f),
+                             .width = std::clamp(reverb.width, 0.0f, 1.0f)};
+    m_impl->buses[bus.index].reverb = clamped;
+    m_impl->send(detail::ReverbCommand{bus.index, clamped});
 }
 
 void AudioSystem::sendBus(std::uint32_t index) {

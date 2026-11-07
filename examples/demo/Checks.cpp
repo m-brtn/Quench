@@ -66,6 +66,10 @@ constexpr std::array kItems{
     CheckItem{"audio.buses", "audio", "Buses and voices",
               "Mute, pause and the bus volumes change the sound without clicks; '40 pings' plays without distortion.",
               ""},
+    CheckItem{"audio.reverb", "audio", "Reverb",
+              "Listen with Reverb on: the emitters and the pings sound in a room, a larger Room size rings longer, "
+              "without a metallic ring or crackles; Reverb off lets the tail ring out without a click.",
+              "set reverb 1"},
     CheckItem{"animation.feet", "animation", "No foot sliding",
               "The hero's feet stay planted while each touches the ground, at walking and at running speed.", ""},
     CheckItem{"animation.footsteps", "animation", "Footstep sync",

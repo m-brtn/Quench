@@ -65,7 +65,8 @@ unshadowed local lights, the sky's reflection and ambient light and bilinear sca
 GGX; game passes and surface
 shaders (with a G-buffer entry for the rays); GPU skinning by compute; `SceneAssets` puts asset textures and models
 into the scene),
-`quench_audio` (headless: a float stereo 48 kHz mixer, buses with volume, mute, pause and meters, sounds as an asset
+`quench_audio` (headless: a float stereo 48 kHz mixer, buses with volume, mute, pause and meters, reverb buses with
+per-sound sends (after 0.9.0, not released), sounds as an asset
 type (WAV, FLAC, MP3, Ogg Vorbis), streamed music with crossfades, game-generated sources, 3D sound with Doppler and voice stealing, WAV writing
 and signal analysis), `quench_audio_device` (output through miniaudio, the iOS audio session; `App::audio()`,
 `--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`), `quench_animation`
@@ -108,7 +109,7 @@ and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scen
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No Basis Universal textures
-(stage 6 remaining work), browser audio, HRTF or reverb (stage 7 remaining
+(stage 6 remaining work), browser audio or HRTF (stage 7 remaining
 work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
 work), the native backend as the default, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
@@ -122,7 +123,7 @@ design and plan beyond stage 12. Update this paragraph whenever that changes.
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,
 Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer, bc7enc_rdo's BC7 decoder and
-mikktspace (assets), miniaudio (sound decoding, Vorbis through its stb_vorbis, and device output), ozz-animation (the animation runtime and the offline library
+mikktspace (assets), miniaudio (sound decoding, Vorbis through its stb_vorbis, the reverb through its verblib, and device output), ozz-animation (the animation runtime and the offline library
 that builds skeletons and clips); the cooker adds fastgltf and stb_image at build time. Pins, planned additions and
 their licences: `docs/dependencies.md`.
 

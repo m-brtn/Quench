@@ -1,5 +1,7 @@
 #include "Mixer.h"
 
+#include <extras/nodes/ma_reverb_node/verblib.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -14,7 +16,32 @@ constexpr float kFracScale = float(1.0 / kFracOne);
 
 float fadeCurve(float fade) { return std::sin(fade * float(std::numbers::pi / 2.0)); }
 
+// -100 dB. verblib's tail does not decay to exact zeros by itself (an impulse's was still not zero after 10 s).
+constexpr float kReverbSilence = 1e-5f;
+
+bool quiet(const float* samples, std::size_t count) {
+    return std::all_of(samples, samples + count, [](float s) { return std::abs(s) < kReverbSilence; });
+}
+
+void configure(verblib& state, const ReverbDesc& desc) {
+    verblib_set_room_size(&state, std::clamp(desc.roomSize, 0.0f, 1.0f));
+    verblib_set_damping(&state, std::clamp(desc.damping, 0.0f, 1.0f));
+    verblib_set_width(&state, std::clamp(desc.width, 0.0f, 1.0f));
+}
+
 } // namespace
+
+struct Mixer::Reverb {
+    verblib state; // wet only (verblib's dry level starts at 0)
+    ReverbDesc desc;
+    bool valid = false;
+    // Idle: the delay lines are zeros and the input has been quiet since, so the output would be zeros. A reverb
+    // becomes idle once its input and output have been quiet for twice its longest delay path; its delay lines are
+    // then cleared (verblib_initialize, which allocates nothing).
+    bool idle = true;
+    std::uint32_t quietFrames = 0;
+    std::uint32_t idleFrames = 0;
+};
 
 Mixer::Mixer(const MixerConfig& config)
     : m_config(config), m_commands(std::size_t(config.maxSounds) * 2 + 256),
@@ -29,12 +56,26 @@ Mixer::Mixer(const MixerConfig& config)
         m_buses[b].parent = b == 0 ? 0 : config.busParents[b];
         m_buses[b].volume = b < config.busVolumes.size() ? config.busVolumes[b] : 1.0f;
         m_buses[b].gain = m_buses[b].volume;
+        if (b < config.busReverbs.size() && config.busReverbs[b]) {
+            auto reverb = std::make_unique<Reverb>();
+            reverb->desc = *config.busReverbs[b];
+            reverb->valid = verblib_initialize(&reverb->state, config.sampleRate, kMixChannels) != 0;
+            if (reverb->valid) configure(reverb->state, reverb->desc);
+            // The longest comb and the four allpasses in series (verblib's tunings are for 44100 Hz), twice.
+            constexpr double kLongestPath = verblib_combtuningR8 + verblib_allpasstuningR1 + verblib_allpasstuningR2 +
+                                            verblib_allpasstuningR3 + verblib_allpasstuningR4;
+            reverb->idleFrames = std::uint32_t(2.0 * kLongestPath * double(config.sampleRate) / 44100.0);
+            m_buses[b].reverb = reverb.get();
+            m_reverbs.push_back(std::move(reverb));
+        }
     }
     m_busBuffers.resize(m_buses.size() * kBlockFrames * kMixChannels);
     const auto maxSourceFrames = std::size_t(std::ceil(kBlockFrames * kMaxStep)) + 2;
     m_scratch.resize(maxSourceFrames * 2);
     if (config.monitorFrames > 0) m_monitor = std::make_unique<SampleRing>(kMixChannels, config.monitorFrames);
 }
+
+Mixer::~Mixer() = default;
 
 void Mixer::render(float* out, std::uint32_t frames) {
     const auto start = std::chrono::steady_clock::now();
@@ -149,6 +190,31 @@ void Mixer::apply(const ListenerCommand& c) {
     m_dopplerScale = c.dopplerScale;
 }
 
+void Mixer::apply(const ReverbCommand& c) {
+    if (c.index >= m_buses.size() || !m_buses[c.index].reverb || !m_buses[c.index].reverb->valid) return;
+    Reverb& reverb = *m_buses[c.index].reverb;
+    reverb.desc = c.reverb;
+    configure(reverb.state, reverb.desc);
+}
+
+void Mixer::processReverb(Reverb& reverb, float* samples, std::uint32_t frames) {
+    const std::size_t count = std::size_t(frames) * kMixChannels;
+    const bool quietInput = quiet(samples, count);
+    if (!reverb.valid || (reverb.idle && quietInput)) {
+        std::fill(samples, samples + count, 0.0f);
+        return;
+    }
+    reverb.idle = false;
+    verblib_process(&reverb.state, samples, samples, frames);
+    reverb.quietFrames = quietInput && quiet(samples, count) ? reverb.quietFrames + frames : 0;
+    if (reverb.quietFrames >= reverb.idleFrames) {
+        verblib_initialize(&reverb.state, m_config.sampleRate, kMixChannels);
+        configure(reverb.state, reverb.desc);
+        reverb.idle = true;
+        reverb.quietFrames = 0;
+    }
+}
+
 void Mixer::beginStop(Voice& voice, float fade, EndReason reason) {
     const float rate = -1.0f / (std::max(fade, kMinStopFade) * float(m_config.sampleRate));
     if (voice.stopping && voice.fadeRate <= rate) return; // already fading out at least as fast
@@ -197,6 +263,7 @@ void Mixer::mixBlock(float* out, std::uint32_t frames) {
         const float g0 = bus.gain;
         float g1 = target + (g0 - target) * smoothing;
         if (std::abs(g1 - target) < 1e-5f) g1 = target;
+        if (bus.reverb) processReverb(*bus.reverb, m_busBuffers.data() + b * kBlockFrames * kMixChannels, frames);
         const float* src = m_busBuffers.data() + b * kBlockFrames * kMixChannels;
         float* dst = b == 0 ? out : m_busBuffers.data() + std::size_t(bus.parent) * kBlockFrames * kMixChannels;
         const float dg = (g1 - g0) / float(frames);
@@ -293,6 +360,13 @@ bool Mixer::mixVoice(Voice& v, std::uint32_t frames, const std::uint8_t* busPaus
     if (need > 0) pull(v, m_scratch.data(), need);
 
     float* bus = m_busBuffers.data() + std::size_t(v.params.bus) * kBlockFrames * kMixChannels;
+    // The send level, smoothed like the gains; no send while it is and stays 0.
+    const float s0 = v.send;
+    float s1 = v.params.sendLevel + (s0 - v.params.sendLevel) * smoothing;
+    if (std::abs(s1 - v.params.sendLevel) < 1e-6f) s1 = v.params.sendLevel;
+    float* send = s0 > 0.0f || s1 > 0.0f
+                      ? m_busBuffers.data() + std::size_t(v.params.sendBus) * kBlockFrames * kMixChannels
+                      : nullptr;
     const float* src = m_scratch.data();
     const bool downmix = v.params.spatial && channels == 2;
     const float inv = 1.0f / float(frames);
@@ -307,8 +381,15 @@ bool Mixer::mixVoice(Voice& v, std::uint32_t frames, const std::uint8_t* busPaus
             if (downmix) l = r = 0.5f * (l + r);
         }
         const float w = float(f + 1) * inv;
-        bus[2 * f] += l * (start[0] + (end[0] - start[0]) * w);
-        bus[2 * f + 1] += r * (start[1] + (end[1] - start[1]) * w);
+        const float outL = l * (start[0] + (end[0] - start[0]) * w);
+        const float outR = r * (start[1] + (end[1] - start[1]) * w);
+        bus[2 * f] += outL;
+        bus[2 * f + 1] += outR;
+        if (send) {
+            const float level = s0 + (s1 - s0) * w;
+            send[2 * f] += outL * level;
+            send[2 * f + 1] += outR * level;
+        }
         const std::uint64_t acc = std::uint64_t(frac) + step;
         frac = std::uint32_t(acc);
         for (auto advance = std::uint32_t(acc >> 32); advance > 0; --advance) {
@@ -327,6 +408,7 @@ bool Mixer::mixVoice(Voice& v, std::uint32_t frames, const std::uint8_t* busPaus
     }
     v.fade = f1;
     v.pauseGain = p1;
+    v.send = s1;
     v.audibility = std::max(end[0], end[1]);
 
     if (v.stopping && (f1 <= 0.0f || (paused && p1 <= 0.0f))) return false;
