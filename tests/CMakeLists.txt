@@ -339,10 +339,11 @@ if(NOT QUENCH_HEADLESS)
         set(app_run_cost 0.001)
 
         # quench_add_batch(<prefix> <suffix> APP <target> SCRIPT <file> BACKEND <golden backend> ARGS <arg>...
-        #                  [ENVIRONMENT <NAME=value>...] [FAIL_REGEX <regex>] PARTS <file>[:<golden>]...)
+        #                  [ENVIRONMENT <NAME=value>...] [FAIL_REGEX <regex>] PARTS <file>[:<golden>...]...)
         # registers <prefix>_batch_<suffix> (the run, in captures/<prefix>_batch_<suffix>/) and per part
-        # <prefix>_<file>_<suffix>: the part <file>.txt passed its checks and its capture <golden>.png matches
-        # tests/golden/<backend>/<device>/<golden>.png. All have the label <prefix>, and vulkan for the suffix vulkan.
+        # <prefix>_<file>_<suffix>: the part <file>.txt passed its checks and each of its captures <golden>.png
+        # matches tests/golden/<backend>/<device>/<golden>.png. All have the label <prefix>, and vulkan for the suffix
+        # vulkan.
         function(quench_add_batch prefix suffix)
             cmake_parse_arguments(PARSE_ARGV 2 arg "" "APP;SCRIPT;BACKEND;FAIL_REGEX" "ARGS;ENVIRONMENT;PARTS")
             set(batch ${prefix}_batch_${suffix})
@@ -362,13 +363,19 @@ if(NOT QUENCH_HEADLESS)
             endif()
             foreach(part IN LISTS arg_PARTS)
                 string(REPLACE ":" ";" part "${part}")
-                list(GET part 0 file)
+                list(POP_FRONT part file)
                 set(capture_args "")
-                list(LENGTH part fields)
-                if(fields GREATER 1)
-                    list(GET part 1 golden)
-                    set(capture_args -DCAPTURE=${dir}/${golden}.png
-                        -DGOLDEN=${Quench_SOURCE_DIR}/tests/golden/${arg_BACKEND}/${QUENCH_GOLDEN_DEVICE}/${golden}.png
+                if(part)
+                    set(captures "")
+                    set(goldens "")
+                    foreach(golden IN LISTS part)
+                        list(APPEND captures ${dir}/${golden}.png)
+                        list(APPEND goldens
+                             ${Quench_SOURCE_DIR}/tests/golden/${arg_BACKEND}/${QUENCH_GOLDEN_DEVICE}/${golden}.png)
+                    endforeach()
+                    list(JOIN captures "|" captures)
+                    list(JOIN goldens "|" goldens)
+                    set(capture_args "-DCAPTURE=${captures}" "-DGOLDEN=${goldens}"
                         -DCOMPARE=$<TARGET_FILE:quench_image_compare>)
                 endif()
                 add_test(NAME ${prefix}_${file}_${suffix} COMMAND ${CMAKE_COMMAND} -DLOG=${dir}.log -DPART=${file}.txt
@@ -417,7 +424,7 @@ if(NOT QUENCH_HEADLESS)
             set(demo_parts materials:demo_materials shadows:demo_shadows sky:demo_sky post:demo_post hdr:demo_hdr
                 hdr_on:demo_hdr_on physics:demo_physics input:demo_input assets:demo_assets audio:demo_audio
                 animation:demo_animation animation_blend2d:demo_animation_blend2d animation_lod
-                animation_skinning:demo_animation_skinning
+                animation_skinning:demo_animation_skinning:demo_animation_skinning_dq
                 animation_retarget:demo_animation_retarget animation_blendshapes:demo_animation_blendshapes
                 ui:demo_ui compact_portrait:demo_compact_portrait
                 compact_landscape:demo_compact_landscape menu audio_tone audio_flyby audio_music audio_reverb

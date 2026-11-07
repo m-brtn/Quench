@@ -1,7 +1,11 @@
-# Animation, skinning (ctest: demo_animation_skinning_<backend>, a part of batch.txt): two standing characters whose
-# left forearms the section turns by 170 degrees about their length. The left one is skinned linearly, its elbow
-# collapsing to a thin neck; the right one by dual quaternions, its elbow keeping its thickness. Then the other
-# characters switch to dual quaternion skinning and back. The capture shows the two at 1 s after the restart.
+# Animation, skinning (ctest: demo_animation_skinning_<backend>, a part of batch.txt): close up, two checkered bars
+# whose upper halves the section turns by 170 degrees about their length, and beside them two standing characters
+# whose inner forearms it turns the same way. The left bar and character are always skinned linearly and collapse to
+# a thin neck at the twist; the right ones follow the "Dual quaternion skinning" checkbox, as the other characters
+# do, and keep their thickness when it is on. Labels over the bars name the skinning. The captures show the view about
+# 1 s after the restart with the checkbox off (both pairs pinched) and on (the right pair round). The waits end
+# half a frame away from a step of the fixed clock, so that they take the same number of frames wherever the batch's
+# app time is (a wait of a whole number of steps can take one more): the characters idle in every frame.
 section animation
 
 set dither 0
@@ -10,21 +14,26 @@ expect anim_failed == 0
 set restart 1
 set crowd 0
 set view skinning
-wait 0.05
+wait 0.054
 expect anim_characters == 9
 until anim_bound == 9 1
 until anim_ready == 1 3
-wait 1
+expect dual_quaternion == 0
+expect twist == 170
+wait 1.004
 windows off
 capture demo_animation_skinning.png
 windows on
 
 set dual_quaternion 1
-wait 0.2
+wait 0.204
 expect dual_quaternion == 1
 expect anim_ready == 1
+windows off
+capture demo_animation_skinning_dq.png
+windows on
 set dual_quaternion 0
-wait 0.1
+wait 0.104
 expect dual_quaternion == 0
 set view hero
 set crowd 48

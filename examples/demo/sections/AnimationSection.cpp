@@ -8,8 +8,10 @@
 // default) the characters small on the screen update every 2nd or 4th frame. A showcase away from them
 // (the views other than the hero's) has a character steered in 2D through a blend space over its velocity (idle,
 // walk, run, walk back, strafes), facing one way while it walks in every direction. Another one, on the other side,
-// has two standing characters whose left forearms the section turns by 170 degrees, skinned linearly (the elbow
-// collapses) and by dual quaternions (it keeps its volume); the other characters' skinning is a choice. Behind the
+// has two checkered bars and two standing characters, the bars' upper halves and the characters' inner forearms
+// turned by 170 degrees about their length: the left bar and character always skinned linearly (the twist collapses
+// to a thin neck), the right ones as the section's skinning choice says, which also holds for the other characters
+// but the blob (dual quaternions keep the volume). Behind the
 // hero's camera the mannequin walks beside a second character of other joint names, proportions and rest pose
 // (tools/assets/make_demo_strider.py), which plays the same walk retargeted onto it at cook time. In its own view a
 // swaying jelly creature (tools/assets/make_demo_blob.py) is reshaped by four blend shapes, applied before its
@@ -41,6 +43,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <format>
 #include <memory>
@@ -48,6 +51,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace demo {
@@ -86,11 +90,18 @@ constexpr float kSpaceEdge = 0.6f;
 constexpr float kSteerSpeed = 0.8f; // m/s of the steering by itself, whose direction turns at kSteerTurn
 constexpr float kSteerTurn = 0.45f; // rad/s
 const glm::vec2 kSteerMin(-0.75f, -0.9f), kSteerMax(0.75f, 2.7f); // the blend space's extent (m/s)
-// The skinning showcase, out of the hero's view on the other side: two standing characters whose left forearms the
-// section turns about their length, skinned linearly (left) and by dual quaternions (right).
+// The skinning showcase, out of the hero's view on the other side, in a row: a character, a bar, a bar and a
+// character, the left two skinned linearly for reference, the right two as the section's choice says. The bars'
+// upper halves and the characters' inner forearms are turned about their length (the bars and their posts are drawn
+// in that view only).
 const glm::vec3 kTwistAt(18.0f, 0.0f, 0.0f);
-constexpr float kTwistApart = 0.8f;                  // m between the two
-constexpr float kTwistAngle = 170.0f * kPi / 180.0f; // radians
+constexpr float kTwistBarX = 0.38f;    // m from kTwistAt to each bar
+constexpr float kTwistFigureX = 0.95f; // m from kTwistAt to each character
+constexpr float kBarRadius = 0.12f;
+constexpr float kBarHalf = 0.5f;        // m: half the bar's length
+constexpr float kBarBlend = 0.4f;       // m in the bar's middle over which its two joints blend
+constexpr float kBarCenterY = 1.2f;     // m: about the characters' elbows
+constexpr float kTwistDegrees = 170.0f; // the default twist
 // The retargeting pair, behind the hero's camera: the mannequin and the strider walk the same clip on circles around
 // kPairCenter. The strider's clips move it kStriderScale times as far (its legs are that much longer), so on a circle
 // that much wider the two stay abreast.
@@ -113,7 +124,7 @@ struct View {
 const std::array kViews{
     View{"hero", "Hero", {0.0f, 0.5f, -0.6f}, 2.0f, 22.0f, 9.0f},
     View{"blend2d", "2D blend space", {-18.0f, 0.6f, 0.0f}, 18.0f, 26.0f, 7.5f},
-    View{"skinning", "Skinning", {18.0f, 1.1f, 0.0f}, 0.0f, 6.0f, 2.1f},
+    View{"skinning", "Skinning", {18.0f, 1.2f, 0.0f}, 0.0f, 4.0f, 1.6f},
     View{"retarget", "Retargeting", {0.0f, 1.0f, 18.0f - 1.075f * kPairRadius}, -120.0f, 10.0f, 4.6f},
     View{"blendshapes", "Blend shapes", {18.0f, 0.45f, -7.0f}, 20.0f, 12.0f, 2.2f},
 };
@@ -123,6 +134,73 @@ glm::mat4 yawed(const glm::vec3& position, float yaw) {
 }
 
 JPH::Quat toJolt(const glm::quat& q) { return JPH::Quat(q.x, q.y, q.z, q.w); }
+
+struct SkinnedMesh {
+    std::vector<Vertex> vertices;
+    std::vector<std::uint32_t> indices;
+    std::vector<SkinVertex> skin;
+};
+
+// The showcase's bar: a capped cylinder along y from -kBarHalf to kBarHalf in a red and white checker (vertex colors;
+// every cell has its own vertices, so the colors meet at sharp edges), on two joints: the lower half follows joint 0,
+// the upper half joint 1, blended smoothly over the middle kBarBlend.
+SkinnedMesh twistBar() {
+    constexpr int kAround = 8, kAlong = 10;  // checker cells
+    constexpr int kSegments = 8, kRings = 5; // per cell
+    constexpr int kSteps = kAround * kSegments;
+    const glm::vec4 red(0.62f, 0.04f, 0.03f, 1.0f), white(0.85f, 0.83f, 0.8f, 1.0f), cap(0.2f, 0.2f, 0.22f, 1.0f);
+    SkinnedMesh m;
+    const auto add = [&](const glm::vec3& p, const glm::vec3& n, const glm::vec4& color, float u, float v) {
+        m.vertices.push_back({.position = p,
+                              .normal = n,
+                              .uv = glm::vec2(u, v),
+                              .color = color,
+                              .tangent = glm::vec4(n.z, 0.0f, -n.x, 1.0f)});
+        const float upper = glm::smoothstep(-0.5f * kBarBlend, 0.5f * kBarBlend, p.y);
+        const auto w = std::uint16_t(std::lround(upper * 65535.0f));
+        m.skin.push_back({.joints = {0, 1, 0, 0}, .weights = {std::uint16_t(65535 - w), w, 0, 0}});
+    };
+    // The direction of step s around (the same bits where neighbouring cells and the seam meet).
+    const auto around = [](int s) {
+        const float a = 2.0f * kPi * float(s % kSteps) / float(kSteps);
+        return glm::vec3(std::sin(a), 0.0f, std::cos(a));
+    };
+    for (int j = 0; j < kAlong; ++j) {
+        for (int i = 0; i < kAround; ++i) {
+            const auto base = std::uint32_t(m.vertices.size());
+            for (int r = 0; r <= kRings; ++r) {
+                const float v = float(j * kRings + r) / float(kAlong * kRings);
+                for (int s = 0; s <= kSegments; ++s) {
+                    const glm::vec3 n = around(i * kSegments + s);
+                    add(glm::vec3(kBarRadius * n.x, kBarHalf * (2.0f * v - 1.0f), kBarRadius * n.z), n,
+                        (i + j) % 2 == 0 ? red : white, float(i * kSegments + s) / float(kSteps), 1.0f - v);
+                }
+            }
+            for (int r = 0; r < kRings; ++r) {
+                for (int s = 0; s < kSegments; ++s) {
+                    const std::uint32_t a = base + std::uint32_t(r * (kSegments + 1) + s), b = a + 1;
+                    const std::uint32_t c = a + kSegments + 1, d = c + 1;
+                    m.indices.insert(m.indices.end(), {a, b, d, a, d, c});
+                }
+            }
+        }
+    }
+    for (const float side : {-1.0f, 1.0f}) {
+        const auto center = std::uint32_t(m.vertices.size());
+        const glm::vec3 n(0.0f, side, 0.0f);
+        add(n * kBarHalf, n, cap, 0.5f, 0.5f);
+        for (int s = 0; s < kSteps; ++s) {
+            const glm::vec3 d = around(s);
+            add(kBarRadius * d + n * kBarHalf, n, cap, 0.5f + 0.5f * d.x, 0.5f + 0.5f * d.z);
+        }
+        for (int s = 0; s < kSteps; ++s) {
+            const std::uint32_t a = center + 1 + std::uint32_t(s), b = center + 1 + std::uint32_t((s + 1) % kSteps);
+            m.indices.insert(m.indices.end(), side > 0.0f ? std::initializer_list<std::uint32_t>{center, a, b}
+                                                          : std::initializer_list<std::uint32_t>{center, b, a});
+        }
+    }
+    return m;
+}
 
 // One animated character and its model in the scene.
 struct Walker {
@@ -138,8 +216,9 @@ struct Walker {
     float turn = 1.0f; // +1: the angle grows (counterclockwise seen from below), -1: it shrinks
     glm::mat4 transform{1.0f};
     std::optional<Skinning> skinning; // unset: the section's choice
-    float twist = 0.0f;               // radians the left forearm is turned about its length (the showcase)
-    bool strider = false;             // the second character (its own model, skeleton and retargeted clips)
+    // The showcase: a forearm turned about its length by the section's twist (0 none, 1 the left, 2 the right).
+    int twistedArm = 0;
+    bool strider = false; // the second character (its own model, skeleton and retargeted clips)
 };
 
 class AnimationSection final : public Section {
@@ -158,8 +237,9 @@ public:
         return "Cooked glTF clips on quench::animation: speed blend, jump and wave with cross-fades, a masked arm "
                "layer, an additive lean, root motion, footstep events with sound, look-at, foot placement on a slope "
                "and a step (ray queries into Jolt), a held torch; a crowd updated on jobs and skinned on the GPU; a "
-               "character steered through a 2D blend space, a forearm twisted under linear and dual quaternion "
-               "skinning, a walk retargeted at cook time onto a character of other proportions, and a creature "
+               "character steered through a 2D blend space, bars and forearms twisted under linear and dual "
+               "quaternion skinning, a walk retargeted at cook time onto a character of other proportions, and a "
+               "creature "
                "reshaped by blend shapes before its skinning (View).";
     }
 
@@ -200,6 +280,27 @@ public:
                                                             .emissive = glm::vec3(6.0f, 2.4f, 0.5f),
                                                             .name = "flame"}),
                                  .castsShadows = false});
+        const SkinnedMesh bar = twistBar();
+        const Result<MeshId> barMesh = s.addMesh(
+            {.vertices = bar.vertices, .indices = bar.indices, .name = "twist bar", .skin = bar.skin, .jointCount = 2});
+        const float postHalf = 0.5f * (kBarCenterY - kBarHalf);
+        const Result<MeshId> post = addMesh(s, cylinderMesh(0.03f, postHalf, 16));
+        for (const Result<MeshId>* m : {&barMesh, &post})
+            if (!*m) return Error{m->error()};
+        const MaterialId barMaterial = s.addMaterial({.roughness = 0.45f, .name = "twist bar"});
+        const MaterialId postMaterial =
+            s.addMaterial({.baseColor = glm::vec4(0.12f, 0.12f, 0.13f, 1.0f), .roughness = 0.6f});
+        for (std::size_t k = 0; k < m_bars.size(); ++k) {
+            const float x = kTwistAt.x + (k == 0 ? -kTwistBarX : kTwistBarX);
+            m_bars[k] = s.addInstance({.mesh = *barMesh,
+                                       .material = barMaterial,
+                                       .transform = placed(glm::vec3(x, kBarCenterY, kTwistAt.z)),
+                                       .visible = false});
+            m_posts[k] = s.addInstance({.mesh = *post,
+                                        .material = postMaterial,
+                                        .transform = placed(glm::vec3(x, postHalf, kTwistAt.z)),
+                                        .visible = false});
+        }
         setDaylight(s, s.addLight({.type = LightType::Directional}), 38.0f, 40.0f);
 
         // The ground the feet are placed on: the floor, the slope and the step as static bodies; the characters'
@@ -286,6 +387,7 @@ public:
             walk(w);
         });
         if (std::string_view(kViews[std::size_t(m_view)].id) == "retarget") followPair(pairAngle);
+        updateBars();
         updateBlob();
         moveStrafer(dt);
         m_teleport = false;
@@ -336,15 +438,20 @@ public:
         ImGui::BeginDisabled(!m_lod);
         ImGui::Checkbox("Interpolate", &m_lodInterpolate);
         ImGui::EndDisabled();
-        bool dualQuaternion = m_skinning == Skinning::DualQuaternion;
-        if (ImGui::Checkbox("Dual quaternion skinning", &dualQuaternion))
-            setSkinning(dualQuaternion ? Skinning::DualQuaternion : Skinning::Linear);
         ImGui::SeparatorText("2D blend space");
         ImGui::Checkbox("Steer by itself", &m_autoSteer);
         ImGui::BeginDisabled(m_autoSteer);
         ImGui::SliderFloat("To the left", &m_steerVelocity.x, kSteerMin.x, kSteerMax.x, "%.2f m/s");
         ImGui::SliderFloat("Ahead", &m_steerVelocity.y, kSteerMin.y, kSteerMax.y, "%.2f m/s");
         ImGui::EndDisabled();
+        ImGui::SeparatorText("Skinning");
+        bool dualQuaternion = m_skinning == Skinning::DualQuaternion;
+        if (ImGui::Checkbox("Dual quaternion skinning", &dualQuaternion))
+            setSkinning(dualQuaternion ? Skinning::DualQuaternion : Skinning::Linear);
+        ImGui::SliderFloat("Twist", &m_twistDegrees, 0.0f, 180.0f, "%.0f deg");
+        ImGui::TextWrapped("View Skinning: the checkbox switches the right bar and arm (and the other characters); "
+                           "linear pinches the twist to a thin neck, dual quaternions keep it round, the left pair "
+                           "stays linear.");
         ImGui::SeparatorText("Blend shapes");
         ImGui::Checkbox("Weights from the clip", &m_blobClip);
         for (std::size_t k = 0; k < kBlobShapes.size(); ++k) {
@@ -372,6 +479,31 @@ public:
                 ImGui::Text("Skinning GPU %.3f ms", double(r.skinningGpuMs));
             else
                 ImGui::TextUnformatted("Skinning GPU time n/a");
+        }
+    }
+
+    // In the skinning view, the skinning over each pair of the showcase: the left one's (always linear) and the right
+    // one's (the checkbox's).
+    void overlay(Context& c) override {
+        if (!m_scene || std::string_view(kViews[std::size_t(m_view)].id) != "skinning") return;
+        const glm::vec2 window = windowSize(c);
+        ImDrawList* draw = ImGui::GetBackgroundDrawList();
+        ImFont* font = ImGui::GetFont();
+        const float em = ImGui::GetFontSize(), size = 1.6f * em;
+        const bool dual = m_skinning == Skinning::DualQuaternion;
+        const ImU32 linearColor = IM_COL32(255, 176, 96, 255), dualColor = IM_COL32(110, 225, 255, 255);
+        for (const auto& [x, text, color] :
+             {std::tuple(-kTwistBarX, "Linear (reference)", linearColor),
+              std::tuple(kTwistBarX, dual ? "Dual quaternion" : "Linear", dual ? dualColor : linearColor)}) {
+            const std::optional<glm::vec2> p =
+                camera.project(kTwistAt + glm::vec3(x, kBarCenterY + kBarHalf + 0.06f, 0.0f), window);
+            if (!p) continue;
+            const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+            const ImVec2 at(p->x - 0.5f * extent.x, p->y - extent.y - 0.5f * em);
+            draw->AddRectFilled(ImVec2(at.x - 0.5f * em, at.y - 0.25f * em),
+                                ImVec2(at.x + extent.x + 0.5f * em, at.y + extent.y + 0.25f * em),
+                                IM_COL32(20, 22, 28, 200), 0.3f * em);
+            draw->AddText(font, size, at, color, text);
         }
     }
 
@@ -427,6 +559,7 @@ public:
         if (name == "anim_lod_rate4") return double(stats.lodRates[2]);
         if (name == "skinned_reused") return double(m_skinnedReused);
         if (name == "dual_quaternion") return m_skinning == Skinning::DualQuaternion ? 1.0 : 0.0;
+        if (name == "twist") return double(m_twistDegrees);
         // The retargeting pair: the strider's angle on its circle ahead of the mannequin's (degrees; 0 while they
         // walk abreast) and its hips' height over the mannequin's pelvis' (1.15 from its proportions).
         if (name == "pair_gap") {
@@ -518,6 +651,8 @@ public:
             m_lodInterpolate = *flag;
         } else if (name == "dual_quaternion" && flag) {
             setSkinning(*flag ? Skinning::DualQuaternion : Skinning::Linear);
+        } else if (name == "twist" && number) {
+            m_twistDegrees = std::clamp(*number, 0.0f, 180.0f);
         } else if (name == "view") {
             const auto it = std::ranges::find_if(kViews, [&](const View& v) { return v.id == value; });
             if (it == kViews.end()) return false;
@@ -630,8 +765,8 @@ private:
     // The characters other than the crowd.
     template <class Self>
     static auto singles(Self& self) {
-        return std::array{&self.m_hero,        &self.m_slopeStand, &self.m_stepStand,     &self.m_strafer,
-                          &self.m_twistLinear, &self.m_twistDual,  &self.m_pairMannequin, &self.m_pairStrider};
+        return std::array{&self.m_hero,        &self.m_slopeStand,  &self.m_stepStand,     &self.m_strafer,
+                          &self.m_twistLinear, &self.m_twistChosen, &self.m_pairMannequin, &self.m_pairStrider};
     }
 
     template <class F>
@@ -692,13 +827,13 @@ private:
         return w;
     }
 
-    // A showcase character: stands with its left forearm turned by kTwistAngle, skinned one way whatever the
-    // section's choice.
-    Walker makeTwisted(const glm::vec3& position, Skinning skinning) {
+    // A showcase character: stands with one forearm (1 the left, 2 the right) turned by the section's twist, skinned
+    // as `skinning` says, or unset: the section's choice.
+    Walker makeTwisted(const glm::vec3& position, int arm, std::optional<Skinning> skinning) {
         Walker w = makeWalker(position, 0.0f, false, false);
         w.skinning = skinning;
-        w.twist = kTwistAngle;
-        m_assets->setSkinning(w.model, 0, skinning);
+        w.twistedArm = arm;
+        if (skinning) m_assets->setSkinning(w.model, 0, *skinning);
         return w;
     }
 
@@ -707,22 +842,38 @@ private:
         forEachWalker([&](Walker& w) {
             if (!w.skinning) m_assets->setSkinning(w.model, 0, skinning);
         });
+        m_scene->setSkinning(m_bars[1], skinning);
     }
 
-    // The palette a walker is drawn with: its skin's, and for the showcase the forearm's joints (lowerarm_l and
-    // hand_l, which follows it) turned about the line from the elbow to the wrist.
+    // The showcase's bars: drawn in the skinning view only, their upper halves turned by the twist.
+    void updateBars() {
+        const bool shown = std::string_view(kViews[std::size_t(m_view)].id) == "skinning";
+        const std::array<glm::mat4, 2> palette{
+            glm::mat4(1.0f), glm::rotate(glm::mat4(1.0f), glm::radians(m_twistDegrees), glm::vec3(0.0f, 1.0f, 0.0f))};
+        for (std::size_t k = 0; k < m_bars.size(); ++k) {
+            m_scene->setVisible(m_bars[k], shown);
+            m_scene->setVisible(m_posts[k], shown);
+            m_scene->setJointPalette(m_bars[k], palette, m_teleport);
+        }
+    }
+
+    // The palette a walker is drawn with: its skin's, and for the showcase the forearm's joints (lowerarm and hand,
+    // which follows it) turned about the line from the elbow to the wrist.
     std::span<const glm::mat4> palette(const Walker& w) {
         const std::span<const glm::mat4> palette = m_anim->skinPalette(w.id, w.skin);
-        if (w.twist == 0.0f || m_forearmJoints.empty()) return palette;
-        const int elbow = m_anim->findJoint(w.id, "lowerarm_l"), wrist = m_anim->findJoint(w.id, "hand_l");
-        if (elbow < 0 || wrist < 0) return palette;
+        if (w.twistedArm == 0 || m_twistDegrees == 0.0f) return palette;
+        const bool left = w.twistedArm == 1;
+        const std::vector<std::size_t>& forearm = m_forearmJoints[left ? 0 : 1];
+        const int elbow = m_anim->findJoint(w.id, left ? "lowerarm_l" : "lowerarm_r");
+        const int wrist = m_anim->findJoint(w.id, left ? "hand_l" : "hand_r");
+        if (forearm.empty() || elbow < 0 || wrist < 0) return palette;
         const std::span<const glm::mat4> models = m_anim->modelMatrices(w.id);
         const glm::vec3 e(models[std::size_t(elbow)][3]), h(models[std::size_t(wrist)][3]);
         const glm::mat4 turn = glm::translate(glm::mat4(1.0f), e) *
-                               glm::rotate(glm::mat4(1.0f), w.twist, glm::normalize(h - e)) *
+                               glm::rotate(glm::mat4(1.0f), glm::radians(m_twistDegrees), glm::normalize(h - e)) *
                                glm::translate(glm::mat4(1.0f), -e);
         m_twisted.assign(palette.begin(), palette.end());
-        for (const std::size_t k : m_forearmJoints)
+        for (const std::size_t k : forearm)
             if (k < m_twisted.size()) m_twisted[k] = turn * m_twisted[k];
         return m_twisted;
     }
@@ -788,8 +939,9 @@ private:
         m_strafer = makeWalker(glm::vec3(start.x, 0.0f, start.y), 0.0f, true, false, m_graph2d);
         m_steerAngle = 0.0f;
         m_steerInput = m_strafeMotion = glm::vec2(0.0f);
-        m_twistLinear = makeTwisted(kTwistAt - glm::vec3(0.5f * kTwistApart, 0.0f, 0.0f), Skinning::Linear);
-        m_twistDual = makeTwisted(kTwistAt + glm::vec3(0.5f * kTwistApart, 0.0f, 0.0f), Skinning::DualQuaternion);
+        // Their inner forearms, next to the bars: the left one's left arm, the right one's right arm.
+        m_twistLinear = makeTwisted(kTwistAt - glm::vec3(kTwistFigureX, 0.0f, 0.0f), 1, Skinning::Linear);
+        m_twistChosen = makeTwisted(kTwistAt + glm::vec3(kTwistFigureX, 0.0f, 0.0f), 2, std::nullopt);
         m_pairMannequin = makePairWalker(false);
         m_pairStrider = makePairWalker(true);
         removeWalker(m_blob);
@@ -842,10 +994,12 @@ private:
         };
         const assets::ModelSkin* mannequinSkin = skinOf(m_model);
         const assets::ModelSkin* striderSkin = skinOf(m_striderModel);
-        if (mannequinSkin && m_forearmJoints.empty())
-            for (std::size_t k = 0; k < mannequinSkin->joints.size(); ++k)
-                if (mannequinSkin->joints[k] == "lowerarm_l" || mannequinSkin->joints[k] == "hand_l")
-                    m_forearmJoints.push_back(k);
+        if (mannequinSkin && m_forearmJoints[0].empty())
+            for (std::size_t k = 0; k < mannequinSkin->joints.size(); ++k) {
+                const std::string& joint = mannequinSkin->joints[k];
+                if (joint == "lowerarm_l" || joint == "hand_l") m_forearmJoints[0].push_back(k);
+                if (joint == "lowerarm_r" || joint == "hand_r") m_forearmJoints[1].push_back(k);
+            }
         forEachWalker([&](Walker& w) {
             const assets::ModelSkin* skin = w.strider ? striderSkin : mannequinSkin;
             if (w.skin < 0 && w.id && skin) w.skin = m_anim->addSkin(w.id, skin->joints, skin->inverseBindMatrices);
@@ -960,6 +1114,8 @@ private:
     JPH::Ref<JPH::Shape> m_slopeShape;
     JPH::BodyID m_slopeBody;
     InstanceId m_slopeInstance, m_stick, m_flame;
+    std::array<InstanceId, 2> m_bars,
+        m_posts; // the showcase's: the left one linear, the right one the section's choice
     glm::mat4 m_stickTransform{1.0f};
     std::unique_ptr<assets::AssetManager> m_manager;
     std::optional<SceneAssets> m_assets;
@@ -976,15 +1132,17 @@ private:
     assets::AssetRef<animation::ClipSetAsset> m_blobClips;
     assets::AssetRef<animation::GraphAsset> m_blobGraph;
     assets::AssetRef<audio::SoundAsset> m_step;
-    Walker m_hero, m_slopeStand, m_stepStand, m_strafer, m_twistLinear, m_twistDual, m_pairMannequin, m_pairStrider;
+    Walker m_hero, m_slopeStand, m_stepStand, m_strafer, m_twistLinear, m_twistChosen, m_pairMannequin, m_pairStrider;
     std::vector<Walker> m_crowd;
     Walker m_blob;
     std::array<float, kBlobShapes.size()> m_blobWeights{};
     int m_blobChannels = -1; // AnimationSystem::addChannels: the clip's weights by kBlobShapes' names
     bool m_blobClip = true;
     std::vector<float> m_blobModelWeights;
-    std::vector<std::size_t> m_forearmJoints; // in the model's skin
+    std::array<std::vector<std::size_t>, 2>
+        m_forearmJoints; // in the model's skin: the left forearm and hand, the right
     std::vector<glm::mat4> m_twisted;
+    float m_twistDegrees = kTwistDegrees;
     app::ActionId m_jumpAction = 0, m_waveAction = 0;
     float m_speed = 1.1f, m_lean = 0.0f, m_slopeDegrees = 16.0f;
     int m_crowdSize = 48;

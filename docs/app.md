@@ -292,7 +292,7 @@ backend runs a scenario that `include`s every check as a part, with a fresh `--u
 captures (`build/<preset>/tests/captures/<batch>/`, the log next to it as `<batch>.log`). The batch is a CTest fixture
 (`<app>_batch_<backend>`, `tests/RunBatch.cmake`: it fails when the app crashes or the log has no result line), and
 each part is a test of its own (`<app>_<part>_<backend>`, `tests/CheckPart.cmake`): the part's checks passed, and its
-capture matches the golden image. Running one part's test runs its batch first. For hello, `hello_batch_metal`,
+capture matches the golden image (a part may have several: `PARTS <file>:<golden>:<golden>`). Running one part's test runs its batch first. For hello, `hello_batch_metal`,
 `hello_batch_metal_native` and `hello_batch_vulkan` run `examples/hello/scenarios/check.txt` (`hello --window 640x360
 --frame-size 1280x720 --gpu-debug`): `hello_frame_*` compares the frame at 1 s with `hello.png`, `hello_input_*` runs
 the scripted input. The demo's batches: [Engine demo](demo.md#checks). Batches are registered where the captures are

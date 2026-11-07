@@ -1,11 +1,12 @@
 # Part check (cmake -P): one part of a batch run (RunBatch.cmake) passed its checks, by its line in the log, and its
-# capture, if it has one, matches the golden image.
+# captures, if it has any, match their golden images.
 #
-#   cmake -DLOG=<file> -DPART=<scenario file name> [-DCAPTURE=<png> -DGOLDEN=<png> -DCOMPARE=<quench_image_compare>]
-#         -P CheckPart.cmake
+#   cmake -DLOG=<file> -DPART=<scenario file name> [-DCAPTURE=<png>[|<png>...] -DGOLDEN=<png>[|<png>...]
+#         -DCOMPARE=<quench_image_compare>] -P CheckPart.cmake
 #
-# Without a golden image the check prints QUENCH_SKIP (the test's SKIP_REGULAR_EXPRESSION) and how to add one: look at
-# the capture first, then copy it to GOLDEN. On a mismatch the difference image is written next to the capture.
+# CAPTURE and GOLDEN pair up in order. Without a golden image the check prints QUENCH_SKIP (the test's
+# SKIP_REGULAR_EXPRESSION) and how to add one, unless another capture of the part differs: look at the capture first,
+# then copy it to GOLDEN. On a mismatch the difference image is written next to the capture.
 
 if(NOT EXISTS ${LOG})
     message(FATAL_ERROR "no log ${LOG}: the batch run did not start")
@@ -29,18 +30,32 @@ endif()
 if(NOT CAPTURE)
     return()
 endif()
-if(NOT EXISTS ${CAPTURE})
-    message(FATAL_ERROR "the part wrote no capture ${CAPTURE}")
+string(REPLACE "|" ";" captures "${CAPTURE}")
+string(REPLACE "|" ";" goldens "${GOLDEN}")
+set(missing "")
+set(differing "")
+foreach(capture golden IN ZIP_LISTS captures goldens)
+    if(NOT EXISTS ${capture})
+        message(FATAL_ERROR "the part wrote no capture ${capture}")
+    endif()
+    if(NOT EXISTS ${golden})
+        list(APPEND missing "no golden image ${golden}. Look at ${capture}; if it is right, copy it there.")
+        continue()
+    endif()
+    get_filename_component(capture_dir ${capture} DIRECTORY)
+    get_filename_component(capture_name ${capture} NAME_WE)
+    set(diff ${capture_dir}/${capture_name}_diff.png)
+    execute_process(COMMAND ${COMPARE} ${capture} ${golden} --diff ${diff} RESULT_VARIABLE compare_result)
+    if(compare_result EQUAL 0)
+        file(REMOVE ${diff})
+    else()
+        list(APPEND differing "the capture ${capture} differs from ${golden} (differences: ${diff})")
+    endif()
+endforeach()
+if(differing)
+    list(JOIN differing "\n" differing)
+    message(FATAL_ERROR "${differing}")
 endif()
-if(NOT EXISTS ${GOLDEN})
-    message("QUENCH_SKIP: no golden image ${GOLDEN}. Look at ${CAPTURE}; if it is right, copy it there.")
-    return()
-endif()
-get_filename_component(capture_dir ${CAPTURE} DIRECTORY)
-get_filename_component(capture_name ${CAPTURE} NAME_WE)
-set(diff ${capture_dir}/${capture_name}_diff.png)
-execute_process(COMMAND ${COMPARE} ${CAPTURE} ${GOLDEN} --diff ${diff} RESULT_VARIABLE compare_result)
-if(NOT compare_result EQUAL 0)
-    message(FATAL_ERROR "the capture ${CAPTURE} differs from ${GOLDEN} (differences: ${diff})")
-endif()
-file(REMOVE ${diff})
+foreach(line IN LISTS missing)
+    message("QUENCH_SKIP: ${line}")
+endforeach()

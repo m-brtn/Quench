@@ -100,10 +100,12 @@ constexpr std::array kItems{
               "while the camera zooms.",
               "set crowd 256\nset lod 1"},
     CheckItem{"animation.skinning", "animation", "Dual quaternion skinning",
-              "View Skinning: the left character's twisted forearm pinches to a thin neck at the elbow (linear), the "
-              "right one's keeps its thickness (dual quaternion), also as they idle. Back at the hero, tick Dual "
-              "quaternion skinning: elbows, knees and hips keep their shape as they bend, with no flicker or pop at "
-              "the switch.",
+              "View Skinning: both checkered bars and the forearms beside them, twisted by 170 degrees, pinch to a "
+              "thin neck at the twist. Tick Dual quaternion skinning: the right bar and arm turn round again, the "
+              "squares running around them in a spiral, and their label reads Dual quaternion; the left ones, "
+              "labelled Linear (reference), stay pinched. Untick: the neck comes back, with no flicker or pop. Move "
+              "Twist from 0 to 180: the linear neck narrows to a point, the dual quaternion bar stays round. Back at "
+              "the hero, ticked: elbows, knees and hips keep their shape as they bend.",
               "set view skinning"},
     CheckItem{"animation.retarget", "animation", "Retargeting",
               "View Retargeting: the blue strider (longer legs, other joint names, a T-pose rest; the mannequin's "

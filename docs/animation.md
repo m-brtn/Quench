@@ -388,8 +388,9 @@ characters that use the asset and keeps their parameters.
   placement on a ramp and a step, a crowd of up to 512 with the update and skinning times on screen and animation LOD
   and dual quaternion skinning as options (off by default; LOD interpolated or held); in the view
   "2D blend space", a character steered by its velocity through a blend space while it faces one way; in the view
-  "Skinning", two characters whose left forearms the section twists by 170 degrees, skinned linearly and by dual
-  quaternions; in the view "Retargeting", the mannequin and the strider walking the same clip abreast, the camera
+  "Skinning", a close-up of two checkered bars and two characters' forearms that the section twists by 170 degrees
+  (a slider: 0 to 180), the left pair always linear and labelled as the reference, the right pair following the
+  dual quaternion checkbox and its label; in the view "Retargeting", the mannequin and the strider walking the same clip abreast, the camera
   following them; in the view "Blend shapes", the blob (a swaying jelly body on three joints) squashed and stretched
   by its clip's weights for its four blend shapes, the sliders added to them (or alone)
   ([Engine demo](demo.md)). Its character is procedural (`tools/assets/make_demo_character.py`, generated and cooked
@@ -421,7 +422,8 @@ characters that use the asset and keeps their parameters.
   and a golden capture); `demo_animation_blend2d_<backend>` (the steered character's root motion against its
   velocity, 17 checks and a golden capture); `demo_animation_lod_<backend>` (the crowd of 256 with LOD: the rates,
   the characters sampled and the reused skins from the hero's view and from 45 m, 18 checks, no capture);
-  `demo_animation_skinning_<backend>` (the twisted pair, 9 checks and a golden capture);
+  `demo_animation_skinning_<backend>` (the twisted bars and forearms, 11 checks and two golden captures: linear,
+  then the checkbox on);
   `demo_animation_retarget_<backend>` (the retargeting pair abreast, the strider's hips 1.15 times as high, 10
   checks and a golden capture); `demo_animation_blendshapes_<backend>` (the blob puffed, spiked and squashed by the
   sliders while it sways, then its clip's weights: squash and stretch in turn, never both, the sliders added; 19
@@ -447,7 +449,9 @@ characters that use the asset and keeps their parameters.
   phases do not stay in step. No directional blend spaces (polar gradient bands): a space's weights are Cartesian.
 - **Skinning**: four joints per vertex, linear blend or dual quaternions (a joint's non-uniform scale or shear is
   lost under dual quaternions; their culling bounds have a margin, not a proof). Dual quaternion skinning was checked
-  by numbers and a still capture; nobody has looked at it in motion.
+  by numbers and still captures. The user looked at the demo's first showcase (two small mannequins, the checkbox
+  not driving them) on 2026-11-07 and saw no change when toggling it; nobody has looked at the bars' showcase that
+  replaced it yet, in motion or on a phone.
 - **Blend shapes**: weights from clips or set by the game; checked by numbers and still captures (the clip's
   squash and stretch only in two captures looked at by an agent, not golden), not looked at in motion by a person
   (the demo's check mode has an item). Float channels are blended linearly (no other curve between keys at run
