@@ -135,7 +135,7 @@ bool RayTracing::init(gpu::Device& device, std::uint32_t& pipelines, const RaySa
                  make(m_probeTracePipelines[0][1], shaders::render_raylight.find("rt_probe_trace_maps_fs"), {&light, 1},
                       "render probe rays (normal maps)") &&
                  m_reflectionFilter.init(device, kLightFormat, "ray reflections", pipelines) &&
-                 m_indirectFilter.init(device, kLightFormat, "ray indirect", pipelines);
+                 m_indirectFilter.init(device, kLightFormat, "ray indirect", pipelines, true);
     if (!m_lighting)
         log::error("render", "ray-traced lighting pipelines failed (logged); sky reflections and ambient light");
     return true;
@@ -961,10 +961,11 @@ void RayTracing::traceIndirect(gpu::CommandBuffer& commands, const shader::RayHi
         pass.draw(3);
         pass.end();
     }
-    // One ray per pixel is the noisiest signal: a long history, a loose clamp and the widest filter.
+    // One ray per pixel is the noisiest signal: a long history, a loose clamp, no tighter than each pixel's own spread
+    // (the filter's deviation, init), and the widest filter.
     if (filtering != RayFiltering::Raw)
         filter(commands, m_indirectFilter, m_indirectRaw, m_indirect, inputs,
-               {.maxHistory = 32.0f, .clampGamma = 2.5f, .steps = 2, .planeTolerance = 0.03f}, filtering);
+               {.maxHistory = 32.0f, .clampGamma = 2.5f, .steps = 3, .planeTolerance = 0.03f}, filtering);
     commands.endTiming();
 }
 

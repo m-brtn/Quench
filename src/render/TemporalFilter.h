@@ -18,7 +18,7 @@ struct FilterParams {
     float maxHistory = 32.0f;     // frames
     float clampGamma = 2.0f;      // the history is clamped to mean +- gamma sigma of the new samples (0: no clamp)
     bool alphaScale = false;      // history and radius scale with the signal's alpha (reflections)
-    int steps = 2;                // a-trous passes: 1 (step 1) or 2 (steps 1 and 2)
+    int steps = 2;                // a-trous passes: 1 to 3 (steps 1, 2 and 4)
     float planeTolerance = 0.02f; // relative to the view depth
     float depthTolerance = 0.05f; // relative: a reprojected depth further off is another surface
 };
@@ -32,8 +32,10 @@ struct FilterInputs {
 
 class TemporalFilter {
 public:
-    // false when a pipeline fails (logged); `pipelines` counts the ones made.
-    bool init(gpu::Device& device, gpu::TextureFormat format, const char* name, std::uint32_t& pipelines);
+    // false when a pipeline fails (logged); `pipelines` counts the ones made. deviation: the history also keeps each
+    // pixel's standard deviation, and the clamp and anti-lag use no less than it (rt_temporal_deviation_fs).
+    bool init(gpu::Device& device, gpu::TextureFormat format, const char* name, std::uint32_t& pipelines,
+              bool deviation = false);
     bool ready() const { return static_cast<bool>(m_atrous); }
     bool ensureTargets(std::uint32_t width, std::uint32_t height);
     void release();
@@ -51,10 +53,11 @@ private:
     const char* m_name = "";
     gpu::GraphicsPipeline m_temporal, m_atrous;
     std::uint32_t m_width = 0, m_height = 0;
-    std::array<gpu::Texture, 2> m_history, m_length;
+    std::array<gpu::Texture, 2> m_history, m_length, m_deviation; // m_deviation only with m_deviationFloor
     gpu::Texture m_scratch;
     int m_index = 0;
     bool m_valid = false; // the history holds a previous frame
+    bool m_deviationFloor = false;
 };
 
 } // namespace quench::render::detail

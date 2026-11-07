@@ -567,6 +567,14 @@ light) are noisy at one or two rays per pixel. `RenderSettings::rayDenoiser`:
   after SVGF, Schied et al. 2017, without its variance estimate). Anti-lag: where the neighbourhood's mean is further
   from the history than its noise explains, the history is cut short, so a moved shadow is there in the next frame
   even where it is a few pixels thin and the clamp alone lets the old value through. A camera cut drops the history.
+- The per-pixel indirect light (since 2026-11-07) also keeps each pixel's standard deviation over its history (an
+  exponentially weighted variance with the history's weights, `rt_temporal_deviation_fs`) and clamps and cuts with
+  no less than it, and takes a third a-trous pass (step 4). At one ray per pixel the 9 new samples around a pixel
+  often agree by chance (all of them see the sky, or none does: a floor under a roof, the ground under a fence), and
+  their spread alone collapsed then: the clamp and the anti-lag pulled the history to their mean, so the light never
+  settled (grain all the time, also in a still scene) and its mean came out darker. The other signals keep the
+  filter as it was: their own changes (a shadow edge that moves with the sun) widen a pixel's deviation too, and the
+  floor let a moving sun shadow trail more (measured in the demo; [Performance](performance.md#the-denoiser-in-a-still-scene)).
 - `Spatial`: the stage 9 blurs for the sun and the occlusion (3 x 3 and 5 x 5, depth-aware) and the a-trous passes
   alone for the rest; TAA's history then averages the frames.
 - `Upscaling::TemporalDenoised` (below) skips both: MetalFX denoises the raw signals.
@@ -574,7 +582,10 @@ light) are noisy at one or two rays per pixel. `RenderSettings::rayDenoiser`:
 Test `renderer_temporal_ray_denoiser` (one ray against eight): temporal mean 0.02 (0.00 % of the pixels over 16),
 spatial 0.50 (1.17 %); frame to frame 0.01 against 0.27. `renderer_ray_tracing_refit_and_compaction`: a moved
 shadow about 7 pixels across reads 57 in the first frame after the move (settled 30, lit 579; 399 before the
-anti-lag).
+anti-lag). `renderer_indirect_light_settles` (native backend): a floor under a black roof, lit only by the sky past
+its edges, reads 0.1752 with the temporal denoiser after 64 frames and changes 0.3 % from frame to frame; the spatial
+filter's mean over 64 frames is 0.1778. With the indirect light's filter as it was before 2026-11-07: 0.0244
+against 0.0987, 9.8 % from frame to frame.
 
 ### Path tracer
 
@@ -929,8 +940,12 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   within 0.45 spacings stays. Classification leaves out a probe after 8 updates without a surface near it, so a
   surface that appears in open air gets the grid's light only after the left-out probes' quarter of rays find it.
   Turns are a fixed round-robin, not chosen by priority (a probe near the camera or in changing
-  light is not traced sooner), and the hysteresis does not shorten with n. The temporal denoiser has no variance estimate and no disocclusion boost: newly
-  visible areas are noisy for a few frames. Without ray tracing local lights are unshadowed unless
+  light is not traced sooner), and the hysteresis does not shorten with n. The temporal denoiser has no variance
+  guidance in its blur and no disocclusion boost: newly visible areas are noisy for a few frames. The per-pixel
+  indirect light's deviation floor makes it follow a sudden change of light (the sun jumping by 60 degrees) a little
+  more slowly in the first 8 frames than before (its 99th percentile error 12 levels at frame 8 against 9; about
+  equal at 16 frames, lower from 32 on), and a light change smaller than one ray's noise is followed over the
+  history's 32 frames; its third a-trous pass blurs the indirect light over about 15 pixels on one plane. Without ray tracing local lights are unshadowed unless
   `localShadowMapSize` is set; the point and spot lights' shadow maps are hard (a 4 x 4 filter, not softened by
   `sourceRadius`), the area lights' soft by an estimate (one mean blocker depth per pixel) and missing on transparent
   surfaces, and all of them dither translucent casters. The path tracer has no refraction, and its translucency is

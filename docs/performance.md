@@ -204,6 +204,66 @@ demo's Adapt to heat (Settings, off) uses them as they are, and its check mode h
 
 ## Measurements
 
+### The denoiser in a still scene
+
+2026-11-07 15:39-16:19, the per-pixel indirect light's temporal filter before and after its change of that day
+([Render](render.md#denoising)), on the Mac (Apple M4 Pro), offscreen on the native backend, `--frame-size
+1920x1080 --audio-device null`, Release; before: the code of `aa75d46` with the demo's `spin` option added (the
+scenarios need it), after: the commit "Keep a per-pixel deviation in the indirect light's temporal filter". The
+cause of a user report from the iPhone 17 (2026-11-07 15:30: with Indirect
+light "Ray traced" at the section's phone defaults the unlit objects and the shadows are grainy all the time, also
+when nothing moves).
+
+**Noise** (`scenarios/raytracing_noise.txt`, one run each): luma (0 to 255) of the captures below the horizon (rows
+250 to 1079), without the pixels within 3 of an edge (edges move with TAA's jitter): flicker, the mean difference
+of two frames in a row; grain, the median difference of a frame from its 5 x 5 mean; residual, the mean difference
+of the captures 300 frames apart (120 apart where the region ends at 300: the noise left, which moves slowly).
+At the phone's 60 Hz, 60 frames are 1 s.
+
+| Configuration (frames) | Before: flicker / grain / residual | After |
+|---|---|---|
+| phone defaults with per-pixel indirect light (600; 300 -> 600) | 0.84 / 0.42 / 1.37 | 0.26 / 0.25 / 0.43 |
+| the same at full size, bilinear (300; 120 -> 300) | 0.66 / 0.38 / 1.27 | 0.05 / 0.14 / 0.26 |
+| half size, bilinear | 0.59 / 0.25 / 1.20 | 0.06 / 0.15 / 0.26 |
+| half size, MetalFX temporal | 1.10 / 0.27 / 1.54 | 0.03 / 0.16 / 0.23 |
+| half size, MetalFX denoising (its own denoiser, unchanged) | 0.05 / 0.09 / 0.21 | 0.05 / 0.09 / 0.21 |
+| phone defaults, the probe grid alone (unchanged) | 0.25 / 0.20 / 0.32 | 0.25 / 0.20 / 0.32 |
+| phone defaults with per-pixel indirect light, the spatial denoiser | 2.53 / 0.52 / 3.04 | 1.58 / 0.37 / 1.77 |
+
+Before, the phone defaults' flicker stayed at 0.88, 0.85, 0.85 and 0.84 after 60, 120, 300 and 600 frames: the
+light never settled. After: 0.27, 0.26, 0.27, 0.26, the level of the probe grid alone, whose floor at half size
+is MetalFX spatial over TAA's jitter. The mean luma of the scene went from 190.3 to 192.7 (the probe grid's 194.2):
+the old filter's mean was darker. How the cause was found, at the phone defaults (flicker / grain / residual): no
+clamp and no anti-lag in the indirect light's filter alone, 0.34 / 0.32 / 0.64 (in every filter: the same within
+0.02); the deviation floor instead, 0.34 / 0.33 / 0.63 (the clamp and anti-lag kept, the noise as without them);
+with 64 frames of history 0.28 / 0.30 / 0.52; with a third a-trous pass 0.22 / 0.23 / 0.38 at 64 frames and
+0.26 / 0.25 / 0.43 at 32. 32 frames were kept: as clean as the probe grid within 60 frames, and they follow a
+sudden change faster (below: mean 0.94 against 1.25 32 frames after the sun's jump, 0.63 against 0.90 after 64).
+The deviation floor on the sun and lamp shadows too changed nothing in a still scene and let the moving sun shadow
+trail more (99th percentile error at the wall's shadow 19.8 against 12.3 in motion), so they keep their filter.
+
+**In motion** (`scenarios/raytracing_noise_motion.txt`): the frame after 2 s of motion against the same instant
+settled for 600 frames, luma: mean difference 2.27 before, 1.57 after (99th percentile 16.4 and 16.2); away from
+the moving sun-shadow edges 2.00 and 1.24; at those edges (62251 pixels where either trails) -8.35 and -9.26 (the
+shadow behind its new place). In a run with the pan stepped every frame (not committed) the probe grid alone read
+-10.74 there against -10.62 before and -11.82 after: a clean image trails at a moving edge as much (TAA keeps more of
+its history where the noise does not cut it), the new filter adds about one level. **After the sun jumps by 60
+degrees**, mean / 99th percentile against the settled frame, 1, 2, 4, 8, 16, 32 and 64 frames after: before 2.36 /
+15, 2.19 / 13, 1.99 / 11, 1.78 / 9, 1.61 / 8, 1.54 / 8, 1.51 / 8; after 2.38 / 17, 2.25 / 16, 2.05 / 14, 1.75 /
+12, 1.36 / 9, 0.94 / 6, 0.63 / 3. The old filter followed the change sooner in the first frames because its random
+resets also made it noisy; the new one is behind there by a few levels at the sunlit sides the floor's rays see,
+and better from 16 frames on.
+
+**Cost** (`perf.txt` regions of 4 s, unpaced, the phone defaults with and without per-pixel indirect light, three
+runs of each build alternated, 16:17-16:19, another agent's builds on the machine; render size 960 x 540), GPU busy
+time p50, ms, medians over the runs: the indirect light's range 1.052 before, 1.169 after (relative to the probe
+grid's range in the same region, which did not change: 0.893 and 0.981, +0.10 ms); the frame (`game`) with
+per-pixel indirect light 5.67 and 5.83 (+2.8 %); without it 3.39 and 3.40 (that filter does not run; the sun and
+lamp filters are the same code). On the iPhone 17 the phone defaults' frame took 7.67 ms ([below](#stage-11-on-the-iphone),
+the display rate), 2.3 times the Mac's: by that ratio the change costs about 0.25 to 0.4 ms there, and the phone
+defaults with per-pixel indirect light take about 13 ms (18 ms by the 3.1 times of everything at the device's
+size): not measured on the phone, and near the 16.7 ms of 60 Hz by the second estimate.
+
 ### The native default on the screen and on the iPhone 17
 
 2026-11-07 14:49-15:12, the code of `c42b2c5` (the native Metal backend as the default on Apple platforms), Release,

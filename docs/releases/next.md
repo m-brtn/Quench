@@ -7,7 +7,8 @@ new game; the demo's dual quaternion skinning showcase made readable after a use
 report, and its characters' wrists closed; the Xcode project's generation in the full gate; soft shadows of area
 lights from shadow maps where the device cannot trace (stage 12's remaining work); a game's surface shaders in ray
 hits and the probe grid's cascades, relocation and classification (stage 11's remaining work); Basis Universal
-textures, one cooked set for every device (stage 6's remaining work). This file becomes
+textures, one cooked set for every device (stage 6's remaining work); the per-pixel ray-traced
+indirect light settles in a still scene instead of staying grainy (a user report). This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
 
@@ -121,6 +122,21 @@ textures, one cooked set for every device (stage 6's remaining work). This file 
 - **The default stays BC7 on the Mac and ASTC on iOS:** on the demo's 19 textures ETC1S is 13 times smaller than
   BC7 but 19 dB worse on color (37.9 against 56.7 dB), UASTC half BC7's size (no smaller once a package is
   compressed) and 1.5 dB below it, and both cook 3 to 7 times slower and add a transcode at load time.
+
+### Rendering: the per-pixel indirect light settles
+
+- **The temporal denoiser of `IndirectLight::RayTraced`** ([Render module](../render.md#denoising)): a user report
+  from the iPhone 17 (2026-11-07: the ray tracing section's phone defaults with Indirect light "Ray traced" grainy
+  all the time, also when nothing moves). At one ray per pixel the 9 new samples around a pixel often agree by
+  chance, and the history's clamp and anti-lag, which used their spread alone, pulled the history to their mean
+  every few frames: the light never settled, and its mean came out darker. Its filter now also keeps each pixel's
+  standard deviation over its history and clamps and cuts with no less than it, and takes a third a-trous pass. The
+  sun, occlusion, lamp shadow and reflection filters are unchanged (bit for bit).
+- **Measured** (the demo at its phone defaults with per-pixel indirect light, offscreen on the M4 Pro;
+  [Performance](../performance.md#the-denoiser-in-a-still-scene)): flicker from frame to frame 0.84 levels before,
+  0.26 after (the probe grid alone 0.25), the same from 60 frames (1 s at 60 Hz) on; in motion the error against
+  the same instant settled 2.27 before, 1.57 after. Cost: the indirect light's range +0.10 ms of 1.05 at half
+  size; the phone defaults without per-pixel indirect light unchanged.
 
 ### The app: a reaction to heat
 
@@ -309,8 +325,17 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   format; `debug` 524 tests; `release` 642 (the captures of every backend, Vulkan through MoltenVK included); `asan`
   524; `tsan` 524; `wasm-node` 146 (under Node.js); `ios-sim-tests` 391 in the iOS Simulator; `ios-xcode`
   generated; a new game built and started. All passed.
+- **The per-pixel indirect light's denoiser** (offscreen, native backend): the new case
+  `renderer_indirect_light_settles` (0.3 % from frame to frame, the spatial filter's long mean within 1.5 %; the
+  filter before the change: 9.8 % and a quarter of that mean), the other denoiser and indirect light cases
+  unchanged; the demo's noise scenarios, captures looked at, still and in motion; no golden image changed (the
+  demo's captures trace the probe grid, not per-pixel indirect light).
 
 ## What was not verified
+
+- **The per-pixel indirect light's denoiser on a phone:** measured offscreen on the Mac only; nobody has looked at
+  it on the iPhone yet, where the report came from, or in motion on a screen. After a sudden change of light it is a
+  few levels behind the old filter in the first 8 frames.
 
 - **The reaction to heat on a hot phone:** it has run with fake states only. Its defaults are a starting point: in
   the iPhone 17's ten-minute run of 2026-11-06 the tunnel missed intervals at fair, about a minute before serious,
@@ -375,6 +400,9 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `quenchProbeAtlasSize(tile, rows)`; `quenchProbeIrradiance` is unchanged. New and optional:
   `RenderSettings::probeCascades`, `probeRelocation`, `probeClassification` and `render::kMaxProbeCascades`; a game
   that sets none keeps one grid as before.
+- **`IndirectLight::RayTraced` looks different:** no API change, but its light no longer stays grainy in a still
+  scene, and where few of its rays see the sky (under roofs and fences) it is brighter than before, closer to the
+  probe grid's; a game's captures with it change.
 - **New:** `gpu::defaultBackend()` (`quench/gpu/Device.h`). `Device::create` no longer returns an error when only
   the native device fails to start: it returns an SDL GPU device (check `caps().backend` where it matters).
 - **iOS presets of games made from the template before this release:** a game that cooks assets

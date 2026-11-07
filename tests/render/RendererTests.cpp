@@ -2860,6 +2860,70 @@ QUENCH_TEST(renderer_indirect_light_furnace) {
     }
 }
 
+// The per-pixel indirect light settles in a still scene: a floor under a black roof is lit only by the uniform sky
+// that a few of its rays see past the roof's edges, so a pixel's 3 x 3 new samples often all see the roof (a history
+// clamped to their spread alone would follow them: grain that never settles, and a biased mean). With the temporal
+// denoiser the light under the roof changes little from frame to frame, and its mean is that of the spatial filter's
+// over many frames (no history, no clamp).
+QUENCH_TEST(renderer_indirect_light_settles) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.indirectLight = IndirectLight::RayTraced;
+    settings.rayDenoiser = RayDenoiser::Temporal;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "ray-traced indirect light: "))
+        QUENCH_SKIP("no ray tracing: the sky's ambient light");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyZenith = e.skyHorizon = e.skyGround = glm::vec3(1.0f);
+    e.fogColor = glm::vec3(1.0f / 0.85f); // skyRadiance's below-horizon blend
+    scene.setEnvironment(e);
+    scene.addInstance({.mesh = addMesh(scene, planeMesh(glm::vec2(20.0f))),
+                       .material = scene.addMaterial({.baseColor = glm::vec4(0.8f, 0.8f, 0.8f, 1), .roughness = 1})});
+    scene.addInstance({.mesh = addMesh(scene, boxMesh(glm::vec3(3.0f, 0.05f, 3.0f))),
+                       .material = scene.addMaterial({.baseColor = glm::vec4(0.0f, 0.0f, 0.0f, 1), .roughness = 1}),
+                       .transform = glm::translate(glm::mat4(1.0f), {0, 1.0f, 0})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    View view = lookAt(glm::vec3(0, 0.6f, 5.0f), glm::vec3(0, 0.0f, 0));
+    view.probeCenter = glm::vec3(0, 1.0f, 0);
+    // The floor under the roof, x -1..1, z 0..1.5.
+    const glm::ivec2 from = pixelOf(view, {-1.0f, 0, 0.0f}), to = pixelOf(view, {1.0f, 0, 1.5f});
+    const auto light = [&](const std::vector<Rgba8>& pixels, std::vector<float>* values) {
+        float mean = 0.0f;
+        int count = 0;
+        for (int y = std::min(from.y, to.y); y <= std::max(from.y, to.y); ++y)
+            for (int x = std::min(from.x, to.x); x <= std::max(from.x, to.x); ++x, ++count) {
+                const float v = sceneValue(at(pixels, {x, y})).g;
+                mean += v;
+                if (values) values->push_back(v);
+            }
+        return mean / float(std::max(count, 1));
+    };
+    std::vector<float> first, second;
+    light(settle(device, *renderer, scene, view, *target, 64), &first);
+    light(settle(device, *renderer, scene, view, *target, 1), &second);
+    REQUIRE(!first.empty() && first.size() == second.size(), "%zu pixels", first.size());
+    float temporal = 0.0f, change = 0.0f;
+    for (std::size_t i = 0; i < first.size(); ++i) {
+        temporal += second[i] / float(first.size());
+        change += std::abs(second[i] - first[i]) / float(first.size());
+    }
+    settings.rayDenoiser = RayDenoiser::Spatial;
+    renderer->setSettings(settings);
+    float spatial = 0.0f;
+    for (int frame = 0; frame < 64; ++frame) spatial += light(settle(device, *renderer, scene, view, *target, 1), {});
+    spatial /= 64.0f;
+    std::printf("  under the roof: temporal %.4f, its change from frame to frame %.4f (%.1f%%); spatial over 64 "
+                "frames %.4f\n",
+                double(temporal), double(change), 100.0 * double(change / temporal), double(spatial));
+    CHECK(spatial > 0.02f, "the floor under the roof has sky light: %.4f", double(spatial));
+    CHECK(change < 0.05f * temporal, "it settles: %.4f from frame to frame of %.4f", double(change), double(temporal));
+    CHECK(std::abs(temporal / spatial - 1.0f) < 0.05f, "with the mean of many frames: %.4f vs %.4f", double(temporal),
+          double(spatial));
+}
+
 // The MetalFX denoising upscaler (gpu::Caps::denoisedUpscaling): the raw one-ray shadows and occlusion at half size,
 // denoised and upscaled from the G-buffer, against eight rays at full size; without it the temporal upscaler and
 // the engine's denoiser.

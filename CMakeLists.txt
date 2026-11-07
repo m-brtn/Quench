@@ -256,7 +256,8 @@ if(NOT QUENCH_HEADLESS)
                 rt_probe_trace_maps_fs:fragment:rayquery pt_maps_fs:fragment:rayquery
                 rt_probe_data_fs:fragment rt_probe_irradiance_fs:fragment rt_probe_distance_fs:fragment)
     quench_add_shaders(quench_render NAME render_raydenoise SOURCE src/render/shaders/raydenoise.hlsl
-        ENTRIES rt_temporal_fs:fragment rt_atrous_fs:fragment rt_denoise_inputs_fs:fragment)
+        ENTRIES rt_temporal_fs:fragment rt_temporal_deviation_fs:fragment rt_atrous_fs:fragment
+                rt_denoise_inputs_fs:fragment)
 
     # SDL main callbacks (src/app/Main.cpp): an object library, so the symbols land in the game executable.
     add_library(quench_main OBJECT src/app/Main.cpp)
