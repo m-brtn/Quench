@@ -57,6 +57,8 @@ quench_cook_assets(quench_demo_retargeted SOURCE_DIR ${demo_character_dir}
     ANIMATIONS characters/mannequin.gltf
     SKELETON characters/strider.gltf
     RETARGET characters/strider.retarget.json)
+# Xcode's build system allows a generated file in several targets only when one of them depends on the others.
+add_dependencies(quench_demo_retargeted quench_demo_character quench_demo_strider)
 # The blend shape creature (tools/assets/make_demo_blob.py): a skinned model with four blend shapes, its skeleton and
 # its clip.
 set(demo_blob_files blob.gltf blob.bin blob.anim.json)
