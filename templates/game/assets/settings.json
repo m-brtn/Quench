@@ -1,3 +1,4 @@
 {
-  "speed": 4.0
+  "speed": 4.0,
+  "adapt_to_heat": false
 }

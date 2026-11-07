@@ -35,13 +35,13 @@ in `images/`.
 | Document | Contents |
 |---|---|
 | [Architecture](architecture.md) | Modules and targets, the graphics layer and its backends (SDL GPU, native Metal), GPU timestamps per pass, the ray tracing design, rendering, shaders, main loop, files, threads, assets, audio, animation |
-| [App shell](app.md) | The game interface, input, ImGui, command line flags, scenarios, HDR output, captures and golden images, `quench_add_game()`, iOS runs |
+| [App shell](app.md) | The game interface, input, ImGui, command line flags, scenarios, the thermal state and a game's reaction to it, HDR output, captures and golden images, `quench_add_game()`, iOS runs |
 | [Jobs, assets and the cook](assets.md) | The job system, asset IDs and the manager, budgets and placeholders, textures and models in a scene, streaming by distance, hot reload, the cooked formats (skins, skeletons and clip sets included), `quench_cook` and `quench_cook_assets()`, limitations |
 | [Audio](audio.md) | The mixer, buses, sounds and streams, generators, 3D sound, voice limit, the audio thread, device output and the iOS audio session, offline mixing and captures, `audio_measure`, the demo section and tests, platforms, limitations |
 | [Animation](animation.md) | Skeletons and clip sets, graphs (state machines), events, root motion, IK, foot placement and attachments, cooking glTF skins and animations, the file formats, GPU skinning, budgets and failures, the demo section and tests, platforms, limitations |
 | [Render module](render.md) | The retained scene, the standard frame, sky and sun, tone mapping and HDR output, fallbacks, game passes, surface shaders, the shader library, skinned meshes, limitations |
 | [Engine demo](demo.md) | The demo's code, sections, coverage, layouts and controls, its modes (tour, check mode, benchmark of every section), flags and files, About and settings, the check mode on the iPhone, its checks and golden images, its benchmark, packaged builds (`tools/package_demo.sh`) |
-| [Performance](performance.md) | The benchmark, how to run and compare it, GPU time per pass, budgets per device |
+| [Performance](performance.md) | The benchmark, how to run and compare it, GPU time per pass, budgets per device, the thermal state |
 | [Platforms](platforms.md) | Target platforms, what has run where, backend and shader formats, known constraints (WebGPU, Android, texture formats) |
 | [Dependencies](dependencies.md) | Pinned libraries, planned libraries with licences and verified capabilities |
 | [Migration](migration.md) | Inventory of the engine code in TrailForge and Ashfall, how far the copies diverged, the procedure for moving code, progress per game |

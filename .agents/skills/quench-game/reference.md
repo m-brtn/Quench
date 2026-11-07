@@ -13,6 +13,7 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 - Input and ImGui
 - Animation
 - Jobs
+- Heat
 - Scenario checks, captures and golden images
 - iOS
 
@@ -281,6 +282,29 @@ app.jobs().parallelFor(count, 64, [&](std::uint32_t begin, std::uint32_t end) { 
 `parallelFor` returns a `Job`; `app.jobs().wait(job)` runs queued jobs on the main thread meanwhile, so it suits
 work this frame needs, not loads. With `--worker-threads 0` every job runs on the main thread: check the game
 still works so.
+
+## Heat
+
+The thermal reaction is opt-in (the template turns it on with `"adapt_to_heat": true` in its settings). The defaults:
+nothing at fair; 60 Hz and 0.8 of the render scale from serious on; 30 Hz, 0.6 and `reduceEffects()` at critical;
+lifted after 60 s at a lower state. The App applies the frame rate; the game applies the rest to what the renderer
+gets, never to the player's settings:
+
+```cpp
+#include <quench/app/ThermalGovernor.h> // also through App.h
+
+// init, or when the player turns the setting on (disable() lifts every limit at once)
+app.thermalGovernor().enable({.serious = {.maxFrameRate = 60.0, .renderScaleFactor = 0.75f}});
+// update: the player's settings stay as they are; the renderer gets the reduced copy
+render::RenderSettings s = m_playerSettings;
+const app::ThermalGovernor& heat = app.thermalGovernor();
+s.renderScale = std::max(heat.renderScale(s.renderScale), 0.25f);
+if (heat.reduceEffects()) s.reflections = render::Reflections::Sky;
+m_renderer->setSettings(s);
+```
+
+Checks without a hot device: `--thermal-state serious`, or in a scenario `thermal_state serious` (`thermal_state
+system` gives it back), then `expect thermal_reaction == 2` and `expect frame_rate_limit == 60`.
 
 ## Scenario checks, captures and golden images
 

@@ -80,6 +80,8 @@ struct PerfRegion {
     std::vector<double> passShare;
     ThermalState thermalStart = ThermalState::Unknown;
     ThermalState thermalMax = ThermalState::Unknown;
+    ThermalState reactionStart = ThermalState::Unknown; // the thermal reaction's level; Unknown: off
+    ThermalState reactionMax = ThermalState::Unknown;
     std::optional<ProcessCpuTime> processCpuStart;
 };
 
@@ -144,7 +146,10 @@ struct AppState {
     std::uint64_t frame = 0;
     std::uint64_t ticks = 0;
     Uint64 lastCounter = 0;
-    double maxFrameRate = 0.0; // App::setMaxFrameRate; 0: the display's rate
+    double maxFrameRate = 0.0;   // App::setMaxFrameRate; 0: the display's rate
+    double frameRateLimit = 0.0; // maxFrameRate lowered by the thermal reaction: what the frames are paced to
+    ThermalGovernor thermalGovernor;
+    std::optional<ThermalState> thermalOverride; // --thermal-state, the scenario command thermal_state
 
     // Statistics.
     FrameStats stats;
@@ -207,6 +212,12 @@ Result<void> writeCaptureFile(std::string_view path, std::span<const std::uint8_
 
 // App.cpp: applies the HDR mode and the window's display state to the swapchain and to `output`.
 void updateOutput(AppState& state);
+// App.cpp: paces the frames to maxFrameRate lowered by the thermal reaction (frameRateLimit).
+void applyFrameRateLimit(AppState& state);
+// App.cpp: the thermal state from the platform, or the override; logs a change.
+void updateThermalState(AppState& state);
+// App.cpp: the thermal reaction's level, Unknown while it is off (perf regions, scenario values).
+ThermalState thermalReaction(const AppState& state);
 
 // App.cpp: the CPU time of the process's threads so far (Apple platforms; elsewhere none).
 std::optional<ProcessCpuTime> processCpuTime();

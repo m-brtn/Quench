@@ -28,6 +28,10 @@ perf: hello: 600 frames; frame ms avg 16.667 p10 16.243 p50 16.657 p95 17.248 p9
   by the same factor without a change in the work, so numbers taken in different states do not compare. The app logs
   each change (`app: thermal state nominal -> fair`); the demo shows the state in its Performance panel and About,
   and `benchmark.json` has it per section (`thermal_start`, `thermal_end`, `thermal_max`).
+- **thermal reaction** (since 2026-11-07, only while a game turned it on): `; thermal reaction serious` with
+  `-> end` and `(max ...)` as above and the limits at the end of the region (`(at most 60 Hz, render scale x0.80
+  now)`, [below](#thermal-state)). A region with a reaction measures the reduced frame, not the game's settings;
+  the demo's `benchmark.json` has `thermal_reaction_start`, `_end` and `_max` per section (`off` when it was off).
 
 On the native Metal backend (`--gpu-backend metal`, since stage 9) a second line follows with the GPU time per pass
 ([below](#gpu-time-per-pass)).
@@ -175,6 +179,28 @@ GPU p50 15 ms as for the other sections. It is above the sections' budget of 2.0
 instances). No iPhone budget for it yet: the crowd of 256 has not run on the phone. The section with its default
 crowd (51 skinned characters, `--benchmark-all` on 2026-11-06, below) stays within the sections' iPhone budget there
 (CPU p50 1.47 ms, CPU p99 1.77 ms).
+
+## Thermal state
+
+A phone under sustained GPU load lowers its clocks: on the iPhone 17 the ray tracing section's phone defaults took
+twice their GPU time after the first 20 s and still held 60 Hz for five minutes, and the tunnel's phone defaults
+missed intervals after about 8 minutes, a minute before the state read serious
+([Ten minutes on the iPhone](#ten-minutes-on-the-iphone)). The engine reports the state and changes nothing by
+itself; a game may opt in to a reaction (`App::thermalGovernor()`, [App shell](app.md#thermal-state)):
+
+| State | Default limits (`ThermalGovernorDesc`) |
+|---|---|
+| nominal, unknown | none |
+| fair | none |
+| serious | at most 60 Hz, render scale x0.8 |
+| critical | at most 30 Hz, render scale x0.6, effects reduced (the game's choice which) |
+
+A higher state applies at once; the limits are lifted after 60 s at a lower state. The frame rate limit is never above
+the player's (`App::setMaxFrameRate`), and the render scale is a factor on the player's. The defaults are not tuned
+on a hot phone yet: in the iPhone 17 run above the misses came at fair, before serious, so with them the reaction
+would come about a minute after the first missed intervals; a game that wants it sooner sets limits at fair. The
+demo's Adapt to heat (Settings, off) uses them as they are, and its check mode has the run that would tell
+(`tunnel.heat`: the tunnel's phone defaults for 10 minutes with it on; [Engine demo](demo.md#modes)).
 
 ## Measurements
 

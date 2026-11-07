@@ -1,11 +1,12 @@
 // A starting point for a game on Quench: a player cube on a grid, moved with the keyboard, a gamepad stick or a finger
 // (a virtual stick around the touch-down point), a camera that follows it, settings read from an asset, an ImGui
-// window and scenario values for the checks in scenarios/.
+// window, an opt-in reaction to the device's heat, and scenario values and a command for the checks in scenarios/.
 
 #include "shaders/GameUniforms.h"
 
 #include <quench/app/App.h>
 #include <quench/app/Input.h>
+#include <quench/app/Scenario.h>
 #include <quench/core/FileSystem.h>
 #include <quench/core/Json.h>
 #include <quench/core/Log.h>
@@ -101,9 +102,11 @@ public:
             Result<json::Value> settings = json::parse(*text);
             if (!settings) return Error{std::format("settings.json: {}", settings.error())};
             m_speed = settings->has("speed") ? (*settings)["speed"].numberOr(m_speed) : m_speed;
+            m_adaptToHeat = (*settings)["adapt_to_heat"].boolOr(m_adaptToHeat);
         } else {
             log::warning("game", "{}; using the default settings", text.error());
         }
+        setAdaptToHeat(app, m_adaptToHeat);
 
         gpu::Device& device = app.device();
         const gpu::VertexBufferLayout layout{.slot = 0, .stride = sizeof(Vertex)};
@@ -173,6 +176,9 @@ public:
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 9.0f);
         if (ImGui::SliderFloat("Speed (m/s)", &speed, 0.5f, 10.0f)) m_speed = speed;
         if (ImGui::Button("Reset")) m_position = m_previous = glm::vec2(0.0f);
+        if (ImGui::Checkbox("Adapt to heat", &m_adaptToHeat)) setAdaptToHeat(app, m_adaptToHeat);
+        ImGui::Text("Thermal state %s, frame rate limit %.0f Hz", app::thermalStateName(stats.thermal),
+                    app.frameRateLimit());
         ImGui::End();
     }
 
@@ -233,12 +239,33 @@ public:
         if (name == "x") return m_position.x;
         if (name == "z") return m_position.y;
         if (name == "speed") return m_speed;
+        if (name == "adapt_to_heat") return m_adaptToHeat ? 1.0 : 0.0;
         return std::nullopt;
+    }
+
+    // adapt_to_heat on|off
+    app::ScenarioExec scenarioCommand(App& app, const app::ScenarioCommand& command) override {
+        if (command.op != "adapt_to_heat") return app::ScenarioExec::Unknown;
+        if (command.args.size() != 1 || (command.args[0] != "on" && command.args[0] != "off"))
+            return app::ScenarioExec::Failed;
+        setAdaptToHeat(app, command.args[0] == "on");
+        return app::ScenarioExec::Done;
     }
 
 private:
     static constexpr gpu::TextureFormat kDepthFormat = gpu::TextureFormat::Depth32Float;
     static constexpr float kArenaHalfSize = 20.0f;
+
+    // The engine's reaction to the device's heat (off in settings.json): from the thermal state serious on the App
+    // limits the frame rate to 60 Hz, at critical to 30 Hz, and lifts the limit a minute after the device cools down.
+    // This game draws at full size; a game with a render scale renders at thermalGovernor().renderScale(its scale).
+    void setAdaptToHeat(App& app, bool on) {
+        m_adaptToHeat = on;
+        if (on)
+            app.thermalGovernor().enable();
+        else
+            app.thermalGovernor().disable();
+    }
 
     // Virtual stick: the first finger's offset from where it touched down, full deflection at 60 points; y up.
     glm::vec2 touchStick(const app::Input& input) {
@@ -280,6 +307,7 @@ private:
     glm::vec2 m_touchStart{0.0f};
     std::uint64_t m_touchId = 0;
     double m_speed = 4.0; // m/s
+    bool m_adaptToHeat = false;
 };
 
 } // namespace

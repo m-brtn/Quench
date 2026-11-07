@@ -76,6 +76,10 @@ QUENCH_TEST(options_errors) {
     CHECK(parse({"--max-frame-rate", "60"})->maxFrameRate == 60.0, "--max-frame-rate 60");
     CHECK(parse({"--max-frame-rate=0"})->maxFrameRate == 0.0, "--max-frame-rate=0");
     CHECK(!parse({"--max-frame-rate", "-1"}).ok() && !parse({"--max-frame-rate", "fast"}).ok(), "bad frame rate");
+    CHECK(!parse({})->thermalState, "the system's thermal state by default");
+    CHECK(parse({"--thermal-state", "serious"})->thermalState == app::ThermalState::Serious, "--thermal-state serious");
+    CHECK(parse({"--thermal-state=unknown"})->thermalState == app::ThermalState::Unknown, "--thermal-state=unknown");
+    CHECK(!parse({"--thermal-state", "hot"}).ok() && !parse({"--thermal-state"}).ok(), "bad thermal state");
     CHECK(parse({"--gpu-backend", "metal"})->gpuBackend == gpu::Backend::Metal, "--gpu-backend metal");
     CHECK(parse({"--gpu-backend=sdl"})->gpuBackend == gpu::Backend::SdlGpu, "--gpu-backend=sdl");
     CHECK(!parse({"--gpu-backend", "vulkan"}).ok(), "unknown backend");

@@ -186,6 +186,7 @@ if(NOT QUENCH_HEADLESS)
         src/app/ScenarioPoint.cpp
         src/app/SdlFileSystem.cpp
         src/app/SdlLog.cpp
+        src/app/ThermalGovernor.cpp
         src/app/ThermalState.cpp
         src/app/UiComposite.cpp)
     if(APPLE)

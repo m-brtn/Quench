@@ -51,7 +51,10 @@ automated runs (no window on the screen, no input from real devices, `--onscreen
 parts (`include`) and points in window points, percent or names a game gives (`Game::scenarioPoint`), HDR display
 output (`--hdr auto|on|off`, an HDR tone curve up to the display's headroom, read every frame on Apple platforms; the UI at paper
 white; SDR captures), captures, perf regions a game starts (`App::beginPerf` / `endPerf`), the process's memory
-footprint, the system's thermal state (read on Apple platforms), a frame rate limit (`App::setMaxFrameRate`,
+footprint, the system's thermal state (read on Apple platforms) and a game's opt-in reaction to it
+(`App::thermalGovernor()`: frame rate and render scale limits with hysteresis, never above the player's; a fake
+state through `--thermal-state` and the scenario command `thermal_state`; checked offscreen only, not on a hot
+phone), a frame rate limit (`App::setMaxFrameRate`,
 `--max-frame-rate`), a relaunch with other arguments on desktops), `quench_render` (the
 retained scene: meshes, textures, materials, instances and lights by handle; the standard frame of cascaded sun
 shadows (cut-out shadows with holes, translucent tinted shadows through a transmittance map or dithered), the HDR

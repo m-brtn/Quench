@@ -46,6 +46,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             app/ScenarioTests.cpp
             app/SdlFileSystemTests.cpp
             app/SdlLogTests.cpp
+            app/ThermalGovernorTests.cpp
             app/ThermalStateTests.cpp
             gpu/DeviceTests.cpp
             gpu/GpuTest.cpp
@@ -215,6 +216,7 @@ if(NOT QUENCH_HEADLESS)
             app/ScenarioTests.cpp
             app/SdlFileSystemTests.cpp
             app/SdlLogTests.cpp
+            app/ThermalGovernorTests.cpp
             app/ThermalStateTests.cpp
         LIBS quench_app)
 

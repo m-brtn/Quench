@@ -6,7 +6,8 @@
 // Per frame: events -> input -> scenario -> fixed simulation ticks -> update -> audio -> ImGui -> render -> ImGui on
 // top -> present. Rendering is skipped while the app is in the background (iOS) or the window is minimized.
 
-#include <quench/app/ImGuiRenderer.h> // imguiTexture()
+#include <quench/app/ImGuiRenderer.h>   // imguiTexture()
+#include <quench/app/ThermalGovernor.h> // ThermalState
 #include <quench/assets/AssetManager.h>
 #include <quench/audio/AudioSystem.h>
 #include <quench/audio/Device.h>
@@ -69,18 +70,15 @@ struct Frame {
     gpu::DisplayOutput output{};
 };
 
-// The operating system's thermal state (Apple platforms: NSProcessInfo's thermalState; Unknown elsewhere). Fair and
-// above: the system lowers clocks to cool down, so frame times grow without a change in the work.
-enum class ThermalState { Unknown = -1, Nominal = 0, Fair = 1, Serious = 2, Critical = 3 };
-const char* thermalStateName(ThermalState state); // "unknown", "nominal", "fair", "serious", "critical"
-
 struct FrameStats {
     double frameMs = 0.0; // real time between frames, averaged over 0.5 s
     double fps = 0.0;
     double cpuMs = 0.0;  // last frame: main thread work until the submit, without the wait for a swapchain texture
     double gpuMs = -1.0; // last measured GPU time of a frame; -1 where unavailable (!gpu::Caps::gpuTiming)
     int ticks = 0;       // simulation ticks in the last frame
-    ThermalState thermal = ThermalState::Unknown; // read every 0.5 s, with frameMs; a change is logged
+    // Read every 0.5 s, with frameMs; a change is logged. --thermal-state and the scenario command thermal_state put a
+    // fake one in its place, for checks without a hot device.
+    ThermalState thermal = ThermalState::Unknown;
     // GPU time per timed range of passes of the last measured frame, in the order they began (gpu::Caps::gpuPassTiming;
     // empty without it, and unless App::requestPassTiming, a perf region or --gpu-pass-timing turned the ranges on a
     // few frames before): the app's "game" (around Game::render, with the renderer's ranges inside), "ui" and "blit".
@@ -101,6 +99,10 @@ struct PerfReport {
     // The thermal state at the start and the end of the region and the highest one read in it.
     ThermalState thermalStart = ThermalState::Unknown, thermalEnd = ThermalState::Unknown,
                  thermalMax = ThermalState::Unknown;
+    // The level of App::thermalGovernor() at the start and the end and the highest one in the region; Unknown while
+    // the reaction was off.
+    ThermalState reactionStart = ThermalState::Unknown, reactionEnd = ThermalState::Unknown,
+                 reactionMax = ThermalState::Unknown;
     // The process's CPU time per frame (all threads) and the percentage of it on performance cores; -1 where unknown
     // (Apple platforms report them). The frame's CPU times are about 4 times longer on efficiency cores (M4 Pro).
     double processCpu = -1.0, cpuPerformanceShare = -1.0;
@@ -237,6 +239,13 @@ public:
     // works half as often, which lowers heat and battery use). Offscreen frames are not limited.
     void setMaxFrameRate(double hz);
     double maxFrameRate() const;
+    // The opt-in reaction to the thermal state (ThermalGovernor.h), off until the game enables it; fed every frame
+    // before Game::update (--thermal-state and the scenario command thermal_state fake the state). Its frame rate
+    // limit applies on top of setMaxFrameRate, never above it; the game applies the render scale and its effects.
+    ThermalGovernor& thermalGovernor();
+    const ThermalGovernor& thermalGovernor() const;
+    // The frame rate limit in effect: maxFrameRate() lowered by the thermal reaction; 0: the display's rate.
+    double frameRateLimit() const;
 
     // HDR output. A new mode takes effect before the next frame; so do changes of the window's display (moved to
     // another display, HDR switched on or off: SDL_EVENT_WINDOW_HDR_STATE_CHANGED) and of its headroom, which the

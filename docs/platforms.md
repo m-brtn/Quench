@@ -119,7 +119,9 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
 - The thermal state (`app::ThermalState`, `NSProcessInfo`'s `thermalState`): read every 0.5 s, logged on a change
   and in the perf lines. On the iPhone 17 (2026-11-06) it read serious after the stage 10 baseline's ten minutes of
   ray tracing and came back to nominal 5 to 11 minutes after a load; with the phone on its cable it also read fair
-  before any demo had run.
+  before any demo had run. A game's opt-in reaction to it (`App::thermalGovernor()`, since 2026-11-07) has run only
+  on the Mac with a fake state (`--thermal-state`, the scenario command `thermal_state`), not on a hot phone; where
+  the state is unknown (every platform but Apple's) the reaction stays at nominal and limits nothing.
 - The app bundle is read-only and SDL's UIKit delegate keeps the process alive after `SDL_main` returns: the device
   test app calls `std::exit`, and file tests that write next to the executable skip there.
 - The iOS Simulator's Metal device (engine GPU tests, 2026-11-05) reports GPU family Apple2 only, no BC textures

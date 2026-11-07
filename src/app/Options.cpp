@@ -1,4 +1,5 @@
 #include "Options.h"
+#include "ThermalState.h"
 
 #include <quench/core/Parse.h>
 
@@ -57,6 +58,10 @@ const char* optionsHelp() {
            "  --present-mode MODE  vsync, immediate or mailbox\n"
            "  --max-frame-rate HZ  at most HZ frames per second on the screen, whole display refreshes (60 on a\n"
            "                       120 Hz display: every second one); 0: the display's rate (the default)\n"
+           "  --thermal-state NAME nominal, fair, serious, critical or unknown in place of the system's thermal\n"
+           "                       state, to check a game's reaction to heat (App::thermalGovernor) without a hot\n"
+           "                       device; the scenario command thermal_state changes it, `thermal_state system`\n"
+           "                       ends it\n"
            "  --hdr MODE           HDR output: off (SDR), on (where the GPU backend supports it) or auto (while\n"
            "                       the display has HDR range); default: the game's choice, normally off\n"
            "  --hdr-headroom N     peak brightness of HDR output in multiples of paper white (N >= 1) instead of\n"
@@ -157,6 +162,13 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
             if (!hz || *hz < 0.0 || *hz > 1000.0)
                 return Error{std::format("--max-frame-rate: '{}' is not a number from 0 to 1000", *v)};
             options.maxFrameRate = *hz;
+        } else if (flag == "--thermal-state") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            options.thermalState = parseThermalState(*v);
+            if (!options.thermalState)
+                return Error{
+                    std::format("--thermal-state: '{}' is not nominal, fair, serious, critical or unknown", *v)};
         } else if (flag == "--gpu-backend") {
             Result<std::string_view> v = value();
             if (!v) return Error{v.error()};

@@ -56,7 +56,9 @@ the ranges arrive a few frames later), the display output (`output()`, `hdrMode(
 tablets or the web), for example with another `--gpu-backend`; `mobile()` says the app runs on a phone or tablet
 (iOS, also in the Simulator, and Android), for lighter quality defaults where sustained GPU load lowers the clocks
 (the demo's ray tracing section; effects still fall back by `gpu::Caps`); `memoryFootprint()` is the memory the system charges
-the process (Apple platforms; nullopt elsewhere). `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
+the process (Apple platforms; nullopt elsewhere); `setMaxFrameRate(hz)` limits the frame rate, and
+`thermalGovernor()` is the opt-in reaction to the device's heat, whose frame rate limit applies on top of it
+(`frameRateLimit()` is the result; [Thermal state](#thermal-state)). `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
 headroom); the renderer takes it as is ([HDR output](#hdr-output)).
 
 The app has no animation system: a game that animates creates its own `animation::AnimationSystem` on
@@ -112,6 +114,7 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--gpu-pass-timing` | record the GPU time per pass in every frame (`gpu::Caps::gpuPassTiming`: the native Metal backend); without it only while the game asks (`App::requestPassTiming`) or a scenario's perf region runs, since recording costs CPU time ([Performance](performance.md#gpu-time-per-pass)) |
 | `--present-mode MODE` | `vsync`, `immediate` or `mailbox`; falls back to vsync where the window does not support it |
 | `--max-frame-rate HZ` | at most HZ frames per second on the screen, in whole display refreshes (60 on a 120 Hz display: every second one; `App::setMaxFrameRate`). iOS calls the app on every refresh of its display link and the app lets the early ones pass; desktops pace SDL's main loop (`SDL_HINT_MAIN_CALLBACK_RATE`). Offscreen frames are not limited. 0: the display's rate (the default) |
+| `--thermal-state NAME` | `nominal`, `fair`, `serious`, `critical` or `unknown` in place of the system's thermal state for the whole run (`FrameStats::thermal`, logged as an override), to check a game's reaction to heat without a hot device ([Thermal state](#thermal-state)); the scenario command `thermal_state` changes it |
 | `--hdr MODE` | HDR output: `off` (SDR), `on` (wherever the GPU backend can composite the window in HDR) or `auto` (while the display reports HDR range); default `AppDesc::hdr`, normally off ([HDR output](#hdr-output)) |
 | `--hdr-headroom N` | peak of HDR output in multiples of paper white (1 to 1000) instead of the display's, for repeatable HDR runs |
 | `--orientation NAME` | `portrait`, `landscape` or `any`: the screen orientations of the window on phones and tablets (`SDL_HINT_ORIENTATIONS`, within those of the app's Info.plist, `quench_add_game(... ORIENTATIONS)`; default: all of those); desktops ignore it |
@@ -198,6 +201,7 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `hdr off\|on\|auto` | `App::setHdrMode`; the output changes at the start of the next frame |
 | `perf_begin LABEL`, `perf_end` | measure the frames in between, in real time; `perf_end` logs a `perf:` line (with the game's `Game::perfDetails` at the end) and sets the `perf_*` values. A frame's time runs from its start to the next frame's start: the frame before the region (a capture's encoding, for example) is not in it |
 | `max_frame_rate HZ` | `App::setMaxFrameRate` (0: the display's rate); value `max_frame_rate` |
+| `thermal_state NAME` | a fake thermal state (`nominal`, `fair`, `serious`, `critical`, `unknown`) in place of the system's, read at once, so the thermal reaction follows in the same frame; `thermal_state system` gives the state back to the system ([Thermal state](#thermal-state)) |
 | `audio_measure S [MIN_HZ MAX_HZ]` | measure the newest S seconds (at most 4) of the mix: RMS per channel and of both, peak, and the strongest frequency between MIN_HZ and MAX_HZ (default 20 to 20000; a Hann-windowed FFT with interpolation between bins); logs a line and sets the `audio_rms*`, `audio_peak`, `audio_freq*` and `audio_measured` values. A script with this command keeps the last 4 s of the mix for it |
 
 A point P is `X Y` in window points (`480 420`), in percent of the window's width and height (`50% 75%`; the two
@@ -224,7 +228,8 @@ frame's wait for its swapchain texture, offscreen for the oldest frame in flight
 window's display; 0 when unknown), with `gpu::Caps::gpuPassTiming` also
 `perf_pass_<range>_p50` per timed range, `perf_pass_sum_p50`, `perf_pass_span_p50` and `perf_pass_share_p50`
 ([Performance](performance.md#gpu-time-per-pass)), and `perf_thermal_start`, `perf_thermal_end`, `perf_thermal_max`
-(as `thermal_state`); after `audio_measure` `audio_rms`,
+(as `thermal_state`) and `perf_thermal_reaction_start`, `perf_thermal_reaction_end`, `perf_thermal_reaction_max`
+(as `thermal_reaction`); after `audio_measure` `audio_rms`,
 `audio_rms_l`, `audio_rms_r`, `audio_peak` (linear, 1 is full scale), `audio_freq` (Hz), `audio_freq_level` (about 1
 for a full-scale sine) and `audio_measured` (seconds actually measured); at any time `audio_voices`,
 `audio_hrtf_voices`, `audio_sounds`,
@@ -235,10 +240,51 @@ textures, buffers, samplers, pipelines, transfer buffers and fences alive; fence
 with the frames and uploads in flight), for leak checks with `mark`; `shader_reloads`, `shader_reload_failures` and
 `shader_reload_pipelines` (`gpu::Device::shaderReloadStatus`: [Shader hot reload](#shader-hot-reload));
 `thermal_state` (`FrameStats::thermal`: -1
-unknown, 0 nominal, 1 fair, 2 serious, 3 critical; `until thermal_state <= 0 600` waits for a cool device); then the game's (`Game::scenarioValue`). Unknown commands are offered
+unknown, 0 nominal, 1 fair, 2 serious, 3 critical; `until thermal_state <= 0 600` waits for a cool device),
+`thermal_reaction` (`ThermalGovernor::level()`, -1 while the reaction is off), `thermal_frame_rate_cap`,
+`thermal_render_scale`, `thermal_reduce_effects` (its limits; 0, 1 and 0 when none) and `thermal_reaction_changes`,
+`frame_rate_limit` (`App::frameRateLimit`); then the game's (`Game::scenarioValue`). Unknown commands are offered
 to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N of FILE: ...`, and the
 run ends with `N passed, M failed`; tests match `FAIL line`. Scripts are read from host paths; on a device a relative
 path is read from the user directory, and an `include` there needs its file next to the including one.
+
+## Thermal state
+
+Phones and tablets cool passively: under sustained GPU load the system lowers the clocks, and frames that fit their
+interval for minutes stop fitting ([Performance](performance.md#thermal-state); on the iPhone 17 the tunnel's phone
+defaults at 60 Hz missed intervals after about 8 minutes, the state read serious after about 9). The app reads the
+system's thermal state every 0.5 s (`FrameStats::thermal`: `NSProcessInfo` on Apple platforms, unknown elsewhere),
+logs each change and puts it in the perf lines. It changes no setting by itself.
+
+A game that wants to react opts in with `App::thermalGovernor()` (`include/quench/app/ThermalGovernor.h`), off by
+default; it should be a player's setting (the demo's Adapt to heat, the template's `adapt_to_heat`):
+
+```cpp
+app.thermalGovernor().enable(); // the defaults below; ThermalGovernorDesc sets the limits per state
+app.thermalGovernor().disable(); // every limit lifted at once
+```
+
+- **Limits per state** (`ThermalGovernorDesc::fair`, `serious`, `critical`; `ThermalLimits`): a frame rate limit, a
+  factor for the render scale, and `reduceEffects`, which the game reads to turn its own expensive effects down. A
+  state keeps the limits of the states below it, the strictest of each. The defaults: nothing at fair (phones hold
+  their frames there for minutes); at most 60 Hz and 0.8 of the render scale from serious on; 30 Hz, 0.6 and
+  `reduceEffects` at critical. They are a starting point, not measured on a hot phone yet.
+- **Hysteresis.** A higher state applies at once. A lower one must last `recoverSeconds` of app time (default 60 s)
+  before the limits are lifted, then to the highest state reported in that time, so a state that drops and comes back
+  does not toggle the limits; a further step down needs a hold of its own. An unknown state counts as nominal, so on
+  platforms without a query the reaction stays at nominal.
+- **The player's choice first.** The App applies the frame rate limit on top of `setMaxFrameRate` and never above it:
+  `frameRateLimit()` is the lower of the two (a player's 30 Hz stays 30 Hz), and the player's value comes back when the
+  limit is lifted. The game applies `renderScale(playerScale)` and `reduceEffects()` to what the renderer gets, not to
+  the player's settings, so nothing has to be restored.
+- **Reports.** A log line per change (`app: thermal reaction nominal -> serious: at most 60 Hz, render scale x0.80`,
+  `... critical -> nominal after 60 s lower: nothing`), `onChange` for the game, the perf line's
+  `thermal reaction serious (at most 60 Hz, render scale x0.80 now)` while it is on, `PerfReport::reactionStart`,
+  `reactionEnd`, `reactionMax` and the scenario values above.
+- **Checks without a hot device.** `--thermal-state serious` for a whole run, or the scenario command
+  `thermal_state serious` and later `thermal_state system`; offscreen runs do not limit their frames, so a script
+  checks `frame_rate_limit` and the game's values rather than the frame rate. The policy has its own unit tests
+  (`tests/app/ThermalGovernorTests.cpp`), the demo a part of its batches (`heat.txt`, [Engine demo](demo.md#checks)).
 
 ## HDR output
 

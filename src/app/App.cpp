@@ -99,16 +99,17 @@ void App::setMaxFrameRate(double hz) {
     hz = std::isfinite(hz) ? std::clamp(hz, 0.0, 1000.0) : 0.0;
     if (hz == m_state.maxFrameRate) return;
     m_state.maxFrameRate = hz;
-    // Desktops: SDL's main loop waits between the callbacks. iOS calls them from a display link on every refresh, which
-    // the hint does not change: iterate() lets the early ones pass without a frame.
-    if (!m_state.offscreen) SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, std::format("{}", hz).c_str());
     if (hz > 0.0)
         log::info("app", "max frame rate {} Hz", hz);
     else
         log::info("app", "max frame rate: the display's");
+    detail::applyFrameRateLimit(m_state);
 }
 
 double App::maxFrameRate() const { return m_state.maxFrameRate; }
+ThermalGovernor& App::thermalGovernor() { return m_state.thermalGovernor; }
+const ThermalGovernor& App::thermalGovernor() const { return m_state.thermalGovernor; }
+double App::frameRateLimit() const { return m_state.frameRateLimit; }
 
 void App::setHdrMode(HdrMode mode) {
     m_state.hdrMode = mode;
@@ -197,6 +198,28 @@ std::optional<ProcessCpuTime> processCpuTime() {
 #else
     return std::nullopt;
 #endif
+}
+
+void applyFrameRateLimit(AppState& s) {
+    const double hz = s.thermalGovernor.frameRateLimit(s.maxFrameRate);
+    if (hz == s.frameRateLimit) return;
+    s.frameRateLimit = hz;
+    // Desktops: SDL's main loop waits between the callbacks. iOS calls them from a display link on every refresh, which
+    // the hint does not change: iterate() lets the early ones pass without a frame.
+    if (!s.offscreen) SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, std::format("{}", hz).c_str());
+    if (hz != s.maxFrameRate) log::info("app", "frame rate limit {} Hz (thermal reaction)", hz);
+}
+
+void updateThermalState(AppState& s) {
+    const ThermalState state = s.thermalOverride ? *s.thermalOverride : queryThermalState();
+    if (state == s.stats.thermal) return;
+    log::info("app", "thermal state {} -> {}{}", thermalStateName(s.stats.thermal), thermalStateName(state),
+              s.thermalOverride ? " (override)" : "");
+    s.stats.thermal = state;
+}
+
+ThermalState thermalReaction(const AppState& s) {
+    return s.thermalGovernor.enabled() ? s.thermalGovernor.level() : ThermalState::Unknown;
 }
 
 namespace {
@@ -444,13 +467,6 @@ bool render(AppState& s, double& waitMs, Uint64& submitCounter) {
     return true;
 }
 
-void updateThermalState(AppState& s) {
-    const ThermalState state = queryThermalState();
-    if (state == s.stats.thermal) return;
-    log::info("app", "thermal state {} -> {}", thermalStateName(s.stats.thermal), thermalStateName(state));
-    s.stats.thermal = state;
-}
-
 void updateStats(AppState& s, double realDt, double cpuMs, double waitMs, int ticks) {
     s.statsWindowMs += realDt * 1000.0;
     ++s.statsWindowFrames;
@@ -466,6 +482,7 @@ void updateStats(AppState& s, double realDt, double cpuMs, double waitMs, int ti
     s.lastFramePerf = s.perf ? s.perf->serial : 0;
     if (s.perf) {
         s.perf->thermalMax = std::max(s.perf->thermalMax, s.stats.thermal);
+        s.perf->reactionMax = std::max(s.perf->reactionMax, thermalReaction(s));
         s.perf->cpuMs.push_back(cpuMs);
         s.perf->waitMs.push_back(waitMs);
     }
@@ -664,8 +681,10 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     log::info("app", "{} {} (Quench {}), SDL {}.{}.{}", s.desc.name, s.desc.version, QUENCH_VERSION,
               SDL_VERSIONNUM_MAJOR(SDL_GetVersion()), SDL_VERSIONNUM_MINOR(SDL_GetVersion()),
               SDL_VERSIONNUM_MICRO(SDL_GetVersion()));
-    s.stats.thermal = queryThermalState();
-    log::info("app", "thermal state {}", thermalStateName(s.stats.thermal));
+    s.thermalOverride = s.options.thermalState;
+    s.stats.thermal = s.thermalOverride ? *s.thermalOverride : queryThermalState();
+    log::info("app", "thermal state {}{}", thermalStateName(s.stats.thermal),
+              s.thermalOverride ? " (override: --thermal-state)" : "");
 
     Result<std::unique_ptr<fs::Backend>> files = makeSdlFileSystem(
         {.org = s.desc.organization, .app = s.desc.name, .assetDir = s.desc.assetDir, .userDir = s.options.userDir});
@@ -784,7 +803,7 @@ SDL_AppResult iterate(AppState& s) {
     // Under a frame rate limit a refresh that comes early passes without a frame (iOS calls on every refresh of its
     // display link: App::setMaxFrameRate). Three quarters of the interval, so that a refresh a little early by jitter
     // still renders: 60 Hz on a 120 Hz display renders every second refresh.
-    if (s.maxFrameRate > 0.0 && !s.offscreen && realDt < 0.75 / s.maxFrameRate) return SDL_APP_CONTINUE;
+    if (s.frameRateLimit > 0.0 && !s.offscreen && realDt < 0.75 / s.frameRateLimit) return SDL_APP_CONTINUE;
     s.lastCounter = now;
     // The last frame's time, counted in its own region: the time before a region's first frame (a capture's encoding
     // just before perf_begin, for example) stays out of it, and its last frame is in.
@@ -824,6 +843,8 @@ SDL_AppResult iterate(AppState& s) {
         ++s.ticks;
     }
     s.time += frameDt;
+    s.thermalGovernor.update(s.stats.thermal, s.time);
+    applyFrameRateLimit(s);
     s.assets->update();
     s.device->pollShaderHotReload();
     s.game->update(s.app, frameDt);

@@ -1,5 +1,6 @@
-# Smoke check (ctest `smoke`): the game starts, reads its settings, the keyboard and a touch drag move the player, and
-# the app quits cleanly. App time advances 1/120 s per frame in scripted runs.
+# Smoke check (ctest `smoke`): the game starts, reads its settings, the keyboard and a touch drag move the player,
+# Adapt to heat limits the frame rate in a faked serious thermal state, and the app quits cleanly. App time advances
+# 1/120 s per frame in scripted runs.
 #   template_game --script scenarios/smoke.txt
 
 wait 0.2
@@ -24,4 +25,19 @@ expect d_z < -0.9
 mark x
 touch 400 300 120 0 30
 expect d_x > 0.3
+
+# Adapt to heat, off in settings.json: on, a serious thermal state (faked; the system's again after `thermal_state
+# system`) limits the frame rate to 60 Hz; off, nothing is limited.
+expect adapt_to_heat == 0
+expect thermal_reaction == -1
+adapt_to_heat on
+thermal_state serious
+wait 0.05
+expect thermal_reaction == 2
+expect frame_rate_limit == 60
+adapt_to_heat off
+thermal_state system
+wait 0.05
+expect thermal_reaction == -1
+expect frame_rate_limit == 0
 quit

@@ -29,6 +29,13 @@ ThermalState queryThermalState() {
     return ThermalState::Unknown;
 }
 
+std::optional<ThermalState> parseThermalState(std::string_view name) {
+    for (const ThermalState state : {ThermalState::Unknown, ThermalState::Nominal, ThermalState::Fair,
+                                     ThermalState::Serious, ThermalState::Critical})
+        if (name == thermalStateName(state)) return state;
+    return std::nullopt;
+}
+
 } // namespace detail
 
 } // namespace quench::app

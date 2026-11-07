@@ -31,7 +31,8 @@ struct Options {
     bool gpuDebug = false;
     bool gpuPassTiming = false; // record per-pass GPU times every frame (FrameStats::gpuPasses)
     std::optional<gpu::PresentMode> presentMode;
-    std::optional<double> maxFrameRate; // App::setMaxFrameRate at the start
+    std::optional<double> maxFrameRate;       // App::setMaxFrameRate at the start
+    std::optional<ThermalState> thermalState; // a fake thermal state in place of the system's
     std::optional<HdrMode> hdr;
     float hdrHeadroom = 0.0f;  // > 0: the headroom of HDR output instead of the display's
     std::string orientation;   // SDL_HINT_ORIENTATIONS value (phones and tablets); empty: the app's orientations

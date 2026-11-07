@@ -3,6 +3,7 @@
 
 #include "AppState.h"
 #include "ScenarioPoint.h"
+#include "ThermalState.h"
 
 #include <quench/audio/Analysis.h>
 #include <quench/core/Log.h>
@@ -253,6 +254,8 @@ void startPerf(AppState& s, std::string label) {
                         .serial = ++s.perfSerial,
                         .thermalStart = s.stats.thermal,
                         .thermalMax = s.stats.thermal,
+                        .reactionStart = thermalReaction(s),
+                        .reactionMax = thermalReaction(s),
                         .processCpuStart = processCpuTime()};
 }
 
@@ -314,6 +317,19 @@ PerfReport finishPerf(AppState& s) {
     if (thermalEnd != r.thermalStart) thermal += std::format(" -> {}", thermalStateName(thermalEnd));
     if (thermalMax > r.thermalStart && thermalMax > thermalEnd)
         thermal += std::format(" (max {})", thermalStateName(thermalMax));
+    // The reaction's levels the same way, where it was on: "; thermal reaction serious (at most 60 Hz, ...)".
+    const ThermalState reactionEnd = thermalReaction(s);
+    const ThermalState reactionMax = std::max(r.reactionMax, reactionEnd);
+    v["perf_thermal_reaction_start"] = double(r.reactionStart);
+    v["perf_thermal_reaction_end"] = double(reactionEnd);
+    v["perf_thermal_reaction_max"] = double(reactionMax);
+    if (reactionMax != ThermalState::Unknown) {
+        thermal += std::format("; thermal reaction {}", thermalStateName(r.reactionStart));
+        if (reactionEnd != r.reactionStart) thermal += std::format(" -> {}", thermalStateName(reactionEnd));
+        if (reactionMax > r.reactionStart && reactionMax > reactionEnd)
+            thermal += std::format(" (max {})", thermalStateName(reactionMax));
+        thermal += std::format(" ({} now)", thermalLimitsText(s.thermalGovernor.limits()));
+    }
     std::string details = s.game->perfDetails(s.app);
     const std::string process = v["perf_process_cpu"] < 0.0
                                     ? std::string()
@@ -346,6 +362,9 @@ PerfReport finishPerf(AppState& s) {
                       .thermalStart = r.thermalStart,
                       .thermalEnd = thermalEnd,
                       .thermalMax = thermalMax,
+                      .reactionStart = r.reactionStart,
+                      .reactionEnd = reactionEnd,
+                      .reactionMax = reactionMax,
                       .processCpu = v["perf_process_cpu"],
                       .cpuPerformanceShare = v["perf_cpu_performance_share"]};
     if (!r.passMs.empty()) {
@@ -449,6 +468,15 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
     }
     if (name == "thermal_state") return double(s.stats.thermal);
     if (name == "max_frame_rate") return s.maxFrameRate;
+    if (name == "frame_rate_limit") return s.frameRateLimit;
+    if (name.starts_with("thermal_")) {
+        const ThermalGovernor& governor = s.thermalGovernor;
+        if (name == "thermal_reaction") return double(thermalReaction(s));
+        if (name == "thermal_frame_rate_cap") return governor.limits().maxFrameRate;
+        if (name == "thermal_render_scale") return double(governor.limits().renderScaleFactor);
+        if (name == "thermal_reduce_effects") return governor.reduceEffects() ? 1.0 : 0.0;
+        if (name == "thermal_reaction_changes") return double(governor.changes());
+    }
     if (const auto it = s.perfValues.find(name); it != s.perfValues.end()) return it->second;
     if (name.starts_with("audio_")) {
         if (const auto it = s.audioValues.find(name); it != s.audioValues.end()) return it->second;
@@ -626,6 +654,19 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
             return Exec::Failed;
         }
         s.app.setMaxFrameRate(*hz);
+        return Exec::Done;
+    }
+    if (op == "thermal_state") {
+        // A fake state in place of the system's until `thermal_state system`; read again at once, so the thermal
+        // reaction follows before this frame's Game::update.
+        const std::optional<ThermalState> state = parseThermalState(first);
+        if (c.args.size() != 1 || (!state && first != "system")) {
+            log::error("scenario", "line {}: thermal_state nominal|fair|serious|critical|unknown|system", c.line);
+            return Exec::Failed;
+        }
+        s.thermalOverride = state;
+        if (!state) log::info("app", "thermal state: the system's again");
+        updateThermalState(s);
         return Exec::Done;
     }
 

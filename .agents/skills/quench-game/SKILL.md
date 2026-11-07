@@ -93,7 +93,7 @@ build directory without the override.
   `scenarioPoint` (`@NAME` points) and `perfDetails`.
 - `App` (main thread only): `device()`, `jobs()`, `assets()`, `audio()`, `input()`, `time()`, `alpha()`,
   `deterministic()`, `scripted()`, `stats()`, `safeArea()`, `requestCapture()`, `beginPerf()`, `endPerf()`,
-  `mobile()`, `quit()`.
+  `setMaxFrameRate()`, `thermalGovernor()`, `frameRateLimit()`, `mobile()`, `quit()`.
 
 ### 3. Modules
 
@@ -138,6 +138,12 @@ Link what the game uses beside `quench_add_game()`:
   from defaults and leave the user's files alone.
 - **Logging.** `quench::log::info("game", "...", args...)`, also `error`, `warning`, `debug`; `log::Throttle` for
   messages that could repeat every frame.
+- **Heat (phones).** The engine reports the thermal state (`stats().thermal`) and changes nothing by itself. A game
+  that wants to react enables `app.thermalGovernor()` (`ThermalGovernorDesc`: limits per state, the hold before
+  they are lifted, an `onChange` callback), ideally behind a player setting (the template's `adapt_to_heat`, off).
+  The App applies its frame rate limit on top of `setMaxFrameRate` (`frameRateLimit()` is the result); the game
+  renders at `thermalGovernor().renderScale(playerScale)` and turns its own effects down while `reduceEffects()`.
+  Never overwrite the player's settings with the limits. `docs/app.md`, "Thermal state".
 
 ### 4. Verify
 
@@ -147,8 +153,10 @@ Link what the game uses beside `quench_add_game()`:
   and play no sound (the mix runs offline). Never start a run with `--onscreen` or without those flags (it opens a
   window and plays sound) without asking the user.
 - **Scenarios** (`--script FILE`): `wait`, `until`, `expect`, `mark` (then `d_NAME`), `down`, `up`, `tap`, `touch`,
-  `click`, `mouse`, `gamepad`, `resize`, `capture`, `audio_measure`, `perf_begin`, `perf_end`, `include`, `quit`.
-  Values: the game's (`scenarioValue`), `time`, `action:NAME`, `audio_played`, `audio_rms`, `gpu_resources` and more.
+  `click`, `mouse`, `gamepad`, `resize`, `capture`, `audio_measure`, `perf_begin`, `perf_end`, `max_frame_rate`,
+  `thermal_state` (a fake thermal state, `system` ends it; also `--thermal-state NAME`), `include`, `quit`.
+  Values: the game's (`scenarioValue`), `time`, `action:NAME`, `audio_played`, `audio_rms`, `gpu_resources`,
+  `thermal_reaction`, `frame_rate_limit` and more.
   Each check logs `ok` or `FAIL line N`; the exit code is 1 when one failed. Scripted runs are deterministic: one
   fixed step per frame. Points in percent (`50% 50%`) or `@NAME` work at any window size.
 - **ctest.** One test per scenario with `FAIL_REGULAR_EXPRESSION "FAIL line"`, as the template's `smoke`.
