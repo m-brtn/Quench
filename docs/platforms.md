@@ -140,6 +140,12 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   Assets section with its 21 ASTC textures passed in the Simulator (17 checks, the capture looked at) and on the
   iPhone 17 on both backends (17 checks each, the two captures identical, one looked at: textured tiles and models,
   the broken and the missing model magenta). Not on the iPhone 18 Pro Max.
+- Basis Universal textures (2026-11-07; [Assets](assets.md#basis-universal)): transcoded at load time to what
+  `gpu::Caps` allow. On the Mac SDL GPU's Metal driver and Vulkan through MoltenVK report BC7 and ASTC but no ETC2
+  (SDL GPU 3.4.18 has no ETC2 formats; MoltenVK exposes ASTC on Apple silicon), so both codecs become ASTC 4x4; the
+  native Metal backend reports ETC2 too (Apple7 GPUs and later on macOS, every GPU on iOS), so ETC1S becomes ETC2
+  RGB8 there (`render.scene_assets_basis_textures` and the demo's `assets_basis` part on all three). Not run on an
+  iPhone yet.
 - Asset hot reload (2026-11-07): development builds read assets from `asset_overlay/` in the user directory
   first, and `tools/push_assets.sh` copies changed files there with `devicectl`
   ([Hot reload on a device](assets.md#hot-reload-on-a-device)). On the iPhone 17 a pushed texture was reloaded
@@ -249,7 +255,9 @@ GPU skinning is a compute pass through SDL GPU, which has compute on all its bac
   `samplerAnisotropy` (`VULKAN_INTERNAL_IsDeviceSuitable` in `src/gpu/vulkan/SDL_gpu_vulkan.c`). Older and budget GPUs
   may fail this check.
 - Assets live inside the APK: `std::ifstream` cannot read them, SDL_IOStream can (hence `quench::fs`).
-- BC formats are rare on Android GPUs; ASTC and ETC2 are the norm.
+- BC formats are rare on Android GPUs; ASTC and ETC2 are the norm. Basis Universal files serve them from one set
+  (built 2026-11-07); ETC2 needs a GPU backend that offers it (SDL GPU 3.4.18 does not), and ASTC is optional on
+  Vulkan (`textureCompressionASTC_LDR`): a device with neither would get RGBA8.
 
 ## Web (WebAssembly)
 
@@ -261,7 +269,9 @@ GPU skinning is a compute pass through SDL GPU, which has compute on all its bac
   Safari) and lists it as unfinished: not thread safe, sparse error handling, a WGSL parser that does not understand
   all valid WGSL, macOS, iOS and Android not done.
 - WebGPU feature support quoted in that pull request: BC texture compression on about 86% of adapters, ASTC on about
-  44%, `float32-filterable` about 91%. Textures for the web therefore need Basis Universal transcoding.
+  44%, `float32-filterable` about 91%. Textures for the web therefore need Basis Universal transcoding: built
+  2026-11-07, its transcoder runs as WebAssembly under Node.js in the `wasm-node` check (`assets.basis_*`, a 64 x 64
+  file with mips in 0.02 to 0.18 ms); not in a browser.
 - Threads need cross-origin isolation (COOP / COEP headers on the host); otherwise the job system runs single
   threaded. Audio starts only after a user gesture (the engine's audio has no browser output yet: see "Audio").
   Memory and download size are limited (TrailForge has 272 MB of

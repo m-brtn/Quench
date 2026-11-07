@@ -280,6 +280,39 @@ converted quality limit again, so the cook allocates each one from the configura
 read while they compress: ThreadSanitizer reports the race (the values written are the same each time). The cook
 allocates contexts under an exclusive lock and compresses under a shared one.
 
+Basis Universal textures ([Assets](assets.md#basis-universal)), 2026-11-07. One library: its transcoder in the
+runtime, its encoder in the cook. Listed in `THIRD_PARTY_LICENSES` with its NOTICE file and the Zstandard licence
+(the transcoder is shipped), and with the build-time tools (the encoder).
+
+| Library | Version | Commit | Licence | Linked into | Purpose |
+|---|---|---|---|---|---|
+| Basis Universal (BinomialLLC/basis_universal) | 2.50 | `9bebe16726b3a61c8c213eeee3b7cffb462ef34e`, SHA256 `8f4397a8d547ab07736c34a8d835e783cd019c3a0bd83d343c1bc4ebe7c570df` | Apache-2.0 with a NOTICE file (`LICENSE`, `NOTICE`); its `zstd/` (Zstandard 1.5) BSD-3-Clause; in the encoder also tinyexr (BSD-3-Clause), qoi and tinydds (MIT), jpgd and pvpngreader (public domain or Apache-2.0) | `quench_assets` (`quench_basisu_transcoder`: the transcoder and its Zstandard decoder); `quench_cook` (`quench_basisu_encoder`) | ETC1S and UASTC LDR 4x4 KTX2 files: encoding in the cook, transcoding at load time to BC7, ASTC 4x4, ETC2 or RGBA8 |
+
+How it is built (`cmake/QuenchBasisu.cmake`): the release archive is 197 MB (test images, web demos) for 13 MB of
+sources, so it is not fetched into every build tree. The first configure of a machine downloads it once, checks its
+SHA256, keeps `transcoder/`, `encoder/`, `zstd/` and the licence files in the per-machine tool cache
+(`~/Library/Caches/Quench/basisu-2.50-9bebe16`, 12 MB; `cmake/QuenchToolCache.cmake`, shared with DXC's build) and
+deletes the archive; `QUENCH_BASISU_DIR` names a source tree of the same commit instead. The transcoder is one
+translation unit (`src/assets/BasisTranscoder.cpp` includes `basisu_transcoder.cpp` unchanged) with
+`BASISD_SUPPORT_KTX2=1`, `BASISD_SUPPORT_KTX2_ZSTD=1` and the targets the engine never asks for off (`PVRTC1`,
+`PVRTC2`, `ATC`, `DXT1`, `DXT5A`, `FXT1`, `ETC2_EAC_RG11` = 0), built with `-w -fno-strict-aliasing` as upstream
+does: `libquench_basisu_transcoder.a` is 1,285,384 bytes, and it adds 0.96 MB to a stripped arm64 program (1.32 MB
+with every target; measured with a program that transcodes to the five targets). Its Zstandard decoder
+(`zstddeclib.c`, through `src/assets/BasisZstd.c`) gets prefixed symbol names (`src/assets/BasisZstdNames.h`,
+`#pragma redefine_extname`), so the cook can link the full Zstandard beside it and a game its own. The encoder
+(`cmake/CookToolchain.cmake`) compiles upstream's library sources without OpenCL, SSE and its astcenc fork
+(`BASISU_SUPPORT_OPENCL=0`, `BASISU_SUPPORT_SSE=0`, `BASISU_SUPPORT_ASTCENC=0`), against the engine's transcoder
+and with `zstd/zstd.c`: `libquench_basisu_encoder.a` is 4,150,424 bytes, built only with the cook. Its job pool has
+one thread (the caller's): the build cooks files in parallel. The web build (`wasm-node`) compiles the transcoder as
+WebAssembly and runs its tests under Node.js. Neither game uses it.
+
+Checked in the v2.50 source and in the tests: `ktx2_transcoder_state` has no constructor, and its cached level index
+starts as whatever the memory held: `transcode_image_level` then skipped the Zstandard decompression of a UASTC
+level in some processes (its output was garbage). The engine calls `clear()` on every state it makes. The transcoder
+needs `basisu_transcoder_init()` once per process (17 to 34 ms on the M4 Pro, its tables), which the engine calls
+under a `std::call_once` on the first loading job that transcodes. ETC1S is a subset of ETC1, so its ETC2 RGB8 output
+is exact; UASTC LDR 4x4 is a subset of ASTC 4x4, so its ASTC output is exact.
+
 Asset hot reload on a device and shader hot reload (2026-11-07) add no library. Shader hot reload uses SDL's
 process API (pinned SDL 3.4.18). Checked in its source (`src/process/posix/SDL_posixprocess.c`): `posix_spawnp`, so
 a bare program name is looked up in `PATH`, and the app's ends of the pipes are non-blocking, so the frame reads a
@@ -292,8 +325,6 @@ Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest
 
 | Library | Latest release | Licence | Planned use |
 |---|---|---|---|
-| KTX-Software (libktx) | 4.4.2 (2025-10-04) | Apache-2.0, with exceptions (see below) | Basis Universal transcoding (the engine writes and reads KTX2 itself, BC7, ASTC 4x4 and RGBA8; ASTC through astc-encoder, above) |
-| Basis Universal | 2_50 (2026-08-03) | Apache-2.0 | supercompressed textures for Android and the web (bundled in libktx) |
 | Recast & Detour | 1.6.0 (2023-05-21) | zlib | navmesh building, path queries, crowds |
 | Tracy | 0.14.1 (2026-08-22) | BSD-3-Clause | CPU and GPU profiler (development builds) |
 | Flecs | 4.2.0 (2026-11-04) | MIT | optional ECS module for games that want one |
@@ -314,9 +345,9 @@ Already pinned and kept: Dear ImGui (diagnostics). miniaudio was pinned with sta
   found, its configure downloads their single-file releases (5.1.0, 9.3.3) from GitHub with `EXPECTED_HASH SHA256`;
   `cmake/CookToolchain.cmake` disables `find_package` for both, so only the pinned files are used. Their headers
   trigger about 200 `-Wundef` warnings, so the cooker's third-party targets build without the engine warnings.
-- **KTX-Software**: bundles Basis Universal (with zstd inside it), astc-encoder, dfdutils and an ETC decoder in
-  `external/`. Most files are Apache-2.0, but `external/etcdec/etcdec.cxx` is not open source (Ericsson licence):
-  configure libktx with `LIBKTX_FEATURE_ETC_UNPACK=NO` so it is not built. Apache-2.0 NOTICE files must be shipped.
+- **KTX-Software** (not used: the engine reads and writes KTX2 itself and takes Basis Universal from its own
+  repository): bundles Basis Universal (with zstd inside it), astc-encoder, dfdutils and an ETC decoder in
+  `external/`. Most files are Apache-2.0, but `external/etcdec/etcdec.cxx` is not open source (Ericsson licence).
 - **Jolt Physics 5.6.0** (pinned commit): provides `JobSystemWithBarrier` (base for a custom job system),
   `JobSystemSingleThreaded` and `JobSystemThreadPool`. The engine job system implements `JobSystemWithBarrier` on
   enkiTS. Single-threaded, Jolt runs dependent jobs nested on the caller's stack: under Emscripten one `step()` of a

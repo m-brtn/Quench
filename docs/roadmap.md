@@ -111,7 +111,7 @@ code may be moved), verified with the engine's tests and the engine demo; no ver
   exposure.
 - Done: version 0.3.0, release notes in [docs/releases/v0.3.0.md](releases/v0.3.0.md).
 
-## Stage 6: assets (done 2026-11-05, version 0.4.0, shader hot reload 2026-11-07; games not switched)
+## Stage 6: assets (done 2026-11-05, version 0.4.0, shader hot reload and Basis Universal 2026-11-07; games not switched)
 
 User decisions for this stage (2026-11-05): engine only (the games are not switched, built or tested), verified with
 the engine's tests and the demo's new "Assets" section. Described in [Jobs, assets and the cook](assets.md).
@@ -152,7 +152,17 @@ the engine's tests and the demo's new "Assets" section. Described in [Jobs, asse
   pipelines again behind the same handles; after a compile error the old code stays. Checked by
   `gpu_device.shader_hot_reload` on the Mac's three backends and by an edit of the renderer's tone mapping in the
   running demo (offscreen) on SDL GPU and the native backend ([App shell](app.md#shader-hot-reload)).
-- Not done, remaining: Basis Universal for Android and the web.
+- Done (2026-11-07, after 0.10.0, on the Mac): Basis Universal textures, one cooked set for every device. The cook
+  writes ETC1S or UASTC KTX2 files (`--format basis`, `quench_cook_assets(TEXTURE_FORMAT basis BASIS_CODEC ...)`;
+  by default UASTC for data and normal maps, ETC1S for color), and the runtime transcodes them on the loading job
+  to what `gpu::Caps` allow: UASTC to ASTC 4x4, BC7 or ETC2, ETC1S to ETC2, ASTC 4x4 or BC7, otherwise RGBA8 with a
+  log line. ETC2 is sampled on the native Metal backend (SDL GPU has no ETC2). Transcoder in `quench_assets`
+  (0.96 MB), encoder in the cook only; the transcoder's tests also run as WebAssembly under Node.js. The default stays
+  BC7 on the Mac and ASTC on iOS: on the demo's textures ETC1S is 13 times smaller than BC7 but 19 dB worse on
+  color, UASTC half the size (and no smaller once a package is compressed) and 1.5 dB below BC7, and both cost a
+  slower cook and a transcode at load time ([Assets](assets.md#basis-universal)). The demo's Assets section loads
+  two Basis sets of its tiles. Open: a run on an iPhone (transcode times, ETC2 on the native backend) and a look at
+  the tiles on its screen.
 - Done: version 0.4.0, release notes in [docs/releases/v0.4.0.md](releases/v0.4.0.md).
 
 ## Stage 7: audio (done 2026-11-06 except the checks on the iPhone and by ear, version 0.5.0; games not switched)
@@ -644,9 +654,9 @@ The queue the user set on 2026-11-07, in this order:
 
 What else stays open, in the order it is useful (not scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (42 items:
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (43 items:
    the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
-   input devices, loading and streaming, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
+   input devices, loading and streaming, the Basis Universal tiles, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
    and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
    the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, its lamp shadow maps on SDL GPU, the
    tunnel for 10 minutes with Adapt to heat, the frame rate and the layout on the phone;
@@ -668,7 +678,7 @@ What else stays open, in the order it is useful (not scheduled; the user decides
    traced in turns since 2026-11-07 (`probeUpdatePeriod`, measured on the Mac only); its phone default waits for
    `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns with classification at half size,
    60 Hz).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7).
+3. **Remaining work of the stages:** browser audio (stage 7).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. The
@@ -684,8 +694,9 @@ Navigation (Recast & Detour: navmesh building, paths, crowds), Tracy profiling, 
 ## Later platforms
 
 Not scheduled; started only when the user asks. Windows and Linux (SDL GPU D3D12 / Vulkan; need hardware or CI),
-Android (Vulkan, ASTC / ETC2 textures through Basis Universal, APK assets), web (needs SDL GPU's WebGPU backend, WGSL
-shaders, single-thread jobs, Basis Universal textures). See [Platforms](platforms.md).
+Android (Vulkan, ASTC / ETC2 textures through Basis Universal (built; ETC2 needs a backend that offers it), APK
+assets), web (needs SDL GPU's WebGPU backend, WGSL shaders, single-thread jobs; Basis Universal textures are built).
+See [Platforms](platforms.md).
 
 ## Requested features
 

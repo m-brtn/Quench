@@ -6,7 +6,8 @@ heat for games, with the demo's Adapt to heat; an agent skill on building a game
 new game; the demo's dual quaternion skinning showcase made readable after a user
 report, and its characters' wrists closed; the Xcode project's generation in the full gate; soft shadows of area
 lights from shadow maps where the device cannot trace (stage 12's remaining work); a game's surface shaders in ray
-hits and the probe grid's cascades, relocation and classification (stage 11's remaining work). This file becomes
+hits and the probe grid's cascades, relocation and classification (stage 11's remaining work); Basis Universal
+textures, one cooked set for every device (stage 6's remaining work). This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
 
@@ -99,6 +100,28 @@ hits and the probe grid's cascades, relocation and classification (stage 11's re
   1 to 2 % slower than before and the main pass the same
   ([Performance](../performance.md#probe-cascades-relocation-and-classification)).
 
+### Assets: Basis Universal textures
+
+- **One cooked set for every device** (stage 6's remaining work; [Assets](../assets.md#basis-universal)): the cook
+  writes Basis Universal KTX2 files (`quench_cook texture ... --format basis [--basis-codec auto|etc1s|uastc]`;
+  `quench_cook_assets(... TEXTURE_FORMAT basis [BASIS_CODEC auto|etc1s|uastc])`, also for a model's textures). ETC1S
+  is small and lossy, UASTC about BC7's quality; `auto` takes UASTC for linear data and normal maps and ETC1S for
+  color. Basis Universal v2.50 (Apache-2.0, pinned with its SHA256 and kept once per machine in the tool cache;
+  [Dependencies](../dependencies.md)): the encoder in the cook only, the transcoder in `quench_assets` (0.96 MB in a
+  stripped arm64 program).
+- **Transcoded at load time**, on the loading job, to what `gpu::Caps` allow: UASTC to ASTC 4x4 (exact), BC7 or
+  ETC2; ETC1S to ETC2 (exact, half the memory), ASTC 4x4 or BC7; RGBA8 where the device has none of them or a side
+  is not a multiple of 4, with a log line. `assets::prepareTexture` reads either kind of KTX2 file (`readBasisInfo`,
+  `basisTarget`, `transcodeBasis` for the parts); `render::TextureAsset::basisCodec()` and `decodeMilliseconds()`
+  say what happened, `SceneAssets::textureSupport()` what the device takes. Hot reload and the asset overlay read
+  them like any other file.
+- **ETC2 textures on the native Metal backend:** `gpu::TextureFormat::Etc2Rgb8Unorm`, `Etc2Rgba8Unorm` (EAC alpha)
+  and their sRGB variants, and `gpu::Caps::etc2Textures` (Apple7 GPUs and later on macOS, every iOS GPU); SDL GPU
+  3.4.18 has no ETC2 formats.
+- **The default stays BC7 on the Mac and ASTC on iOS:** on the demo's 19 textures ETC1S is 13 times smaller than
+  BC7 but 19 dB worse on color (37.9 against 56.7 dB), UASTC half BC7's size (no smaller once a package is
+  compressed) and 1.5 dB below it, and both cook 3 to 7 times slower and add a transcode at load time.
+
 ### The app: a reaction to heat
 
 - **`App::thermalGovernor()`** (`quench/app/ThermalGovernor.h`; [App shell](../app.md#thermal-state)): a game's
@@ -166,6 +189,10 @@ hits and the probe grid's cascades, relocation and classification (stage 11's re
   "Lamp shadow maps" choice in its panel (Off, 256, 512, 1024; off by default), a batch part `tunnel_maps` with golden
   captures on SDL GPU's Metal driver and on Vulkan through MoltenVK, and a check mode item `tunnel.maps` (42 items
   now).
+- **Basis Universal tiles** (section 8, Assets): the tiles are also cooked as an ETC1S and a UASTC set; "Tile
+  textures" streams them instead of the platform's set, and a line names the format they were transcoded to. The
+  batch part `assets_basis` (no capture) checks both sets on every backend, and a check mode item asks a person to
+  look at them (43 items now).
 - **The native backend by default:** the ray tracing section and the tunnel trace where `gpu::Caps` allow it
   without a flag now (on the Mac and on phones with ray tracing: the iPhone 17 and the iPhone 18 Pro Max), with their
   phone defaults on phones; `--gpu-backend sdl` shows their fallbacks. About names the platform's default backend and
@@ -269,6 +296,14 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 - **Gates with probe cascades:** `tools/check.sh full` (2026-11-07, 423.9 s): format; `debug` 518 tests; `release`
   634; `asan` 518; `tsan` 518; `wasm-node` 140 (under Node.js); `ios-sim-tests` 387 in the iOS Simulator;
   `ios-xcode` generated; a new game built and started. All passed.
+- **Basis Universal** (M4 Pro, Release; [Assets](../assets.md#basis-universal)): the comparison on the demo's 19
+  textures (1.88 Mtexels in level 0): BC7 and ASTC 2,519,504 bytes, ETC1S 188,980, UASTC 1,255,728; color 56.7 dB
+  (BC7), 60.0 (ASTC), 37.9 (ETC1S), UASTC 58.2 to ASTC and 55.2 to BC7; normal maps 0.77° (BC7), 0.51° (ASTC),
+  3.3° (ETC1S), 0.68° (UASTC to ASTC). Transcoding 1.8 (ETC1S to ETC2) to 8.8 ms (UASTC to ETC2) per Mtexel, a
+  64 x 64 file with mips 0.03 to 0.10 ms (0.02 to 0.18 ms as WebAssembly under Node.js), the transcoder's tables
+  once per process 17 to 34 ms. `assets.basis_*` (also under Node.js), `cook.cook_basis_*`,
+  `render.scene_assets_basis_textures` on SDL GPU's Metal driver, the native backend (ETC1S to ETC2 RGB8) and
+  Vulkan through MoltenVK (ASTC), the demo's `assets_basis` part on all three; the golden captures unchanged.
 
 ## What was not verified
 
@@ -301,6 +336,9 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   device tests include the two new render cases); the phone costs are estimates from the iPhone 17's ratio, and the
   proposed phone default (classification in 4 turns) is not set. Nobody has looked at them on a screen in motion
   (a cascade's edge passing over a surface as the camera moves, a probe's relocation changing as the rays turn).
+- Basis Universal has not run on an iPhone (the transcode time there, ETC2 on the native backend) and nobody has
+  looked at the ETC1S and UASTC tiles on a screen; the numbers are of the demo's procedural textures on the M4 Pro.
+  No ETC1S quality option and no rate-distortion optimization for smaller UASTC files yet.
 
 ## Changes for games
 
@@ -356,6 +394,15 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   (`Unknown` while the reaction is off), the flag `--thermal-state` and the scenario command `thermal_state`. A game
   that does not enable the governor behaves as before; a game whose own flag or scenario command is named
   `--thermal-state` or `thermal_state` loses it to the engine's.
+- **Basis Universal:** the first configure of a game on a machine downloads Basis Universal's archive once
+  (197 MB, 12 MB kept in the tool cache next to DXC; `QUENCH_BASISU_DIR` names a source tree instead), because
+  `quench_assets` links its transcoder. New and optional: `TEXTURE_FORMAT basis` and `BASIS_CODEC` in
+  `quench_cook_assets()`, `--format basis` and `--basis-codec` in `quench_cook`, `assets::prepareTexture` and the
+  Basis functions in `quench/assets/Texture.h`, `TextureAsset::basisCodec()`, `decodeMilliseconds()`,
+  `SceneAssets::etc2Textures()` and `textureSupport()`. New enum values: `assets::PixelFormat::Etc2Rgb8`,
+  `Etc2Rgba8` and their sRGB variants, the four `gpu::TextureFormat::Etc2*`, `gpu::Caps::etc2Textures`; a game
+  that switches over these enums without a default gets a `-Wswitch` warning. `TextureAsset::decodedOnCpu()` is
+  also true for a Basis Universal file transcoded to RGBA8. Neither game uses these.
 - **The skill:** a game made before this release has no copy; copy `.agents/skills/quench-game/` from the engine
   at the pinned commit if its agents should use it (and again when the pin moves).
 - The rest is in the demo and the engine's own test and gate scripts; `quench_add_batch()` in

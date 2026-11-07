@@ -1,9 +1,10 @@
 # Quench documentation
 
 Stages 1 to 3 and 5 to 12 of the [Roadmap](roadmap.md) are implemented (stages 11 and 12 except their runs on the
-iPhone 18 Pro Max and the checks by eye; Basis Universal textures and browser audio still open), stage 4 (games on the
+iPhone 18 Pro Max and the checks by eye; browser audio still open), stage 4 (games on the
 engine) for one game (version 0.10.0): the core and physics modules, the job system, the asset system and the asset
-cooker (BC7, ASTC in iOS builds; asset hot reload on the Mac and on a device), the GPU layer over SDL GPU (and a native
+cooker (BC7, ASTC in iOS builds, Basis Universal as an option, transcoded at load time; asset hot reload on the Mac
+and on a device), the GPU layer over SDL GPU (and a native
 Metal backend with GPU timestamps per pass, acceleration structures and MetalFX; not the default yet; shader hot
 reload on desktops), the app shell with HDR display output, the render module (a retained scene and the standard
 frame with cut-out and translucent shadows, normal and emissive maps, area lights, anisotropic GGX, GPU skinning with

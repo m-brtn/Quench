@@ -141,7 +141,8 @@ checks that do not depend on the backend: the asserts below, live resource count
   `depthClamp` (not in the iOS Simulator, where
   the SDL patch skips the depth clip mode), `depthBiasClamp` (not on SDL's Vulkan backend, which does not enable the
   device feature), `indirectDraw` (not in the iOS Simulator: its Metal device is GPU family Apple2), `bcTextures`,
-  `astcTextures`; per format `supportsFormat` and `supportsSampleCount`.
+  `astcTextures`, `etc2Textures` (native Metal backend only: SDL GPU has no ETC2 formats); per format
+  `supportsFormat` and `supportsSampleCount`.
 - **SDL video**: SDL GPU needs SDL's video subsystem for every driver. Its device holds a reference to it, so it is
   created and destroyed on the main thread. The native Metal device needs video only for windows, which the app
   creates (offscreen tests run without it).
@@ -519,10 +520,11 @@ As built in stage 6 ([Jobs, assets and the cook](assets.md)):
 - **Asynchronous loading**: files are read through `quench::fs` and decoded on jobs; the main-thread part (the GPU
   upload) runs in `AssetManager::update()` under a byte budget per frame, so a frame never waits for a load.
 - **Cooked formats**: games ship cooked files: KTX2 textures (BC7 on desktops, ASTC 4x4 on iOS, or RGBA8, with
-  mips; BC7 is decoded to RGBA8 on a device that cannot sample it, ASTC is not decoded; Basis Universal transcoding
-  for Android and the web is later work) and `.qmodel` models (meshoptimizer-ordered and compressed vertex and index
-  streams, LOD ranges, materials naming their textures). The importers and encoders (fastgltf, stb_image, bc7enc,
-  astc-encoder) live only in `quench_cook`, a host tool; games call
+  mips; BC7 is decoded to RGBA8 on a device that cannot sample it, ASTC is not decoded; or Basis Universal ETC1S or
+  UASTC, transcoded on the loading job to BC7, ASTC 4x4, ETC2 or RGBA8 by `gpu::Caps`, one set for every device)
+  and `.qmodel` models (meshoptimizer-ordered and compressed vertex and index streams, LOD ranges, materials naming
+  their textures). The importers and encoders (fastgltf, stb_image, bc7enc, astc-encoder, Basis Universal's encoder)
+  live only in `quench_cook`, a host tool (the runtime links Basis Universal's transcoder only); games call
   `quench_cook_assets()` and `quench_add_game(... COOKED_ASSETS ...)`.
 - **Hot reload**: the manager polls the modification time of loaded files and swaps a changed file in under the same
   ID and handles; rebuilding the game's assets target cooks the changed sources and copies the changed files. On a

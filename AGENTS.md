@@ -33,9 +33,12 @@ library backend, worker thread priority, the job system `quench::JobSystem` on e
 (`PhysicsWorld` on Jolt, its jobs on the engine's job system), `quench_assets` (asset IDs, the `AssetManager` cache
 with reference counts, placeholders, budgets, loads on jobs, a per-frame upload budget, hot reload on the Mac and,
 in development builds, on a device through an asset overlay in the user directory filled by `tools/push_assets.sh`
-(checked on the iPhone 17), streaming by distance; KTX2 textures and cooked `.qmodel` models, version 4 with skins, blend shapes and MikkTSpace tangents in a
+(checked on the iPhone 17), streaming by distance; KTX2 textures (also Basis Universal ETC1S and UASTC, transcoded
+on the loading job to BC7, ASTC 4x4, ETC2 or RGBA8 by `gpu::Caps`; ETC2 on the native backend only; not yet run on
+an iPhone) and cooked `.qmodel` models, version 4 with skins, blend shapes and MikkTSpace tangents in a
 64-byte vertex), `quench_cook` (the host
-tool: glTF, GLB, PNG, JPEG, KTX2 to BC7, ASTC 4x4 (iOS builds, through astc-encoder) or RGBA8 KTX2 with mips and meshoptimizer models with tangents and blend shapes; sounds; skeletons and clips
+tool: glTF, GLB, PNG, JPEG, KTX2 to BC7, ASTC 4x4 (iOS builds, through astc-encoder), RGBA8 or, as an option, Basis
+Universal KTX2 with mips and meshoptimizer models with tangents and blend shapes; sounds; skeletons and clips
 (with morph target weights) from glTF, clips retargeted onto another skeleton by a bone map; `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
 ray query entries through DXC built from source, a manifest per set for shader hot reload) and the engine shader
 library in `shaders/quench/` (uniform structs
@@ -120,8 +123,7 @@ and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scen
 `d708783`, not yet moved to a release) with its own input layer fed through `Game::event` and its own physics clock;
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
-the asset system, the engine's audio or animation yet. No Basis Universal textures
-(stage 6 remaining work) or browser audio (stage 7 remaining
+the asset system, the engine's audio or animation yet. No browser audio (stage 7 remaining
 work)
 yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
@@ -131,10 +133,11 @@ design and plan beyond stage 12. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,
-Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer, bc7enc_rdo's BC7 decoder and
-mikktspace (assets), miniaudio (sound decoding, Vorbis through its stb_vorbis, the reverb through its verblib, and device output),
+Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer, bc7enc_rdo's BC7 decoder,
+mikktspace and Basis Universal's transcoder (assets), miniaudio (sound decoding, Vorbis through its stb_vorbis, the reverb through its verblib, and device output),
 the SADIE HRTF set (from Resonance Audio's repository, reduced to a table in `quench_audio`), ozz-animation (the animation runtime and the offline library
-that builds skeletons and clips); the cooker adds fastgltf and stb_image at build time. Pins, planned additions and
+that builds skeletons and clips); the cooker adds fastgltf, stb_image, astc-encoder and Basis Universal's encoder at
+build time. Pins, planned additions and
 their licences: `docs/dependencies.md`.
 
 ## Platforms
@@ -342,8 +345,8 @@ are built:
 - Nothing outside a platform backend may assume Apple (or any single OS): platform code lives in clearly named
   backend files or behind `QUENCH_PLATFORM_*` checks, which only `src/core/Platform.h` defines.
 - Keep the SPIR-V, DXIL and MSL outputs of the shader build working even where only Metal is run.
-- Texture formats are chosen by device capability: BC7 today; ASTC or Basis Universal transcoding is needed for Android
-  and the web.
+- Texture formats are chosen by device capability: BC7 and ASTC 4x4 cooked per platform, or Basis Universal files
+  transcoded at load time to what `gpu::Caps` allow (the way to Android and the web).
 - No blocking waits on the main thread for loading; long work goes to the job system and finishes across frames.
 
 ## Coordinate system and units
@@ -542,15 +545,17 @@ LICENSE                MIT licence of the engine; THIRD_PARTY_LICENSES: licences
 CMakeLists.txt         engine targets; CMakePresets.json: configure, build and test presets
 cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), CookToolchain (asset
                        cooker pins), QuenchDxc and BuildDxc (DXC for ray query shaders, built from source into a
-                       per-machine tool cache), QuenchShaders (quench_add_shaders, quench_add_ray_hits), QuenchCook
-                       (quench_cook_assets), EmbedShaders, QuenchTargets (warnings, include directories), QuenchGame
-                       (quench_add_game)
+                       per-machine tool cache), QuenchBasisu (Basis Universal's sources, kept in that cache, and its
+                       transcoder), QuenchToolCache (the cache's place), QuenchShaders (quench_add_shaders,
+                       quench_add_ray_hits), QuenchCook (quench_cook_assets), EmbedShaders, QuenchTargets (warnings,
+                       include directories), QuenchGame (quench_add_game)
                        and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator;
                        MikkTSpaceRotate: a shift by 32 in MikkTSpace masked)
 include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
                        src/core/Jobs.cpp: the job system; src/physics/JoltJobSystem: Jolt's jobs on it;
-                       src/assets/: the asset manager, KTX2, cooked models, tangents, streaming; src/audio/: the mixer,
+                       src/assets/: the asset manager, KTX2, Basis Universal (Basis.cpp; BasisTranscoder.cpp and
+                       BasisZstd.c build the transcoder), cooked models, tangents, streaming; src/audio/: the mixer,
                        decoders, streams, the HRTF (Hrtf; HrtfTable.inc: the reduced SADIE set), the device and the
                        iOS audio session (AudioSessionApple.m);
                        src/animation/: skeletons, clips, graphs, the character update, IK, the animation system
@@ -577,7 +582,8 @@ examples/demo/         the engine demo: a menu of sections (rendering features, 
                        used as they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
-tools/cook/            quench_cook, the build-time asset cooker (glTF, GLB, PNG, JPEG, KTX2 -> KTX2, .qmodel;
+tools/cook/            quench_cook, the build-time asset cooker (glTF, GLB, PNG, JPEG, KTX2 -> KTX2 (also Basis
+                       Universal: CookBasis.cpp), .qmodel;
                        glTF, GLB -> .qskel skeletons, .qanim clip sets, also retargeted by a bone map; WAV, FLAC,
                        MP3 checked or converted to WAV)
 tools/assets/          make_demo_assets.py: writes the demo's procedural source assets; make_demo_sounds.py: the
@@ -595,7 +601,8 @@ tools/check.sh         the gates: quick (a small change), full, release, single 
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
 tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a development-signed .ipa)
 tools/format.sh        clang-format over the C and C++ sources (--check)
-tests/                 harness/, core/ (job system included), physics/, assets/, audio/ (mixer, streams, decoders,
+tests/                 harness/, core/ (job system included), physics/, assets/ (data/: CC0 Basis Universal test
+                       files written by cook.cook_basis_test_data), audio/ (mixer, streams, decoders,
                        device; data/: CC0 test sounds), animation/, cook/ (and CookCli.cmake), gpu/ (shader tests;
                        GPU device tests and their shaders; RayTracingTests: acceleration structures, MetalFX), app/,
                        render/ (scene, scene assets, skinning and frame tests), header check, RunBatch.cmake

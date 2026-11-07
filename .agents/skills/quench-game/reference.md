@@ -206,6 +206,16 @@ ground.textures[2] = m_groundNormal->texture();
 const render::MaterialId groundMaterial = m_scene->addMaterial(ground);
 ```
 
+One texture set for every device (Basis Universal, transcoded on the loading job to what the GPU samples):
+
+```cmake
+quench_cook_assets(my_game_portable SOURCE_DIR assets_src
+    TEXTURES textures/ground.png DATA_TEXTURES textures/ground_normal.png
+    TEXTURE_FORMAT basis)  # BASIS_CODEC auto (default: UASTC for data, ETC1S for color), etc1s or uastc
+```
+
+Loaded the same way; `m_groundColor->basisCodec()` names the file's codec and `format()` what it became.
+
 ## Physics
 
 ```cpp

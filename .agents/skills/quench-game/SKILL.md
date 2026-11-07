@@ -119,7 +119,10 @@ Link what the game uses beside `quench_add_game()`:
   under `SOURCE_DIR` with the cooked extension: `models/crate.gltf` becomes `models/crate.qmodel`, textures `.ktx2`,
   sounds keep theirs. Load through `render::SceneAssets` (textures, models), `app.audio()` (sounds) or
   `animation::AnimationSystem`: loads run on jobs and show placeholders until ready (`AssetRef::ready()`); never
-  wait for them. `--hot-reload` loads changed cooked files again. `docs/assets.md`.
+  wait for them. `--hot-reload` loads changed cooked files again. Textures are BC7 on the Mac and ASTC 4x4 in iOS
+  builds by default (`TEXTURE_FORMAT auto`); `TEXTURE_FORMAT basis` cooks one Basis Universal set for every device,
+  transcoded at load time (smaller with `BASIS_CODEC etc1s`, lower quality; slower to cook). `docs/assets.md`,
+  "Basis Universal".
 - **Physics.** `quench::PhysicsWorld` on `&app.jobs()` (Jolt, its jobs on the engine's pool); bodies through
   `bodies()` with `PhysicsLayers::kStatic` or `kMoving`; `step(float(dt))` in `fixedStep`.
 - **Audio.** `app.audio()`: `load`, `play` with `PlayParams` (buses `"music"`, `"effects"`, `"ui"` by default;

@@ -121,8 +121,11 @@ original files or delete the app.
 - `TextureAsset`: a KTX2 file (below). Where the device cannot sample BC7 (`gpu::Caps`), BC7 is decoded to RGBA8 on
   the CPU during the load (`decodedOnCpu()`). ASTC 4x4 is sampled where `gpu::Caps::astcTextures` is set (the Mac's
   three backends, the iOS Simulator and the iPhone); elsewhere the load fails with an error and the texture stays the
-  placeholder (the runtime has no ASTC decoder). `SceneAssetsSettings::textureSkipLevels` leaves out the largest
-  mip levels.
+  placeholder (the runtime has no ASTC decoder). A Basis Universal file is transcoded on its loading job to what the
+  device samples ([Basis Universal](#basis-universal)): `basisCodec()` names its codec, `format()` the result,
+  `decodeMilliseconds()` how long the job's read, decode or transcode took; `SceneAssets::textureSupport()` gives
+  the formats `gpu::Caps` allow, and one log line per `SceneAssets` says what each codec becomes on the device.
+  `SceneAssetsSettings::textureSkipLevels` leaves out the largest mip levels.
 - `ModelAsset`: a `.qmodel` file: one scene mesh and material per part, its textures loaded as `TextureAsset`s.
   `SceneAssetsSettings::modelLod` picks the cooked level of detail to upload. `addModel` places a model (any number
   of times); the placed instances follow its state, and are rebuilt after a reload. Skinned parts (stage 8) become
@@ -148,7 +151,11 @@ synchronous loads.
 - **Textures**: KTX 2.0 files of one 2D image with its mip chain, without supercompression, in RGBA8, BC7 (both
   with or without sRGB) or ASTC 4x4 (LDR, with or without sRGB), at most 32768 x 32768 and 16 levels. `readKtx2`,
   `writeKtx2` and `decodeBc7` are in `include/quench/assets/Texture.h`; the reader checks every size and offset
-  against the file before it allocates, so a corrupt file is an error, not a crash or a huge allocation.
+  against the file before it allocates, so a corrupt file is an error, not a crash or a huge allocation. Or KTX 2.0
+  files of Basis Universal data, ETC1S (BasisLZ supercompression) or UASTC LDR 4x4 (Zstandard supercompression),
+  one 2D image with its mips ([Basis Universal](#basis-universal)): `readBasisInfo`, `basisTarget`, `transcodeBasis`
+  and `prepareTexture` (which takes either kind) in the same header. ETC2 RGB8 and RGBA8 exist as `PixelFormat`s
+  for what Basis Universal files are transcoded to; the cook does not write them.
 - **Models**: `.qmodel` (`include/quench/assets/Model.h`): the meshes of a glTF scene with the node transforms
   applied, the engine's 64-byte vertex (position, normal, uv, linear color, tangent), index ranges per level of
   detail, and glTF metallic-roughness materials that name their textures by asset path (base color,
@@ -180,8 +187,8 @@ synchronous loads.
 The cook (`tools/cook/`) turns source files into cooked files. It is a host tool: games do not link it.
 
 ```sh
-quench_cook texture tiles/stone.png assets/tiles/stone.ktx2 [--format bc7|astc|rgba8] [--linear] [--no-mips]
-            [--max-size N]
+quench_cook texture tiles/stone.png assets/tiles/stone.ktx2 [--format bc7|astc|rgba8|basis]
+            [--basis-codec auto|etc1s|uastc] [--linear] [--no-mips] [--max-size N]
 quench_cook model models/crate.gltf assets/models/crate.qmodel --asset-root assets [--lods N] [--lod-ratio R]
             [--lod-error E] [--scale S]
 quench_cook sound sounds/hit.flac assets/sounds/hit.flac            # checked, copied as it is
@@ -199,7 +206,14 @@ quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skele
   rule), otherwise the texture is written as RGBA8 with a note. `--linear` for data (normals, metallic-roughness).
   ASTC is the closer of the two to the source: 57.1 and 56.3 dB PSNR against BC7's 43.6 and 44.4 dB on the test
   gradients (sRGB, linear), 54.9 and 54.1 dB against 50.3 and 51.2 dB on the demo's crate planks
-  (`cook.cook_astc_matches_the_source`). The cook times of the two were not compared.
+  (`cook.cook_astc_matches_the_source`). The cook times of the two were not compared. `--format basis` writes a
+  Basis Universal file from the same levels ([Basis Universal](#basis-universal)): `--basis-codec etc1s` (small,
+  lower quality), `uastc` (about BC7's quality) or `auto` (the default: UASTC for `--linear` data and normal maps,
+  ETC1S for color). Basis Universal's encoder v2.50 with its defaults: ETC1S at quality level 128 of 255, UASTC at
+  pack level 2 without rate-distortion optimization, Zstandard at level 6; one thread per texture (the build cooks
+  files in parallel). A level 0 that is not a multiple of 4 is written all the same (a note says that devices get
+  RGBA8 from it). A Basis Universal KTX2 input is copied unchanged with `--format basis`, and transcoded with the
+  other formats; a BC7 or ASTC input is decoded and encoded again (a note says it is compressed twice).
 - **Models**: glTF and GLB (fastgltf; external buffers and images, data URIs, embedded images; the extensions
   `KHR_mesh_quantization` and `KHR_materials_emissive_strength`; files with `KHR_texture_transform` or
   `KHR_materials_unlit` are accepted, the extension is ignored with a note). Primitives of the default scene are merged per material with their node transforms; smooth
@@ -260,13 +274,17 @@ quench_cook_assets(my_game_cooked SOURCE_DIR assets_src
     [SKELETON characters/hero.gltf]        # the skeleton the ANIMATIONS are for (default: their own)
     [RETARGET characters/hero.map.json]    # retargeted onto SKELETON: <path>.<SKELETON's name>.qanim
     [FILES credits.txt levels/one.json]    # copied as they are
-    [OUTPUT_DIR dir] [TEXTURE_FORMAT auto|bc7|astc|rgba8] [TEXTURE_MAX_SIZE n] [MODEL_OPTIONS --lods 2 ...])
+    [OUTPUT_DIR dir] [TEXTURE_FORMAT auto|bc7|astc|rgba8|basis] [BASIS_CODEC auto|etc1s|uastc]
+    [TEXTURE_MAX_SIZE n] [MODEL_OPTIONS --lods 2 ...])
 quench_add_game(my_game ... ASSETS assets COOKED_ASSETS my_game_cooked)
 ```
 
 `quench_cook_assets` (`cmake/QuenchCook.cmake`) adds a target that cooks each file into the same relative path (with
 `.ktx2`, `.qmodel`, `.qskel` or `.qanim`; sounds keep their name and format). `TEXTURE_FORMAT auto` (the default) cooks
-ASTC 4x4 in iOS builds and BC7 elsewhere, also the textures of models. `FILES` are copied unchanged
+ASTC 4x4 in iOS builds and BC7 elsewhere, also the textures of models. `TEXTURE_FORMAT basis` cooks Basis
+Universal files for every device (also the textures of models), with `BASIS_CODEC` (only with `basis`): `auto` (the
+default; UASTC for `DATA_TEXTURES` and a model's linear textures, ETC1S for color), `etc1s` or `uastc` for the whole
+call; a game that wants both codecs for color makes two calls. `FILES` are copied unchanged
 (texts, settings, licences; paths relative to `SOURCE_DIR`, no `..`), so a game can ship files from outside its
 `ASSETS` directory: the demo reads the engine's `LICENSE` and `THIRD_PARTY_LICENSES` that way. A call with `FILES`
 only needs no `quench_cook` (it works in cross builds without `host-tools`). `quench_add_game(... COOKED_ASSETS ...)`
@@ -282,6 +300,64 @@ The cook is built from source in host builds. Cross builds (iOS) take it from th
 dependencies (fastgltf with its bundled simdjson and simdutf, stb) are fetched at configure time in host builds and
 built only when the cook is (`EXCLUDE_FROM_ALL`).
 
+## Basis Universal
+
+One cooked set for every device: a Basis Universal file (KTX 2.0, ETC1S or UASTC LDR 4x4) is transcoded at load
+time, on the loading job, to a format the device samples. Basis Universal v2.50 (Binomial, Apache-2.0;
+[Dependencies](dependencies.md)): its transcoder is in `quench_assets` (0.96 MB in a stripped arm64 program, the
+targets the engine never asks for left out), its encoder only in `quench_cook`.
+
+What a file becomes (`assets::basisTarget`, from `gpu::Caps` through `SceneAssets::textureSupport()`), the first the
+device samples of:
+
+| Codec | Targets in order | Why |
+|---|---|---|
+| UASTC | ASTC 4x4, BC7, ETC2, RGBA8 | UASTC is a subset of ASTC (exact); BC7 is close; ETC2 only about ETC1S's quality |
+| ETC1S | ETC2, ASTC 4x4, BC7, RGBA8 | ETC1S is a subset of ETC1 (ETC2 RGB8 is exact, 4 bits per texel); ASTC and BC7 give the same quality, ASTC transcodes faster |
+
+ETC2 is RGB8 for an opaque file, RGBA8 (EAC alpha) for one with alpha; the sRGB variant when the file is sRGB. RGBA8
+also where level 0 is not a multiple of 4 on both sides (Metal's rule for block formats), with one log line per
+`SceneAssets` the first time a texture falls back to RGBA8 for a missing format. On the Mac: SDL GPU's Metal driver
+and Vulkan through MoltenVK sample BC7 and ASTC, not ETC2 (SDL GPU 3.4.18 has no ETC2 formats), so both codecs
+become ASTC 4x4; the native Metal backend also samples ETC2, so ETC1S becomes ETC2 RGB8 there (half the memory of
+ASTC). iOS devices sample ASTC, and ETC2 on the native backend (the backend reports ETC2 on every iOS GPU), so the
+same holds there (not run on an iPhone yet). Hot reload and the asset overlay read Basis Universal files like any
+other (`render.scene_assets_basis_textures` reloads one).
+
+**Measured** (2026-11-07, M4 Pro, Release; `cook.cook_basis_compared_on_demo_textures`): the demo's 19 textures
+(the 8 tiles, the crate's planks and the tunnel's 10, procedural; 1.88 Mtexels in level 0, all with mips) cooked
+directly and through Basis Universal. Quality against the source over every level: PSNR in dB from the squared
+error of all texels of a group (color and data), the mean angle of the normals in degrees (normal maps).
+
+| | Bytes (bits per level-0 texel) | Color, 12 textures | Data, 3 | Normal maps, 4 |
+|---|---|---|---|---|
+| BC7 | 2,519,504 (10.7) | 56.7 dB | 56.1 dB | 0.77° |
+| ASTC 4x4 | 2,519,504 (10.7) | 60.0 dB | 66.6 dB | 0.51° |
+| ETC1S, to any target | 188,980 (0.80) | 37.9 dB | 29.3 to 29.9 dB | 3.3 to 3.4° |
+| UASTC to ASTC 4x4 | 1,255,728 (5.33) | 58.2 dB | 64.3 dB | 0.68° |
+| UASTC to BC7 | | 55.2 dB | 57.4 dB | 0.70° |
+| UASTC to ETC2 | | 40.8 dB | 27.8 dB | 2.68° |
+
+With the default codecs (ETC1S for color, UASTC for data and normal maps) the set is 911,065 bytes. Packages are
+compressed: with `gzip -9` (zip's method) BC7 shrinks to 1,142,874 bytes and ASTC to 1,274,141 (`zstd -19`:
+1,040,458 and 1,158,761), Basis Universal files hardly (ETC1S 183,250, UASTC 1,251,611): UASTC saves no download
+over a compressed BC7 set, ETC1S saves about 6 times.
+
+Cooking the 19 files, one `quench_cook` process each, CPU time: BC7 0.70 s, ASTC 1.26 s, ETC1S 2.17 s, UASTC
+5.14 s. Transcoding the set (every level, one thread): ETC1S to ETC2 3.3 ms, to ASTC 5.1 ms, to RGBA8 5.2 ms, to
+BC7 12.4 ms (1.8, 2.7, 2.8 and 6.6 ms per Mtexel of level 0); UASTC, Zstandard included, to RGBA8 10.4 ms, ASTC
+12.0 ms, BC7 15.9 ms, ETC2 16.5 ms (5.5, 6.4, 8.5 and 8.8 ms per Mtexel). A 64 x 64 file with mips takes 0.03 to
+0.10 ms (`assets.basis_transcode_speed`, the median of 101; as WebAssembly under Node.js 0.02 to 0.18 ms). The first
+transcode of a process also builds the transcoder's tables: 17 to 34 ms more, once, on the loading job.
+
+**The default stays `auto`** (BC7 on the Mac, ASTC 4x4 on iOS): on the platforms the engine runs on, both are
+sampled directly, at a quality Basis Universal does not reach (ETC1S 19 dB below BC7 on color; UASTC 1.5 dB below
+BC7 and 1.8 dB below ASTC on color), with no transcoding at load time and a cook 3 to 7 times faster, and a
+compressed BC7 package is not larger than a UASTC one. Basis Universal is the option for a set that must serve
+devices with other formats (Android's ETC2-only GPUs, the web once it renders), and ETC1S where the download size
+matters more than the quality. The default codecs follow the measurements: ETC1S on data and normal maps is far
+worse (29 dB, 3.3°) than on color.
+
 ## Demo content and tests
 
 The demo's sources (`examples/demo/assets_src/`) are procedural, written by `tools/assets/make_demo_assets.py`
@@ -293,19 +369,29 @@ SOUNDS ...)` checks and copies them ([Audio](audio.md#demo-and-tests)). Its anim
 `tools/assets/make_demo_character.py` (procedural, CC0) writes a mannequin with its clips as glTF and its clip
 settings at build time, and `quench_cook_assets(... MODELS ... SKELETONS ... ANIMATIONS ...)` cooks it
 ([Animation](animation.md#demo-and-tests)); `tools/assets/make_demo_blob.py` writes the blend shape creature the same
-way (four targets, no normals in the file).
+way (four targets, no normals in the file). The Assets section's tiles also come as two Basis Universal sets,
+cooked from the same PNG files with `TEXTURE_FORMAT basis` (`tiles_etc1s/`, `tiles_uastc/`), and its "Tile
+textures" choice loads them ([Engine demo](demo.md#sections)).
 
 Tests: `core.jobs_*` (also without workers and under stress), `physics.*` (Jolt on the job system, single-threaded,
 two worlds on one pool, worker priority), `assets.*` (the manager with a test asset type, KTX2,
-BC7 decoding, `.qmodel` with blend shapes and the version 3 reader, the streaming grid), `audio.sound_assets` (the
+BC7 decoding, `.qmodel` with blend shapes and the version 3 reader, the streaming grid; `assets.basis_*`: the
+header, the target by device support, every test file to RGBA8, BC7, ASTC and ETC2 with its levels and sizes and
+its quality where it can be decoded, the alpha channel, a 6 x 5 file to RGBA8, corrupt and truncated files, the
+transcode time; the files are cooked by the cook's `cook.cook_basis_test_data` into `tests/assets/data/` and
+embedded, so the web build tests them too), `audio.sound_assets` (the
 sound type: loading, plays of a loading
 sound, missing and broken files, a late one-shot dropped), `animation.missing_and_corrupt_assets_hold_the_rest_pose`
 and `animation.reload_rebinds_and_keeps_parameters`, `cook.*` and `cook_cli` (sounds, skeletons, clips and skinned
 models included; `cook.cook_model_morph_targets`: names, default weights, offsets under a non-uniform node scale,
 welding, computed normals),
-`render.scene_assets_*` and `render_vulkan.scene_assets_*` (pixels of placeholders, loaded textures and models,
-failures; `scene_assets_blend_shapes`: weights by name across parts, the file's defaults, kept across a reload;
-Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_assets_vulkan`.
+`cook.cook_basis_round_trips` (each codec from color, alpha and normal maps to every target, with floors),
+`cook.cook_basis_compared_on_demo_textures` (above; Release only), `render.scene_assets_*` and
+`render_vulkan.scene_assets_*` (pixels of placeholders, loaded textures and models, failures;
+`scene_assets_blend_shapes`: weights by name across parts, the file's defaults, kept across a reload;
+`scene_assets_basis_textures`: an ETC1S and a UASTC file in the scene, transcoded to the device's target, and a
+reload of one file with the other; Vulkan through MoltenVK), and the demo's `demo_assets_<backend>` and
+`demo_assets_basis_<backend>`.
 
 ## Limitations
 
@@ -313,11 +399,18 @@ Vulkan through MoltenVK), and the demo's `demo_assets_metal` / `demo_assets_vulk
   asset directory is a directory of the file system (the Mac) and, in development builds, through the asset overlay
   on a device: files are pushed from the Mac by `devicectl` (iOS only; not over the network, no asset server).
   A file removed from the overlay goes back to the bundled one, but the script does not remove files.
-- **Texture formats**: the cook writes BC7, ASTC 4x4 (iOS builds) and RGBA8. Basis Universal transcoding is needed
-  for Android and the web; until then a device without BC sampling gets BC7 decoded to RGBA8 on the CPU (four times
-  the memory), and a device without ASTC sampling gets placeholders for ASTC files (no device the engine has run on
-  lacks it, so that path is checked only where the test sees no ASTC support, which has not happened). ASTC is cooked
-  at 4x4 only (8 bits per texel, as BC7), LDR only; HDR images and larger blocks are not offered.
+- **Texture formats**: the cook writes BC7, ASTC 4x4 (iOS builds), RGBA8 and Basis Universal (opt-in). A device
+  without BC sampling gets BC7 decoded to RGBA8 on the CPU (four times the memory), and a device without ASTC
+  sampling gets placeholders for ASTC files (no device the engine has run on lacks it, so that path is checked only
+  where the test sees no ASTC support, which has not happened); a set for such devices is cooked as Basis
+  Universal. ASTC is cooked at 4x4 only (8 bits per texel, as BC7), LDR only; HDR images and larger blocks are not
+  offered.
+- **Basis Universal**: LDR only (no UASTC HDR or ASTC HDR 6x6), one 2D image per file (no arrays, cube maps or
+  video); the codec is chosen per call of `quench_cook_assets` or per file by `quench_cook`, with the encoder's
+  default quality (no rate-distortion optimization for smaller UASTC files, no ETC1S quality option). ETC2 is
+  sampled only on the native Metal backend; SDL GPU has no ETC2 formats, so on SDL GPU a device without BC7 and ASTC
+  (none so far) gets RGBA8. The measurements are of the demo's procedural textures, on the M4 Pro only; the
+  transcode time on a phone and the look of ETC1S and UASTC on a phone's screen are not measured yet.
 - **Materials**: normal and emissive textures are cooked, named in the model and read by the standard surface
   (`SceneAssets` puts them into a material's textures 2 and 3; [Render module](render.md)); ray hits do not read
   normal maps. Occlusion textures, `KHR_texture_transform` and unlit materials are dropped with a note; cameras and
