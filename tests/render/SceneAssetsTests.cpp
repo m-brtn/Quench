@@ -47,9 +47,12 @@ void writeFile(const std::string& path, std::span<const std::uint8_t> data) {
         .write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
 }
 
-// A clean asset directory per case, installed as the file system backend.
-void useDir(const char* name) {
-    g_assets = std::filesystem::path(quench::test::tmpDir()) / name / "assets";
+// A clean asset directory per case and backend (CTest runs a case's variants at once), installed as the file system
+// backend.
+void useDir(const gpu::Device& device, const char* name) {
+    const gpu::Caps& caps = device.caps();
+    g_assets = std::filesystem::path(quench::test::tmpDir()) /
+               (std::string(name) + "_" + gpu::backendName(caps.backend) + "_" + caps.driver) / "assets";
     std::filesystem::remove_all(g_assets.parent_path());
     std::filesystem::create_directories(g_assets);
     fs::setBackend(fs::makeStdBackend(g_assets, {}));
@@ -207,7 +210,7 @@ bool settle(assets::AssetManager& manager, SceneAssets& sceneAssets) {
 
 QUENCH_TEST(scene_assets_texture_states) {
     QUENCH_GPU_DEVICE(device);
-    useDir("scene_assets_texture_states");
+    useDir(device, "scene_assets_texture_states");
     writeFile("tex/green.ktx2", solidKtx2(20, 200, 20, 16));
     writeFile("tex/red_bc7.ktx2", solidBc7Ktx2(110, 8, 8, 8));
     writeFile("tex/blue_astc.ktx2", solidAstcKtx2(20, 20, 200, 8));
@@ -288,7 +291,7 @@ QUENCH_TEST(scene_assets_texture_states) {
 // and the asset overlay replace a file the same way).
 QUENCH_TEST(scene_assets_basis_textures) {
     QUENCH_GPU_DEVICE(device);
-    useDir("scene_assets_basis_textures");
+    useDir(device, "scene_assets_basis_textures");
     writeFile("tex/green.ktx2", test::basisGreenEtc1s());
     writeFile("tex/blue.ktx2", test::basisBlueUastc());
     {
@@ -358,7 +361,7 @@ QUENCH_TEST(scene_assets_basis_textures) {
 
 QUENCH_TEST(scene_assets_model_states) {
     QUENCH_GPU_DEVICE(device);
-    useDir("scene_assets_model_states");
+    useDir(device, "scene_assets_model_states");
     writeFile(
         "models/box.qmodel",
         boxModel(
@@ -475,7 +478,7 @@ std::vector<std::uint8_t> morphingBoxes() {
 // Blend shapes of a model: by name across its parts, the file's defaults until set, kept across a reload.
 QUENCH_TEST(scene_assets_blend_shapes) {
     QUENCH_GPU_DEVICE(device);
-    useDir("scene_assets_blend_shapes");
+    useDir(device, "scene_assets_blend_shapes");
     writeFile("models/boxes.qmodel", morphingBoxes());
     {
         Result<Renderer> renderer = Renderer::create(device, plainSettings());
