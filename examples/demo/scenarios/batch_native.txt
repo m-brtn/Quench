@@ -33,4 +33,5 @@ include animation_lod.txt
 include animation_skinning.txt
 include animation_retarget.txt
 include animation_blendshapes.txt
+include heat.txt
 quit

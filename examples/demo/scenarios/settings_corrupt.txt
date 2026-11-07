@@ -4,6 +4,8 @@ expect settings_loaded == -1
 expect section == 0
 expect ui_scale == 1
 expect touch_ui == 0
+expect adapt_heat == 0
+expect thermal_reaction == -1
 expect ui == 1
 expect log_warnings >= 1
 section sky

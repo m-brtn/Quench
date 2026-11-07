@@ -1,8 +1,9 @@
 # Quench, the next release (draft)
 
 Not released: no version or tag yet (the version in `project()` stays 0.10.0). Changes since [0.10.0](v0.10.0.md)
-(tag `v0.10.0`): the native Metal backend as the default on Apple platforms; an agent skill on building a game
-on the engine, copied into every new game; the demo's dual quaternion skinning showcase made readable after a user
+(tag `v0.10.0`): the native Metal backend as the default on Apple platforms; an opt-in reaction to the device's
+heat for games, with the demo's Adapt to heat; an agent skill on building a game on the engine, copied into every
+new game; the demo's dual quaternion skinning showcase made readable after a user
 report, and its characters' wrists closed; the Xcode project's generation in the full gate. This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
@@ -30,6 +31,31 @@ report, and its characters' wrists closed; the Xcode project's generation in the
   fallback included), and each batch checks the app's `gpu: backend` line (`quench_add_batch(... GPU
   <backend>:<driver>)`). New cases: `default_backend`, `native_fallback`, `buffer_cycle`. Debug and sanitizer builds
   run `demo_smoke_metal` and `demo_smoke_metal_native` on Apple platforms.
+
+### The app: a reaction to heat
+
+- **`App::thermalGovernor()`** (`quench/app/ThermalGovernor.h`; [App shell](../app.md#thermal-state)): a game's
+  opt-in reaction to the system's thermal state, off by default; the engine still changes nothing by itself. Enabled
+  with a `ThermalGovernorDesc`, it maps the states to limits the game allows (`ThermalLimits`: a frame rate limit, a
+  factor on the render scale, `reduceEffects` for the game's own choice of effects). Defaults: nothing at fair; 60 Hz
+  and x0.8 from serious on; 30 Hz, x0.6 and `reduceEffects` at critical. A higher state applies at once, a lower one
+  only after `recoverSeconds` (60 s) of app time below, then to the highest state of that time; unknown counts as
+  nominal. The App applies the frame rate limit on top of `setMaxFrameRate`, never above it (`App::frameRateLimit()`
+  is the result), and the player's value comes back when it is lifted; `renderScale(playerScale)` gives the game the
+  reduced scale without touching its settings. A log line per change, `onChange`, a perf line field and
+  `PerfReport::reactionStart`, `reactionEnd`, `reactionMax`.
+- **Checks without a hot device:** `--thermal-state nominal|fair|serious|critical|unknown` and the scenario command
+  `thermal_state NAME` (`system` gives the state back) replace the system's state; new scenario values
+  `thermal_reaction`, `thermal_frame_rate_cap`, `thermal_render_scale`, `thermal_reduce_effects`,
+  `thermal_reaction_changes`, `frame_rate_limit`, and after `perf_end` `perf_thermal_reaction_start`, `_end`, `_max`.
+- **The demo's Adapt to heat** (Settings, off; `adapt_to_heat` in `settings.json`, still version 1): the engine's
+  defaults; the render scale goes into what the renderer gets and, at critical, the traced reflections and indirect
+  light fall back to the sky's and the lamp shadows and the shadow and occlusion rays go down to one. The Performance
+  panel shows the thermal state and what is reduced (in both layouts), the Graphics panel a line while limits apply;
+  `benchmark.json` gets the reaction per section. A batch part `heat` (no capture) and a check mode item
+  `tunnel.heat` (the tunnel's phone defaults for 10 minutes with it on; 41 items now).
+- **The template** has the same setting as an example (`"adapt_to_heat": false` in `assets/settings.json`, a
+  checkbox, the scenario command `adapt_to_heat on|off`), and its smoke scenario checks it with `thermal_state`.
 
 ### Building games
 
@@ -129,7 +155,24 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   (under Node.js); `ios-sim-tests` 363 in the iOS Simulator; `ios-xcode` generated; a new game built and started.
   All passed.
 
+- **The reaction to heat** (offscreen, fake states): 10 unit cases of the policy (`thermal_governor_*`,
+  `thermal_limits_text`: escalation at once, the hold and its restart, recovery to the highest state in the hold,
+  the player's frame rate first, unknown as nominal, accumulated limits, disable and callbacks) and the flag's
+  parsing; the demo's `heat` part 48 of 48 checks in each batch: SDL GPU's Metal driver, the native backend (there
+  1 lamp shadow of 4 and the sky's reflections and light at critical, all back after the recovery) and Vulkan
+  through MoltenVK; the template's smoke scenario 11 of 11 in a game made by `tools/new_game.py`. No golden image
+  changed: the reaction is off by default.
+- **Gates with the thermal reaction:** `tools/check.sh full` (2026-11-07, 353.5 s): format; `debug` 506 tests;
+  `release` 618; `asan` 506; `tsan` 506; `wasm-node` 140 (under Node.js); `ios-sim-tests` 379 in the iOS
+  Simulator; `ios-xcode` generated; a new game built and started. All passed.
+
 ## What was not verified
+
+- **The reaction to heat on a hot phone:** it has run with fake states only. Its defaults are a starting point: in
+  the iPhone 17's ten-minute run of 2026-11-06 the tunnel missed intervals at fair, about a minute before serious,
+  where the defaults begin. On a phone the frame rate limit acts through the display link; offscreen runs do not
+  limit frames, so the checks read `frame_rate_limit`, not the frame rate. Nobody has looked at the demo's
+  Performance and Graphics lines on a phone.
 
 - **The native backend as the default on an iPhone:** the tests and batches name their backend, so no iPhone ran it
   as the default (the iOS Simulator did), and nobody has looked at it on a phone's screen. The iPhone 18 Pro Max has not
@@ -174,6 +217,12 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   ```
 
   Without them its iOS configure stops at `quench_cook_assets()`. A game without cooked assets needs nothing.
+- **The thermal state's header:** `app::ThermalState` and `thermalStateName` moved from `quench/app/App.h` to
+  `quench/app/ThermalGovernor.h`, which `App.h` includes: no change for code that includes `App.h`. New and optional:
+  `App::thermalGovernor()`, `App::frameRateLimit()`, `PerfReport::reactionStart`, `reactionEnd`, `reactionMax`
+  (`Unknown` while the reaction is off), the flag `--thermal-state` and the scenario command `thermal_state`. A game
+  that does not enable the governor behaves as before; a game whose own flag or scenario command is named
+  `--thermal-state` or `thermal_state` loses it to the engine's.
 - **The skill:** a game made before this release has no copy; copy `.agents/skills/quench-game/` from the engine
   at the pinned commit if its agents should use it (and again when the pin moves).
 - The rest is in the demo and the engine's own test and gate scripts; `quench_add_batch()` in

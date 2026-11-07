@@ -1,9 +1,13 @@
 # Settings (ctest: demo_settings, with --settings-file and a fresh --user-dir): the section, the UI scale, the touch
-# controls and the hidden windows are saved; tests/DemoUserFiles.cmake reads the file afterwards.
+# controls, Adapt to heat and the hidden windows are saved; tests/DemoUserFiles.cmake reads the file afterwards.
 
 expect settings_loaded == 0
+expect adapt_heat == 0
+expect thermal_reaction == -1
 set ui_scale 1.25
 set touch_controls on
+set adapt_heat on
+expect thermal_reaction >= 0
 section shadows
 tap H
 until ui == 0 1

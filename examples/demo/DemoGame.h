@@ -125,6 +125,12 @@ private:
     void resetSection();
     void resetCamera();
     bool setRenderSetting(std::string_view name, std::string_view value);
+    // `set` names of the demo's own settings: ui_scale, touch_controls, adapt_heat, heat_recover.
+    bool setDemoSetting(std::string_view name, std::string_view value);
+    // Adapt to heat: the engine's thermal reaction on or off as the settings say.
+    void applyAdaptToHeat(quench::app::App& app);
+    // What the renderer gets: graphicsSettings() with Adapt to heat's render scale and effects.
+    quench::render::RenderSettings rendererSettings(const quench::render::RenderSettings& own) const;
     // One line of a check item's setup: `set NAME VALUE`, `camera YAW PITCH DISTANCE`, `hdr off|on|auto`.
     bool runLine(std::string_view line);
     void click(glm::vec2 point);
@@ -143,6 +149,7 @@ private:
     void sectionList(bool compactList);
     void modeButtons();
     void performancePanel(quench::app::App& app);
+    void heatStatus(quench::app::App& app); // Adapt to heat: off, nothing reduced, or what is and since when
     void logPanel();
     void sectionPanel(bool withAbout);
     void aboutContents(quench::app::App& app);
@@ -242,6 +249,9 @@ private:
     double m_settingsSavedAt = -1.0;
     int m_settingsWrites = 0;
     quench::app::HdrMode m_lastHdr = quench::app::HdrMode::Off;
+    // The reaction's hold before its limits are lifted: the engine's default, shorter in checks (`set heat_recover`).
+    double m_heatRecoverSeconds = quench::app::ThermalGovernorDesc{}.recoverSeconds;
+    double m_heatChangedAt = -1.0; // app time of the reaction's last change
 
     // Modes
     Mode m_mode = Mode::None;

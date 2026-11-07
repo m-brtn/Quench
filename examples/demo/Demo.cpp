@@ -131,6 +131,7 @@ Result<void> DemoGame::init(App& app) {
     m_camera.init(input);
 
     loadSettings(app);
+    applyAdaptToHeat(app);
     std::size_t start = 0;
     if (!m_flags.section.empty()) {
         const std::optional<std::size_t> found = find(m_flags.section);
@@ -196,7 +197,7 @@ void DemoGame::update(App& app, double frameDt) {
         current().sectionTime += frameDt;
         current().update(*m_context, frameDt);
     }
-    if (const render::RenderSettings settings = graphicsSettings(current().settings);
+    if (const render::RenderSettings settings = rendererSettings(current().settings);
         !(m_renderer->settings() == settings))
         m_renderer->setSettings(settings);
 
@@ -241,6 +242,7 @@ void DemoGame::render(App& app, app::Frame& frame) {
 void DemoGame::shutdown(App& app) {
     if (m_jobTest && m_jobTest->running) app.jobs().wait(m_jobTest->job);
     m_jobTest.reset();
+    app.thermalGovernor().disable(); // its callback points into the demo
     saveSettings(true);
     if (m_entered && currentReady()) current().leave(*m_context);
     for (Slot& slot : m_slots)
@@ -280,7 +282,7 @@ void DemoGame::select(std::size_t index) {
     m_current = index;
     m_entered = true;
     if (prepare(m_slots[index])) current().enter(*m_context);
-    m_renderer->setSettings(graphicsSettings(current().settings));
+    m_renderer->setSettings(rendererSettings(current().settings));
     m_cut = true; // another scene: no motion vectors from the previous one
     m_camera.reset();
     m_switchMs = elapsedMs(start);
@@ -304,7 +306,7 @@ void DemoGame::resetSection() {
     slot.ready = false;
     slot.error.clear();
     if (prepare(slot)) slot.section->enter(*m_context);
-    m_renderer->setSettings(graphicsSettings(slot.section->settings));
+    m_renderer->setSettings(rendererSettings(slot.section->settings));
     m_cut = true;
     m_camera.reset();
 }
@@ -483,11 +485,66 @@ bool DemoGame::setRenderSetting(std::string_view name, std::string_view value) {
     return true;
 }
 
+bool DemoGame::setDemoSetting(std::string_view name, std::string_view value) {
+    const std::optional<float> number = parseFloat(value);
+    const std::optional<bool> flag = parseBool(value);
+    if (name == "ui_scale" && number) {
+        m_settings.uiScale = std::clamp(*number, 0.5f, 3.0f);
+        applyStyle();
+    } else if (name == "touch_controls" && (value == "auto" || value == "on" || value == "off")) {
+        m_settings.touch = value == "on"    ? TouchControls::On
+                           : value == "off" ? TouchControls::Off
+                                            : TouchControls::Auto;
+        applyStyle();
+    } else if (name == "adapt_heat" && flag) {
+        m_settings.adaptToHeat = *flag;
+        applyAdaptToHeat(m_context->app);
+    } else if (name == "heat_recover" && number && *number >= 0.0f) {
+        m_heatRecoverSeconds = *number; // for this run only
+        applyAdaptToHeat(m_context->app);
+        return true;
+    } else {
+        return false;
+    }
+    noteSettings();
+    return true;
+}
+
+void DemoGame::applyAdaptToHeat(App& app) {
+    app::ThermalGovernor& governor = app.thermalGovernor();
+    if (!m_settings.adaptToHeat) {
+        governor.disable();
+        return;
+    }
+    if (governor.enabled() && governor.desc().recoverSeconds == m_heatRecoverSeconds) return;
+    // The engine's limits per state; the frame rate limit is the App's, the render scale and the effects go into
+    // rendererSettings().
+    governor.enable({.recoverSeconds = m_heatRecoverSeconds,
+                     .onChange = [this, &app](const app::ThermalGovernor&) { m_heatChangedAt = app.time(); }});
+}
+
+render::RenderSettings DemoGame::rendererSettings(const render::RenderSettings& own) const {
+    render::RenderSettings s = graphicsSettings(own);
+    const app::ThermalGovernor& heat = m_context->app.thermalGovernor();
+    s.renderScale = std::max(heat.renderScale(s.renderScale), 0.25f);
+    if (heat.reduceEffects()) {
+        // The traced effects that cost the most per frame, to their fallbacks; the sun's shadows and the lamps'
+        // light stay.
+        s.reflections = render::Reflections::Sky;
+        s.indirectLight = render::IndirectLight::Sky;
+        s.localLightShadows = std::min(s.localLightShadows, 1);
+        s.shadowRays = std::min(s.shadowRays, 1);
+        s.occlusionRays = std::min(s.occlusionRays, 1);
+    }
+    return s;
+}
+
 bool DemoGame::runLine(std::string_view line) {
     const std::vector<std::string_view> w = splitWords(line);
     if (w.empty()) return true;
     if (w[0] == "set" && w.size() == 3)
-        return setRenderSetting(w[1], w[2]) || (currentReady() && current().set(*m_context, w[1], w[2]));
+        return setDemoSetting(w[1], w[2]) || setRenderSetting(w[1], w[2]) ||
+               (currentReady() && current().set(*m_context, w[1], w[2]));
     if (w[0] == "camera" && w.size() == 4) {
         const std::optional<float> yaw = parseFloat(w[1]), pitch = parseFloat(w[2]), distance = parseFloat(w[3]);
         if (!yaw || !pitch || !distance) return false;
@@ -675,6 +732,9 @@ std::optional<double> DemoGame::scenarioValue(std::string_view name) const {
     if (name == "touch_ui") return m_appliedTouch ? 1.0 : 0.0;
     if (name == "settings_loaded") return double(m_settingsLoaded);
     if (name == "settings_writes") return double(m_settingsWrites);
+    if (name == "adapt_heat") return m_settings.adaptToHeat ? 1.0 : 0.0;
+    if (name == "heat_scale") return double(rendererSettings(current().settings).renderScale);
+    if (name == "heat_changed_at") return m_heatChangedAt;
     if (name == "mode") return double(int(m_mode));
     if (name == "tours") return double(m_toursDone);
     if (name == "check_index") return double(m_checkIndex);
@@ -735,22 +795,8 @@ app::ScenarioExec DemoGame::scenarioCommand(App& app, const app::ScenarioCommand
     }
     if (command.op == "set") {
         if (args.size() != 2) return fail("set NAME VALUE");
-        const std::optional<float> number = parseFloat(args[1]);
-        if (args[0] == "ui_scale" && number) {
-            m_settings.uiScale = std::clamp(*number, 0.5f, 3.0f);
-            applyStyle();
-            noteSettings();
-            return done;
-        }
-        if (args[0] == "touch_controls" && (args[1] == "auto" || args[1] == "on" || args[1] == "off")) {
-            m_settings.touch = args[1] == "on"    ? TouchControls::On
-                               : args[1] == "off" ? TouchControls::Off
-                                                  : TouchControls::Auto;
-            applyStyle();
-            noteSettings();
-            return done;
-        }
-        if (setRenderSetting(args[0], args[1]) || (currentReady() && current().set(*m_context, args[0], args[1])))
+        if (setDemoSetting(args[0], args[1]) || setRenderSetting(args[0], args[1]) ||
+            (currentReady() && current().set(*m_context, args[0], args[1])))
             return done;
         return fail(std::format("set {} {}: unknown name or bad value", args[0], args[1]));
     }

@@ -4,6 +4,8 @@ expect settings_loaded == 1
 expect section == 1
 expect ui_scale == 1.25
 expect touch_ui == 1
+expect adapt_heat == 1
+expect thermal_reaction >= 0
 expect ui == 0
 tap H
 until ui == 1 1

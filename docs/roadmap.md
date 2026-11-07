@@ -442,7 +442,7 @@ scaler.
 - [x] The system's thermal state (`app::ThermalState`: frame stats, perf lines, the scenario value `thermal_state`,
   the demo's Performance panel, About and `benchmark.json`) and a frame rate limit (`App::setMaxFrameRate`,
   `--max-frame-rate`, the scenario command `max_frame_rate`), 2026-11-06. The engine does not react to the thermal
-  state by itself.
+  state by itself; a game may opt in to a reaction since 2026-11-07 ("What is next", item 2).
 - [x] Xcode builds copy re-cooked assets into the app (found on the iPhone: the demo's mannequin stayed in the old
   model format): the merged `assets/` folder is touched when a file in it changes, and `<game>_assets` is built
   first ([App shell](app.md#ios-runs)).
@@ -612,18 +612,19 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
 The queue the user set on 2026-11-07, in this order:
 
 1. The native Metal backend as the default on Apple platforms (done 2026-11-07).
-2. A game-level reaction to the thermal state (item 2 below).
+2. A game-level reaction to the thermal state (built 2026-11-07, item 2 below; its phone run is open).
 3. The stages' remaining work (item 3 below).
 4. Navigation and Tracy profiling ([Other modules](#other-modules-when-a-game-needs-them)).
 5. Stage 13, weather (above).
 
 What else stays open, in the order it is useful (not scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (40 items:
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (41 items:
    the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
    input devices, loading and streaming, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
    and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
-   the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, the frame rate and the layout on the phone;
+   the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, the tunnel for 10 minutes with Adapt to
+   heat, the frame rate and the layout on the phone;
    [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.10.0 code (on
    the iPhone 17 last with the stage 11 code), on the iPhone 18 Pro Max the stage 11 and 12 runs (done on the
    iPhone 17), Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes,
@@ -632,10 +633,13 @@ What else stays open, in the order it is useful (not scheduled; the user decides
    the native Metal backend is the default on Apple platforms since 2026-11-07 (the user's decision; it ran the
    device tests and the benchmarks on both iPhones on 2026-11-06 as an option; open: the device test app, the
    demo and hello on an iPhone with it as the default, the hello benchmark on the Mac's screen on both backends, and
-   the user's look at it on the phone). Open: ray-traced shadows or shadow maps in the other sections. Recommended,
-   not built: a game-level reaction to the thermal state (opt-in, for example 60 Hz
-   or a lower render scale from serious on, with hysteresis and the player's choice first); the engine reports the
-   state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
+   the user's look at it on the phone). Open: ray-traced shadows or shadow maps in the other sections. Built
+   2026-11-07: a game-level reaction to the thermal state (`App::thermalGovernor()`, opt-in: by default 60 Hz and 0.8
+   of the render scale from serious on, 30 Hz, 0.6 and fewer effects at critical, lifted after 60 s lower, never
+   above the player's frame rate; `--thermal-state` and the scenario command `thermal_state` to check it; the demo's
+   Adapt to heat, off; [App shell](app.md#thermal-state)); the engine reports the state and limits the frame rate on
+   request, and does not change settings on its own. Open: its defaults on a hot phone (the iPhone 17 missed
+   intervals at fair, a minute before serious; check mode item `tunnel.heat`). The probe grid on phones:
    traced in turns since 2026-11-07 (`probeUpdatePeriod`, measured on the Mac only); its phone default waits for
    `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns at half size, 60 Hz).
 3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); custom surfaces

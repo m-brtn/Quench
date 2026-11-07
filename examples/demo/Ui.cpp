@@ -213,6 +213,7 @@ void DemoGame::performancePanel(App& app) {
         else
             ImGui::Text("GPU resources %lld", static_cast<long long>(app.device().liveResources()));
         ImGui::Text("Thermal state %s", app::thermalStateName(stats.thermal));
+        heatStatus(app);
         const Slot& slot = m_slots[m_current];
         if (slot.initMs >= 0.0) ImGui::Text("Section ready in %.1f ms, switch %.1f ms", slot.initMs, m_switchMs);
         ImGui::Text("Jobs: %d threads, %d pending", app.jobs().threadCount(), app.jobs().pendingCount());
@@ -235,6 +236,31 @@ void DemoGame::performancePanel(App& app) {
     const render::RenderStats& s = m_renderer->stats();
     ImGui::Text("%u draws, %u shadow draws", s.draws, s.shadowDraws);
     ImGui::Text("%s, %s", caps.driver.c_str(), caps.deviceName.c_str());
+}
+
+void DemoGame::heatStatus(App& app) {
+    const app::ThermalGovernor& heat = app.thermalGovernor();
+    if (!heat.enabled()) {
+        ImGui::TextDisabled("Adapt to heat off (Settings)");
+        return;
+    }
+    if (heat.limits() == app::ThermalLimits{}) {
+        ImGui::TextUnformatted("Adapt to heat: nothing reduced");
+    } else {
+        std::string reduced;
+        const auto add = [&reduced](const std::string& part) { reduced += (reduced.empty() ? "" : ", ") + part; };
+        if (app.frameRateLimit() != app.maxFrameRate()) add(std::format("at most {:.0f} fps", app.frameRateLimit()));
+        if (heat.limits().renderScaleFactor < 1.0f)
+            add(std::format("render scale {:.2f} -> {:.2f}", graphicsSettings(current().settings).renderScale,
+                            rendererSettings(current().settings).renderScale));
+        if (heat.reduceEffects()) add("traced reflections, indirect light and lamp shadows but one off");
+        ImGui::TextWrapped("Adapt to heat, %s for %.0f s: %s", app::thermalStateName(heat.level()),
+                           app.time() - m_heatChangedAt,
+                           reduced.empty() ? "nothing below your settings" : reduced.c_str());
+    }
+    if (heat.recoveringSince() >= 0.0)
+        ImGui::TextDisabled("Cooler for %.0f of %.0f s", app.time() - heat.recoveringSince(),
+                            heat.desc().recoverSeconds);
 }
 
 void DemoGame::logPanel() {
@@ -574,6 +600,15 @@ void DemoGame::settingsContents(App& app) {
     outputControls(app);
     ImGui::SetNextItemWidth(itemWidth());
     if (ImGui::SliderFloat("Tour time", &m_tourSeconds, 2.0f, 30.0f, "%.0f s")) noteSettings();
+    if (ImGui::Checkbox("Adapt to heat", &m_settings.adaptToHeat)) {
+        applyAdaptToHeat(app);
+        noteSettings();
+    }
+    recordPoint("ui:adapt_heat");
+    const app::ThermalGovernorDesc heat;
+    ImGui::TextWrapped("Thermal state serious: %s. Critical: %s (fewer traced effects). Lifted after %.0f s cooler.",
+                       app::thermalLimitsText(heat.serious).c_str(), app::thermalLimitsText(heat.critical).c_str(),
+                       m_heatRecoverSeconds);
     if (ImGui::Button("Defaults")) {
         const std::string section = m_settings.section;
         m_settings = Settings{};
@@ -581,6 +616,7 @@ void DemoGame::settingsContents(App& app) {
         m_tourSeconds = m_settings.tourSeconds;
         app.setHdrMode(app::HdrMode::Off);
         app.setPresentMode(gpu::PresentMode::Vsync);
+        applyAdaptToHeat(app);
         applyStyle();
         noteSettings();
     }

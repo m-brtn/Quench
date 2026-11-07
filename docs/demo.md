@@ -84,6 +84,7 @@ What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks
 | The job system | the Performance panel | threads and pending jobs, a job test (256 items on the pool, its time and the items per thread) (added); physics, animation and loads run on it |
 | Frame, CPU and GPU times | the Performance panel | fps, frame, CPU and GPU time, a frame-time graph (added), the GPU time per pass on the native Metal backend; hidden in deterministic runs (captures) |
 | Memory and GPU resources | the Performance panel | the process's memory and the live GPU resources, the section's load and switch times (added) |
+| Thermal state, the reaction to heat | the Performance panel; Settings | the thermal state, and with Adapt to heat what is reduced and for how long (since 2026-11-07) |
 | GPU backend, device, fallbacks | every section's "Frame and fallbacks"; About | the backend, driver, device and capabilities, every fallback with its reason (added); a relaunch with the other backend on the Mac (added) |
 | Display scale, safe area, orientation | the layouts | sizes from the display's scale, windows inside the safe area, the compact layout in portrait and landscape (added) |
 | Logging | the Log panel | the demo's log lines with the warning and error counts (added) |
@@ -173,7 +174,9 @@ cascades. The controls here show those values and change them there.", with "Ope
 "Frame and fallbacks" show and change the panel's value. Reset section keeps the panel's values. The check mode
 and the benchmark run without them (each item and each measurement uses the section's own settings; the panel says
 so and its controls are off) and they come back when the mode ends. The values are kept in `settings.json` (below);
-Defaults in Settings gives every one back.
+Defaults in Settings gives every one back. Adapt to heat ([Settings](#about-and-settings)) applies on top of what
+the panel and the section give, also in the check mode and the benchmark; while it limits something, a line under
+the panel's title says what, and the controls still show the values set.
 
 ## Modes
 
@@ -181,7 +184,7 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
 
 - **Tour** (`--tour [SECONDS]`, default 8; the Tour button takes the Tour time of the settings): every section in turn for
   SECONDS each, round and round, from the current one. Any key, click, touch, button or stick stops it.
-- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 40
+- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 41
   items, one at a time: it switches to the item's section, sets it up (a camera, a setting) and says what to look at
   or listen to. OK, Problem or Skip, with a note, marks the item and goes to the next; the arrows go back and
   forward, End stops. Every mark is written to `checks.json` in the user directory at once, with the backend and the
@@ -193,7 +196,10 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
   look-at, foot placement, the crowd, the 2D blend space, animation LOD, dual quaternion skinning, the retargeted walk and the blend shapes (animation), noise, MetalFX ghosting and the fallback, and since stage 11
   the reflections, the bounced light, the lamp shadows, MetalFX denoising in motion and the path tracer against the
   real-time frame (raytracing), since stage 12 the area lights and their shadows, the brushed aluminium, the
-  puddle and the lamps and the camera in motion (tunnel), the frame rate and the layout on the device.
+  puddle and the lamps and the camera in motion (tunnel), since 2026-11-07 Adapt to heat (`tunnel.heat`: on a
+  phone, the tunnel's defaults in motion for 10 minutes with Adapt to heat on; the Performance panel shows the
+  thermal state and what is reduced; frames should stay smooth, with a lower render scale from serious on), the
+  frame rate and the layout on the device.
 - **Benchmark** (`--benchmark-all [SECONDS]`, default 5; the Benchmark button: 5 s): every section measured in turn
   as `scenarios/benchmark.txt` measures it: a warm-up of a second (or SECONDS, if shorter) and until the section's
   assets are in (at most 6 s), then a perf region of SECONDS in real time (`App::beginPerf` .. `endPerf`). One report
@@ -229,6 +235,7 @@ on the Mac, `Library/Application Support/Quench/Quench Demo/` in the app's data 
 
 - `settings.json`: `section` (the last one), `show_ui`, `ui_scale` (0.5 to 3), `touch_controls` (`auto`, `on`,
   `off`), `hdr` (`off`, `auto`, `on`), `present_mode` (`vsync`, `immediate`, `mailbox`), `tour_seconds` (1 to 120),
+  `adapt_to_heat` (a boolean, off; since 2026-11-07, still version 1: a file without it loads with it off),
   `graphics` (the Graphics panel's options: an object with only the options it sets, under the keys of the table
   above; the choices as names, `aa` `none`, `fxaa`, `taa`; `upscaling` `bilinear`, `spatial`, `temporal`;
   `sun_shadows` `maps`, `rt`; `translucent_shadows` `map`, `dithered`; `ao` `none`, `rt`; `tone` `aces`, `agx`;
@@ -246,7 +253,8 @@ on the Mac, `Library/Application Support/Quench/Quench Demo/` in the app's data 
   `frames`, `frame_avg_ms`, `frame_p50_ms`, `frame_p99_ms`, `frame_max_ms`, `cpu_avg_ms`, `cpu_p50_ms`,
   `cpu_p99_ms`, `process_cpu_ms` and `cpu_performance_share` (the process's CPU time per frame and its percentage
   on performance cores; -1 where unknown), `gpu_avg_ms`, `gpu_p50_ms`, `gpu_samples`, `pass_p50_ms` (the median per timed GPU range, native
-  Metal backend), `details` (the renderer's state, as on a `perf:` line).
+  Metal backend), `thermal_start`, `thermal_end`, `thermal_max`, `thermal_reaction_start`, `thermal_reaction_end`,
+  `thermal_reaction_max` (`off` while Adapt to heat is off), `details` (the renderer's state, as on a `perf:` line).
 
 ## About and settings
 
@@ -263,8 +271,18 @@ the native Metal backend by default, SDL GPU with `--gpu-backend sdl` or the env
 the backend follows the default unless the command line or the environment names one.
 
 Settings: the UI scale (applied when the slider is let go), touch-sized controls (auto, on, off), HDR output, the
-present mode (one piece of code with the Graphics panel's Display group), the tour's time, Defaults (also gives
-back every option of the Graphics panel), and Screenshot (`screenshot-N.png` in the user directory).
+present mode (one piece of code with the Graphics panel's Display group), the tour's time, Adapt to heat, Defaults
+(also gives back every option of the Graphics panel and turns Adapt to heat off), and Screenshot
+(`screenshot-N.png` in the user directory).
+
+Adapt to heat (off) turns on the engine's thermal reaction with its defaults ([App shell](app.md#thermal-state)):
+from the device's thermal state serious on, at most 60 Hz and 0.8 of the render scale; at critical 30 Hz, 0.6, and
+the traced reflections and indirect light fall back to the sky's while the lamp shadows and the shadow and
+occlusion rays go down to one; lifted after 60 s at a lower state. The limits apply on top of each section's
+settings and the Graphics panel's options, which stay as they are (the panel says so in a line while limits apply),
+and never raise the frame rate above the one set. The Performance panel shows the thermal state and, below it, what
+the reaction reduces and how long the device has been cooler. On a Mac the state is nominal unless the machine is
+hot; `--thermal-state serious` shows the reaction anywhere.
 
 ## Check mode on the iPhone
 
@@ -353,10 +371,10 @@ included), from the log's `gpu: backend ...` line.
 `batch.txt` includes, in this order: materials, shadows, sky, post, hdr, hdr_on, physics, input, assets, audio,
 animation, raytracing_fallback, tunnel_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone,
 audio_flyby, audio_music, audio_reverb, audio_hrtf, tunnel_motion_fallback, animation_blend2d, animation_lod, animation_skinning,
-animation_retarget, animation_blendshapes, raytracing_maps, raytracing_screen, cycle. The parts that
+animation_retarget, animation_blendshapes, raytracing_maps, raytracing_screen, heat, cycle. The parts that
 move (the tunnel's motion) and the parts added later come last, before the cycle, which has no capture: TAA's jitter
 follows the frame count, so a part inserted earlier would move every capture after it. `batch_native.txt` ends with
-animation_blend2d, animation_lod, animation_skinning, animation_retarget and animation_blendshapes after
+animation_blend2d, animation_lod, animation_skinning, animation_retarget, animation_blendshapes and heat after
 tunnel_motion (no raytracing_maps or raytracing_screen: the native backend traces those shadows and the occlusion on
 the Mac; the render tests run GTAO there).
 Every part selects its section first (and resets it where it needs the defaults), so it does not depend on the parts
@@ -399,6 +417,7 @@ elements stay where they are what is checked. The menu and the layouts have capt
 | `compact_portrait`, `compact_landscape` | `compact.txt` in a phone-sized frame (400 x 720 and 720 x 320 points): the compact layout, the bar's arrows, the menu sheet, About and its licences, the controls sheet | `demo_compact_portrait.png`, `demo_compact_landscape.png`: the controls sheet over the materials section |
 | `menu` | switching sections by keys, gamepad, a click and a tap on the list; the menu by Tab, the arrows and Enter and by the D-pad, A and B; hiding the windows | none |
 | `audio_tone`, `audio_flyby`, `audio_music`, `audio_reverb`, `audio_hrtf` | the checks on the mix itself (below) | none |
+| `heat` (every batch, before the cycle; the last part on the native backend) | Adapt to heat in the tunnel through `thermal_state` (bilinear at scale 1, so the scale is the reaction's): off, serious changes nothing; on, serious gives 60 Hz and 0.8 of the render scale, critical 30 Hz, 0.6 and the effects reduced (on the native backend 1 lamp shadow of 4, the sky's reflections and light); a frame rate set at 24 stays 24; with a hold of 1 s (`set heat_recover 1`) fair and then nominal lift the limits in two steps, 4 changes in all; unknown counts as nominal; off lifts them at once; the system's state again at the end (48 checks) | none |
 | `cycle` (every batch, the last part on SDL GPU) | every section three times (created or reset, switched, reset), with the live GPU resources, the scene's instances and the error count marked after the first round and the memory after the second: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 64 MB in the third round; no instance more; no new error). The memory is marked a round later since stage 11: after the first round alone it swung between -24 and +47 MB on the native backend, where the ray tracing section's filter histories come and go. The bound is 64 MB since the tunnel moves (2026-11-06): over 20 rounds the footprint moved within about 60 MB from round to round, with the tunnel's motion and without it, with no trend and the same GPU resources | none |
 
 The cycle runs on Vulkan through MoltenVK since 2026-11-06, when the growth there was found in SDL GPU's Vulkan
@@ -482,7 +501,9 @@ transmittance map, 1 dithered, after fallbacks), `moved`, `lights`, `render_w`, 
 `about`, `licence_bytes`, `ui_scale`, `touch_ui`, `settings_loaded` (1 read, 0 not, -1 unusable), `settings_writes`,
 `mode` (0 none, 1 tour, 2 checks, 3 benchmark), `tours`, `check_index`, `check_items`, `check_writes`,
 `checks_pending`, `checks_ok`, `checks_problem`, `checks_skipped`, `benchmark_sections`, `benchmark_written`,
-`log_errors`, `log_warnings`, `job_test_ms` (-1 until a job test finished); then the
+`log_errors`, `log_warnings`, `job_test_ms` (-1 until a job test finished), `adapt_heat` (the setting),
+`heat_scale` (the render scale the renderer gets, after the reaction), `heat_changed_at` (the app time of the
+reaction's last change; -1 before one); then the
 section's own (for example `bodies`, `blasts`,
 `player_x`, `jumps`, `marker_draws`, `exposure`; the assets section's `assets_loading`, `assets_ready`,
 `assets_failed`, `assets_idle`, `assets_loads`, `assets_reloads`, `assets_evictions`, `showcase_ready`,
@@ -500,7 +521,8 @@ of the showcase's right pair and the other characters: 1 dual quaternion, 0 line
 `sheet none|sections|controls|about|settings|graphics`, `mode off|tour|checks|benchmark [SECONDS]`,
 `check ok|problem|skip [NOTE]`, `check next|prev`, `job_test`, `settings_save` (now, not half a second later),
 `settings_corrupt` (overwrites the settings file with text that is not JSON),
-`camera YAW PITCH DISTANCE` (degrees, meters), `set NAME VALUE` (`ui_scale`, `touch_controls auto|on|off`; render settings: `aa none|fxaa|taa`,
+`camera YAW PITCH DISTANCE` (degrees, meters), `set NAME VALUE` (`ui_scale`, `touch_controls auto|on|off`,
+`adapt_heat on|off`, `heat_recover SECONDS` (the reaction's hold for this run, not saved); render settings: `aa none|fxaa|taa`,
 `tone aces|agx`, `cascades`, `shadow_size`, `shadow_filter`, `shadow_distance`, `translucent_shadows map|dithered`,
 `sun_shadows maps|rt`, `shadow_rays`, `shadow_softness`, `ao none|rt`, `ao_rays`, `ao_radius`,
 `upscaling bilinear|spatial|temporal`, `scale`, `bloom`, `bloom_strength`,

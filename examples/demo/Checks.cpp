@@ -177,6 +177,13 @@ constexpr std::array kItems{
               "without trails or smears, and no shadow flickers as the camera passes lamps. Path traced: everything "
               "stops and settles; back to Ray traced, it moves on. A drag hands the camera to the free one.",
               "set animate 1\nset drive 1\nset pause 0"},
+    CheckItem{"tunnel.heat", "tunnel", "Adapt to heat",
+              "On the phone: this turns Adapt to heat on (Settings; it stays on). Let the tunnel drive for 10 minutes "
+              "without touching it, then open the menu: Performance shows the thermal state and what Adapt to heat "
+              "reduces (from serious on the render scale, at critical also 30 fps and the traced effects). Note when "
+              "it turned serious, whether the motion stayed smooth at 60 fps before and after, and whether the "
+              "picture jumps when the scale changes.",
+              "set adapt_heat on\nset animate 1\nset drive 1\nset pause 0"},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",

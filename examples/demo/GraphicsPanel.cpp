@@ -552,7 +552,7 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
     GraphicsOverrides& g = m_settings.graphics;
     const GraphicsOverrides before = g;
     const RenderSettings& own = current().settings;
-    const RenderSettings s = graphicsSettings(own); // what the renderer was given
+    const RenderSettings s = graphicsSettings(own); // what the renderer was given, before Adapt to heat
     const bool locked = graphicsSuspended();
     // The renderer's reason for a fallback without the effect's name and what replaced it.
     const auto reason = [&](std::string_view effect, std::string_view otherwise) {
@@ -577,6 +577,9 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
         ImGui::Text("%.0f fps, frame %.2f ms, CPU %.2f ms, GPU n/a", frame.fps, frame.frameMs, frame.cpuMs);
     const std::string_view title = current().title();
     ImGui::TextDisabled("%.*s; %zu fallbacks", int(title.size()), title.data(), fallbacks.size());
+    if (const app::ThermalGovernor& heat = app.thermalGovernor(); !(heat.limits() == app::ThermalLimits{}))
+        ImGui::TextWrapped("Adapt to heat (Settings), thermal state %s: %s on top of these options.",
+                           app::thermalStateName(heat.level()), app::thermalLimitsText(heat.limits()).c_str());
     ImGui::BeginDisabled(locked || g.empty());
     if (ImGui::Button("Use section defaults")) g = {};
     ImGui::EndDisabled();

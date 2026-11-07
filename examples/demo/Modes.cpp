@@ -266,6 +266,13 @@ bool DemoGame::writeBenchmark(App& app) {
         s.object["thermal_start"] = json::Value::makeString(app::thermalStateName(r.thermalStart));
         s.object["thermal_end"] = json::Value::makeString(app::thermalStateName(r.thermalEnd));
         s.object["thermal_max"] = json::Value::makeString(app::thermalStateName(r.thermalMax));
+        // Adapt to heat's level in the same way; "off" where it was off.
+        const auto reaction = [](app::ThermalState level) {
+            return json::Value::makeString(level == app::ThermalState::Unknown ? "off" : app::thermalStateName(level));
+        };
+        s.object["thermal_reaction_start"] = reaction(r.reactionStart);
+        s.object["thermal_reaction_end"] = reaction(r.reactionEnd);
+        s.object["thermal_reaction_max"] = reaction(r.reactionMax);
         sections.array.push_back(std::move(s));
     }
     v.object["sections"] = std::move(sections);

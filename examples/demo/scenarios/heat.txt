@@ -1,0 +1,89 @@
+# Adapt to heat (ctest: demo_heat_<backend>, a part of the batches; no capture): the setting turns the engine's thermal
+# reaction on, and `thermal_state` fakes the system's state, so no hot device is needed. Off, a serious state changes
+# nothing. On, serious caps the frame rate at 60 Hz and the render scale at 0.8 of the player's; critical at 30 Hz,
+# 0.6, with the traced effects at their fallbacks; a lower frame rate of the player's stays. A cooler state lifts the
+# limits only after the hold (`set heat_recover 1`: 1 s instead of a minute), step by step to the highest state in the
+# hold, and the player's values come back exactly. The tunnel at full size with bilinear scaling, so that the render
+# scale reads the same on every backend.
+section tunnel
+reset_section
+set dither 0
+until tunnel_ready == 1 10
+set animate 0
+set upscaling bilinear
+set scale 1
+wait 0.1
+mark reflections
+mark indirect
+mark local_shadows
+expect adapt_heat == 0
+expect thermal_reaction == -1
+expect render_scale == 1
+thermal_state serious
+wait 0.05
+expect thermal_state == 2
+expect thermal_reaction == -1
+expect frame_rate_limit == 0
+expect render_scale == 1
+set heat_recover 1
+mark thermal_reaction_changes
+set adapt_heat on
+wait 0.05
+expect adapt_heat == 1
+expect thermal_reaction == 2
+expect thermal_frame_rate_cap == 60
+expect thermal_render_scale == 0.8
+expect thermal_reduce_effects == 0
+expect max_frame_rate == 0
+expect frame_rate_limit == 60
+expect heat_scale == 0.8
+expect render_scale == 0.8
+expect d_reflections == 0
+expect d_local_shadows == 0
+thermal_state critical
+wait 0.05
+expect thermal_reaction == 3
+expect frame_rate_limit == 30
+expect heat_scale == 0.6
+expect render_scale == 0.6
+expect thermal_reduce_effects == 1
+expect reflections == 0
+expect indirect == 0
+expect local_shadows <= 1
+max_frame_rate 24
+expect frame_rate_limit == 24
+max_frame_rate 0
+expect frame_rate_limit == 30
+thermal_state fair
+wait 0.5
+expect thermal_reaction == 3
+thermal_state nominal
+wait 0.6
+expect thermal_reaction == 1
+expect frame_rate_limit == 0
+expect render_scale == 1
+wait 1.1
+expect thermal_reaction == 0
+expect frame_rate_limit == 0
+expect heat_scale == 1
+expect render_scale == 1
+expect d_reflections == 0
+expect d_indirect == 0
+expect d_local_shadows == 0
+expect d_thermal_reaction_changes == 4
+thermal_state unknown
+wait 0.05
+expect thermal_state == -1
+expect thermal_reaction == 0
+thermal_state critical
+wait 0.05
+expect thermal_reaction == 3
+set adapt_heat off
+wait 0.05
+expect thermal_reaction == -1
+expect frame_rate_limit == 0
+expect render_scale == 1
+expect d_reflections == 0
+thermal_state system
+set heat_recover 60
+quit

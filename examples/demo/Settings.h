@@ -26,6 +26,9 @@ struct Settings {
     std::string hdr;     // "off", "on", "auto"; empty: the app's default
     std::string present; // "vsync", "immediate", "mailbox"; empty: the app's default
     float tourSeconds = 8.0f;
+    // Adapt to heat: the engine's thermal reaction (App::thermalGovernor) with its defaults ("adapt_to_heat":
+    // optional, off where a file has none).
+    bool adaptToHeat = false;
     // The Graphics panel's options, for every section ("graphics": optional, so files without it still load).
     GraphicsOverrides graphics;
 
