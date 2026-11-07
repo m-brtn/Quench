@@ -242,7 +242,7 @@ public:
             m_azimuth = std::fmod(m_azimuth + dt * 10.0f, 360.0f);
             applySun();
         }
-        if (!still) m_spin += dt * 0.5f;
+        if (!still && m_spinning) m_spin += dt * 0.5f;
         animate();
         if (m_skin < 0 && m_model.ready() && !m_model->skins().empty())
             m_skin = m_anim->addSkin(m_character, m_model->skins()[0].joints, m_model->skins()[0].inverseBindMatrices);
@@ -403,6 +403,8 @@ public:
             m_turnSun = *flag;
         } else if (name == "walk" && flag) {
             m_walk = *flag;
+        } else if (name == "spin" && flag) {
+            m_spinning = *flag;
         } else if (name == "sun_azimuth" && number) {
             m_azimuth = *number;
             applySun();
@@ -475,7 +477,7 @@ private:
     float m_spin = 0.0f; // the torus's turn (rad)
     float m_elevation = 34.0f;
     float m_azimuth = 315.0f;
-    bool m_turnSun = true, m_walk = true, m_teleport = true;
+    bool m_turnSun = true, m_walk = true, m_spinning = true, m_teleport = true;
     bool m_limit60 = false;
     double m_outsideRate = 0.0; // the app's frame rate limit outside the section
 };

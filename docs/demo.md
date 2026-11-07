@@ -539,8 +539,8 @@ of the showcase's right pair and the other characters: 1 dual quaternion, 0 line
 `tone_x`, `tone_z`, `orbit_speed`, `flyby_speed`, `attenuation none|inverse|linear|exponential`, `min_distance`,
 `max_distance`, `doppler`, `music 0|1|2`, `bus_<name>` (volume), `mute_<name>`, `pause_effects`, `ping`,
 `burst N`, `reverb`, `room_size`, `hrtf`; for the animation section `restart`, `speed`, `lean`, `jump`, `wave`, `foot_ik`, `look_at`,
-`footstep_sound`, `slope DEGREES`, `crowd N`, `lod`, `lod_interpolate`, `dual_quaternion`, `twist DEGREES`, `view hero|blend2d|skinning|retarget|blendshapes`, `steer_auto`, `steer_vx`, `steer_vz`, `blob_squash|stretch|puff|spikes WEIGHT`, `blob_clip`; for the ray tracing section `turn_sun`, `walk`, `sun_azimuth`,
-`sun_elevation`).
+`footstep_sound`, `slope DEGREES`, `crowd N`, `lod`, `lod_interpolate`, `dual_quaternion`, `twist DEGREES`, `view hero|blend2d|skinning|retarget|blendshapes`, `steer_auto`, `steer_vx`, `steer_vz`, `blob_squash|stretch|puff|spikes WEIGHT`, `blob_clip`; for the ray tracing section `turn_sun`, `walk`, `spin` (the torus turns; since 2026-11-07),
+`sun_azimuth`, `sun_elevation`).
 
 ## Benchmark
 
@@ -586,7 +586,13 @@ thermal state first, at 20 frames per second on the cheapest frame), and `scenar
 holds the section's phone defaults for a minute at the display's rate and for a minute at 60 Hz;
 `scenarios/raytracing_phone_probes.txt` adds the probe grid to the phone defaults, traced every frame and in 2, 4
 and 8 turns, classified every frame and in 4 turns, 1 m probes in two cascades moved and classified in 4 turns
-(since 2026-11-07), then holds it in 4 turns and classified for 20 s at 60 Hz (not run on a phone yet). For the tunnel,
+(since 2026-11-07), then holds it in 4 turns and classified for 20 s at 60 Hz (not run on a phone yet). The noise of
+the per-pixel indirect light (since 2026-11-07, offscreen on the Mac, no thresholds;
+[Performance](performance.md#the-denoiser-in-a-still-scene)): `scenarios/raytracing_noise.txt` holds the phone
+defaults with it still and captures two frames in a row after 60, 120, 300 and 600 frames, then the same at full
+size, bilinear at half size, with MetalFX temporal and denoising, with the probe grid alone and with the spatial
+denoiser; `scenarios/raytracing_noise_motion.txt` captures it in motion (the camera and the sun stepped as at 60 Hz)
+and the same instant settled, then after the sun jumps by 60 degrees. For the tunnel,
 `scenarios/tunnel_phone.txt` measures each option at half size (and the lamps at 0.67 and full size), then holds the
 section's phone defaults at 60 Hz for 40 s with the lamps still, then 20 s in motion (`tunnel_moving_60hz`), and
 captures them and the path tracer; `tunnel_phone_fallback.txt` runs the fallback frame on SDL GPU, still and in

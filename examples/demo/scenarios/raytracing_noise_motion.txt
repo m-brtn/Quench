@@ -1,0 +1,250 @@
+# The ray-traced indirect light in motion and after a sudden change (docs/performance.md, "The denoiser in a still
+# scene"): the ray tracing section's phone defaults with per-pixel indirect light, converged still for 120 frames;
+# then for 120 frames (2 s at the phone's 60 Hz) the camera pans and the sun turns as they would on the phone (0.5
+# and 0.33 degrees every 2 frames: 15 and 10 degrees per second at 60 Hz), the character walks and the torus spins
+# (at app time: half their speed per frame on the phone, since an offscreen frame is 1/120 s), captured at 30, 60
+# and 120; then everything stops at once and the frame of the same instant settles for 600 frames: the difference
+# of the two is the noise and the lag in motion. Then, from the start camera and still again, the sun jumps by 60
+# degrees; captures 1 to 64 frames after it and the settled frame 600 frames after it. Offscreen on the native
+# backend, the captures into the user directory:
+#   quench-demo --gpu-backend metal --frame-size 1920x1080 --audio-device null --user-dir DIR \
+#     --script raytracing_noise_motion.txt
+section raytracing
+until rt_ready == 1 5
+set dither 0
+set turn_sun 0
+set walk 0
+set spin 0
+set sun_azimuth 315
+set limit_60hz 1
+set sun_shadows rt
+set ao rt
+set local_shadows 2
+set reflections rt
+set denoiser temporal
+set indirect rt
+set upscaling spatial
+set scale 0.5
+windows off
+camera 18 26 10.5
+mark frame
+until d_frame >= 120 10
+
+# In motion.
+set walk 1
+set spin 1
+mark frame
+until d_frame >= 2 5
+camera 18.5 26 10.5
+set sun_azimuth 315.33
+until d_frame >= 4 5
+camera 19 26 10.5
+set sun_azimuth 315.67
+until d_frame >= 6 5
+camera 19.5 26 10.5
+set sun_azimuth 316.00
+until d_frame >= 8 5
+camera 20 26 10.5
+set sun_azimuth 316.33
+until d_frame >= 10 5
+camera 20.5 26 10.5
+set sun_azimuth 316.67
+until d_frame >= 12 5
+camera 21 26 10.5
+set sun_azimuth 317.00
+until d_frame >= 14 5
+camera 21.5 26 10.5
+set sun_azimuth 317.33
+until d_frame >= 16 5
+camera 22 26 10.5
+set sun_azimuth 317.67
+until d_frame >= 18 5
+camera 22.5 26 10.5
+set sun_azimuth 318.00
+until d_frame >= 20 5
+camera 23 26 10.5
+set sun_azimuth 318.33
+until d_frame >= 22 5
+camera 23.5 26 10.5
+set sun_azimuth 318.67
+until d_frame >= 24 5
+camera 24 26 10.5
+set sun_azimuth 319.00
+until d_frame >= 26 5
+camera 24.5 26 10.5
+set sun_azimuth 319.33
+until d_frame >= 28 5
+camera 25 26 10.5
+set sun_azimuth 319.67
+until d_frame >= 30 5
+camera 25.5 26 10.5
+set sun_azimuth 320.00
+capture motion_30.png
+until d_frame >= 32 5
+camera 26 26 10.5
+set sun_azimuth 320.33
+until d_frame >= 34 5
+camera 26.5 26 10.5
+set sun_azimuth 320.67
+until d_frame >= 36 5
+camera 27 26 10.5
+set sun_azimuth 321.00
+until d_frame >= 38 5
+camera 27.5 26 10.5
+set sun_azimuth 321.33
+until d_frame >= 40 5
+camera 28 26 10.5
+set sun_azimuth 321.67
+until d_frame >= 42 5
+camera 28.5 26 10.5
+set sun_azimuth 322.00
+until d_frame >= 44 5
+camera 29 26 10.5
+set sun_azimuth 322.33
+until d_frame >= 46 5
+camera 29.5 26 10.5
+set sun_azimuth 322.67
+until d_frame >= 48 5
+camera 30 26 10.5
+set sun_azimuth 323.00
+until d_frame >= 50 5
+camera 30.5 26 10.5
+set sun_azimuth 323.33
+until d_frame >= 52 5
+camera 31 26 10.5
+set sun_azimuth 323.67
+until d_frame >= 54 5
+camera 31.5 26 10.5
+set sun_azimuth 324.00
+until d_frame >= 56 5
+camera 32 26 10.5
+set sun_azimuth 324.33
+until d_frame >= 58 5
+camera 32.5 26 10.5
+set sun_azimuth 324.67
+until d_frame >= 60 5
+camera 33 26 10.5
+set sun_azimuth 325.00
+capture motion_60.png
+until d_frame >= 62 5
+camera 33.5 26 10.5
+set sun_azimuth 325.33
+until d_frame >= 64 5
+camera 34 26 10.5
+set sun_azimuth 325.67
+until d_frame >= 66 5
+camera 34.5 26 10.5
+set sun_azimuth 326.00
+until d_frame >= 68 5
+camera 35 26 10.5
+set sun_azimuth 326.33
+until d_frame >= 70 5
+camera 35.5 26 10.5
+set sun_azimuth 326.67
+until d_frame >= 72 5
+camera 36 26 10.5
+set sun_azimuth 327.00
+until d_frame >= 74 5
+camera 36.5 26 10.5
+set sun_azimuth 327.33
+until d_frame >= 76 5
+camera 37 26 10.5
+set sun_azimuth 327.67
+until d_frame >= 78 5
+camera 37.5 26 10.5
+set sun_azimuth 328.00
+until d_frame >= 80 5
+camera 38 26 10.5
+set sun_azimuth 328.33
+until d_frame >= 82 5
+camera 38.5 26 10.5
+set sun_azimuth 328.67
+until d_frame >= 84 5
+camera 39 26 10.5
+set sun_azimuth 329.00
+until d_frame >= 86 5
+camera 39.5 26 10.5
+set sun_azimuth 329.33
+until d_frame >= 88 5
+camera 40 26 10.5
+set sun_azimuth 329.67
+until d_frame >= 90 5
+camera 40.5 26 10.5
+set sun_azimuth 330.00
+until d_frame >= 92 5
+camera 41 26 10.5
+set sun_azimuth 330.33
+until d_frame >= 94 5
+camera 41.5 26 10.5
+set sun_azimuth 330.67
+until d_frame >= 96 5
+camera 42 26 10.5
+set sun_azimuth 331.00
+until d_frame >= 98 5
+camera 42.5 26 10.5
+set sun_azimuth 331.33
+until d_frame >= 100 5
+camera 43 26 10.5
+set sun_azimuth 331.67
+until d_frame >= 102 5
+camera 43.5 26 10.5
+set sun_azimuth 332.00
+until d_frame >= 104 5
+camera 44 26 10.5
+set sun_azimuth 332.33
+until d_frame >= 106 5
+camera 44.5 26 10.5
+set sun_azimuth 332.67
+until d_frame >= 108 5
+camera 45 26 10.5
+set sun_azimuth 333.00
+until d_frame >= 110 5
+camera 45.5 26 10.5
+set sun_azimuth 333.33
+until d_frame >= 112 5
+camera 46 26 10.5
+set sun_azimuth 333.67
+until d_frame >= 114 5
+camera 46.5 26 10.5
+set sun_azimuth 334.00
+until d_frame >= 116 5
+camera 47 26 10.5
+set sun_azimuth 334.33
+until d_frame >= 118 5
+camera 47.5 26 10.5
+set sun_azimuth 334.67
+until d_frame >= 120 5
+camera 48 26 10.5
+set sun_azimuth 335.00
+capture motion_120.png
+set turn_sun 0
+set walk 0
+set spin 0
+mark frame
+until d_frame >= 600 30
+capture motion_120_settled.png
+
+# A sudden change: the sun jumps by 60 degrees.
+camera 18 26 10.5
+set sun_azimuth 315
+mark frame
+until d_frame >= 120 10
+set sun_azimuth 15
+mark frame
+until d_frame >= 1 5
+capture jump_1.png
+until d_frame >= 2 5
+capture jump_2.png
+until d_frame >= 4 5
+capture jump_4.png
+until d_frame >= 8 5
+capture jump_8.png
+until d_frame >= 16 5
+capture jump_16.png
+until d_frame >= 32 5
+capture jump_32.png
+until d_frame >= 64 5
+capture jump_64.png
+until d_frame >= 600 30
+capture jump_settled.png
+quit

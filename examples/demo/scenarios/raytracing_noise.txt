@@ -1,0 +1,126 @@
+# The noise of the ray-traced indirect light in a still scene (docs/performance.md, "The denoiser in a still
+# scene"): the ray tracing section's phone defaults with per-pixel indirect light (half size, MetalFX spatial, the
+# engine's temporal denoiser), the camera, the sun, the character and the torus still; captures 60, 120, 300 and 600
+# frames after the settings change (1, 2, 5 and 10 s at the phone's 60 Hz; a change of the render size or the
+# upscaler starts the histories again), two frames in a row at each; then the same at full size without MetalFX, at
+# half size bilinear, with MetalFX temporal and denoising, with the probe grid alone and with the spatial denoiser,
+# up to 300 frames each. Offscreen on the native backend, the captures into the user directory:
+#   quench-demo --gpu-backend metal --frame-size 1920x1080 --audio-device null --user-dir DIR \
+#     --script raytracing_noise.txt
+section raytracing
+until rt_ready == 1 5
+set dither 0
+set turn_sun 0
+set walk 0
+set spin 0
+set limit_60hz 1
+set sun_shadows rt
+set ao rt
+set local_shadows 2
+set reflections rt
+set denoiser temporal
+windows off
+
+# The phone defaults with per-pixel indirect light.
+set indirect rt
+set upscaling spatial
+set scale 0.5
+mark frame
+wait 0.1
+expect indirect == 2
+expect upscaling == 1
+expect render_scale == 0.5
+until d_frame >= 60 10
+capture phone_60_a.png
+capture phone_60_b.png
+until d_frame >= 120 10
+capture phone_120_a.png
+capture phone_120_b.png
+until d_frame >= 300 20
+capture phone_300_a.png
+capture phone_300_b.png
+until d_frame >= 600 30
+capture phone_600_a.png
+capture phone_600_b.png
+
+# Full size, bilinear (no MetalFX).
+set upscaling bilinear
+set scale 1
+mark frame
+until d_frame >= 60 10
+capture full_60_a.png
+capture full_60_b.png
+until d_frame >= 120 10
+capture full_120_a.png
+capture full_120_b.png
+until d_frame >= 300 20
+capture full_300_a.png
+capture full_300_b.png
+
+# Half size, bilinear: MetalFX spatial's own share.
+set scale 0.5
+mark frame
+until d_frame >= 60 10
+capture bilinear_60_a.png
+capture bilinear_60_b.png
+until d_frame >= 120 10
+capture bilinear_120_a.png
+capture bilinear_120_b.png
+until d_frame >= 300 20
+capture bilinear_300_a.png
+capture bilinear_300_b.png
+
+# Half size, MetalFX temporal.
+set upscaling temporal
+mark frame
+until d_frame >= 60 10
+capture temporal_60_a.png
+capture temporal_60_b.png
+until d_frame >= 120 10
+capture temporal_120_a.png
+capture temporal_120_b.png
+until d_frame >= 300 20
+capture temporal_300_a.png
+capture temporal_300_b.png
+
+# Half size, MetalFX denoising (the raw signals).
+set upscaling denoised
+mark frame
+until d_frame >= 60 10
+capture denoised_60_a.png
+capture denoised_60_b.png
+until d_frame >= 120 10
+capture denoised_120_a.png
+capture denoised_120_b.png
+until d_frame >= 300 20
+capture denoised_300_a.png
+capture denoised_300_b.png
+
+# The phone defaults with the probe grid alone.
+set upscaling spatial
+set indirect probes
+mark frame
+until d_frame >= 60 10
+capture probes_60_a.png
+capture probes_60_b.png
+until d_frame >= 120 10
+capture probes_120_a.png
+capture probes_120_b.png
+until d_frame >= 300 20
+capture probes_300_a.png
+capture probes_300_b.png
+
+# The phone defaults with per-pixel indirect light and the spatial denoiser.
+set indirect rt
+set denoiser spatial
+mark frame
+until d_frame >= 60 10
+capture spatial_60_a.png
+capture spatial_60_b.png
+until d_frame >= 120 10
+capture spatial_120_a.png
+capture spatial_120_b.png
+until d_frame >= 300 20
+capture spatial_300_a.png
+capture spatial_300_b.png
+quit
