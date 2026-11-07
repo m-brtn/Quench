@@ -214,7 +214,8 @@ public:
         return "Area lights (floor strips, ceiling squares, a wall panel, neon tubes, a round portal) and two spots in "
                "a tunnel of metal panels, wet asphalt with a puddle, rubber, embossed plastic and brushed aluminium "
                "(anisotropic). With ray tracing: soft lamp shadows, traced reflections and a path tracer. Elsewhere "
-               "the lamps light and shine without shadows and reflect only the night sky.";
+               "the lamps light and shine without shadows (soft ones from shadow maps as an option) and reflect only "
+               "the night sky.";
     }
 
     Result<void> init(Context& c) override {
@@ -491,8 +492,8 @@ public:
         const gpu::Caps& caps = c.app.device().caps();
         const ActiveEffects& e = c.renderer.effects();
         if (!caps.rayTracing)
-            ImGui::TextWrapped("No ray tracing: %s The lamps light and shine without shadows; reflections are the "
-                               "night sky's.",
+            ImGui::TextWrapped("No ray tracing: %s The lamps light and shine without shadows (or soft ones from "
+                               "shadow maps, an option); reflections are the night sky's.",
                                rayTracingWhyNot(caps));
         int mode = settings.pathTracer ? 1 : 0;
         ImGui::TextUnformatted("Rendering");
@@ -505,8 +506,19 @@ public:
             ImGui::TextWrapped("%u samples; everything stands still while it runs", c.renderer.stats().pathSamples);
         ImGui::SliderInt("Lamp shadows", &settings.localLightShadows, 0, kMaxRayLocalShadows);
         if (settings.localLightShadows > 0 && e.localLightShadows == 0)
-            ImGui::TextDisabled(e.localShadowMaps > 0 ? "  fallback: shadow maps (the area lights unshadowed)"
-                                                      : "  fallback: unshadowed");
+            ImGui::TextDisabled(e.localShadowMaps > 0 ? "  fallback: shadow maps" : "  fallback: unshadowed");
+        if (!caps.rayTracing) {
+            int maps = settings.localShadowMapSize >= 1024  ? 3
+                       : settings.localShadowMapSize >= 512 ? 2
+                       : settings.localShadowMapSize > 0    ? 1
+                                                            : 0;
+            if (ImGui::Combo("Lamp shadow maps", &maps,
+                             "Off\0"
+                             "256\0"
+                             "512\0"
+                             "1024\0"))
+                settings.localShadowMapSize = maps == 0 ? 0u : 128u << maps;
+        }
         bool reflections = settings.reflections == Reflections::RayTraced;
         if (ImGui::Checkbox("Traced reflections", &reflections))
             settings.reflections = reflections ? Reflections::RayTraced : Reflections::Sky;

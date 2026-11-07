@@ -2984,6 +2984,119 @@ QUENCH_TEST(renderer_ray_traced_area_light_shadows) {
     CHECK(o > 0.95f && o < 1.05f, "the open ground: %.3f", double(o));
 }
 
+// Area light shadows without ray tracing: the scene of renderer_ray_traced_area_light_shadows with shadow maps (five
+// for the one-sided rect). For one flat blocker the soft filter is exact: about 40% of the light is seen at 1.3 m.
+// Then a tube light (six maps) standing beside a post as tall as it. Where rays run, the same shadows are traced, and
+// the checks hold for them too. Last, with maps only, a spot light beside a rect light: both read in one screen-space
+// pass.
+QUENCH_TEST(renderer_area_light_shadow_maps) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.localLightShadows = 1;
+    settings.localShadowMapSize = 512;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    const bool maps = renderer->effects().localShadowMaps > 0;
+    if (!maps && !lightingActive(device, *renderer, "ray-traced local light shadows: "))
+        QUENCH_SKIP("no local light shadows on this device");
+    std::printf("  %s\n", maps ? "shadow maps" : "ray traced");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.6f, 0.6f, 0.6f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    const InstanceId blocker =
+        scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0, 1.5f, 0})});
+    const LightId rect = scene.addLight(
+        {.type = LightType::Rect, .intensity = 6.0f, .position = {0, 3.0f, 0}, .range = 12.0f, .size = {1.0f, 1.0f}});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 4.0f, 6.0f), glm::vec3(0));
+    const int frames = maps ? 1 : 24;
+    const std::vector<Rgba8> shadowed = settle(device, *renderer, scene, view, *target, frames);
+    REQUIRE(shadowed.size() == kSize * kSize, "%zu pixels", shadowed.size());
+    if (maps)
+        CHECK(renderer->stats().localShadowLights == 1 && renderer->stats().localShadowMaps == 5,
+              "the rect's five maps: %u lights, %u maps", renderer->stats().localShadowLights,
+              renderer->stats().localShadowMaps);
+    settings.localLightShadows = 0;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> unshadowed = settle(device, *renderer, scene, view, *target, 2);
+    const auto share = [&](const std::vector<Rgba8>& a, const std::vector<Rgba8>& b, glm::vec3 p) {
+        return meanValue(a, view, p) / meanValue(b, view, p);
+    };
+    const float u = share(shadowed, unshadowed, {0, 0, 0}), p = share(shadowed, unshadowed, {1.3f, 0, 0});
+    std::printf("  rect: lit share under the box %.3f, beside it %.3f\n", double(u), double(p));
+    CHECK(u < 0.1f, "the umbra: %.3f", double(u));
+    CHECK(p > 0.25f && p < 0.6f, "the penumbra: %.3f", double(p));
+    // The open ground around the box's penumbra (it ends 2.5 m from the middle), on several of the maps: no acne, no
+    // seams between them.
+    float worst = 0.0f;
+    for (const glm::vec3 o : {glm::vec3(2.6f, 0, 0), glm::vec3(-2.7f, 0, 0.5f), glm::vec3(0, 0, 2.7f),
+                              glm::vec3(1.0f, 0, 3.0f), glm::vec3(-1.2f, 0, 2.8f), glm::vec3(2.7f, 0, -1.5f)}) {
+        const float s = share(shadowed, unshadowed, o);
+        worst = std::max(worst, std::abs(s - 1.0f));
+        CHECK(s > 0.95f && s < 1.05f, "the open ground at (%.1f, %.1f): %.3f", double(o.x), double(o.z), double(s));
+    }
+    std::printf("  rect: open ground within %.3f of unshadowed\n", double(worst));
+
+    // A tube light standing beside a post: its shadow falls on the ground behind the post, soft along the tube.
+    scene.removeLight(rect);
+    scene.setTransform(blocker, glm::scale(glm::translate(glm::mat4(1.0f), {0, 0.75f, 0}), {0.6f, 1.5f, 0.6f}));
+    const LightId tube = scene.addLight({.type = LightType::Tube,
+                                         .intensity = 20.0f,
+                                         .position = {-1.5f, 1.0f, 0.0f},
+                                         .range = 8.0f,
+                                         .size = {1.0f, 0.03f},
+                                         .tangent = glm::vec3(0, 1, 0)});
+    settings.localLightShadows = 1;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> tubeShadowed = settle(device, *renderer, scene, view, *target, frames);
+    if (maps)
+        CHECK(renderer->stats().localShadowLights == 1 && renderer->stats().localShadowMaps == 6,
+              "the tube's six maps: %u lights, %u maps", renderer->stats().localShadowLights,
+              renderer->stats().localShadowMaps);
+    settings.localLightShadows = 0;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> tubeOpen = settle(device, *renderer, scene, view, *target, 2);
+    const float behind = share(tubeShadowed, tubeOpen, {0.9f, 0, 0}),
+                side = share(tubeShadowed, tubeOpen, {0, 0, 1.2f});
+    std::printf("  tube: lit share behind the post %.3f, beside it %.3f\n", double(behind), double(side));
+    CHECK(behind < 0.1f, "behind the post: %.3f", double(behind));
+    CHECK(side > 0.95f && side < 1.05f, "beside the post: %.3f", double(side));
+    if (!maps) return;
+
+    // A spot light beside an area light with maps: its map is read in the same screen-space pass.
+    scene.removeLight(tube);
+    scene.addLight({.type = LightType::Rect,
+                    .intensity = 2.0f,
+                    .position = {0, 3.0f, -6.0f},
+                    .range = 12.0f,
+                    .size = {1.0f, 1.0f}});
+    scene.addLight({.type = LightType::Spot,
+                    .intensity = 20.0f,
+                    .position = {2.0f, 1.2f, 0.0f},
+                    .direction = glm::normalize(glm::vec3(-1.0f, -0.5f, 0.0f)),
+                    .range = 6.0f,
+                    .innerAngle = 0.5f,
+                    .outerAngle = 0.6f});
+    settings.localLightShadows = 2;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> spotShadowed = settle(device, *renderer, scene, view, *target, frames);
+    CHECK(renderer->stats().localShadowLights == 2 && renderer->stats().localShadowMaps == 6,
+          "the rect's five maps and the spot's: %u lights, %u maps", renderer->stats().localShadowLights,
+          renderer->stats().localShadowMaps);
+    settings.localLightShadows = 0;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> spotOpen = settle(device, *renderer, scene, view, *target, 2);
+    const float spotBehind = share(spotShadowed, spotOpen, {-0.9f, 0, 0});
+    const float spotSide = share(spotShadowed, spotOpen, {1.0f, 0, -1.0f});
+    std::printf("  spot: lit share behind the post %.3f, beside it %.3f\n", double(spotBehind), double(spotSide));
+    CHECK(spotBehind < 0.3f, "behind the post: %.3f", double(spotBehind));
+    CHECK(spotSide > 0.95f && spotSide < 1.05f, "beside the post: %.3f", double(spotSide));
+}
+
 // The path tracer and the raster agree on area lights: the scene of renderer_area_lights_match_their_integrals traced
 // with next-event estimation on the lights and MIS against BRDF samples that hit their shapes.
 QUENCH_TEST(renderer_path_tracer_area_lights) {

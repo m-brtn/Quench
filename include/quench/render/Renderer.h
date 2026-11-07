@@ -145,9 +145,9 @@ struct RenderSettings {
     // Ray-traced shadows of the frame's nearest local lights with castsShadows (0..kMaxRayLocalShadows; one ray per
     // pixel and light, soft by LightDesc::sourceRadius; gpu::Caps::rayTracing, else localShadowMapSize's maps).
     int localLightShadows = 0;
-    // Where those shadows cannot be ray traced: shadow maps of this many texels per side (64..4096) for the point and
-    // spot lights among them, one per spot light and six per point light (the faces of a cube), filtered over 4 x 4
-    // texels. 0: unshadowed there. Area lights stay unshadowed without ray tracing.
+    // Where those shadows cannot be ray traced: shadow maps of this many texels per side (64..4096) for the lights
+    // among them: one per spot light and six per point light (the faces of a cube), filtered over 4 x 4 texels; six
+    // per area light (five for a one-sided rect or disk), soft by the shape's size. 0: unshadowed there.
     std::uint32_t localShadowMapSize = 0;
     Reflections reflections = Reflections::Sky;
     float reflectionRoughness = 0.5f; // traced (or screen-space) reflections up to this roughness, the sky's above
@@ -291,7 +291,8 @@ struct RenderStats {
     // had in the previous frame: the channel's history was another light's shadow.
     std::uint32_t localShadowChanges = 0;
     // Local lights with shadow maps (RenderSettings::localShadowMapSize), the maps rendered (a spot light's one, a
-    // point light's six), the instances drawn into them (summed over the maps) and their draw calls.
+    // point light's six, an area light's five or six), the instances drawn into them (summed over the maps) and their
+    // draw calls.
     std::uint32_t localShadowLights = 0;
     std::uint32_t localShadowMaps = 0;
     std::uint32_t localShadowInstances = 0;

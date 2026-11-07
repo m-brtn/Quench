@@ -149,14 +149,16 @@ SamplerState quenchLocalShadowSampler : QUENCH_SAMPLER(13);
 // True when the material has texture n (MaterialDesc::textures); unset textures sample white.
 bool quenchHasTexture(int n) { return (uint(quenchMaterial.surface.w) & (1u << uint(n))) != 0u; }
 
-// In a frame with local light shadow maps (FrameUniforms::localShadows.x is not 0): the shadows of the lights that
-// have them, in their channels (LocalLight::cone.y = channel + 1), 1 = lit.
+// In a frame with local light shadow maps (FrameUniforms::localShadows.x is not 0): the shadows of the point and spot
+// lights that have them, in their channels (LocalLight::cone.y = channel + 1), 1 = lit. Area lights' maps are read in
+// a screen-space pass (src/render/shaders/localshadow.hlsl), which opaque surfaces read as traced shadows; here they
+// are lit.
 float4 quenchLocalShadows(Texture2DArray<float> maps, SamplerState s, float3 P, float3 N) {
     float4 lit = float4(1.0, 1.0, 1.0, 1.0);
     const int lights = int(quenchLights.count.x);
     for (int k = 0; k < lights; ++k) {
         const LocalLight light = quenchLights.lights[k];
-        if (light.cone.y <= 0.0) continue;
+        if (light.cone.y <= 0.0 || int(light.color.w) >= QUENCH_LIGHT_RECT) continue;
         const int c = int(light.cone.y) - 1;
         const float v = quenchLocalShadow(maps, s, light, P, N);
         lit = min(lit, float4(c == 0 ? v : 1.0, c == 1 ? v : 1.0, c == 2 ? v : 1.0, c == 3 ? v : 1.0));

@@ -194,7 +194,9 @@ where the light fades to zero.
   first): one ray per pixel and light toward a uniform point of the shape (a second point when the first is behind
   the surface or on the dark side), so the penumbra widens away from the caster; the temporal denoiser filters it like
   the other local lights. The visibility multiplies the LTC light (the light's mean visibility over its area, not
-  weighted by where on the shape the light comes from). Without ray tracing they are unshadowed.
+  weighted by where on the shape the light comes from). Without ray tracing they are unshadowed, or since
+  2026-11-07 (after 0.10.0) take shadow maps soft by their shape where `localShadowMapSize` is set
+  ([below](#local-light-shadow-maps)).
 - **Path tracer**: next-event estimation picks one of the lights at random and an area light's point uniformly over
   its area (a tube over its facing half), and BRDF samples that hit a shape count with multiple importance sampling
   (power heuristic), so small bright lamps and large dim panels both converge.
@@ -295,8 +297,8 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   `castsShadows` get one shadow ray per pixel each toward a random point of their sphere (`LightDesc::sourceRadius`,
   0: hard), cut-out and translucent casters as for the sun; the result is one channel per light of a second mask,
   filtered like the sun's (fragment sampler 9, `options.w` bit 4). Without ray tracing they are unshadowed, or since
-  2026-11-07 (0.10.0) the point and spot lights among them take shadow maps where `localShadowMapSize` is set
-  (below, "Local light shadow maps"). The channels go to the lights in order of distance each frame: a light that
+  2026-11-07 they take shadow maps where `localShadowMapSize` is set (point and spot lights since 0.10.0, area
+  lights after it; below, "Local light shadow maps"). The channels go to the lights in order of distance each frame: a light that
   takes a channel another light (or none) had starts from that channel's history, counted in
   `RenderStats::localShadowChanges` (in the demo's moving tunnel 4 to 10 times in 34 s, without a visible trace:
   [Performance](performance.md#the-tunnel-in-motion)). Test `renderer_ray_traced_local_light_shadows`: behind a box
@@ -350,20 +352,23 @@ passes' GPU costs at 1080p are in [Performance](performance.md#measurements).
 
 ### Local light shadow maps
 
-Since 2026-11-07 (0.10.0). Where `localLightShadows` cannot be ray traced (SDL GPU, the default
-off Apple platforms, and the native backend without `gpu::Caps::rayTracing`), `RenderSettings::
-localShadowMapSize` (0, the default: off; else 64..4096 texels per side) gives the same lights shadow maps: the
-nearest `localLightShadows` (at most 4) point and spot lights with `castsShadows`, chosen as for the rays.
-`ActiveEffects::localShadowMaps` is that count; `RenderStats::localShadowLights`, `localShadowMaps`,
-`localShadowInstances` and `localShadowDraws` say what a frame drew. Area lights stay unshadowed without ray tracing
-(their soft shadows would need a filter as wide as the shape; that is stage 12's remaining work).
+Since 2026-11-07 (0.10.0; area lights since the same day, after 0.10.0). Where `localLightShadows` cannot be ray
+traced (SDL GPU, the default off Apple platforms, and the native backend without `gpu::Caps::rayTracing`),
+`RenderSettings::localShadowMapSize` (0, the default: off; else 64..4096 texels per side) gives the same lights
+shadow maps: the nearest `localLightShadows` (at most 4) point, spot and area lights with `castsShadows`, chosen as
+for the rays. `ActiveEffects::localShadowMaps` is that count; `RenderStats::localShadowLights`, `localShadowMaps`,
+`localShadowInstances` and `localShadowDraws` say what a frame drew.
 
 - **Maps.** One layer of a depth texture array (the cascades' format, standard depth) per map: a spot light whose
   outer cone is under 60 degrees takes one perspective map over its cone, a wider spot and a point light six, the
   faces of a cube (+x, -x, +y, -y, +z, -z), each 3 texels wider than 90 degrees so that the filter does not read
   past a face's edge. Near plane: the light's `sourceRadius`, at least 1 % of its range; far plane: the range. The
   array is made for the frame's count of maps (at most 24) and kept while that count and the size hold: the demo's
-  two lamps at 512 are 7 layers, 7 MB with `Depth32Float`.
+  two lamps at 512 are 7 layers, 7 MB with `Depth32Float`. An area light takes a cube of maps in its own frame (x
+  its tangent, y its normal, for a tube a direction across its axis): the point light's faces and up vectors in
+  that frame, five for a one-sided rect or disk (none looks behind it); far plane the range plus the shape's radius,
+  near plane 1 % of it (`QUENCH_AREA_SHADOW_NEAR`); `LocalLight::cone.w` is its first layer + 1. The tunnel's four
+  nearest lamps at 512 are 21 layers, 21 MB.
 - **Casters** (timed range `local_shadows`, after the cascades): every instance with `castsShadows` whose bounds meet
   a map's frustum, drawn with the cascades' shadow pipelines and depth bias. Cut-out casters keep their holes
   (`surface_shadow_fs`), translucent ones are dithered into the depth (no transmittance map for local lights),
@@ -378,18 +383,52 @@ nearest `localLightShadows` (at most 4) point and spot lights with `castsShadows
   draws with that variant in frames with maps only, so other frames pay nothing for it (4 sections measured within
   0.5 % of before on the native backend, [Performance](performance.md#local-light-shadow-maps)); a surface without
   it leaves its local lights unshadowed in those frames. The standard surface and the demo's checker have it.
+- **In screen space where an area light has maps.** Their soft filter is too costly per surface fragment (the
+  tunnel's four lamps took about 7.6 ms more of a 1080p frame on the M4 Pro read that way, 1.4 ms in the screen
+  pass), so in such frames every map is read once per 2 x 2 pixels (`ScreenSpace::resolveLocalShadows`,
+  `src/render/shaders/localshadow.hlsl`): a depth prepass of its own (as GTAO's, timed range `prepass`), then
+  `local_shadow_fs` at the top-left pixel of each block, at its depth's position with its normal from the depth,
+  writes every mapped light's shadow into its channel, and `local_shadow_blur_fs` averages the 3 x 3 texels around
+  each pixel's own at full resolution (weighted by how well their depth continues the pixel's and by distance) into
+  an `Rgba8Unorm` target (timed range `local_filter`). Opaque surfaces read it as they read traced local shadows
+  (sampler 9, `options.w` bit 4) with their usual variants; transparent ones are drawn with
+  `surface_local_shadows_fs`, which reads the point and spot lights' maps and leaves area lights unshadowed. Without
+  the screen-space pipelines the frame's local lights stay unshadowed.
+- **Area lights' penumbra** (`quenchAreaShadow` in `Shadows.hlsli`): percentage-closer soft shadows (Fernando 2005)
+  with the shape's own points as the kernel. A search of 8 `Gather` taps over the region where blockers of the
+  shape's light could be (from P's own direction outward, quadratically, within about 37 degrees of it) finds the
+  blockers' mean depth d (none: lit; all: shadowed); then 8 bilinear taps toward points of the shape (uniform over a
+  rect's or disk's area, over the half of a tube that faces P) seen through a blocker at d say which of them P sees.
+  Depths are measured from the shape's plane (a tube's axis), so a tap toward point p runs along q + p (z_R / d - 1),
+  exact for one flat blocker parallel to the shape. Each point counts with its diffuse light at P (the cosines at
+  both ends over the squared distance; the ratio of Heitz et al. 2018), so the far ends of the tunnel's 25 m floor
+  strips add little to a wall's shadow. A tap's reference depth is where its direction meets P's plane (no acne on
+  slanted receivers); the taps turn per pixel by interleaved gradient noise, per frame under TAA, and the blur
+  evens that out.
 - **Cost** on the M4 Pro at 1080p (SDL GPU's Metal driver, offscreen): the demo's ray tracing section's two lamps (a
   point light and a spot light, 7 maps) add 0.3 to 0.4 ms to the frame and about 0.1 ms of CPU time; the map size
-  barely matters (256 to 1024).
+  barely matters (256 to 1024). The tunnel's four nearest lamps (two floor strips, a ceiling square, a tube: 21 maps
+  at 512), on the native backend with its rays switched off in a local build (offscreen, 1920 x 1080 output): 0.92 ms
+  of GPU time more per frame at the section's 0.67 render scale (maps 0.23, prepass 0.02, screen pass 0.70 ms;
+  `hdr` unchanged), 1.7 ms at the full size (maps 0.37, screen pass 1.38 ms)
+  ([Performance](performance.md#area-light-shadow-maps)).
 - **Test** `renderer_local_light_shadow_maps` (SDL GPU's Metal driver and Vulkan through MoltenVK; on the Mac's native
   backend the same scene with traced shadows): a point light and a spot light over small casters; behind them 0
   where the open ground has 411, 687 (under a plate, the -y face), 381 and 375; lit points beside them as without
   shadows; nine open ground points, among them the edge of two cube faces and the corner of three, 0 apart from the
   unshadowed image (no acne, no seams). One light with shadows takes the nearer spot light's one map; size 0 leaves
-  them unshadowed and says so in `fallbacks()`.
-- **Limits.** Shadows are as hard as the 4 x 4 filter (`sourceRadius` does not soften them as it does the rays); a
-  caster closer to the light than the near plane is lost; in `surface_shadow_fs` drawn into these maps
-  `QuenchSurfaceInput::view` still points toward the sun.
+  them unshadowed and says so in `fallbacks()`. `renderer_area_light_shadow_maps` (the same backends; the native
+  backend traces the same scene): a 1 m rect light 3 m over a box 1.5 m up (five maps) leaves 0.007 of its light
+  under the box (traced 0.000) and 0.393 1.3 m beside it (traced 0.326; a flat blocker there lets about 40 % through),
+  six open ground points within 0.025 of the unshadowed image (traced 0.021); a 1 m tube standing beside a post
+  (six maps) leaves 0.051 behind the post (traced 0.089) and 1.000 beside it; a spot light next to a rect with maps
+  (the screen pass) leaves 0.085 behind the post and 1.000 beside it.
+- **Limits.** Point and spot lights' shadows are as hard as the 4 x 4 filter (`sourceRadius` does not soften them
+  as it does the rays); a caster closer to the light than the near plane is lost; in `surface_shadow_fs` drawn into
+  these maps `QuenchSurfaceInput::view` still points toward the sun. An area light's penumbra is an estimate: one
+  mean blocker depth per pixel (blockers at different depths blend), the maps see the casters from the shape's
+  center only (a long light's shadows of casters near its ends are approximate), and the blur softens contact edges
+  by about a pixel; transparent surfaces get no area light shadows.
 
 ### Screen-space ambient occlusion
 
@@ -566,7 +605,7 @@ maps"), so a game can show them (the demo's "Frame and fallbacks" panel); it is 
 | Ray-traced sun shadows | `gpu::Caps::rayTracing`, the ray query shaders, a sampleable depth | shadow cascades |
 | Ray-traced ambient occlusion | the same | GTAO with `screenSpaceFallbacks`, else none |
 | Screen-space ambient occlusion (GTAO) | a sampleable depth, `Rg16Float` targets | none |
-| Ray-traced local light shadows (also area lights) | the same | point and spot lights: shadow maps if `localShadowMapSize` is set and a depth array is sampleable; else (and area lights always) unshadowed |
+| Ray-traced local light shadows (also area lights) | the same | shadow maps if `localShadowMapSize` is set and a depth array is sampleable (area lights' soft, read in a screen-space pass); else unshadowed |
 | Ray-traced reflections | the same and the hit shaders | SSR with `screenSpaceFallbacks`, else the sky's reflection |
 | Screen-space reflections (SSR) | a sampleable depth, `Rgba16Float` targets | the sky's reflection |
 | Probe grid, per-pixel indirect light | the same and the hit shaders | `skyAmbient` and `groundAmbient` |
@@ -650,9 +689,10 @@ scene.addMaterial({.surface = checker, .params = {...}});
   [Performance](performance.md#the-tunnel)).
 - `surface_local_shadows_fs:fragment`, passed as `SurfaceDesc::localShadowFragmentShader` (since 2026-11-07, after
   0.9.0), is `surface_fs` with the local lights' shadow maps (`QUENCH_SURFACE_LOCAL_SHADOWS` is 1 in it; "Local light
-  shadow maps" above). The renderer draws every material of the surface with it in frames with such maps, so
-  `surface_fs` and `surface_basic_fs` carry no code for them. Without it the surface's local lights stay unshadowed
-  in those frames.
+  shadow maps" above). The renderer draws every material of the surface with it in frames with such maps (where an
+  area light has maps, its transparent materials only: the opaque ones read the screen pass), so `surface_fs` and
+  `surface_basic_fs` carry no code for them. Without it the surface's local lights stay unshadowed
+  in those frames (but for its opaque materials in frames with the screen pass).
 - `addSurface` creates the opaque pipeline at once (and the basic one), so a shader that does not fit the interface
   fails there with an error, not at the first draw.
 
@@ -710,7 +750,8 @@ passes in timed ranges of the command buffer it records into, `upload` (the inst
 tracer), `gtao` (screen-space ambient occlusion, after its own `prepass` where nothing is traced), `ssr` (screen-space
 reflections: the march and the resolve), `shadows` (the
 cascades and their
-transmittance maps), `local_shadows` (the local lights' shadow maps), `hdr` (opaque, sky, transparent and the game's passes in them), `taa` (motion vectors and the
+transmittance maps), `local_shadows` (the local lights' shadow maps), `local_filter` (their screen pass where an area
+light has maps, after its own `prepass`), `hdr` (opaque, sky, transparent and the game's passes in them), `taa` (motion vectors and the
 resolve), `upscale` (MetalFX), `bloom` and `tonemap` (with FXAA and the overlay passes), `ssr history` (after
 `hdr`). A range whose effect is off
 records nothing; the game's `PostHdr` passes are in no range of the renderer. The app reads them per frame
@@ -797,8 +838,9 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   visibility hides it). Turns are a fixed round-robin, not chosen by priority (a probe near the camera or in changing
   light is not traced sooner), and the hysteresis does not shorten with n. The temporal denoiser has no variance estimate and no disocclusion boost: newly
   visible areas are noisy for a few frames. Without ray tracing local lights are unshadowed unless
-  `localShadowMapSize` is set; their shadow maps are hard (a 4 x 4 filter, not softened by `sourceRadius`), dither
-  translucent casters and leave area lights unshadowed. The path tracer has no refraction, and its translucency is
+  `localShadowMapSize` is set; the point and spot lights' shadow maps are hard (a 4 x 4 filter, not softened by
+  `sourceRadius`), the area lights' soft by an estimate (one mean blocker depth per pixel) and missing on transparent
+  surfaces, and all of them dither translucent casters. The path tracer has no refraction, and its translucency is
   a coin flip.
 - Area lights: a tube's LTC has no end caps (-4.7 % against the integral for a 1.2 m tube of 5 cm); the traced
   shadow is the light's mean visibility, not weighted over the shape; anisotropic surfaces take the LTC with a bent
@@ -829,7 +871,7 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   instance whose palette changed is skinned every frame (an unchanged one is copied from the frame before; no
   skinning LOD); the output buffers grow with the skinned vertices drawn (two copies).
 - No MSAA, no image-based lighting from a cubemap (the sky model is the environment), shadows of local and area
-  lights only by rays (at most 4), at most 16 local lights per frame (8 of them area lights) and no clustered or
+  lights only by rays or shadow maps (at most 4), at most 16 local lights per frame (8 of them area lights) and no clustered or
   tiled light lists.
 - One render per scene and frame (several views of one scene need a scene per view).
 - Not in this stage, listed in the roadmap: Ashfall's other screen-space effects (bounce light, sun shafts) as

@@ -64,8 +64,9 @@ occlusion and MetalFX upscaling, and since stage 11 ray-traced shadows of up to 
 indirect light by a probe grid (DDGI-like; traced in turns on request) or per-pixel rays, the engine's temporal denoiser (the default; a spatial
 one), MetalFX's denoising upscaler and a reference path tracer, falling back to shadow maps, no occlusion (or, as an
 option, screen-space GTAO),
-unshadowed local lights (or, as an option, shadow maps for point and spot lights), the sky's reflection (or, as an option, screen-space reflections) and ambient light and bilinear scaling; since stage 12 area lights
-(rect, disk, tube: LTC shading, soft traced shadows, in the path tracer; unshadowed as the fallback) and anisotropic
+unshadowed local lights (or, as an option, shadow maps for point, spot and area lights), the sky's reflection (or, as an option, screen-space reflections) and ambient light and bilinear scaling; since stage 12 area lights
+(rect, disk, tube: LTC shading, soft traced shadows, in the path tracer; unshadowed as the fallback, or, as an
+option, soft shadows from shadow maps read in screen space) and anisotropic
 GGX; game passes and surface
 shaders (with a G-buffer entry for the rays); GPU skinning by compute (linear or dual quaternion; blend shapes before it; unchanged poses copied); `SceneAssets` puts asset textures and models
 into the scene),
@@ -120,9 +121,8 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
-work), custom
-surface shading in ray hits (normal maps are read there since 0.10.0; stage 11 remaining work) or
-shadows of area lights without ray tracing (stage 12 remaining work)
+work) or custom
+surface shading in ray hits (normal maps are read there since 0.10.0; stage 11 remaining work)
 yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/demo.md`, `docs/performance.md` and `docs/platforms.md` describe what is

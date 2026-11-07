@@ -309,7 +309,8 @@ are noted below.
   `screenSpaceFallbacks`), and since stage 11 `localLightShadows` (unshadowed without rays, or since
   2026-11-07 shadow maps for its point and spot lights where `localShadowMapSize` asks for them, drawn through a
   surface variant of their own so that frames without them pay nothing; since stage 12 also the area lights' soft
-  shadows, unshadowed without rays),
+  shadows, and since 2026-11-07 their shadow maps without rays, with a penumbra by the shape, read in a
+  screen-space pass at half resolution in the frames that have them),
   `Reflections::Sky | RayTraced | ScreenSpace` (since 2026-11-07 SSR, the traced reflections' fallback with the same
   flag), `IndirectLight::Sky | Probes | RayTraced` (the sky's ambient values without rays),
   `RayDenoiser::Spatial | Temporal` and `pathTracer`. Without the capability the renderer takes the fallback and logs
@@ -372,7 +373,8 @@ Area lights (rect, disk, tube) are scene lights like the others, with a size and
 their shapes itself, so what is seen and what lights cannot disagree ([Render module](render.md#area-lights)). The
 light itself is analytic in the raster: linearly transformed cosines (Heitz et al. 2016) give the diffuse and
 specular integral over the shape with no noise, on every backend; ray tracing adds only the visibility (soft shadows
-in the `localLightShadows` slot, unshadowed without it), and the path tracer samples the shapes with MIS as its
+in the `localLightShadows` slot; without it, as an option since 2026-11-07, shadow maps filtered over the shape:
+[Render module](render.md#local-light-shadow-maps)), and the path tracer samples the shapes with MIS as its
 reference. The fitted LTC tables are third-party data (`selfshadow/ltc_code`, BSD-2-Clause) baked into a source file
 by a script, not fitted at build time. Anisotropic GGX is a material parameter (strength and rotation) along the
 MikkTSpace tangent, the same lobe in the raster, the ray hits and the path tracer; the sky's reflection and the LTC

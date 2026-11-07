@@ -497,7 +497,8 @@ the lookup cost frames without maps: inside the light loop of `surface_fs` 3.4 %
 maps have their own variant, `surface_local_shadows_fs`.
 
 **Frames with maps** (SDL GPU's Metal driver, the ray tracing section at full size with bilinear scaling, its point
-lamp (6 maps) and spot lamp (1 map); the tunnel's two spot lamps, 1 map each; two runs):
+lamp (6 maps) and spot lamp (1 map); the tunnel's two spot lamps, 1 map each, before area lights took maps (since
+then the tunnel's four nearest lamps: [below](#area-light-shadow-maps)); two runs):
 
 | Region | frame p50 | CPU p50 | SDL GPU's GPU time p50 |
 |---|---|---|---|
@@ -513,6 +514,50 @@ draws); the size matters little at these counts of casters. The native backend's
 splits it per pass where it runs, but on the Mac the native backend traces these shadows instead. Not measured on
 a phone (the reason to have the maps: phones on SDL GPU, the default until 2026-11-07, and devices without ray
 tracing).
+
+### Area light shadow maps
+
+`localShadowMapSize` with area lights, read in a screen-space pass ([Render module](render.md#local-light-shadow-maps)).
+2026-11-07 15:30-15:55, Release, Mac (Apple M4 Pro), **offscreen** at 1920 x 1080 (`--frame-size 1920x1080
+--audio-device null --script`, unpaced), regions of 3 s after a second. The demo's tunnel from its overview with
+`set local_shadow_maps 512`: the four nearest lamps (two floor strips, the ceiling square, the orange tube), 21 maps.
+On the Mac the native backend traces these shadows, so the timings per pass come from a local build whose renderer
+ignored `gpu::Caps::rayTracing` (not committed): the fallback path on the native backend, with its timed ranges.
+GPU busy time p50, ms, two runs:
+
+| Render size | `game` without maps | with | `local_shadows` | `prepass` | `local_filter` | `hdr` without | with |
+|---|---|---|---|---|---|---|---|
+| 1286 x 724 (the section's 0.67, MetalFX temporal) | 2.925, 2.949 | 3.843, 3.844 | 0.230, 0.231 | 0.023 | 0.696, 0.695 | 1.278, 1.282 | 1.272, 1.270 |
+| 1920 x 1080 (bilinear) | 3.539, 3.511 | 5.308, 5.167 | 0.368, 0.360 | 0.033 | 1.380, 1.377 | 2.777, 2.751 | 2.671, 2.647 |
+
+So 0.92 ms more at the section's size and 1.7 ms at the full size. CPU p50 0.37 to 0.41 ms without the maps and
+0.49 to 1.09 with them at 0.67, 0.66 to 0.70 and 1.16 to 1.42 at the full size (21 depth passes with their culling
+and draws; the runs spread widely). How the cost came down:
+
+- **The soft filter in the main pass** (per surface fragment, 8 search and 16 filter taps; SDL GPU's Metal driver at
+  1080p): 355 frames in 4 s against 1137 without maps, about 7.8 ms more per frame. With the lookup cut out (the
+  depth passes alone) 842 frames in 3 s, as without maps: the filter was the cost, the 21 passes are cheap.
+- **In a screen pass at half resolution** (8 and 8 taps): `local_filter` 1.68 ms at 1080p, of which 0.68 ms without
+  any tap and about 0.55 ms for a 4 x 4 blur; the 3 x 3 blur of now: 1.38 ms. With the 4 x 4 blur at the section's
+  size the map size changed `local_filter` little (0.78, 0.80 and 0.98 ms at 256, 512 and 1024; `local_shadows`
+  0.22, 0.23 and 0.36 ms).
+
+**Against the traced shadows** (the same frame at full size with the sky's reflections and ambient light, lamps
+standing): mean difference 1.05 for SDL GPU's maps and 1.00 for the native backend's, looked at: the crates', the
+plinth's and the pillars' shadows and the orange tube's light cut by its bay agree; the traced frame shows blotches
+of its denoiser on the near walls that the maps do not.
+
+**Frames without maps** (the defaults): the binary of `f915958` and this change, one pair per backend (a second pair
+ran while another agent's demo used the GPU and slowed both binaries alike; left out). Native backend, `hdr` GPU p50
+before and after: materials 0.934 and 0.936, shadows 0.646 and 0.649, ray tracing 0.767 and 0.769, tunnel 1.969 and
+1.995 ms; SDL GPU frames in 4 s: 2331 and 2408, 2950 and 2983, 2472 and 2474, 1188 and 1193.
+
+**On a phone:** not measured. The iPhone 17 took about 3 times the M4 Pro's time per effect (stage 11); the tunnel's
+phone fallback runs at three quarters of its size (905 x 1966, 0.86 times 1080p's pixels) at 60 Hz in frames of
+about 12 ms ([The tunnel on the iPhone](#the-tunnel-on-the-iphone)), so four lamps would add about 4.5 ms (3.6 ms
+screen pass, 0.7 to 1.1 ms maps) and two lamps (11 maps) somewhat more than half of that: within the 60 Hz interval
+on paper, to be measured by `scenarios/lamp_maps_phone.txt` on SDL GPU (`--gpu-backend sdl`: the tunnel's four
+lamps at 256 and 512, two at 256, then two for 20 s at 60 Hz).
 
 ### Screen-space ambient occlusion
 

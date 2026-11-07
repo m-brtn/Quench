@@ -735,9 +735,8 @@ void RendererImpl::applySettings() {
         fallbacks.emplace_back("screen-space ambient occlusion: needs a depth buffer to sample and 16-bit float "
                                "targets, or its pipelines failed; none");
     if (settings.localLightShadows > 0 && next.localLightShadows == 0)
-        fallbacks.push_back(
-            std::format("ray-traced local light shadows: {}; {}", noRays,
-                        next.localShadowMaps > 0 ? "shadow maps (area lights unshadowed)" : "unshadowed"));
+        fallbacks.push_back(std::format("ray-traced local light shadows: {}; {}", noRays,
+                                        next.localShadowMaps > 0 ? "shadow maps" : "unshadowed"));
     const char* noLighting = support.rayTracing ? "this build has no ray query shaders for traced lighting" : noRays;
     if (settings.reflections == Reflections::RayTraced && next.reflections != Reflections::RayTraced)
         fallbacks.push_back(
@@ -1690,7 +1689,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (owners[c] != 0 && owners[c] != shadowChannels[c]) ++stats.localShadowChanges;
     shadowChannels = owners;
     localShadows = channels;
-    // Without ray tracing: shadow maps for the nearest point and spot lights that cast shadows.
+    // Without ray tracing: shadow maps for the nearest lights that cast shadows.
     localMaps.clear();
     const int mapLights = pathTracing ? 0 : effects.localShadowMaps;
     const std::uint32_t mapSize = std::clamp(settings.localShadowMapSize, 64u, 4096u);
@@ -1698,43 +1697,92 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     for (std::size_t i = 0; i < lightCount && int(stats.localShadowLights) < mapLights; ++i) {
         shader::LocalLight& l = lu.lights[i];
         const int type = int(l.color.w);
-        if ((type != 1 && type != 2) || !candidates[i].shadows) continue;
+        if (type == 0 || !candidates[i].shadows) continue;
         const glm::vec3 origin(l.positionRange);
+        const auto addMap = [&](const glm::vec3& forward, const glm::vec3& up, float tanHalf, float near, float far) {
+            const glm::mat4 viewProj = glm::perspectiveRH_ZO(2.0f * std::atan(tanHalf), 1.0f, near, far) *
+                                       glm::lookAtRH(origin, origin + forward, up);
+            localMaps.push_back({viewProj, frustumPlanes(viewProj)});
+        };
+        if (candidates[i].area) {
+            // A cube in the light's frame (quenchAreaShadow, quench/Shadows.hlsli): its faces and up vectors as a
+            // point light's in that frame, none behind a one-sided rect or disk.
+            const glm::vec3 x(l.shape), y(l.direction), z = glm::cross(x, y);
+            const float radius = type == QUENCH_LIGHT_DISK ? l.cone.x : glm::length(glm::vec2(l.cone.x, l.cone.z));
+            const float far = l.positionRange.w + radius;
+            const bool oneSided = type != QUENCH_LIGHT_TUBE && l.direction.w < 0.5f;
+            l.cone.y = float(stats.localShadowLights + 1);
+            l.cone.w = float(localMaps.size() + 1);
+            for (int f = 0; f < 6; ++f) {
+                if (oneSided && f == 3) continue;
+                glm::vec3 forward(0.0f);
+                forward[f / 2] = f % 2 == 0 ? 1.0f : -1.0f;
+                const glm::vec3 up = f / 2 == 1 ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
+                addMap(x * forward.x + y * forward.y + z * forward.z, x * up.x + y * up.y + z * up.z, cubeTan,
+                       far * float(QUENCH_AREA_SHADOW_NEAR), far);
+            }
+            ++stats.localShadowLights;
+            continue;
+        }
         const float range = l.positionRange.w;
         const float near = std::min(std::max(l.cone.z, kLocalShadowNear * range), 0.5f * range);
         const bool single = type == 2 && l.direction.w > kSpotMapMinCos;
         const float spotTan = single ? std::tan(std::acos(l.direction.w)) * cubeTan : 0.0f;
-        const auto addMap = [&](const glm::vec3& forward, const glm::vec3& up, float tanHalf) {
-            const glm::mat4 viewProj = glm::perspectiveRH_ZO(2.0f * std::atan(tanHalf), 1.0f, near, range) *
-                                       glm::lookAtRH(origin, origin + forward, up);
-            localMaps.push_back({viewProj, frustumPlanes(viewProj)});
-        };
         l.shape = glm::vec4(float(localMaps.size() + 1), spotTan, near, 0.0f);
         l.cone.y = float(stats.localShadowLights + 1); // a channel, as the traced shadows have
         if (single) {
             // The up vector of quenchLocalShadow (quench/Shadows.hlsli).
             const glm::vec3 forward(l.direction);
-            addMap(forward, std::abs(forward.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0), spotTan);
+            addMap(forward, std::abs(forward.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0), spotTan, near,
+                   range);
         } else {
             // +x, -x, +y, -y, +z, -z with quenchLocalShadow's up vectors.
             for (int f = 0; f < 6; ++f) {
                 glm::vec3 forward(0.0f);
                 forward[f / 2] = f % 2 == 0 ? 1.0f : -1.0f;
-                addMap(forward, f / 2 == 1 ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0), cubeTan);
+                addMap(forward, f / 2 == 1 ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0), cubeTan, near, range);
             }
         }
         ++stats.localShadowLights;
     }
     if (!localMaps.empty() && !ensureLocalShadowMaps(mapSize, std::uint32_t(localMaps.size()))) {
-        for (std::size_t i = 0; i < lightCount; ++i)
-            if (!candidates[i].area && lu.lights[i].shape.x > 0.0f) {
-                lu.lights[i].shape = glm::vec4(0.0f);
-                lu.lights[i].cone.y = 0.0f;
+        for (std::size_t i = 0; i < lightCount; ++i) {
+            shader::LocalLight& l = lu.lights[i];
+            if (candidates[i].area ? l.cone.w > 0.0f : l.shape.x > 0.0f) {
+                if (candidates[i].area)
+                    l.cone.w = 0.0f;
+                else
+                    l.shape = glm::vec4(0.0f);
+                l.cone.y = 0.0f;
             }
+        }
         localMaps.clear();
         stats.localShadowLights = 0;
     }
     if (mapLights == 0) localShadowMap = {};
+    // With an area light among them, every map is read in a screen-space pass (ScreenSpace::resolveLocalShadows): the
+    // area lights' soft filter is too costly per surface fragment. Without its pipelines the lights are unshadowed.
+    bool screenLocal = false;
+    for (std::size_t i = 0; i < lightCount && !localMaps.empty(); ++i)
+        screenLocal = screenLocal || (candidates[i].area && lu.lights[i].cone.w > 0.0f);
+    if (screenLocal && !screenSpace.ready()) {
+        if (!screenSpaceTried && !screenSpace.init(*device, pipelineCount, pointClamp, linearClamp)) {
+            support.screenSpace = false; // logged
+            applySettings();
+        }
+        screenSpaceTried = true;
+        screenOcclusion = screenOcclusion && screenSpace.ready();
+        screenReflections = screenReflections && screenSpace.ready();
+        if (!screenSpace.ready()) {
+            for (std::size_t i = 0; i < lightCount; ++i) {
+                lu.lights[i].cone.y = 0.0f;
+                if (candidates[i].area) lu.lights[i].cone.w = 0.0f;
+            }
+            localMaps.clear();
+            stats.localShadowLights = 0;
+            screenLocal = false;
+        }
+    }
     stats.localShadowMaps = std::uint32_t(localMaps.size());
     if (!localMaps.empty())
         fu.localShadows = glm::vec4(float(mapSize), 1.0f / float(mapSize), kLocalShadowNormalOffset, cubeTan);
@@ -1745,8 +1793,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     const bool gbuffer = rayReflections || rayIndirect || denoisedUpscale || screenReflections;
     if (!rayTraced) rayTracing.releaseTargets();
     // The screen-space effects read the ray tracing prepass's depth and G-buffer, or those of a prepass of their own.
-    const bool screenPrepass = (screenOcclusion || screenReflections) && !rayTraced;
-    if (!screenOcclusion && !screenReflections) screenSpace.releaseTargets();
+    const bool screenPrepass = (screenOcclusion || screenReflections || screenLocal) && !rayTraced;
+    if (!screenOcclusion && !screenReflections && !screenLocal) screenSpace.releaseTargets();
     Cascades shadow;
     if (cascades > 0)
         shadow = computeCascades(view.view, view.fovY, aspect, view.nearPlane, towardSun,
@@ -1805,7 +1853,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (needNormal) normalMatrices[i] = glm::transpose(glm::inverse(model));
         if (inView) {
             const Shading shading =
-                !localMaps.empty() && surface->localShadowFragment ? Shading::LocalShadows
+                !localMaps.empty() && (!screenLocal || m.blend != BlendMode::Opaque) && surface->localShadowFragment
+                    ? Shading::LocalShadows
                 : areaCount == 0 && !(m.anisotropy > 0.0f) && material->light == 0 && surface->basicFragment
                     ? Shading::Basic
                     : Shading::Full;
@@ -1971,7 +2020,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     stats.instances = std::uint32_t(opaque.size() + transparent.size());
     stats.movedInstances = std::uint32_t(moved.size());
     // Timed ranges (gpu::Caps::gpuPassTiming): upload, accel, prepass, raytrace with rays and denoise (ray tracing),
-    // shadows, hdr, taa, upscale, bloom, tonemap.
+    // shadows, local_shadows and local_filter (local light shadow maps), hdr, taa, upscale, bloom, tonemap.
     commands.beginTiming("upload");
     const bool buffers = ensureBuffers(commands);
     commands.endTiming();
@@ -2025,15 +2074,19 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     // Screen-space occlusion: into alpha of the traced mask (its rgb the sun's when traced), else of its own mask.
     // Screen-space reflections: read where the previous frame's image is there to take the hits' color from.
     const bool tracedPrepass = rayMask && !pathFrame;
-    const bool screenTargets = (screenOcclusion || screenReflections) && (tracedPrepass || screenPrepass) &&
+    const bool screenTargets = (screenOcclusion || screenReflections || screenLocal) &&
+                               (tracedPrepass || screenPrepass) &&
                                screenSpace.ensureTargets({.width = rw,
                                                           .height = rh,
                                                           .depthFormat = depthFormat,
                                                           .imageFormat = hdrFormat,
                                                           .ownDepth = !tracedPrepass,
                                                           .occlusion = screenOcclusion,
-                                                          .reflections = screenReflections});
+                                                          .reflections = screenReflections,
+                                                          .localShadows = screenLocal});
     const bool screenAo = screenOcclusion && screenTargets;
+    const bool screenShadows = screenLocal && screenTargets;
+    if (screenShadows) rayBits |= 4u;
     const bool screenHistory = screenReflections && screenTargets; // this frame's image is kept for the next
     const bool screenReflect = screenHistory && screenSpace.historyValid() && !cut;
     if (screenAo) rayBits |= 2u;
@@ -2181,27 +2234,27 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (rayIndirect) rayTracing.traceIndirect(commands, hu, lu, inputs, filtering);
         commands.endTiming();
     }
-    // ---- 0b. Screen-space effects: the depth (and G-buffer) of the opaque surfaces where nothing is traced, then GTAO
-    // and the reflections. Positions are camera-relative (precise far from the origin).
+    // ---- 0b. Screen-space effects: the depth (and G-buffer) of the opaque surfaces where nothing is traced (also read
+    // by the local shadow maps' screen pass), then GTAO and the reflections. Positions are camera-relative (precise far
+    // from the origin).
     const glm::mat4 relativeViewProj = projJ * glm::mat4(glm::mat3(view.view));
-    if (screenAo || screenReflect) {
-        if (screenPrepass) {
-            commands.beginTiming("prepass");
-            const gpu::DepthTarget dt{
-                .texture = screenSpace.depth(), .store = gpu::StoreOp::Store, .clearDepth = 0.0f, .cycle = true};
-            const gpu::ColorTarget colors[] = {{.texture = screenSpace.gbufferNormal(), .cycle = true},
-                                               {.texture = screenSpace.gbufferAlbedo(), .cycle = true}};
-            gpu::RenderPass pass = commands.beginRenderPass(
-                screenReflections ? std::span<const gpu::ColorTarget>(colors) : std::span<const gpu::ColorTarget>{},
-                &dt);
-            if (pass) {
-                pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
-                pass.bindSampler(kFragment, 0, noShadowBinding);
-                drawBatches(pass, opaqueBatches, -1, stats.screenPrepassDraws, true);
-                pass.end();
-            }
-            commands.endTiming();
+    if (screenPrepass && (screenAo || screenReflect || screenShadows)) {
+        commands.beginTiming("prepass");
+        const gpu::DepthTarget dt{
+            .texture = screenSpace.depth(), .store = gpu::StoreOp::Store, .clearDepth = 0.0f, .cycle = true};
+        const gpu::ColorTarget colors[] = {{.texture = screenSpace.gbufferNormal(), .cycle = true},
+                                           {.texture = screenSpace.gbufferAlbedo(), .cycle = true}};
+        gpu::RenderPass pass = commands.beginRenderPass(
+            screenReflections ? std::span<const gpu::ColorTarget>(colors) : std::span<const gpu::ColorTarget>{}, &dt);
+        if (pass) {
+            pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
+            pass.bindSampler(kFragment, 0, noShadowBinding);
+            drawBatches(pass, opaqueBatches, -1, stats.screenPrepassDraws, true);
+            pass.end();
         }
+        commands.endTiming();
+    }
+    if (screenAo || screenReflect) {
         // The camera rays at reversed depth 1 from the jittered projection and the view's rotation.
         const glm::mat4 invProj = glm::inverse(projJ);
         const glm::mat3 rotation(invView);
@@ -2304,6 +2357,12 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         commands.pushUniforms(kFragment, 0, fu);
         commands.endTiming();
     }
+    if (screenShadows) {
+        commands.beginTiming("local_filter");
+        screenSpace.resolveLocalShadows(commands, screenSpace.depth(), localShadowMap, shadowSampler, lu);
+        commands.pushUniforms(kFragment, 1, lu);
+        commands.endTiming();
+    }
 
     // ---- 2. HDR pass: opaque surfaces, game passes, sky, transparent surfaces
     bool hasLaterPasses = false;
@@ -2376,7 +2435,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             const gpu::TextureSamplerBinding opaqueTraced[] = {
                 traced(3u, tracedPrepass ? rayTracing.mask() : screenSpace.mask()),
                 (rayBits & 64u) != 0 ? traced(64u, screenSpace.reflections()) : traced(8u, rayTracing.reflections()),
-                traced(16u, rayTracing.indirect()), traced(4u, rayTracing.localShadows())};
+                traced(16u, rayTracing.indirect()),
+                traced(4u, screenShadows ? screenSpace.localShadows() : rayTracing.localShadows())};
             const gpu::TextureSamplerBinding noTraced[] = {
                 {white, pointClamp}, {white, pointClamp}, {white, pointClamp}, {white, pointClamp}};
             const bool grid = (rayBits & 32u) != 0;

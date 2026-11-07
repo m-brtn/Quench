@@ -240,6 +240,9 @@ if(NOT QUENCH_HEADLESS)
     # them).
     quench_add_shaders(quench_render NAME render_screenspace SOURCE src/render/shaders/screenspace.hlsl
         ENTRIES ss_gtao_fs:fragment ss_gtao_blur_fs:fragment ss_reflect_fs:fragment ss_reflect_resolve_fs:fragment)
+    # The local lights' shadow maps read in screen space (frames where an area light has maps).
+    quench_add_shaders(quench_render NAME render_localshadow SOURCE src/render/shaders/localshadow.hlsl
+        ENTRIES local_shadow_fs:fragment local_shadow_blur_fs:fragment)
     # Ray tracing (gpu::Caps::rayTracing): the rayquery entries need DXC (cmake/QuenchDxc.cmake); without it the sets
     # have the other entries only and the renderer uses the shadow maps and the sky's light.
     quench_add_shaders(quench_render NAME render_raytrace SOURCE src/render/shaders/raytrace.hlsl

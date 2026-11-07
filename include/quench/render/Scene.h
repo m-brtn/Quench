@@ -157,9 +157,10 @@ enum class LightType : std::uint8_t { Directional, Point, Spot, Rect, Disk, Tube
 // The first directional light is the sun: it lights the scene with cascaded shadow maps (when castsShadows and the
 // renderer has cascades) and places the sun in the sky. Further directional lights, point, spot and area lights light
 // the surfaces; per frame the renderer uses at most 16 of them, the nearest to the camera, of which at most 8 area
-// lights. Local lights have shadows only where they are ray traced (RenderSettings::localLightShadows: the nearest
-// ones with castsShadows; area lights soft by their area). A light with zero color or intensity is off (a sun that is
-// off still places the sun disc and casts no shadows).
+// lights. Local lights have shadows where they are ray traced (RenderSettings::localLightShadows: the nearest ones
+// with castsShadows; area lights soft by their area) and, without ray tracing, from shadow maps where
+// RenderSettings::localShadowMapSize asks for them. A light with zero color or intensity is off (a sun that is off
+// still places the sun disc and casts no shadows).
 //
 // Area lights are shaded with linearly transformed cosines (diffuse and specular, docs/render.md, "Area lights").
 // The scene draws their shape with the light's radiance (an instance, a material and a mesh of its own, not in the
@@ -173,7 +174,7 @@ struct LightDesc {
     float range = 10.0f;      // local lights: the light fades to zero at this distance (m; area lights: from the shape)
     float innerAngle = 0.35f; // spot: half angle of the full-intensity cone (radians)
     float outerAngle = 0.5f;  // spot: half angle where the light ends
-    bool castsShadows = true; // the sun; local lights with ray-traced local light shadows
+    bool castsShadows = true; // the sun; local lights with traced local light shadows or shadow maps
     float sourceRadius = 0.0f; // point, spot: the radius of the emitting sphere (m): soft traced shadows
     // Area lights (m): rect: width along `tangent` and height; disk: x the radius; tube: x the length along
     // `tangent`, y the radius.

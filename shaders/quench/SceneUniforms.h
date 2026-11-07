@@ -28,6 +28,9 @@
 #define QUENCH_LIGHT_DISK 4
 #define QUENCH_LIGHT_TUBE 5
 
+// The near plane of an area light's shadow maps (quench/Shadows.hlsli), a share of their far plane.
+#define QUENCH_AREA_SHADOW_NEAR 0.01
+
 QUENCH_SHARED_BEGIN
 
 struct QUENCH_ALIGN16 FrameUniforms {
@@ -113,7 +116,8 @@ struct QUENCH_ALIGN16 LocalLight {
     float4 direction;
     // x: spot: 1 / (cos inner - cos outer); rect: half width, disk: radius, tube: half length (m); y: the channel of
     // its ray-traced shadow or of its shadow maps + 1 (0: none); z: point, spot: radius of the emitting sphere; rect:
-    // half height, tube: radius (m)
+    // half height, tube: radius (m); w: area lights with shadow maps (FrameUniforms::localShadows): the layer of the
+    // first map + 1 (0: none)
     float4 cone;
     // Area lights: xyz the unit tangent (rect: along the width, tube: the axis), w: 1 + the light's id (the id its
     // shape's RayInstanceData refers to). Point and spot lights with shadow maps (FrameUniforms::localShadows): x: the

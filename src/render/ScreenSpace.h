@@ -5,10 +5,12 @@
 // of the opaque surfaces (the ray tracing prepass's, or a depth prepass of its own where nothing is traced), blurred
 // into alpha of the mask the surfaces read. Reflections: rays marched through that depth with the G-buffer's normal
 // and roughness, their hits' color from the previous frame's image (kept here). docs/render.md, "Screen-space
-// effects".
+// effects". Local lights' shadow maps in frames where an area light has them: read per 2 x 2 pixels at that depth and
+// blurred into a target the surfaces read as traced local shadows (docs/render.md, "Local light shadow maps").
 
 #include "shaders/ScreenSpaceUniforms.h"
 
+#include <quench/SceneUniforms.h>
 #include <quench/gpu/CommandBuffer.h>
 #include <quench/gpu/Device.h>
 
@@ -31,6 +33,7 @@ public:
         bool ownDepth = false; // a depth prepass of its own (frames where nothing is traced), and its G-buffer
         bool occlusion = false;
         bool reflections = false;
+        bool localShadows = false;
         friend bool operator==(const Targets&, const Targets&) = default;
     };
     bool ensureTargets(const Targets& targets);
@@ -41,6 +44,7 @@ public:
     const gpu::Texture& gbufferNormal() const { return m_gbufferNormal; }
     const gpu::Texture& gbufferAlbedo() const { return m_gbufferAlbedo; }
     const gpu::Texture& reflections() const { return m_reflections; }
+    const gpu::Texture& localShadows() const { return m_localShadows; }
 
     // GTAO from `depth` (at half resolution) into alpha of `mask` (an Rgba8Unorm target of the render size, blurred
     // and upsampled): rgb 1, or kept with keepRgb (the traced sun's visibility).
@@ -61,6 +65,11 @@ public:
     void reflect(gpu::CommandBuffer& commands, const gpu::Texture& depth, const gpu::Texture& normal,
                  const shader::ScreenSpaceUniforms& uniforms);
 
+    // The shadows of the lights with shadow maps (LocalLight::cone.y = channel + 1) from `depth` (at half resolution,
+    // the shadow maps through `mapSampler`) into localShadows() (Rgba8Unorm, the render size, blurred and upsampled).
+    void resolveLocalShadows(gpu::CommandBuffer& commands, const gpu::Texture& depth, const gpu::Texture& maps,
+                             const gpu::Sampler& mapSampler, const shader::LightUniforms& lights);
+
 private:
     bool createTarget(gpu::Texture& out, gpu::TextureFormat format, gpu::TextureUsage usage, std::uint32_t width,
                       std::uint32_t height, const char* name);
@@ -73,7 +82,9 @@ private:
     gpu::GraphicsPipeline m_blurAlphaPipeline; // writes its alpha only
     gpu::GraphicsPipeline m_reflectPipeline;
     gpu::GraphicsPipeline m_resolvePipeline;
-    gpu::Texture m_depth, m_term, m_mask;
+    gpu::GraphicsPipeline m_localPipeline;
+    gpu::GraphicsPipeline m_localBlurPipeline;
+    gpu::Texture m_depth, m_term, m_mask, m_localTerm, m_localShadows;
     gpu::Texture m_gbufferNormal, m_gbufferAlbedo, m_reflectTerm, m_reflections, m_history;
     Targets m_targets{};
     glm::mat4 m_historyViewProj{1.0f};

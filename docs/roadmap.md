@@ -398,7 +398,7 @@ scaler.
   (a cube) per point or wide spot light, filtered 4 x 4, through their own surface variant so frames without them
   pay nothing; 7 maps cost 0.3 to 0.4 ms of the M4 Pro's 1080p frame on SDL GPU
   ([Render module](render.md#local-light-shadow-maps), [Performance](performance.md#local-light-shadow-maps)).
-  Area lights stay unshadowed without ray tracing. Open: the cost on a phone.
+  Area lights take them too since the same day (stage 12, below). Open: the cost on a phone.
 - [x] GTAO as the screen-space fallback of the traced occlusion (0.10.0, 2026-11-07, on the Mac):
   `AmbientOcclusion::ScreenSpace`, and `RenderSettings::screenSpaceFallbacks` (off by default) for `RayTraced` where
   the device cannot trace; adapted from XeGTAO (MIT), at half resolution with a depth-aware 4 x 4 blur, after a
@@ -497,6 +497,16 @@ BRDF; own procedural content only. Released with 0.10.0 ([docs/releases/v0.10.0.
 - [x] Surface shader variants without the area light and anisotropy paths, for frames and materials that do not
   use them (`surface_basic_fs`, `SurfaceDesc::basicFragmentShader`; after stage 12, 2026-11-06): such a frame is
   back to before stage 12 within 0.6% ([Performance](performance.md#the-tunnel)).
+- [x] Shadows of area lights without ray tracing (stage 12's remaining work; 2026-11-07, after 0.10.0, on the Mac):
+  with `RenderSettings::localShadowMapSize` (off by default) an area light takes a cube of shadow maps in its own
+  frame (five for a one-sided rect or disk), and its penumbra follows the shape (percentage-closer soft shadows with
+  the shape's points as the kernel, each weighted by its light at the receiver). Read in a screen-space pass at half
+  resolution with a depth-aware blur in frames that have them; the tunnel's four nearest lamps (21 maps at 512) cost
+  the M4 Pro 0.92 ms at the section's 0.67 render scale and 1.7 ms at 1080p
+  ([Render module](render.md#local-light-shadow-maps), [Performance](performance.md#area-light-shadow-maps)). The
+  demo's tunnel has "Lamp shadow maps" in its panel without ray tracing, a part of the batches with golden captures
+  (SDL GPU's Metal driver, Vulkan through MoltenVK) and a check mode item (42 in all). Open: the cost on a phone and
+  a look in motion.
 - [ ] Look at the tunnel in motion and on the iPhone's screen (the lamps' shading and shadows, the brushed
   aluminium, the puddle): by the user (the demo's check mode).
 - [ ] The tunnel on the iPhone 18 Pro Max.
@@ -619,12 +629,12 @@ The queue the user set on 2026-11-07, in this order:
 
 What else stays open, in the order it is useful (not scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (41 items:
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (42 items:
    the cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the
    input devices, loading and streaming, the audio by ear, animation in motion, ray tracing noise, MetalFX ghosting
    and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the path tracer,
-   the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, the tunnel for 10 minutes with Adapt to
-   heat, the frame rate and the layout on the phone;
+   the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, its lamp shadow maps on SDL GPU, the
+   tunnel for 10 minutes with Adapt to heat, the frame rate and the layout on the phone;
    [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.10.0 code (on
    the iPhone 17 last with the stage 11 code), on the iPhone 18 Pro Max the stage 11 and 12 runs (done on the
    iPhone 17), Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes,
@@ -644,7 +654,7 @@ What else stays open, in the order it is useful (not scheduled; the user decides
    `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns at half size, 60 Hz).
 3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); custom surfaces
    in ray hits, a denser or cascaded probe grid
-   (stage 11); shadows of area lights without ray tracing (stage 12).
+   (stage 11).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. The

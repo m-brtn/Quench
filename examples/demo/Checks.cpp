@@ -177,6 +177,13 @@ constexpr std::array kItems{
               "without trails or smears, and no shadow flickers as the camera passes lamps. Path traced: everything "
               "stops and settles; back to Ray traced, it moves on. A drag hands the camera to the free one.",
               "set animate 1\nset drive 1\nset pause 0"},
+    CheckItem{"tunnel.maps", "tunnel", "Lamp shadow maps",
+              "SDL GPU (on the Mac: Graphics, GPU backend; on the iPhone: started with --gpu-backend sdl): this sets "
+              "Lamp shadow maps to 512. The four nearest lamps cast soft shadows (the crates and the plinth on the "
+              "floor, the bay's pillars on the wall beside the orange tube), wider away from their casters; while "
+              "the camera drives and the lamps move they follow without crawling grain, flicker at their edges or "
+              "jumps when the lamps that have maps change, and the frame rate holds.",
+              "set local_shadow_maps 512\nset animate 1\nset drive 1\nset pause 0"},
     CheckItem{"tunnel.heat", "tunnel", "Adapt to heat",
               "On the phone: this turns Adapt to heat on (Settings; it stays on). Let the tunnel drive for 10 minutes "
               "without touching it, then open the menu: Performance shows the thermal state and what Adapt to heat "

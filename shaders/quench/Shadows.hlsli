@@ -10,6 +10,7 @@
 // (half its size, Rgba16Float): rgb is the product of the light the casters let through, a is 1 - the depth of the
 // caster nearest to the light, so that a receiver in front of the casters stays untinted.
 
+#include "quench/Common.hlsli"
 #include "quench/Frame.hlsli"
 
 // 1 = lit: z <= the depth in the map, filtered over the four nearest texels.
@@ -145,6 +146,169 @@ float quenchLocalShadow(Texture2DArray<float> maps, SamplerState s, LocalLight l
                    quenchLocalShadowTap(maps, s, uv + float2(o, -o), layer, ref) +
                    quenchLocalShadowTap(maps, s, uv + float2(-o, o), layer, ref) +
                    quenchLocalShadowTap(maps, s, uv + float2(o, o), layer, ref));
+}
+
+// Area lights (rect, disk, tube) with shadow maps: a cube of maps around the light's center in the light's own frame
+// (x its tangent, y its normal, for a tube a direction across its axis, z their cross product) with a point light's
+// faces and up vectors in that frame, five for a one-sided rect or disk (none looks behind it: +x, -x, +y, +z, -z).
+// LocalLight::cone.w is the first map's layer + 1; the far plane is the range plus the shape's radius, the near plane
+// QUENCH_AREA_SHADOW_NEAR of it. The shadow is soft by the shape's size (percentage-closer soft shadows, Fernando
+// 2005, with the shape's own points as the kernel): a search over the region where blockers of the shape's light could
+// be finds their mean depth d, then taps toward points of the shape (uniform over its area, a tube's half that faces
+// P) seen through a blocker at d say which of them P sees. Each point counts with its diffuse light at P (the cosines
+// at both ends over the squared distance; the ratio of Heitz et al. 2018), so that the far ends of a long light, which
+// add little to P's light, add little to its shadow. Exact for one flat blocker parallel to the shape; the maps see the
+// casters from the center only. Too costly per surface fragment: the renderer reads it per 2 x 2 pixels in a
+// screen-space pass (docs/render.md, "Local light shadow maps").
+#define QUENCH_AREA_SHADOW_SEARCH 8
+#define QUENCH_AREA_SHADOW_TAPS 8
+
+struct QuenchAreaMaps {
+    int type;
+    float first; // the first map's layer
+    bool oneSided;
+    float tanHalf;
+    float a, b;  // a map's depth of a distance z along its axis: a - b / z
+    float3 size; // rect: half sizes (x, z); disk: radius (x); tube: half length (x), radius (z)
+    float2 n0;   // tube: the direction toward P across the axis (y, z)
+    float3 N;    // the receiver's normal in the light's frame
+    float D;     // its plane: dot(x, N) = D
+    float dist;  // its distance from the light's center
+};
+
+// A point of the shape for u in [0, 1)^2, uniform over its area, from its center in the light's frame; a tube's on the
+// half that faces P.
+float3 quenchAreaShadowPoint(QuenchAreaMaps m, float2 u) {
+    if (m.type == QUENCH_LIGHT_RECT) return float3((u.x * 2.0 - 1.0) * m.size.x, 0.0, (u.y * 2.0 - 1.0) * m.size.z);
+    float s, c;
+    if (m.type == QUENCH_LIGHT_DISK) {
+        sincos(6.2831853 * u.y, s, c);
+        const float r = sqrt(u.x) * m.size.x;
+        return float3(r * c, 0.0, r * s);
+    }
+    sincos(3.14159265 * (u.y - 0.5), s, c);
+    return float3((u.x * 2.0 - 1.0) * m.size.x, (m.n0 * c + float2(-m.n0.y, m.n0.x) * s) * m.size.z);
+}
+
+// A point's distance from the shape's plane (rect, disk) or axis (tube), in the light's frame: the depth by which the
+// shape's points spread through a blocker (exact for a blocker parallel to the shape).
+float quenchAreaShadowDepth(int type, float3 p) { return type == QUENCH_LIGHT_TUBE ? length(p.yz) : abs(p.y); }
+
+// The diffuse light the shape's point p sends to q (normal N) up to a constant: the cosines at both ends over the
+// squared distance (a tube's point by the share of its width seen from q); 0 under q's horizon.
+float quenchAreaShadowWeight(int type, float3 p, float3 q, float3 N) {
+    const float3 l = p - q;
+    const float d2 = max(dot(l, l), 1e-8);
+    return max(dot(l, N), 0.0) * quenchAreaShadowDepth(type, l) / (d2 * d2);
+}
+
+// Where direction v (the light's frame) meets the receiver's plane, in the map v falls in: uv and layer, and the
+// map's depth there (P's own distance where v runs along the plane or away from it); z: v's component along the map's
+// axis. False behind a one-sided light (no map there). The faces' right and up axes as quenchLocalShadow's.
+bool quenchAreaMapAt(QuenchAreaMaps m, float3 v, out float3 at, out float ref, out float z) {
+    const float3 b = abs(v);
+    float2 st;
+    float face;
+    if (b.x >= b.y && b.x >= b.z) {
+        z = b.x;
+        face = v.x >= 0.0 ? 0.0 : 1.0;
+        st = float2(v.x >= 0.0 ? v.z : -v.z, v.y);
+    } else if (b.y >= b.z) {
+        z = b.y;
+        face = v.y >= 0.0 ? 2.0 : 3.0;
+        st = float2(v.y >= 0.0 ? v.x : -v.x, v.z);
+    } else {
+        z = b.z;
+        face = v.z >= 0.0 ? 4.0 : 5.0;
+        st = float2(v.z >= 0.0 ? -v.x : v.x, v.y);
+    }
+    const float2 ndc = st / (z * m.tanHalf);
+    at = float3(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, m.first + face - (m.oneSided && face > 3.0 ? 1.0 : 0.0));
+    float t = m.dist * rsqrt(dot(v, v));
+    const float vn = dot(v, m.N);
+    if (vn * m.D > 0.0) t = clamp(m.D / vn, 0.5 * t, 2.0 * t);
+    ref = min(m.a - m.b / (t * z), 1.0);
+    return !(m.oneSided && face == 3.0);
+}
+
+// 1 = lit. P and N in world space; pixel turns the taps per pixel (and per frame under TAA).
+float quenchAreaShadow(Texture2DArray<float> maps, SamplerState s, LocalLight light, float3 P, float3 N, float2 pixel) {
+    if (light.cone.w <= 0.0) return 1.0;
+    QuenchAreaMaps m;
+    m.type = int(light.color.w);
+    const float radius = m.type == QUENCH_LIGHT_DISK ? light.cone.x : length(light.cone.xz);
+    const float zFar = light.positionRange.w + radius;
+    const float3 toP = P - light.positionRange.xyz;
+    if (dot(toP, toP) >= zFar * zFar) return 1.0;
+    const float zNear = zFar * QUENCH_AREA_SHADOW_NEAR;
+    m.first = light.cone.w - 1.0;
+    m.oneSided = m.type != QUENCH_LIGHT_TUBE && light.direction.w < 0.5;
+    m.tanHalf = quenchFrame.localShadows.w;
+    m.a = zFar / (zFar - zNear);
+    m.b = zNear * m.a;
+    m.size = light.cone.xyz;
+    const float3 X = light.shape.xyz, Y = light.direction.xyz, Z = cross(X, Y);
+    float3 q = float3(dot(toP, X), dot(toP, Y), dot(toP, Z));
+    if (m.oneSided && q.y <= 0.0) return 1.0; // behind the light: it does not shine there
+    m.N = float3(dot(N, X), dot(N, Y), dot(N, Z));
+    // The normal offset scales with the world size of a texel at P's depth in its map.
+    const float3 aq = abs(q);
+    const float texel = 2.0 * m.tanHalf * quenchFrame.localShadows.y; // per unit of depth
+    q += m.N * (max(aq.x, max(aq.y, aq.z)) * texel * quenchFrame.localShadows.z);
+    m.dist = length(q);
+    m.D = dot(q, m.N);
+    const float l2 = dot(q.yz, q.yz);
+    m.n0 = l2 > 1e-10 ? q.yz * rsqrt(l2) : float2(1.0, 0.0);
+    const float frame = quenchFrame.options.z > 0.5 ? float(uint(quenchFrame.options.y) & 63u) : 0.0;
+    const float2 shift = float2(ign(pixel + frame * 5.588238), ign(pixel.yx + 7.0 + frame * 3.17));
+    const float2 r2 = float2(0.7548777, 0.5698403); // the R2 sequence (Roberts 2018)
+
+    // A tap toward the shape's point p seen through a blocker at depth d (quenchAreaShadowDepth) from P at depth zR
+    // runs along q + p * (zR / d - 1). The search: blockers whose shadow of some point of the shape could reach P,
+    // from the near plane on, seen within about 37 degrees of P's direction; its taps spread from P's own direction
+    // outward (quadratically), so that blockers close to P, whose region is small, are found as well.
+    const float zR = quenchAreaShadowDepth(m.type, q);
+    const float reach = min(zR / zNear - 1.0, 0.75 * m.dist / max(radius, 1e-4));
+    float blockers = 0.0, weights = 0.0, depths = 0.0;
+    int taps = 0;
+    for (int i = 0; i < QUENCH_AREA_SHADOW_SEARCH; ++i) {
+        const float2 u = frac(shift + float(i) * r2);
+        const float3 p = quenchAreaShadowPoint(m, u);
+        const float k = (float(i) + shift.y) / float(QUENCH_AREA_SHADOW_SEARCH);
+        const float3 v = q + p * (reach * k * k);
+        float3 at;
+        float ref, z;
+        if (!quenchAreaMapAt(m, v, at, ref, z)) continue;
+        const float4 d = maps.Gather(s, at);
+        const float4 hit = 1.0 - step(ref, d);
+        const float found = dot(hit, float4(1.0, 1.0, 1.0, 1.0));
+        // A texel's depth along the map's axis, then the depth of the blocker it holds in direction v.
+        const float4 along = m.b / (m.a - d);
+        const float w = quenchAreaShadowWeight(m.type, p, q, m.N) + 1e-12;
+        blockers += found;
+        taps += 4;
+        weights += w * found;
+        depths += w * dot(hit, along) * quenchAreaShadowDepth(m.type, v) / z;
+    }
+    if (blockers == 0.0) return 1.0;
+    if (blockers == float(taps)) return 0.0;
+    // The taps: the shape's points seen through a blocker at the mean depth, at least a texel apart at P.
+    const float least = texel * m.dist / max(radius, 1e-4);
+    const float spread = clamp(zR * weights / max(depths, 1e-12) - 1.0, least, max(reach, least));
+    float lit = 0.0, total = 0.0;
+    for (int j = 0; j < QUENCH_AREA_SHADOW_TAPS; ++j) {
+        const float3 p = quenchAreaShadowPoint(m, frac(shift.yx + (float(j) + 0.5) * r2));
+        const float w = quenchAreaShadowWeight(m.type, p, q, m.N);
+        if (w <= 0.0) continue; // under P's horizon: no light from there
+        float3 at;
+        float ref, z;
+        total += w;
+        if (quenchAreaMapAt(m, q + p * spread, at, ref, z))
+            lit += w * quenchLocalShadowTap(maps, s, at.xy, at.z, ref);
+        else
+            lit += w;
+    }
+    return total > 0.0 ? lit / total : 1.0;
 }
 
 // rgb: the part of the sun's light that reaches P through translucent casters (1: none in front of P). The map is

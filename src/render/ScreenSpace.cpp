@@ -5,6 +5,7 @@
 #include <quench/core/Log.h>
 
 #include <render_frame_shaders.h>
+#include <render_localshadow_shaders.h>
 #include <render_screenspace_shaders.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -33,6 +34,7 @@ bool ScreenSpace::init(gpu::Device& device, std::uint32_t& pipelines, const gpu:
     const auto make = [&](gpu::GraphicsPipeline& out, const char* entry, const gpu::ColorTargetDesc& target,
                           const char* name) {
         const ShaderBlob* shader = shaders::render_screenspace.find(entry);
+        if (!shader) shader = shaders::render_localshadow.find(entry);
         if (!shader) {
             log::error("render", "pipeline '{}': the shader is not in this build", name);
             return false;
@@ -53,14 +55,19 @@ bool ScreenSpace::init(gpu::Device& device, std::uint32_t& pipelines, const gpu:
         make(m_blurAlphaPipeline, "ss_gtao_blur_fs", alphaOnly, "render gtao blur (alpha)") &&
         make(m_blurPipeline, "ss_gtao_blur_fs", {kMaskFormat}, "render gtao blur") &&
         make(m_reflectPipeline, "ss_reflect_fs", {kReflectionFormat}, "render ssr") &&
-        make(m_resolvePipeline, "ss_reflect_resolve_fs", {kReflectionFormat}, "render ssr resolve"))
+        make(m_resolvePipeline, "ss_reflect_resolve_fs", {kReflectionFormat}, "render ssr resolve") &&
+        make(m_localPipeline, "local_shadow_fs", {kMaskFormat}, "render local shadows") &&
+        make(m_localBlurPipeline, "local_shadow_blur_fs", {kMaskFormat}, "render local shadows blur"))
         return true;
     m_gtaoPipeline = {};
     m_blurAlphaPipeline = {};
     m_blurPipeline = {};
     m_reflectPipeline = {};
     m_resolvePipeline = {};
-    log::error("render", "screen-space pipelines failed (logged); no screen-space ambient occlusion or reflections");
+    m_localPipeline = {};
+    m_localBlurPipeline = {};
+    log::error("render", "screen-space pipelines failed (logged); no screen-space ambient occlusion or reflections, "
+                         "no shadow maps of area lights");
     return false;
 }
 
@@ -97,6 +104,9 @@ bool ScreenSpace::ensureTargets(const Targets& targets) {
                                                  "render screen-space gbuffer normal") &&
                                     createTarget(m_gbufferAlbedo, RayTracing::gbufferAlbedoFormat(), target, w, h,
                                                  "render screen-space gbuffer albedo")));
+    if (ok && targets.localShadows)
+        ok = createTarget(m_localTerm, kMaskFormat, target, (w + 1) / 2, (h + 1) / 2, "render local shadows term") &&
+             createTarget(m_localShadows, kMaskFormat, target, w, h, "render local shadows");
     if (!ok) {
         releaseTargets();
         return false;
@@ -114,6 +124,8 @@ void ScreenSpace::releaseTargets() {
     m_reflectTerm = {};
     m_reflections = {};
     m_history = {};
+    m_localTerm = {};
+    m_localShadows = {};
     m_targets = {};
     m_historyValid = false;
 }
@@ -179,6 +191,29 @@ void ScreenSpace::reflect(gpu::CommandBuffer& commands, const gpu::Texture& dept
         pass.bindPipeline(m_resolvePipeline);
         pass.bindSamplers(kFragment, 0, samplers);
         pass.pushUniforms(kFragment, 1, uniforms);
+        pass.draw(3);
+        pass.end();
+    }
+}
+
+void ScreenSpace::resolveLocalShadows(gpu::CommandBuffer& commands, const gpu::Texture& depth, const gpu::Texture& maps,
+                                      const gpu::Sampler& mapSampler, const shader::LightUniforms& lights) {
+    {
+        const gpu::ColorTarget color{.texture = m_localTerm, .load = gpu::LoadOp::DontCare, .cycle = true};
+        if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
+            const gpu::TextureSamplerBinding samplers[] = {{depth, *m_point}, {maps, mapSampler}};
+            pass.bindPipeline(m_localPipeline);
+            pass.bindSamplers(kFragment, 0, samplers);
+            pass.pushUniforms(kFragment, 1, lights);
+            pass.draw(3);
+            pass.end();
+        }
+    }
+    const gpu::ColorTarget color{.texture = m_localShadows, .load = gpu::LoadOp::DontCare, .cycle = true};
+    if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
+        const gpu::TextureSamplerBinding samplers[] = {{m_localTerm, *m_point}, {depth, *m_point}};
+        pass.bindPipeline(m_localBlurPipeline);
+        pass.bindSamplers(kFragment, 0, samplers);
         pass.draw(3);
         pass.end();
     }

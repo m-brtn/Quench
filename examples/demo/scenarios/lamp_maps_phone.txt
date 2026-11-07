@@ -1,8 +1,9 @@
 # Local light shadow maps on a phone (RenderSettings::localShadowMapSize; docs/performance.md, "Local light shadow
-# maps") on SDL GPU, where the lamps' shadows are not traced: the ray tracing section's two
-# lamps (a point light, 6 maps, and a spot light, 1 map) and the tunnel's two spots (1 map each), unshadowed and with
-# maps of 256 and 512, at the display's rate in 4 s regions, each section from the nominal thermal state; then the
-# tunnel with maps of 256 at the section's 60 Hz for 20 s and a capture of the ray tracing section's lamps:
+# maps", "Area light shadow maps") on SDL GPU, where the lamps' shadows are not traced: the ray tracing section's two
+# lamps (a point light, 6 maps, and a spot light, 1 map) and the tunnel's four nearest lamps (area lights and spots,
+# about 21 maps as the camera drives), unshadowed and with maps of 256 and 512, then its two nearest at 256, at the
+# display's rate in 4 s regions, each section from the nominal thermal state; then the tunnel's two lamps with maps
+# of 256 at the section's 60 Hz for 20 s and a capture of the ray tracing section's lamps:
 #   copy this file into the app's user directory, launch with --gpu-backend sdl --script lamp_maps_phone.txt
 # On the native backend (the default on Apple platforms) the lamps' shadows are traced and the map checks fail.
 
@@ -51,18 +52,25 @@ wait 0.5
 perf_begin tunnel_maps_256
 wait 4
 perf_end
-expect local_map_lights == 2
-expect local_maps == 2
+expect local_map_lights == 4
+expect local_maps >= 16
 set local_shadow_maps 512
 wait 0.5
 perf_begin tunnel_maps_512
 wait 4
 perf_end
+set local_shadows 2
 set local_shadow_maps 256
+wait 0.5
+perf_begin tunnel_maps2_256
+wait 4
+perf_end
+expect local_map_lights == 2
 set limit_60hz 1
 wait 0.5
-perf_begin tunnel_maps_256_60hz
+perf_begin tunnel_maps2_256_60hz
 wait 20
 perf_end
 set local_shadow_maps off
+set local_shadows 4
 quit

@@ -1,0 +1,31 @@
+# The tunnel's lamp shadows from shadow maps on SDL GPU (ctest: demo_tunnel_maps_<backend>, a part of batch.txt):
+# without ray tracing the section's four lamp shadows (RenderSettings::localLightShadows) become shadow maps
+# (localShadowMapSize 512, the panel's "Lamp shadow maps") for the four nearest lamps: the two floor strips and the
+# ceiling square (five maps each, one-sided) and the orange tube (six). They are read in a screen-space pass after a
+# depth prepass and are soft by each lamp's size: the crates, the plinth and the pillars throw soft shadows. The
+# capture is taken at 2.5 s from the overview with the lamps at their clock's start, as in tunnel_fallback.txt; the
+# maps are switched off again before the part ends.
+section tunnel
+
+set dither 0
+until tunnel_ready == 1 10
+reset_camera
+set animate 0
+set lamp_time 0
+set local_shadow_maps 512
+wait 0.1
+expect local_shadows == 0
+expect local_map_lights == 4
+expect local_maps == 21
+expect local_map_draws > 0
+expect screen_prepass_draws > 0
+expect ray_instances == 0
+until time >= 2.5 3
+windows off
+capture demo_tunnel_maps.png
+windows on
+set local_shadow_maps off
+wait 0.05
+expect local_maps == 0
+expect screen_prepass_draws == 0
+quit

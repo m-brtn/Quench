@@ -4,7 +4,8 @@ Not released: no version or tag yet (the version in `project()` stays 0.10.0). C
 (tag `v0.10.0`): the native Metal backend as the default on Apple platforms; an opt-in reaction to the device's
 heat for games, with the demo's Adapt to heat; an agent skill on building a game on the engine, copied into every
 new game; the demo's dual quaternion skinning showcase made readable after a user
-report, and its characters' wrists closed; the Xcode project's generation in the full gate. This file becomes
+report, and its characters' wrists closed; the Xcode project's generation in the full gate; soft shadows of area
+lights from shadow maps where the device cannot trace (stage 12's remaining work). This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
 
@@ -31,6 +32,23 @@ report, and its characters' wrists closed; the Xcode project's generation in the
   fallback included), and each batch checks the app's `gpu: backend` line (`quench_add_batch(... GPU
   <backend>:<driver>)`). New cases: `default_backend`, `native_fallback`, `buffer_cycle`. Debug and sanitizer builds
   run `demo_smoke_metal` and `demo_smoke_metal_native` on Apple platforms.
+
+### Rendering: shadows of area lights without ray tracing
+
+- **Area lights take shadow maps** (stage 12's remaining work; [Render module](../render.md#local-light-shadow-maps)):
+  with `RenderSettings::localShadowMapSize` (off by default, as before) the nearest lights with `castsShadows` that
+  are not traced, area lights among them, get maps. An area light's cube of maps is in its own frame, one-sided rects
+  and disks skip the face behind them (five maps), and the maps reach the range plus the shape's radius.
+- **A penumbra that follows the shape:** percentage-closer soft shadows whose blocker search and filter use points
+  of the rect, disk or tube (the tube's half that faces the receiver), each weighted by the light it sends to the
+  receiver, with depths measured across the shape. A narrow strip casts shadows soft across it and sharp along it.
+- **Read in screen space:** in a frame where an area light has maps, every map (the spot and point lights' too) is
+  read by a screen-space pass at half resolution over a depth prepass, blurred by a depth-aware 3 x 3 filter, and
+  the surfaces read the result as they read traced shadows (`options.w` bit 4); frames with point and spot maps only
+  read them in the surfaces as before. Timed ranges `local_shadows` (the maps) and `local_filter` (the pass).
+  Transparent surfaces leave area lights unshadowed.
+- **Cost** on the M4 Pro (offscreen, the tunnel's four nearest lamps, 21 maps at 512): 0.92 ms of GPU time at the
+  tunnel's 0.67 render scale and 1.7 ms at 1080p ([Performance](../performance.md#area-light-shadow-maps)).
 
 ### The app: a reaction to heat
 
@@ -95,6 +113,10 @@ report, and its characters' wrists closed; the Xcode project's generation in the
   the box wholly, so the join follows the hand when it turns (`tools/assets/make_demo_character.py`,
   `make_demo_strider.py`: 884 vertices each, 836 before). The Skinning view's camera is a little further back and
   lower, so that the bars clear the demo's caption and the menu at the default window size.
+- **The tunnel's lamp shadow maps** (section 12 without ray tracing: SDL GPU, or a device that cannot trace): a
+  "Lamp shadow maps" choice in its panel (Off, 256, 512, 1024; off by default), a batch part `tunnel_maps` with golden
+  captures on SDL GPU's Metal driver and on Vulkan through MoltenVK, and a check mode item `tunnel.maps` (42 items
+  now).
 - **The native backend by default:** the ray tracing section and the tunnel trace where `gpu::Caps` allow it
   without a flag now (on the Mac and on phones with ray tracing: the iPhone 17 and the iPhone 18 Pro Max), with their
   phone defaults on phones; `--gpu-backend sdl` shows their fallbacks. About names the platform's default backend and
@@ -209,6 +231,11 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   there sets `AppDesc::gpuBackend = gpu::Backend::SdlGpu`, or passes `--gpu-backend sdl` or `QUENCH_GPU_BACKEND=sdl`;
   `--gpu-driver vulkan` still gives SDL GPU. A game whose own tests or scripts assumed SDL GPU on Apple platforms
   names it now.
+- **Area lights with `castsShadows` take shadow maps** where a game sets `RenderSettings::localShadowMapSize` and
+  the lights are not traced: they cast soft shadows now and cost a screen-space pass in those frames (0.9 to 1.7 ms
+  of the M4 Pro for four lamps). A game that wants them unshadowed sets `castsShadows = false` on them. Custom
+  surface shaders built on the engine's `Surface.hlsli` need no change: in those frames opaque surfaces read the
+  screen-space term as they read traced shadows, and `quenchLocalShadows` skips area lights.
 - **New:** `gpu::defaultBackend()` (`quench/gpu/Device.h`). `Device::create` no longer returns an error when only
   the native device fails to start: it returns an SDL GPU device (check `caps().backend` where it matters).
 - **iOS presets of games made from the template before this release:** a game that cooks assets

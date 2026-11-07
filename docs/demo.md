@@ -371,12 +371,12 @@ included), from the log's `gpu: backend ...` line.
 `batch.txt` includes, in this order: materials, shadows, sky, post, hdr, hdr_on, physics, input, assets, audio,
 animation, raytracing_fallback, tunnel_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone,
 audio_flyby, audio_music, audio_reverb, audio_hrtf, tunnel_motion_fallback, animation_blend2d, animation_lod, animation_skinning,
-animation_retarget, animation_blendshapes, raytracing_maps, raytracing_screen, heat, cycle. The parts that
+animation_retarget, animation_blendshapes, raytracing_maps, raytracing_screen, tunnel_maps, heat, cycle. The parts that
 move (the tunnel's motion) and the parts added later come last, before the cycle, which has no capture: TAA's jitter
 follows the frame count, so a part inserted earlier would move every capture after it. `batch_native.txt` ends with
 animation_blend2d, animation_lod, animation_skinning, animation_retarget, animation_blendshapes and heat after
-tunnel_motion (no raytracing_maps or raytracing_screen: the native backend traces those shadows and the occlusion on
-the Mac; the render tests run GTAO there).
+tunnel_motion (no raytracing_maps, raytracing_screen or tunnel_maps: the native backend traces those shadows and the
+occlusion on the Mac; the render tests run GTAO there).
 Every part selects its section first (and resets it where it needs the defaults), so it does not depend on the parts
 before it, and its `time` starts at 0. A test per part and backend, `demo_<part>_<backend>`, checks the part's line
 in the batch's log (`part <file>: N passed, 0 failed`) and compares its capture (or captures:
@@ -411,6 +411,7 @@ elements stay where they are what is checked. The menu and the layouts have capt
 | `tunnel` (native batch) | the section's defaults run: 10 lamps, 8 of them area lights, 4 lamp shadows, reflections, the probe grid, MetalFX temporal at 0.67, no shadow draws (no sun), at least 46 instances in the top level, no fallbacks; lamp groups off and on change the counts; the anisotropy changes; the path tracer adds samples; bilinear at scale 1 again | `demo_tunnel_native.png` at 2.5 s (every traced effect at full size, the lamps at their time 0, standing still, the camera free): the scene |
 | `tunnel_path` (native batch) | the path tracer runs to 256 samples with the lamps still, then stops | `demo_tunnel_path_native.png`, without a golden image (1.3 MB of noise); look at it beside `demo_tunnel_native.png` |
 | `tunnel_fallback` (Metal, Vulkan) | the 8 area lights light without shadows, the sky's reflections and light, no top level, bilinear at scale 1, the path tracer falls back (at least 3 fallbacks); the tubes and the portal off and on | `demo_tunnel.png` at 2.5 s: the scene |
+| `tunnel_maps` (Metal, Vulkan) | the lamps' shadow maps at 512 (the panel's "Lamp shadow maps", since 2026-11-07): no traced lamp shadows, 4 lamps with 21 maps (the two floor strips and the ceiling square 5 each, the orange tube 6) and draws in them, the screen pass's prepass, no top level; off again, no maps, no prepass | `demo_tunnel_maps.png` at 2.5 s: the scene as `demo_tunnel.png` with soft lamp shadows (the crates and the plinth on the floor, the bay's pillars cutting the orange tube's light on the near right wall, the strips' light on the walls) |
 | `tunnel_motion` (native batch, the last part) | the drive starts eased (its speed rises over a second), the lamps' clock runs, the path tracer stops both and they go on after it, Pause all stops both, a script's camera hands the drive to the free camera | `demo_tunnel_motion_native.png`: 3 s of the drive and the lamps from their time 0 |
 | `tunnel_motion_fallback` (Metal, Vulkan, the last part) | the same without ray tracing: the path tracer falls back, so nothing stops for it | none |
 | `ui` | the wide layout with its windows | `demo_ui.png`: the materials section with the menu, its panel and the caption |
@@ -585,8 +586,8 @@ captures them and the path tracer; `tunnel_phone_fallback.txt` runs the fallback
 motion. The scenarios on SDL GPU (this one and the three below) need `--gpu-backend sdl` (or
 `QUENCH_GPU_BACKEND=sdl`) since the native backend became the default. `scenarios/lamp_maps_phone.txt` measures the
 lamps' shadow maps on SDL GPU (the ray tracing section's two
-lamps and the tunnel's two spots, unshadowed and with maps of 256 and 512, then the tunnel with maps of 256 at 60 Hz
-for 20 s; not run on a phone yet). `scenarios/gtao_phone.txt` measures GTAO on SDL GPU (the shadows section, the ray
+lamps and the tunnel's four nearest lamps, area lights among them, unshadowed and with maps of 256 and 512, the
+tunnel's two nearest at 256, then those two at 60 Hz for 20 s; not run on a phone yet). `scenarios/gtao_phone.txt` measures GTAO on SDL GPU (the shadows section, the ray
 tracing section and the tunnel without occlusion and with it, and a capture; not run on a phone yet).
 `scenarios/ssr_phone.txt` measures SSR on SDL GPU (the materials section, the ray tracing section and the tunnel
 with the sky's reflection and with SSR, and a capture `ssr_phone.png`; not run on a phone yet).
