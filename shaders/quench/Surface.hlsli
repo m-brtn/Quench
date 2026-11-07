@@ -58,6 +58,7 @@
 
 #include "quench/AreaLights.hlsli"
 #include "quench/Brdf.hlsli"
+#include "quench/Clouds.hlsli"
 #include "quench/Common.hlsli"
 #include "quench/Fog.hlsli"
 #include "quench/Frame.hlsli"
@@ -157,6 +158,12 @@ SamplerState quenchAreaSampler : QUENCH_SAMPLER(12);
 // The local lights' shadow maps (quenchLocalShadows), read where FrameUniforms::localShadows.x is not 0.
 Texture2DArray<float> quenchLocalShadowMaps : QUENCH_TEXTURE(13);
 SamplerState quenchLocalShadowSampler : QUENCH_SAMPLER(13);
+// The clouds' shadow and the sky cube (quench/Clouds.hlsli), read where FrameUniforms::cloudShadow.w and skyCube.x
+// are not 0.
+Texture2D<float4> quenchCloudShadowMap : QUENCH_TEXTURE(14);
+SamplerState quenchCloudShadowSampler : QUENCH_SAMPLER(14);
+TextureCube<float4> quenchSkyCube : QUENCH_TEXTURE(15);
+SamplerState quenchSkyCubeSampler : QUENCH_SAMPLER(15);
 #endif
 
 // True when the material has texture n (MaterialDesc::textures); unset textures sample white.
@@ -288,8 +295,13 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     [branch] if (rayTraced != 0u) {
         rayMask = quenchRayMask.SampleLevel(quenchRayMaskSampler, i.pixel * quenchFrame.screen.zw, 0.0);
     }
+    // The sun's light under the clouds' shadow, with either kind of shadows below.
+    float3 sun = quenchFrame.sunColor.rgb;
+    [branch] if (quenchFrame.cloudShadow.w > 0.0) {
+        sun *= quenchCloudShadow(quenchCloudShadowMap, quenchCloudShadowSampler, i.world);
+    }
     [branch] if (quenchFrame.sunDir.w > 0.0 && (rayTraced & 1u) != 0u) {
-        color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, quenchFrame.sunColor.rgb * rayMask.rgb);
+        color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, sun * rayMask.rgb);
         shadow = luminance(rayMask.rgb);
     } else if (quenchFrame.sunDir.w > 0.0) {
         shadow = shadowFactor(quenchShadowMap, quenchShadowSampler, i.world, i.normal);
@@ -297,10 +309,10 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
         // without translucent casters change by a few levels.
         [branch] if (shadow > 0.0 && quenchFrame.shadowTransmittance.x > 0.0) {
             const float3 t = shadowTransmittance(quenchTransmittanceMap, quenchTransmittanceSampler, i.world, i.normal);
-            color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, quenchFrame.sunColor.rgb * shadow * t);
+            color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, sun * shadow * t);
             shadow *= luminance(t);
         } else {
-            color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, quenchFrame.sunColor.rgb * shadow);
+            color += quenchDirectLight(s, V, quenchFrame.sunDir.xyz, sun * shadow);
         }
     }
     const int lights = int(quenchLights.count.x);
@@ -376,7 +388,8 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     color += ambient * s.albedo * (1.0 - s.metallic) * occlusion;
     // Sun-shadowed areas see less of the bright sky in their reflection.
     const float3 R = reflect(-V, lobeNormal);
-    float3 env = lerp(skyRadiance(R), ambient, saturate(lobeRoughness * 1.2)) * lerp(0.35, 1.0, shadow);
+    const float3 sky = quenchSkyReflection(quenchSkyCube, quenchSkyCubeSampler, R, lobeRoughness);
+    float3 env = lerp(sky, ambient, saturate(lobeRoughness * 1.2)) * lerp(0.35, 1.0, shadow);
     float envOcclusion = occlusion;
     // Traced reflections up to the roughness cutoff, faded into the sky's over its last quarter; screen-space ones
     // (bit 6) also by their confidence in alpha.

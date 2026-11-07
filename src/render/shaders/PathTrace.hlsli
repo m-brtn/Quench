@@ -105,7 +105,7 @@ float4 pt_fs(FullscreenOut vin) : SV_Target0 {
                                          QUENCH_RT_MASK_VISIBLE | QUENCH_RT_MASK_SEE_THROUGH | QUENCH_RT_MASK_EMITTER,
                                          seed);
         if (!hit.hit) {
-            const float3 sky = skyRadiance(dir);
+            const float3 sky = quenchCloudySky(dir);
             radiance += throughput * (bounce == 0 ? quenchSunDisc(sky, dir) : sky);
             break;
         }
@@ -147,8 +147,10 @@ float4 pt_fs(FullscreenOut vin) : SV_Target0 {
             const float r = sqrt(rtRandom(seed)) * sqrt(max(1.0 - sunCos * sunCos, 0.0)) / max(sunCos, 1e-3);
             const float a = 6.2831853 * rtRandom(seed);
             const float3 L = normalize(sun + (T * cos(a) + B * sin(a)) * r);
-            if (dot(N, L) > 0.0)
-                radiance += throughput * rtDirectLight(s, V, L, quenchFrame.sunColor.rgb * rtVisibility(P, L, 1e4));
+            if (dot(N, L) > 0.0) {
+                const float3 sunLight = quenchFrame.sunColor.rgb * quenchOvercastSun();
+                radiance += throughput * rtDirectLight(s, V, L, sunLight * rtVisibility(P, L, 1e4));
+            }
         }
         // One local light, chosen uniformly (its contribution times the count).
         if (lights > 0) {

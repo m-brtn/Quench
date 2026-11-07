@@ -15,7 +15,9 @@
 //             shadows at the render size, samplers 10 and 11 the probe grid's irradiance and distance atlases
 //             (each read only where FrameUniforms::options.w says so), sampler 12 the table of the area lights
 //             (quench/AreaLights.hlsli, read where LightUniforms::count.y is not 0), sampler 13 the local lights'
-//             shadow maps (Texture2DArray<float>, read where FrameUniforms::localShadows.x is not 0)
+//             shadow maps (Texture2DArray<float>, read where FrameUniforms::localShadows.x is not 0), sampler 14 the
+//             clouds' shadow (Texture2D<float4>, read where FrameUniforms::cloudShadow.w is not 0), sampler 15 the
+//             sky cube (TextureCube<float4>, read where FrameUniforms::skyCube.x is not 0)
 
 #include "quench/Shared.h"
 
@@ -85,6 +87,16 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // tangent of half the field of view of a point light's six maps (a little over 1, so that the filter's taps at a
     // map's edge stay inside it).
     float4 localShadows;
+    // The clouds (render::RenderSettings::clouds; quench/Clouds.hlsli). Their shadow (sampler 14: the share of the
+    // sun's light they let through, a top-down map on the plane y = 0): xy: the map's corner (world x and z, m), z: 1 /
+    // its size (m), w: 1 when it is read.
+    float4 cloudShadow;
+    // The sky cube (sampler 15: the sky with its clouds, for the sky's reflection): x: 1 when it is read, y: its last
+    // mip level.
+    float4 skyCube;
+    // How overcast it is around the camera: rgb: the radiance of a closed cloud deck's base, w: the cover (0..1). The
+    // traced effects' sky (misses, the probe grid, the path tracer) takes it in place of the clouds themselves.
+    float4 overcast;
 };
 
 // One registered instance in the frame's instance buffer.

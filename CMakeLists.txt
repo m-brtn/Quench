@@ -156,6 +156,14 @@ add_library(quench_navigation STATIC
 quench_configure_target(quench_navigation)
 target_link_libraries(quench_navigation PUBLIC quench_core quench_assets quench_glm PRIVATE quench_recast quench_xxhash)
 
+# ------------------------------------------------------------------ weather
+# Headless: the weather field (cloud coverage and type, precipitation, cirrus) drifting with the wind and evolving,
+# cells (a single raining cloud), and its queries. The field's code is shared with the renderer's shaders
+# (shaders/quench/WeatherField.h), hence quench_gpu_shaders for its include directory.
+add_library(quench_weather STATIC src/weather/Weather.cpp)
+quench_configure_target(quench_weather)
+target_link_libraries(quench_weather PUBLIC quench_core quench_gpu_shaders quench_glm)
+
 # The asset cooker (host tool, tools/cook) and quench_cook_assets().
 include(cmake/QuenchCook.cmake)
 
@@ -253,6 +261,7 @@ if(NOT QUENCH_HEADLESS)
     # The retained scene and the standard frame (shadows, HDR pass, sky, fog, TAA, bloom, tone mapping) on quench_gpu.
     add_library(quench_render STATIC
         src/render/Cascades.cpp
+        src/render/Clouds.cpp
         src/render/Daylight.cpp
         src/render/Effects.cpp
         src/render/MeshBuilder.cpp
@@ -266,7 +275,8 @@ if(NOT QUENCH_HEADLESS)
         src/render/TemporalFilter.cpp
         src/render/ToneMap.cpp)
     quench_configure_target(quench_render)
-    target_link_libraries(quench_render PUBLIC quench_core quench_assets quench_gpu quench_gpu_shaders quench_glm)
+    target_link_libraries(quench_render PUBLIC quench_core quench_assets quench_gpu quench_gpu_shaders quench_glm
+                                               quench_weather)
     quench_add_shaders(quench_render NAME render_frame SOURCE src/render/shaders/frame.hlsl
         ENTRIES fullscreen_vs:vertex shadow_vs:vertex shadow_fs:fragment depth_vs:vertex sky_fs:fragment
                 velocity_fs:fragment velocity_obj_vs:vertex velocity_skin_vs:vertex velocity_obj_fs:fragment
@@ -282,6 +292,14 @@ if(NOT QUENCH_HEADLESS)
     # The local lights' shadow maps read in screen space (frames where an area light has maps).
     quench_add_shaders(quench_render NAME render_localshadow SOURCE src/render/shaders/localshadow.hlsl
         ENTRIES local_shadow_fs:fragment local_shadow_blur_fs:fragment)
+    # The clouds (RenderSettings::clouds, docs/weather.md): the weather map, their shadow, the volumetric march and
+    # its accumulation, the sky with the clouds, the 2D layer, the sky cube's faces; their noise, drawn once.
+    quench_add_shaders(quench_render NAME render_clouds SOURCE src/render/shaders/clouds.hlsl
+        ENTRIES weather_map_fs:fragment cloud_shadow_fs:fragment cloud_shadow_layer_fs:fragment
+                cloud_march_fs:fragment cloud_temporal_fs:fragment sky_clouds_fs:fragment sky_layer_fs:fragment
+                sky_cube_fs:fragment sky_cube_layer_fs:fragment)
+    quench_add_shaders(quench_render NAME render_cloudnoise SOURCE src/render/shaders/cloudnoise.hlsl
+        ENTRIES cloud_noise_fs:fragment)
     # Ray tracing (gpu::Caps::rayTracing): the rayquery entries need DXC (cmake/QuenchDxc.cmake); without it the sets
     # have the other entries only and the renderer uses the shadow maps and the sky's light.
     quench_add_shaders(quench_render NAME render_raytrace SOURCE src/render/shaders/raytrace.hlsl

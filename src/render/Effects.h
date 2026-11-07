@@ -19,6 +19,9 @@ struct DeviceSupport {
     bool spatialUpscaling = false;   // gpu::Caps::spatialUpscaling
     bool temporalUpscaling = false;  // gpu::Caps::temporalUpscaling
     bool denoisedUpscaling = false;  // gpu::Caps::denoisedUpscaling
+    bool cloudLayer = false;         // the cloud pipelines (the 2D layer)
+    bool cloudVolume = false;        // also a renderable Rgba8Unorm 3D texture and the volumetric pipelines
+    bool skyCube = false;            // an Rgba16Float cube that can be rendered to and sampled
 };
 
 ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport& support);

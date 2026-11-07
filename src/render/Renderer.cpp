@@ -1,5 +1,6 @@
 #include <quench/render/Renderer.h>
 
+#include "Clouds.h"
 #include "Effects.h"
 #include "PathTracer.h"
 #include "RayTracing.h"
@@ -322,7 +323,7 @@ struct RendererImpl {
     std::map<TextureFormat, gpu::GraphicsPipeline> tonemapPipelines, fxaaPipelines;
 
     gpu::Sampler shadowSampler, linearClamp, pointClamp, materialSampler;
-    gpu::Texture white, dummyShadow, dummyTransmittance, areaTable;
+    gpu::Texture white, dummyShadow, dummyTransmittance, areaTable, noSkyCube;
 
     // Targets
     std::uint32_t renderWidth = 0, renderHeight = 0, outputWidth = 0, outputHeight = 0;
@@ -389,6 +390,9 @@ struct RendererImpl {
     // The screen-space effects (AmbientOcclusion::ScreenSpace, and the fallbacks of the traced effects)
     ScreenSpace screenSpace;
     bool screenSpaceTried = false;
+    // The clouds of the scene's weather (RenderSettings::clouds)
+    CloudRenderer clouds;
+    bool cloudsTried = false;
     bool targetVelocity = false; // the velocity target was made (TAA, or the temporal ray denoiser)
     // The light (scene slot + 1, 0: none) of each local shadow channel in the previous frame.
     std::array<std::uint32_t, QUENCH_RT_LOCAL_SHADOWS> shadowChannels{};
@@ -483,6 +487,9 @@ Result<void> RendererImpl::init() {
     support.spatialUpscaling = caps.spatialUpscaling;
     support.temporalUpscaling = caps.temporalUpscaling;
     support.denoisedUpscaling = caps.denoisedUpscaling;
+    support.cloudLayer = true; // until its pipelines fail (made when clouds are first drawn)
+    support.cloudVolume = CloudRenderer::volumeSupported(*device);
+    support.skyCube = CloudRenderer::cubeSupported(*device);
     if (!supports(ldrFormat, gpu::TextureType::Texture2D, targetSampled))
         return Error{"render: Rgba8Unorm cannot be rendered to and sampled"};
 
@@ -558,6 +565,16 @@ Result<void> RendererImpl::init() {
             device->upload(gpu::TextureRegion{.texture = dummyTransmittance}, std::as_bytes(std::span(clearPixel)));
         !r)
         return Error{std::format("render: placeholder texture: {}", r.error())};
+    // Bound in place of the sky cube when there is none (surface sampler 15; not read then).
+    Result<gpu::Texture> noCube = device->createTexture(
+        {.type = gpu::TextureType::Cube, .format = ldrFormat, .layers = 6, .name = "render no sky cube"});
+    if (!noCube) return Error{std::format("render: placeholder cube: {}", noCube.error())};
+    noSkyCube = std::move(*noCube);
+    for (std::uint32_t face = 0; face < 6; ++face)
+        if (Result<void> r = device->upload(gpu::TextureRegion{.texture = noSkyCube, .layer = face},
+                                            std::as_bytes(std::span(whitePixel)));
+            !r)
+            return Error{std::format("render: placeholder cube: {}", r.error())};
     // The area lights' table (quench/AreaLights.hlsli): layer 0 the inverse transforms, layer 1 the lobe's magnitude
     // and Fresnel part.
     Result<gpu::Texture> ltc = device->createTexture({.type = gpu::TextureType::Texture2DArray,
@@ -786,6 +803,14 @@ void RendererImpl::applySettings() {
         fallbacks.push_back(
             std::format("translucent shadows: no {} texture array to render to; dithered into the depth map",
                         gpu::formatInfo(transmittanceFormat).name));
+    if (settings.sky && settings.clouds == Clouds::Volumetric && next.clouds == Clouds::Layer)
+        fallbacks.push_back(std::format("volumetric clouds: no {} 3D texture and Rgba16Float targets to render to, or "
+                                        "their pipelines failed; the 2D cloud layer",
+                                        gpu::formatInfo(ldrFormat).name));
+    if (settings.sky && settings.clouds != Clouds::Off && next.clouds == Clouds::Off)
+        fallbacks.emplace_back("clouds: their pipelines failed; none");
+    if (next.clouds != Clouds::Off && settings.skyCubeSize > 0 && !next.skyCube)
+        fallbacks.emplace_back("sky cube: no Rgba16Float cube to render to; surfaces reflect the sky without clouds");
     if (next == effects && effectsChosen) return;
     for (const std::string& line : fallbacks) log::warning("render", "{}", line);
     effects = next;
@@ -1681,6 +1706,16 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         screenOcclusion = screenOcclusion && screenSpace.ready();
         screenReflections = screenReflections && screenSpace.ready();
     }
+    // The clouds of the scene's weather: their pipelines when they are first drawn.
+    Clouds cloudMode = scene.weather ? effects.clouds : Clouds::Off;
+    if (cloudMode != Clouds::Off && !clouds.ready()) {
+        if (!cloudsTried && !clouds.init(*device, hdrFormat, depthFormat, pipelineCount)) {
+            support.cloudLayer = support.cloudVolume = false; // logged
+            applySettings();
+        }
+        cloudsTried = true;
+        if (!clouds.ready()) cloudMode = Clouds::Off;
+    }
     // Local lights with ray-traced shadows: the nearest ones that cast shadows, one channel each.
     int channels = 0;
     std::array<std::uint32_t, QUENCH_RT_LOCAL_SHADOWS> owners{};
@@ -2026,7 +2061,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     stats.instances = std::uint32_t(opaque.size() + transparent.size());
     stats.movedInstances = std::uint32_t(moved.size());
     // Timed ranges (gpu::Caps::gpuPassTiming): upload, accel, prepass, raytrace with rays and denoise (ray tracing),
-    // shadows, local_shadows and local_filter (local light shadow maps), hdr, taa, upscale, bloom, tonemap.
+    // cloud_noise (once), weather, clouds and sky_cube (clouds), shadows, local_shadows and local_filter (local light
+    // shadow maps), hdr, taa, upscale, bloom, tonemap.
     commands.beginTiming("upload");
     const bool buffers = ensureBuffers(commands);
     commands.endTiming();
@@ -2107,6 +2143,19 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     }
     stats.screenOcclusion = screenAo;
     stats.screenReflections = screenReflect;
+    // ---- 0b. The clouds: the weather map, their shadow, the march and the sky cube; then their fields of the frame
+    // uniforms and the light under them, for every pass after.
+    clouds.render(commands, settings,
+                  {.weather = scene.weather ? &*scene.weather : nullptr,
+                   .mode = cloudMode,
+                   .cube = effects.skyCube,
+                   .renderWidth = rw,
+                   .renderHeight = rh,
+                   .viewProjStable = viewProjStable,
+                   .prevViewProjStable = fu.prevViewProj,
+                   .cut = cut,
+                   .sequence = sequenceIndex},
+                  fu, stats);
     fu.options.w = float(rayBits);
     commands.pushUniforms(kVertex, 0, fu);
     commands.pushUniforms(kFragment, 0, fu);
@@ -2465,13 +2514,18 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.bindSamplers(kFragment, 10, probeBindings);
                 pass.bindSampler(kFragment, 12, {areaTable, pointClamp});
                 pass.bindSampler(kFragment, 13, localMapBinding);
+                pass.bindSampler(kFragment, 14, clouds.shadowBinding(white, linearClamp));
+                pass.bindSampler(kFragment, 15, clouds.cubeBinding(noSkyCube, linearClamp));
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
             };
             bindFrame(true);
             drawBatches(pass, opaqueBatches, -1, stats.draws);
             PassContext ctx{commands, &pass, fu, hdr, depth, hdrFormat, depthFormat, rw, rh, -1};
             runPasses(PassStage::Opaque, ctx, fu);
-            if (settings.sky) {
+            if (settings.sky && clouds.drawsSky()) {
+                clouds.drawSky(pass);
+                bindFrame(true); // the samplers and uniforms the sky with the clouds took
+            } else if (settings.sky) {
                 pass.bindPipeline(skyPipeline);
                 pass.draw(3);
             }

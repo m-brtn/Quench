@@ -307,8 +307,10 @@ FetchContent_Declare(SDL3
     URL https://github.com/libsdl-org/SDL/archive/829a65d769d935c4852f8159e964312c0957260a.tar.gz
     URL_HASH SHA256=48e15cf1a6928453d77afa955d1fdfbbca9169e2bc3d76d111acb9b8bb076d66
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    # iOS Simulator only (TARGET_OS_SIMULATOR): accept the Simulator's Metal device in SDL GPU.
+    # iOS Simulator only (TARGET_OS_SIMULATOR): accept the Simulator's Metal device in SDL GPU. Vulkan: 3D textures
+    # are 2D-array compatible only as color targets (MoltenVK's portability subset has no 2D views of 3D images).
     PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlIosSimulator.cmake
+          COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlVulkan3d.cmake
     SYSTEM
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(SDL3)

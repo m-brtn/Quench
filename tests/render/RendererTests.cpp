@@ -697,6 +697,60 @@ QUENCH_TEST(renderer_sun_disc_outshines_its_glow) {
           double(disc.b), double(glow));
 }
 
+// A raining cumulonimbus overhead (a weather cell in a clear sky): its shadow takes the sun off the ground in both
+// cloud modes, the sky cube is drawn whole on the first frame and in turns after it, and with clouds off (the
+// default) the weather changes nothing.
+QUENCH_TEST(renderer_clouds_shadow_the_ground) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(100.0f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.setEnvironment(sunOnly());
+    addSun(scene, glm::normalize(glm::vec3(0.2f, -1.0f, 0.1f)));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 50.0f, 0), glm::vec3(0), glm::vec3(0, 0, -1));
+    const glm::ivec2 centre{kSize / 2, kSize / 2};
+    const float sunlit = sceneValue(at(renderOnce(device, *renderer, scene, view, *target), centre)).g;
+
+    weather::Weather w(weather::Settings{.coverage = 0.0f, .cirrus = 0.0f});
+    w.addCell({.position = {0.0f, 0.0f}, .radius = 4000.0f, .precipitation = 1.0f});
+    scene.setWeather(w);
+    const std::vector<Rgba8> off = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().clouds == Clouds::Off && sceneValue(at(off, centre)).g == sunlit,
+          "clouds are off by default: mode %d, ground %.3f and %.3f", int(renderer->stats().clouds),
+          double(sceneValue(at(off, centre)).g), double(sunlit));
+
+    for (const Clouds mode : {Clouds::Volumetric, Clouds::Layer}) {
+        settings.clouds = mode;
+        settings.skyCubeFacesPerFrame = 2;
+        renderer->setSettings(settings);
+        const float shaded = sceneValue(at(renderOnce(device, *renderer, scene, view, *target), centre)).g;
+        const RenderStats first = renderer->stats();
+        CHECK(first.clouds == mode, "mode %d drawn as %d", int(mode), int(first.clouds));
+        CHECK(shaded < sunlit * 0.5f && shaded > 0.0f, "mode %d: the ground under the cloud %.3f, in the sun %.3f",
+              int(mode), double(shaded), double(sunlit));
+        // The cover is the mean over 6 km around the camera, most of it outside the 4 km cell.
+        CHECK(first.cloudCover > 0.1f, "mode %d: cover %.3f under the cell", int(mode), double(first.cloudCover));
+        if (renderer->effects().skyCube) {
+            renderOnce(device, *renderer, scene, view, *target);
+            CHECK(first.skyCubeFaces == 6 && renderer->stats().skyCubeFaces == 2, "mode %d: sky cube faces %u, then %u",
+                  int(mode), first.skyCubeFaces, renderer->stats().skyCubeFaces);
+        }
+        std::printf("  clouds %d: ground %.3f under the cell, %.3f in the sun, cover %.3f\n", int(mode), double(shaded),
+                    double(sunlit), double(first.cloudCover));
+    }
+    settings.clouds = Clouds::Volumetric;
+    renderer->setSettings(settings);
+    scene.clearWeather();
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().clouds == Clouds::Off, "clouds without a weather: %d", int(renderer->stats().clouds));
+}
+
 QUENCH_TEST(renderer_taa_motion_vectors_and_render_scale) {
     QUENCH_GPU_DEVICE(device);
     RenderSettings settings = plainSettings();

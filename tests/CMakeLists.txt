@@ -55,6 +55,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             ${audio_test_data}
             animation/AnimationTests.cpp
             navigation/NavigationTests.cpp
+            weather/WeatherTests.cpp
             app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
             app/OptionsTests.cpp
@@ -69,6 +70,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             gpu/RayTracingTests.cpp
             gpu/RenderTests.cpp
             gpu/ShaderReloadTests.cpp
+            gpu/VolumeTests.cpp
             gpu/WindowTests.cpp
             render/RenderMathTests.cpp
             render/RendererTests.cpp
@@ -76,7 +78,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
     quench_configure_target(quench_device_tests)
     target_include_directories(quench_device_tests PRIVATE harness gpu)
     target_link_libraries(quench_device_tests PRIVATE quench_physics quench_assets quench_audio_device quench_render
-                                                      quench_animation quench_navigation)
+                                                      quench_animation quench_navigation quench_weather)
     target_compile_definitions(quench_device_tests PRIVATE
         QUENCH_TEST_SDL_MAIN=1
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
@@ -88,6 +90,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
                 surface_transmittance_fs:fragment)
     quench_add_shaders(quench_device_tests NAME reload_test SOURCE gpu/shaders/reload.hlsl
         ENTRIES reload_vs:vertex reload_fs:fragment)
+    quench_add_shaders(quench_device_tests NAME volume SOURCE gpu/shaders/volume.hlsl
+        ENTRIES fullscreen_vs:vertex flat_fs:fragment volume_fs:fragment cube_face_fs:fragment cube_sample_fs:fragment)
     return()
 endif()
 
@@ -97,9 +101,9 @@ target_include_directories(quench_test_harness PUBLIC harness)
 target_compile_definitions(quench_test_harness PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
 # Every test has the label of the module it checks (ctest -L <label>; tools/check.sh quick picks them from the changed
-# files): core, physics, assets, audio, animation, navigation, cook, gpu, render, app, hello, demo. The variants on
-# Vulkan through MoltenVK also have the label vulkan: tools/check.sh quick leaves them out (-LE vulkan), full and
-# release run them.
+# files): core, physics, assets, audio, animation, navigation, weather, cook, gpu, render, app, hello, demo. The
+# variants on Vulkan through MoltenVK also have the label vulkan: tools/check.sh quick leaves them out (-LE vulkan),
+# full and release run them.
 # quench_add_test_executable(<name> PREFIX <ctest prefix> LABEL <label> SOURCES <file>... LIBS <target>...
 #                            [ENVIRONMENT <NAME=value>...])
 function(quench_add_test_executable name)
@@ -179,6 +183,10 @@ quench_add_test_executable(quench_animation_tests PREFIX animation LABEL animati
 quench_add_test_executable(quench_navigation_tests PREFIX navigation LABEL navigation
     SOURCES navigation/NavigationTests.cpp
     LIBS quench_navigation)
+
+quench_add_test_executable(quench_weather_tests PREFIX weather LABEL weather
+    SOURCES weather/WeatherTests.cpp
+    LIBS quench_weather)
 
 # quench_cook (host builds that build the cook themselves): the library's cases, and the command line run twice on the
 # demo's sources and its generated character with byte-identical outputs.
@@ -276,14 +284,17 @@ if(NOT QUENCH_HEADLESS)
             gpu/RayTracingTests.cpp
             gpu/RenderTests.cpp
             gpu/ShaderReloadTests.cpp
+            gpu/VolumeTests.cpp
             gpu/WindowTests.cpp
-        LIBS quench_gpu SDL3::SDL3-static
+        LIBS quench_gpu SDL3::SDL3-static quench_glm
         ENVIRONMENT ${gpu_environment})
     quench_add_shaders(quench_gpu_device_tests NAME render SOURCE gpu/shaders/render.hlsl
         ENTRIES color_vs:vertex color_fs:fragment fullscreen_vs:vertex uniform_fs:fragment texture_fs:fragment
                 rects_vs:vertex scale_cs:compute ray_fs:fragment:rayquery ray_face_fs:fragment:rayquery)
     quench_add_shaders(quench_gpu_device_tests NAME reload_test SOURCE gpu/shaders/reload.hlsl
         ENTRIES reload_vs:vertex reload_fs:fragment)
+    quench_add_shaders(quench_gpu_device_tests NAME volume SOURCE gpu/shaders/volume.hlsl
+        ENTRIES fullscreen_vs:vertex flat_fs:fragment volume_fs:fragment cube_face_fs:fragment cube_sample_fs:fragment)
     target_compile_definitions(quench_gpu_device_tests PRIVATE
         QUENCH_TEST_METALLIB=$<BOOL:${QUENCH_SHADER_METAL_OK}>)
     if(NOT CMAKE_CROSSCOMPILING)
@@ -585,7 +596,8 @@ endforeach()
 add_library(quench_header_check OBJECT ${header_sources})
 quench_configure_target(quench_header_check)
 target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_assets quench_audio
-                                                  quench_animation quench_navigation quench_gpu_shaders)
+                                                  quench_animation quench_navigation quench_weather
+                                                  quench_gpu_shaders)
 if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_header_check PRIVATE quench_app quench_render)
 endif()

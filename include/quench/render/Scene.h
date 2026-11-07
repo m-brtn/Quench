@@ -14,6 +14,7 @@
 #include <quench/assets/Texture.h>
 #include <quench/core/Result.h>
 #include <quench/render/Handles.h>
+#include <quench/weather/Weather.h>
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec2.hpp>
@@ -264,6 +265,11 @@ public:
 
     void setEnvironment(const Environment& environment);
     const Environment& environment() const;
+    // The weather the renderer draws the clouds of (RenderSettings::clouds; docs/weather.md): a copy, so a game sets
+    // it again after each Weather::update. Without one (the default, or after clearWeather) no clouds are drawn.
+    void setWeather(const weather::Weather& weather);
+    void clearWeather();
+    const weather::Weather* weather() const; // null: none
 
     bool contains(MeshId mesh) const;
     bool contains(TextureId texture) const;

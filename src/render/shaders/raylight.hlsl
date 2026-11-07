@@ -185,7 +185,7 @@ float4 rt_probe_trace_fs(FullscreenOut vin) : SV_Target0 {
     const float3 dir = rtProbeRay(ray, uint(rtHit.probes.x), rtHit.rotation);
     uint seed = rtSeed(uint2(ray, row), uint(quenchFrame.options.y), 0x2545u);
     const RtHit hit = rtTraceClosest(origin, dir, rtHit.params.z, QUENCH_RT_MASK_VISIBLE, seed);
-    if (!hit.hit) return float4(rtClampRadiance(skyRadiance(dir)), rtHit.params.z);
+    if (!hit.hit) return float4(rtClampRadiance(quenchCloudySky(dir)), rtHit.params.z);
     const RtSurface s = rtSurfaceAt(hit, origin, dir);
     if (s.back) return float4(0.0, 0.0, 0.0, -0.2 * hit.t);
     return float4(rtClampRadiance(rtShade(s, -dir)), hit.t);

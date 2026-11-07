@@ -73,6 +73,9 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
                 support.spatialUpscaling && settings.renderScale < 1.0f ? Upscaling::Spatial : Upscaling::Bilinear;
     }
     e.bloom = settings.bloom && settings.bloomStrength > 0.0f;
+    if (settings.sky && settings.clouds != Clouds::Off && support.cloudLayer)
+        e.clouds = settings.clouds == Clouds::Volumetric && support.cloudVolume ? Clouds::Volumetric : Clouds::Layer;
+    e.skyCube = e.clouds != Clouds::Off && settings.skyCubeSize > 0 && support.skyCube;
     return e;
 }
 

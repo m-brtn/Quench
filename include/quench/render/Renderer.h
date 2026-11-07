@@ -118,6 +118,18 @@ enum class IndirectLight : std::uint8_t {
     RayTraced,
 };
 
+// The clouds of the scene's weather (Scene::setWeather; docs/weather.md).
+enum class Clouds : std::uint8_t {
+    Off,
+    // A 2D layer at the cloud base from the same weather (its coverage and cirrus), lit by the sun and the sky: the
+    // fallback of Volumetric and the cheap setting.
+    Layer,
+    // Raymarched clouds, from fair-weather cumulus to cumulonimbus and stratus, after the weather's cloud types, lit
+    // by the sun and the sky (sunsets tint them), at cloudResolution and accumulated over frames. Needs sampled
+    // Rgba8Unorm 3D textures (drawn as the layers of a 2D array and copied) and Rgba16Float targets; else Layer.
+    Volumetric,
+};
+
 // Ray-traced shadows of at most this many local lights per frame (RenderSettings::localLightShadows).
 inline constexpr int kMaxRayLocalShadows = 4;
 // Cascades of the probe grid (RenderSettings::probeCascades).
@@ -187,6 +199,18 @@ struct RenderSettings {
     float bloomThreshold = 1.6f; // linear HDR value where bloom starts (soft knee)
     bool sky = true;             // false: the background is clearColor
     glm::vec3 clearColor{0.0f};  // linear HDR
+    // The clouds of the scene's weather (Scene::setWeather), drawn in the sky (with `sky`). Off by default.
+    Clouds clouds = Clouds::Off;
+    float cloudResolution = 0.5f; // Volumetric: the march's share of the render size per side, 0.25..1
+    // Volumetric: each frame's march blended into the previous ones' (reprojected): less noise, so fewer steps do.
+    bool cloudTemporal = true;
+    int cloudSteps = 64; // Volumetric: steps along a view ray through the cloud layer, 8..256
+    // The clouds shade the sun's light on surfaces (a map 24 km across around the camera; farther away its edge).
+    bool cloudShadows = true;
+    // With clouds: a cube of the sky with its clouds (texels per side, 16..512; 0: none) that surfaces reflect in
+    // place of the sky's radiance, and how many of its faces are drawn again each frame (1..6).
+    std::uint32_t skyCubeSize = 64;
+    int skyCubeFacesPerFrame = 6;
     ToneCurve toneCurve = ToneCurve::Aces;
     float vignette = 0.28f;
     bool dither = true;
@@ -218,6 +242,10 @@ struct ActiveEffects {
     AntiAliasing antiAliasing = AntiAliasing::None;
     Upscaling upscaling = Upscaling::Bilinear;
     bool bloom = false;
+    // Volumetric falls back to Layer (Clouds::Volumetric); clouds need RenderSettings::sky. Drawn in frames whose
+    // scene has a weather.
+    Clouds clouds = Clouds::Off;
+    bool skyCube = false; // needs an Rgba16Float cube the device can render to and sample
 
     friend bool operator==(const ActiveEffects&, const ActiveEffects&) = default;
 };
@@ -349,6 +377,14 @@ struct RenderStats {
     std::uint32_t rayHitSurfaces = 0;
     std::uint32_t probes = 0;      // probes traced this frame, in every cascade (IndirectLight::Probes and RayTraced)
     std::uint32_t pathSamples = 0; // samples in the path tracer's mean
+    // The clouds drawn this frame (Off: none, or no weather on the scene), the size of the volumetric march, how
+    // overcast it is around the camera (the weather's mean coverage within 6 km, 0..1: the sky's ambient light moves
+    // toward the overcast's) and the faces of the sky cube drawn.
+    Clouds clouds = Clouds::Off;
+    std::uint32_t cloudWidth = 0;
+    std::uint32_t cloudHeight = 0;
+    float cloudCover = 0.0f;
+    std::uint32_t skyCubeFaces = 0;
 };
 
 class Renderer {

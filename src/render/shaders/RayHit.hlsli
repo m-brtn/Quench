@@ -20,6 +20,7 @@
 #include "quench/AreaLights.hlsli"
 #include "quench/Bindings.hlsli"
 #include "quench/Brdf.hlsli"
+#include "quench/Clouds.hlsli"
 #include "quench/Probes.hlsli"
 #include "quench/SceneUniforms.h"
 #include "quench/Sky.hlsli"
@@ -371,7 +372,8 @@ float3 rtShade(RtSurface s, float3 V) {
     const float offset = 0.002 * max(length(s.position - quenchFrame.cameraPos.xyz), 1.0);
     if (quenchFrame.sunDir.w > 0.0 && dot(s.normal, quenchFrame.sunDir.xyz) > 0.0) {
         const float3 visibility = rtVisibility(s.position + s.normal * offset, quenchFrame.sunDir.xyz, rtHit.params.z);
-        color += rtDirectLight(s, V, quenchFrame.sunDir.xyz, quenchFrame.sunColor.rgb * visibility);
+        const float3 sunLight = quenchFrame.sunColor.rgb * quenchOvercastSun();
+        color += rtDirectLight(s, V, quenchFrame.sunDir.xyz, sunLight * visibility);
     }
     float3 lobeNormal;
     float lobeRoughness;
@@ -409,14 +411,15 @@ float3 rtShade(RtSurface s, float3 V) {
     const float3 F0 = lerp(((float3)(0.04)), s.albedo, s.metallic);
     const float NdotV = max(dot(s.normal, V), 1e-3);
     const float3 R = reflect(-V, lobeNormal);
-    color += lerp(skyRadiance(R), indirect, saturate(lobeRoughness * 1.2)) * envBRDFApprox(F0, lobeRoughness, NdotV);
+    const float3 specular = lerp(quenchCloudySky(R), indirect, saturate(lobeRoughness * 1.2));
+    color += specular * envBRDFApprox(F0, lobeRoughness, NdotV);
     return color;
 }
 
 // Radiance along a ray: the hit's, or the sky's without the sun disc.
 float3 rtRadiance(float3 origin, float3 direction, float tMax, inout uint seed, out RtHit hit) {
     hit = rtTraceClosest(origin, direction, tMax, QUENCH_RT_MASK_VISIBLE, seed);
-    if (!hit.hit) return skyRadiance(direction);
+    if (!hit.hit) return quenchCloudySky(direction);
     const RtSurface s = rtSurfaceAt(hit, origin, direction);
     return rtShade(s, -direction);
 }

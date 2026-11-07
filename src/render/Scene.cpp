@@ -601,6 +601,10 @@ void Scene::removeLight(LightId light) {
 void Scene::setEnvironment(const Environment& environment) { m_impl->environment = environment; }
 const Environment& Scene::environment() const { return m_impl->environment; }
 
+void Scene::setWeather(const weather::Weather& weather) { m_impl->weather = weather; }
+void Scene::clearWeather() { m_impl->weather.reset(); }
+const weather::Weather* Scene::weather() const { return m_impl->weather ? &*m_impl->weather : nullptr; }
+
 bool Scene::contains(MeshId mesh) const { return m_impl->meshes.get(mesh) != nullptr; }
 bool Scene::contains(TextureId texture) const { return m_impl->textures.get(texture) != nullptr; }
 bool Scene::contains(MaterialId material) const { return m_impl->materials.get(material) != nullptr; }

@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace quench::render::detail {
@@ -103,6 +104,7 @@ struct SceneImpl {
     SlotMap<InstanceId, InstanceEntry> instances;
     SlotMap<LightId, LightEntry> lights;
     Environment environment;
+    std::optional<weather::Weather> weather;
     // The area lights' shapes (rect, disk, tube), made with the first light of each, and the scene's own entries
     // in the maps above.
     std::array<MeshId, 3> areaShapes{};
