@@ -911,23 +911,55 @@ QUENCH_TEST(reload_rebinds_and_keeps_parameters) {
 
 namespace {
 
-// With lod, the characters stand from 3 to about 40 m from the eye: every LOD rate, with and without IK.
+// testClips() and clips with float channels: "smile" 0, 1, 0.5 at 0, 0.5, 1 s; "frown": smile 0.2 and brow 1;
+// "wide": smile 0.8; "grin", additive: smile from 0.1 to 0.5 over 1 s (+0.4).
+std::vector<ClipDesc> channelClips() {
+    std::vector<ClipDesc> clips = testClips();
+    ClipDesc smile = clip("smile", 1.0f, false);
+    smile.channels = {{"smile", {{0.0f, 0.0f}, {0.5f, 1.0f}, {1.0f, 0.5f}}}};
+    clips.push_back(smile);
+    ClipDesc frown = clip("frown", 1.0f);
+    frown.channels = {{"smile", {{0.0f, 0.2f}}}, {"brow", {{0.0f, 1.0f}}}};
+    clips.push_back(frown);
+    ClipDesc wide = clip("wide", 1.0f);
+    wide.channels = {{"smile", {{0.0f, 0.8f}}}};
+    clips.push_back(wide);
+    ClipDesc grin = clip("grin", 1.0f);
+    grin.channels = {{"smile", {{0.0f, 0.1f}, {1.0f, 0.5f}}}};
+    grin.additive = true;
+    clips.push_back(grin);
+    return clips;
+}
+
+const std::vector<std::string> kChannelNames = {"smile", "brow", "nope"};
+constexpr float kChannelRest[] = {0.5f, 0.25f, 0.7f};
+
+bool channelsNear(std::span<const float> values, std::initializer_list<float> expected, float tolerance = 1e-5f) {
+    if (values.size() != expected.size()) return false;
+    for (std::size_t i = 0; i < values.size(); ++i)
+        if (!near(values[i], expected.begin()[i], tolerance)) return false;
+    return true;
+}
+
+// With lod, the characters stand from 3 to about 40 m from the eye: every LOD rate, with and without IK. Per
+// character its model matrices, then a matrix of its channels' values.
 std::vector<glm::mat4> crowd(const char* dir, int workers, int count, bool lod = false) {
     Rig rig(dir, workers);
-    rig.writeData();
+    rig.writeData(channelClips());
     if (lod) {
         rig.anim.setLod({.enabled = true});
         rig.anim.setLodView({0.0f, 0.9f, 0.0f}, glm::radians(50.0f));
     }
     const char* graph = R"({"parameters": {"speed": 0}, "layers": [{"states": [{"name": "move",
         "blend": {"parameter": "speed", "clips": [{"clip": "a", "at": 0}, {"clip": "walk", "at": 1},
-        {"clip": "keys", "at": 2}]}}]}]})";
+        {"clip": "smile", "at": 1.75}, {"clip": "keys", "at": 2}]}}]}]})";
     std::vector<CharacterId> ids;
     for (int i = 0; i < count; ++i) {
         CharacterDesc desc;
         desc.feet = feet();
         if (lod) desc.transform = glm::translate(glm::mat4(1.0f), {float(i % 4), 0.0f, -3.0f - 0.8f * float(i)});
         ids.push_back(rig.add(graph, std::move(desc)));
+        rig.anim.addChannels(ids.back(), kChannelNames);
         rig.anim.setFloat(ids.back(), "speed", float(i % 5) * 0.5f);
         rig.anim.setPhase(ids.back(), float(i) / float(count));
     }
@@ -941,6 +973,8 @@ std::vector<glm::mat4> crowd(const char* dir, int workers, int count, bool lod =
     for (const CharacterId id : ids) {
         const std::span<const glm::mat4> m = rig.anim.modelMatrices(id);
         out.insert(out.end(), m.begin(), m.end());
+        glm::mat4& channels = out.emplace_back(0.0f);
+        for (std::size_t i = 0; i < kChannelNames.size(); ++i) channels[0][int(i)] = rig.anim.channels(id, 0)[i];
     }
     return out;
 }
@@ -955,7 +989,7 @@ QUENCH_TEST(parallel_update_matches_one_thread) {
     for (const bool lod : {false, true}) {
         const std::vector<glm::mat4> one = crowd("anim_crowd_one", 0, 48, lod);
         const std::vector<glm::mat4> many = crowd("anim_crowd_many", 3, 48, lod);
-        REQUIRE(one.size() == 48u * 10u && one.size() == many.size(), "%zu and %zu matrices", one.size(), many.size());
+        REQUIRE(one.size() == 48u * 11u && one.size() == many.size(), "%zu and %zu matrices", one.size(), many.size());
         const auto* a = reinterpret_cast<const std::uint32_t*>(one.data());
         const auto* b = reinterpret_cast<const std::uint32_t*>(many.data());
         const std::size_t floats = one.size() * 16;
@@ -970,7 +1004,7 @@ QUENCH_TEST(parallel_update_matches_one_thread) {
 
 QUENCH_TEST(one_thread_updates_a_crowd) {
     const std::vector<glm::mat4> one = crowd("anim_crowd_single", 0, 16);
-    REQUIRE(one.size() == 16u * 10u, "%zu matrices", one.size());
+    REQUIRE(one.size() == 16u * 11u, "%zu matrices", one.size());
     for (const glm::mat4& m : one)
         for (int c = 0; c < 4; ++c)
             for (int r = 0; r < 4; ++r) REQUIRE(std::isfinite(m[c][r]), "finite matrices");
@@ -1154,4 +1188,142 @@ QUENCH_TEST(lod_hysteresis_and_ik) {
     rig.anim.setTransform(id, at(40.0f));
     rig.step(1.0f / 60.0f);
     CHECK(rig.anim.state(id).lodRate == 1 && rig.anim.state(id).lodIk, "no view: every frame");
+}
+
+// ---- float channels
+
+QUENCH_TEST(channel_clips_round_trip_and_errors) {
+    const SkeletonDesc desc = figure();
+    const Built a = build(desc, channelClips()), plain = build(desc, testClips());
+    REQUIRE(!a.clipsFile.empty() && !plain.clipsFile.empty(), "clips built");
+    CHECK(a.clipsFile[4] == 2 && plain.clipsFile[4] == 1, "version 2 with channels (%u), 1 without (%u)",
+          unsigned(a.clipsFile[4]), unsigned(plain.clipsFile[4]));
+    Result<std::shared_ptr<const ClipSet>> set = readClipSet(a.clipsFile);
+    REQUIRE(set, "read: %s", set ? "" : set.error().c_str());
+    const Clip* frown = (*set)->find("frown");
+    REQUIRE(frown && (*set)->find("a"), "the clips");
+    CHECK(std::ranges::equal(frown->channels(), std::vector<std::string>{"smile", "brow"}), "frown's channels (%zu)",
+          frown->channels().size());
+    CHECK((*set)->find("a")->channels().empty(), "a clip without channels");
+    CHECK(writeClipSet(**set) == a.clipsFile, "the same bytes written again");
+    Result<std::shared_ptr<const ClipSet>> old = readClipSet(plain.clipsFile);
+    CHECK(old && (*old)->find("frown") == nullptr && writeClipSet(**old) == plain.clipsFile, "version 1 still read");
+    std::vector<std::uint8_t> newer = a.clipsFile;
+    newer[4] = 3;
+    Result<std::shared_ptr<const ClipSet>> future = readClipSet(newer);
+    CHECK(!future && future.error().find("1 to 2") != std::string::npos, "a newer version: %s",
+          future ? "read" : future.error().c_str());
+
+    const auto fails = [&](std::vector<ChannelTrack> channels, const char* what) {
+        ClipDesc bad = clip("bad", 1.0f);
+        bad.channels = std::move(channels);
+        Result<std::shared_ptr<const ClipSet>> r = buildClipSet(*a.skeleton, desc, std::span(&bad, 1), exact());
+        CHECK(!r, "%s: built", what);
+    };
+    fails({{"x", {}}}, "a channel without keys");
+    fails({{"", {{0.0f, 1.0f}}}}, "a channel without a name");
+    fails({{"x", {{0.0f, 1.0f}}}, {"x", {{0.0f, 2.0f}}}}, "two channels with one name");
+    fails({{"x", {{0.0f, NAN}}}}, "a key that is not a number");
+}
+
+QUENCH_TEST(channels_sample_blend_and_rest) {
+    Rig rig("anim_channels");
+    rig.writeData(channelClips());
+    const CharacterId one = rig.add(oneState("smile", R"(, "loop": false)"));
+    const CharacterId tree = rig.add(R"({"parameters": {"w": 0}, "layers": [{"states": [{"name": "s",
+        "blend": {"parameter": "w", "clips": [{"clip": "a", "at": 0}, {"clip": "frown", "at": 1}]}}]}]})");
+    const CharacterId fade = rig.add(R"({"parameters": {"go": 0}, "layers": [{"states": [{"name": "idle",
+        "clip": "a"}, {"name": "sad", "clip": "frown"}], "start": "idle", "transitions": [{"from": "idle",
+        "to": "sad", "duration": 0.5, "conditions": [{"parameter": "go", "op": ">", "value": 0.5}]}]}]})");
+    const CharacterId layered = rig.add(R"({"parameters": {"over": 0.5, "add": 0}, "layers": [
+        {"name": "base", "states": [{"name": "s", "clip": "frown"}]},
+        {"name": "over", "mask": ["spine"], "weightParameter": "over", "states": [{"name": "s", "clip": "wide"}]},
+        {"name": "plain", "states": [{"name": "s", "clip": "a"}]},
+        {"name": "add", "blend": "additive", "weightParameter": "add", "states": [{"name": "s", "clip": "grin"}]}]})");
+    int sets[4];
+    const CharacterId ids[4] = {one, tree, fade, layered};
+    for (int i = 0; i < 4; ++i) sets[i] = rig.anim.addChannels(ids[i], kChannelNames, kChannelRest);
+    CHECK(sets[0] == 0 && channelsNear(rig.anim.channels(one, 0), {0.5f, 0.25f, 0.7f}),
+          "the rest values before the clips are ready");
+    rig.load();
+
+    // One clip: linear between keys; names no bound clip has keep their rest values.
+    const float phases[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+    const float expected[] = {0.0f, 0.5f, 1.0f, 0.75f, 0.5f};
+    for (int i = 0; i < 5; ++i) {
+        rig.anim.setPhase(one, phases[i]);
+        rig.step(0.0f);
+        const std::span<const float> v = rig.anim.channels(one, sets[0]);
+        CHECK(channelsNear(v, {expected[i], 0.25f, 0.7f}), "at %.2f: smile %.4f (expected %.4f), brow %.4f, nope %.4f",
+              phases[i], v[0], expected[i], v[1], v[2]);
+    }
+
+    // A blend tree: a clip without a channel leaves its share to the rest value.
+    const float weights[] = {0.0f, 0.5f, 1.0f};
+    const float smile[] = {0.5f, 0.35f, 0.2f}, brow[] = {0.25f, 0.625f, 1.0f};
+    for (int i = 0; i < 3; ++i) {
+        rig.anim.setFloat(tree, "w", weights[i]);
+        rig.step(0.0f);
+        const std::span<const float> v = rig.anim.channels(tree, sets[1]);
+        CHECK(channelsNear(v, {smile[i], brow[i], 0.7f}), "blend %.1f: smile %.4f, brow %.4f", weights[i], v[0], v[1]);
+    }
+
+    // A cross-fade from a clip without channels: half way (smoothstep(0.5) = 0.5) the blend tree's middle.
+    rig.anim.setFloat(fade, "go", 1.0f);
+    rig.step(0.1f); // the fade starts at the end of this update
+    rig.step(0.25f);
+    std::span<const float> v = rig.anim.channels(fade, sets[2]);
+    CHECK(channelsNear(v, {0.35f, 0.625f, 0.7f}, 1e-4f), "half way: smile %.4f, brow %.4f", v[0], v[1]);
+    rig.step(0.25f);
+    v = rig.anim.channels(fade, sets[2]);
+    CHECK(channelsNear(v, {0.2f, 1.0f, 0.7f}), "faded: smile %.4f, brow %.4f", v[0], v[1]);
+
+    // Layers: an override layer moves the channels its clip has by its weight (its mask is for joints), a layer whose
+    // clip has none leaves them, an additive layer adds its clip's difference (+0.2 half way).
+    rig.anim.setPhase(layered, 0.0f);
+    rig.step(0.0f);
+    v = rig.anim.channels(layered, sets[3]);
+    CHECK(channelsNear(v, {0.5f, 1.0f, 0.7f}), "override at 0.5: smile %.4f, brow %.4f", v[0], v[1]);
+    rig.anim.setFloat(layered, "over", 1.0f);
+    rig.step(0.0f);
+    CHECK(near(rig.anim.channels(layered, sets[3])[0], 0.8f, 1e-5f), "override at 1: smile %.4f",
+          rig.anim.channels(layered, sets[3])[0]);
+    rig.anim.setFloat(layered, "over", 0.0f);
+    rig.anim.setFloat(layered, "add", 1.0f);
+    CHECK(rig.anim.setState(layered, "add", "s"), "the additive layer restarted");
+    rig.step(0.5f);
+    v = rig.anim.channels(layered, sets[3]);
+    CHECK(channelsNear(v, {0.4f, 1.0f, 0.7f}), "additive half way: smile %.4f, brow %.4f", v[0], v[1]);
+
+    // A set added to a bound character has the last update's values at once.
+    const int late = rig.anim.addChannels(layered, std::vector<std::string>{"brow"});
+    CHECK(late == 1 && channelsNear(rig.anim.channels(layered, late), {1.0f}), "a set added later");
+}
+
+// Channels follow animation LOD like the pose: interpolated between updates, or held. "smile" rises 2 per second for
+// its first 0.5 s: held at rate 4, up to 3 frames behind (0.1).
+QUENCH_TEST(lod_channels_interpolated_and_held) {
+    for (const bool interpolate : {true, false}) {
+        Rig full("anim_lod_channels_full"), lod("anim_lod_channels_far");
+        for (Rig* rig : {&full, &lod}) rig->writeData(channelClips());
+        lod.anim.setLod({.enabled = true, .interpolate = interpolate});
+        lod.anim.setLodView(kLodEye, kLodFov);
+        CharacterDesc desc;
+        desc.transform = at(40.0f);
+        const CharacterId a = full.add(oneState("smile"), desc), b = lod.add(oneState("smile"), desc);
+        const int setA = full.anim.addChannels(a, kChannelNames), setB = lod.anim.addChannels(b, kChannelNames);
+        full.load();
+        lod.load();
+        float maxError = 0.0f;
+        for (int frame = 0; frame < 24; ++frame) {
+            full.step(1.0f / 60.0f);
+            lod.step(1.0f / 60.0f);
+            maxError = std::max(maxError, std::abs(full.anim.channels(a, setA)[0] - lod.anim.channels(b, setB)[0]));
+        }
+        CHECK(lod.anim.state(b).lodRate == 4, "rate %d at 40 m", lod.anim.state(b).lodRate);
+        if (interpolate)
+            CHECK(maxError < 1e-5f, "interpolated: %.6f from an update every frame", double(maxError));
+        else
+            CHECK(maxError > 0.09f && maxError < 0.11f, "held: up to 3 frames behind (%.4f)", double(maxError));
+    }
 }

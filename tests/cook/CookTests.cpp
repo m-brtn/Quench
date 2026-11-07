@@ -565,6 +565,86 @@ QUENCH_TEST(cook_animation_errors) {
     CHECK(cookAnimation(gltf, {}), "without settings");
 }
 
+// Morph target weights: a mesh node without a skin ("face", which becomes the skeleton's joint) with two targets
+// ("smile" from extras.targetNames, the second unnamed: "face.target1"), animated linear (smile 0 to 1, the other 1 to
+// 0), step (smile 0.2, 0.8, 0.4) and as a cubic spline with zero tangents (smile to 1, the other to 0.5); weights of
+// a node without a mesh are dropped with a note.
+QUENCH_TEST(cook_animation_morph_weights) {
+    const std::filesystem::path dir = tmpPath("cook_animation_weights");
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    GltfWriter w;
+    const int positions = w.add(std::vector<float>{0, 0, 0, 1, 0, 0, 0, 1, 0}, 3, "VEC3", kFloat,
+                                R"(, "min": [0, 0, 0], "max": [1, 1, 0])");
+    const int up = w.add(std::vector<float>{0, 0, 0, 0, 0, 0, 0, 0.5f, 0}, 3, "VEC3", kFloat,
+                         R"(, "min": [0, 0, 0], "max": [0, 0.5, 0])");
+    const int side = w.add(std::vector<float>{0, 0, 0, 0.5f, 0, 0, 0, 0, 0}, 3, "VEC3", kFloat,
+                           R"(, "min": [0, 0, 0], "max": [0.5, 0, 0])");
+    const int indices = w.add(std::vector<std::uint16_t>{0, 1, 2}, 3, "SCALAR", kUnsignedShort);
+    const int linearTimes = w.add(std::vector<float>{0, 1}, 2, "SCALAR", kFloat, R"(, "min": [0], "max": [1])");
+    const int linearWeights = w.add(std::vector<float>{0, 1, 1, 0}, 4, "SCALAR", kFloat);
+    const int stepTimes = w.add(std::vector<float>{0, 0.5f, 1}, 3, "SCALAR", kFloat, R"(, "min": [0], "max": [1])");
+    const int stepWeights = w.add(std::vector<float>{0.2f, 0, 0.8f, 0, 0.4f, 0}, 6, "SCALAR", kFloat);
+    const int cubicWeights = w.add(std::vector<float>{0, 0, 0, 0, 0, 0, 0, 0, 1, 0.5f, 0, 0}, 12, "SCALAR", kFloat);
+    const std::string json = std::format(
+        R"({{"asset": {{"version": "2.0"}}, "scene": 0, "scenes": [{{"nodes": [0, 1]}}],
+"nodes": [{{"name": "face", "mesh": 0}}, {{"name": "empty"}}],
+"meshes": [{{"name": "face", "extras": {{"targetNames": ["smile"]}},
+  "primitives": [{{"attributes": {{"POSITION": {}}}, "indices": {}, "targets": [{{"POSITION": {}}}, {{"POSITION": {}}}]}}]}}],
+"animations": [
+  {{"name": "linear", "channels": [{{"sampler": 0, "target": {{"node": 0, "path": "weights"}}}},
+    {{"sampler": 0, "target": {{"node": 1, "path": "weights"}}}}],
+   "samplers": [{{"input": {}, "output": {}}}]}},
+  {{"name": "step", "channels": [{{"sampler": 0, "target": {{"node": 0, "path": "weights"}}}}],
+   "samplers": [{{"input": {}, "output": {}, "interpolation": "STEP"}}]}},
+  {{"name": "cubic", "channels": [{{"sampler": 0, "target": {{"node": 0, "path": "weights"}}}}],
+   "samplers": [{{"input": {}, "output": {}, "interpolation": "CUBICSPLINE"}}]}}],
+"buffers": [{{"uri": "face.bin", "byteLength": {}}}], "bufferViews": [{}], "accessors": [{}]}})",
+        positions, indices, up, side, linearTimes, linearWeights, stepTimes, stepWeights, linearTimes, cubicWeights,
+        w.bin.size(), join(w.views), join(w.accessors));
+    std::ofstream(dir / "face.gltf", std::ios::binary) << json;
+    std::ofstream(dir / "face.bin", std::ios::binary)
+        .write(reinterpret_cast<const char*>(w.bin.data()), std::streamsize(w.bin.size()));
+
+    Result<CookedAnimation> skeleton = cookSkeleton(dir / "face.gltf");
+    Result<CookedAnimation> clips = cookAnimation(dir / "face.gltf", {});
+    REQUIRE(skeleton && clips, "%s", !skeleton ? skeleton.error().c_str() : clips ? "" : clips.error().c_str());
+    CHECK(std::ranges::any_of(skeleton->names, [](const std::string& n) { return n == "face"; }),
+          "the animated mesh node is a joint");
+    CHECK(std::ranges::any_of(clips->notes,
+                              [](const std::string& n) { return n.find("without blend shapes") != n.npos; }),
+          "the weights of a node without a mesh are noted");
+    Result<std::shared_ptr<const animation::ClipSet>> set = animation::readClipSet(clips->file);
+    REQUIRE(set && (*set)->find("linear") && (*set)->find("step") && (*set)->find("cubic"), "%s",
+            set ? "the three clips" : set.error().c_str());
+    CHECK(std::ranges::equal((*set)->find("linear")->channels(), std::vector<std::string>{"smile", "face.target1"}),
+          "channels named like the model's blend shapes");
+    Result<CookedAnimation> again = cookAnimation(dir / "face.gltf", {});
+    CHECK(again && again->file == clips->file, "two cooks write the same bytes");
+
+    struct Expected {
+        const char* clip;
+        float phase, smile, other;
+    };
+    const Expected expected[] = {{"linear", 0.25f, 0.25f, 0.75f}, {"linear", 0.75f, 0.75f, 0.25f},
+                                 {"step", 0.25f, 0.2f, 0.0f},     {"step", 0.75f, 0.8f, 0.0f},
+                                 {"step", 1.0f, 0.4f, 0.0f},      {"cubic", 0.25f, 0.15625f, 0.078125f},
+                                 {"cubic", 0.5f, 0.5f, 0.25f},    {"cubic", 0.75f, 0.84375f, 0.421875f}};
+    for (const Expected& e : expected)
+        withCooked(dir / e.clip, *skeleton, *clips, e.clip, false,
+                   [&](assets::AssetManager& manager, animation::AnimationSystem& anim, animation::CharacterId id) {
+                       const int channels = anim.addChannels(id, std::vector<std::string>{"smile", "face.target1"});
+                       anim.setPhase(id, e.phase);
+                       manager.update();
+                       anim.update(0.0f);
+                       const std::span<const float> v = anim.channels(id, channels);
+                       REQUIRE(anim.state(id).bound && v.size() == 2, "%s: bound", e.clip);
+                       CHECK(std::abs(v[0] - e.smile) < 3e-3f && std::abs(v[1] - e.other) < 3e-3f,
+                             "%s at %.2f: %.4f, %.4f (expected %.4f, %.4f)", e.clip, e.phase, v[0], v[1], e.smile,
+                             e.other);
+                   });
+}
+
 // ---- retargeting
 
 namespace {
@@ -682,7 +762,9 @@ QUENCH_TEST(cook_retarget_map_and_errors) {
 
 QUENCH_TEST(cook_retarget_onto_itself) {
     const SkeletonDesc skeleton = sourceSkeleton();
-    const ClipDesc clips[] = {sourceClip()};
+    ClipDesc walk = sourceClip();
+    walk.channels = {{"blink", {{0.0f, 0.0f}, {0.5f, 1.0f}}}};
+    const ClipDesc clips[] = {walk};
     Result<RetargetMap> map = parseRetargetMap(R"({"joints": {"root": "root", "hip": "hip", "knee": "knee",
         "foot": "foot", "arm": "arm", "hand": "hand"}, "translations": ["root", "hip"]})");
     REQUIRE(map, "%s", map ? "" : map.error().c_str());
@@ -692,8 +774,9 @@ QUENCH_TEST(cook_retarget_onto_itself) {
     const ClipDesc& c = (*out)[0];
     CHECK(notes.empty(), "no notes (%zu)", notes.size());
     CHECK(c.name == "walk" && c.duration == 1.0f && c.loop && c.events.size() == 1 && c.events[0].name == "footstep" &&
-              c.rootMotion && c.rootMotion->joint == "root",
-          "name, duration, loop, events and root motion copied");
+              c.rootMotion && c.rootMotion->joint == "root" && c.channels.size() == 1 &&
+              c.channels[0].name == "blink" && c.channels[0].keys.size() == 2 && c.channels[0].keys[1].value == 1.0f,
+          "name, duration, loop, events, root motion and channels copied");
     float worst = 0.0f;
     for (int i = 0; i <= 60; ++i) {
         const float t = float(i) / 60.0f;

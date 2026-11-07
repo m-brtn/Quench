@@ -38,6 +38,8 @@ struct ClipImpl {
     bool rootMotion = false;
     ozz::animation::Float3Track motionPosition;     // by ratio, in the root motion joint's parent space
     ozz::animation::QuaternionTrack motionRotation; // identity keys without rotation extraction
+    std::vector<std::string> channelNames;
+    std::vector<ozz::animation::FloatTrack> channels; // by ratio; additive clips: the difference to the first value
 };
 
 // Fills names, rest and restModel from the ozz skeleton and computes the signature.

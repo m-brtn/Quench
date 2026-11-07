@@ -1,7 +1,9 @@
 # Animation, blend shapes (ctest: demo_animation_blendshapes_<backend>, a part of batch.txt): the blob, a jelly body
 # with two eyes on three joints, sways by its clip while four blend shapes reshape it before its skinning. The capture
-# shows it puffed out and spiked (puff 0.7, spikes 1, squash 0.3) 1 s after the restart, its normals following the
-# spikes. The waits end half a frame away from a step of the fixed clock (see animation_retarget.txt).
+# shows it puffed out and spiked by the sliders (puff 0.7, spikes 1, squash 0.3; the clip's weights off) 1 s after the
+# restart, its normals following the spikes. Then the clip's weights: it squashes the blob where its sway turns and
+# stretches it in between, never both, and the sliders add to them. The waits end half a frame away from a step of
+# the fixed clock (see animation_retarget.txt).
 section animation
 
 set dither 0
@@ -15,6 +17,8 @@ expect anim_characters == 9
 until anim_bound == 9 1
 until anim_ready == 1 3
 expect blob_shapes == 4
+expect blob_clip == 1
+set blob_clip 0
 set blob_puff 0.7
 set blob_spikes 1
 set blob_squash 0.3
@@ -28,6 +32,20 @@ set blob_puff 0
 set blob_spikes 0
 set blob_squash 0
 expect blob_weight_puff == 0
+expect blob_weight_squash == 0
+set blob_clip 1
+until blob_clip_squash > 0.3 3
+expect blob_clip_stretch < 0.002
+expect blob_clip_puff == 0
+expect blob_clip_spikes == 0
+until blob_clip_stretch > 0.25 3
+expect blob_clip_squash < 0.002
+set blob_stretch 0.5
+expect blob_weight_stretch > 0.75
+set blob_stretch 0
+set blob_clip 0
+expect blob_weight_stretch == 0
+set blob_clip 1
 set view hero
 set crowd 48
 until anim_ready == 1 3

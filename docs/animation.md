@@ -2,7 +2,8 @@
 
 Stage 8 of the [Roadmap](roadmap.md): `quench_animation`, a headless module on ozz-animation (skeletons and clip sets
 as assets, sampling and blending, data-driven state machines, events, root motion, masked and additive layers,
-two-bone and aim IK, foot placement, bone attachments, animation LOD), the cooking of glTF skins and animations in
+float channels (blend shape weights), two-bone and aim IK, foot placement, bone attachments, animation LOD,
+retargeting at cook time), the cooking of glTF skins and animations in
 `quench_cook`, and GPU skinning in `quench_render`'s retained scene. The engine demo's "Animation" section shows it
 ([Engine demo](demo.md)). Written for the engine: neither game has skeletal animation to move (Ashfall animates one
 mesh procedurally in a vertex shader, TrailForge has none). What was run where is under [Platforms](#platforms);
@@ -29,6 +30,8 @@ animation.setGroundQuery(groundRay); // a ray down into the physics world, calle
 auto heroModel = sceneAssets.loadModel("characters/hero.qmodel");
 render::ModelInstanceId model = sceneAssets.addModel(heroModel, heroTransform);
 int skin = -1; // once heroModel.ready(): animation.addSkin(hero, skins[0].joints, skins[0].inverseBindMatrices)
+// The clips' float channels by the model's blend shape names (the cook names both alike).
+int face = animation.addChannels(hero, {"smile", "blink"});
 
 animation.setLod({.enabled = true}); // optional: characters small on the screen update less often
 
@@ -41,6 +44,7 @@ for (const anim::Event& e : animation.events())
     if (e.name == "footstep") playStep(e.value);       // the clip's marker, its value and weight
 const anim::RootMotion motion = animation.rootMotion(hero); // move the character by its clips
 sceneAssets.setJointPalette(model, 0, animation.skinPalette(hero, skin));
+sceneAssets.setMorphWeights(model, faceWeights(animation.channels(hero, face))); // in the model's target order
 torch.setTransform(animation.jointWorld(hero, animation.findJoint(hero, "hand_l")) * grip);
 ```
 
@@ -62,6 +66,16 @@ zero worker threads (the web) it runs on the calling thread. Everything else is 
 - **Root motion**: a clip names a joint (`root` in the demo) whose horizontal motion, and optionally its turn about
   Y, is taken out of the pose and reported per update as `RootMotion` in model space, across loops and cross-fades
   (weighted). The game applies it to its transform (or ignores it and moves the character itself).
+- **Float channels** (since 2026-11-07): a clip can carry named float tracks (`ClipDesc::channels`, keys linear in
+  between, held before the first and after the last; ozz's `FloatTrack`, reduced by `ClipBuildOptions::
+  channelTolerance`, 0.001), the cook's blend shape weights. A game asks for a set of names with rest values
+  (`addChannels(character, names, rest)`) and reads them after each update (`channels(character, set)`). They are
+  blended like the pose: each channel's weighted sum over the clips that have it, the rest value filling the weight
+  of those that do not (an empty state, a clip without the channel); a cross-fade and a blend tree or space weight
+  them as they weight the clips; an override layer moves the channels its clips have by its weight, an additive layer
+  adds its clips' differences to their first value; layer masks are for joints and do not apply. Animation LOD
+  interpolates or holds them with the pose. Names no bound clip has, and every name before the clips are ready,
+  give the rest values. The demo's blob takes its clip's weights and adds its sliders to them.
 
 ## Graphs (state machines)
 
@@ -193,6 +207,11 @@ inverse bind matrices, four joints and 16-bit weights per vertex that sum to 655
 - **Keys**: step and linear keys are kept (step keys held up to 0.1 ms before the next); cubic splines are sampled
   at 30 Hz; glTF's linear rotations are spherical, ozz's normalized linear, so steps wider than 0.2 rad get
   spherically interpolated keys in between (error below 1e-4 rad); ozz's optimizer then drops what it does not need.
+- **Morph target weights** (glTF `weights` channels, since 2026-11-07) become one float channel per target of the
+  node's mesh, named like the model cook names its blend shapes (the mesh's `extras.targetNames`, else
+  `<mesh>.target<index>`), with the same key handling; a node without a mesh with targets is noted and dropped, a
+  target animated twice keeps the first. In a file without skins, a node animated by weights is a joint of the
+  skeleton (so a morph-only model gets a skeleton of one joint).
 - **Clip settings**: `<input stem>.anim.json` next to the source, or `--clips FILE`, listed in the depfile:
 
   ```json
@@ -233,7 +252,8 @@ cooks the clips of `walk.gltf` (with their settings) for `hero.gltf`'s skeleton 
   lengths.
 - **scale**: a number, or a mapped joint whose rest heights (target over source) give it; by default the first
   translation joint above the ground (the hips: their height ratio). Root motion is scaled with it.
-- Root motion (renamed to the target's joint), events, loops and additive clips come along; the clips are sampled at
+- Root motion (renamed to the target's joint), events, float channels, loops and additive clips come along; the clips
+  are sampled at
   the source's key times and at least 30 times per second, then the cook's key reduction runs as for any clip.
   Scale keys are not retargeted (noted).
 - **In CMake**: `RETARGET map.json` with `SKELETON` (both under `SOURCE_DIR`) writes the clips of each of the call's
@@ -260,7 +280,9 @@ one uniform scale for the translations.
 
 `.qskel` and `.qanim` are ozz archives in an engine container (little endian: magic `QSKL` or `QANM`, a version, the
 payload size, the payload's XXH64, the payload), so a truncated or corrupt file is an error, not an assertion in
-ozz. A `.qanim` also holds per clip its events, flags and root motion, and the skeleton signature.
+ozz. A `.qanim` also holds per clip its events, flags and root motion, and the skeleton signature. A clip set with
+float channels is written as version 2 (the channels' names and ozz float tracks after each clip), one without as
+version 1, which engines before channels read; both versions are read. `.qskel` is version 1.
 
 ## GPU skinning
 
@@ -308,8 +330,9 @@ ms of the frame thread, nothing measurable on the GPU ([Performance](performance
 Blend shapes (morph targets, since 2026-11-07) are applied in the same pass, before the joints: the weighted
 offsets of a mesh's targets are added to the bind-pose position, normal and tangent, then the vertex is skinned
 ([Render module](render.md#blend-shapes)). A game sets the weights per instance (`Scene::setMorphWeights`, or
-`SceneAssets::setMorphWeights` by the cooked model's target names); the cook takes them from glTF morph targets
-([Assets](assets.md#quench_cook)).
+`SceneAssets::setMorphWeights` by the cooked model's target names), by itself or from its clips' float channels
+(above); the cook takes the targets from glTF morph targets ([Assets](assets.md#quench_cook)) and their animated
+weights into the clips (Cooking, above).
 
 `RenderStats::skinnedInstances`, `skinnedVertices`, `skinnedReused` and `skinningGpuMs` (GPU time of the skinning
 pass, with the copies, measured through its own command buffer's fence where `Caps::gpuTiming` holds, a few frames
@@ -367,24 +390,29 @@ characters that use the asset and keeps their parameters.
   "2D blend space", a character steered by its velocity through a blend space while it faces one way; in the view
   "Skinning", two characters whose left forearms the section twists by 170 degrees, skinned linearly and by dual
   quaternions; in the view "Retargeting", the mannequin and the strider walking the same clip abreast, the camera
-  following them; in the view "Blend shapes", the blob (a swaying jelly body on three joints) reshaped by the
-  sliders of its four blend shapes
+  following them; in the view "Blend shapes", the blob (a swaying jelly body on three joints) squashed and stretched
+  by its clip's weights for its four blend shapes, the sliders added to them (or alone)
   ([Engine demo](demo.md)). Its character is procedural (`tools/assets/make_demo_character.py`, generated and cooked
   at build time; 20 joints, 836 vertices, clips idle, walk, run, jump, wave, lean, walk_back, strafe_l, strafe_r);
   so is the strider (`tools/assets/make_demo_strider.py`: 21 joints, 836 vertices, no clips of its own; the
   mannequin's are retargeted onto it at build time through its bone map), and the blob
-  (`tools/assets/make_demo_blob.py`: 3 joints, a sway clip, blend shapes squash, stretch, puff and spikes; 1094
-  vertices, 2176 triangles).
-- **Tests**: `animation.*` (29 cases: sampling at and between keys, blend weights and phase sync, 2D blend space
+  (`tools/assets/make_demo_blob.py`: 3 joints, a sway clip that also animates the weights, blend shapes squash,
+  stretch, puff and spikes; 1094 vertices, 2176 triangles).
+- **Tests**: `animation.*` (32 cases: sampling at and between keys, blend weights and phase sync, 2D blend space
   weights (on a grid: in 0..1, a sum of 1 within 1.2e-7, at most 0.0018 of change per mm, exact at the points,
   mirror symmetric) and their pose, phases and root motion, graph errors, masked and additive
   layers, transitions, cross-fades, triggers and exit times, events in order, across loops and with a large dt, root
   motion, two-bone IK reached and unreachable, aim IK, foot placement on a step and a slope, look-at, missing and
   corrupt assets, clips for another skeleton, reload, a parallel update equal to a single-threaded one (with LOD off
   and on), a crowd on one thread, skin palettes; animation LOD: the rates and the updates per frame by screen size,
-  interpolated against held poses, root motion spread over the frames, the thresholds' hysteresis and IK off); `cook.cook_skeleton_from_skins`, `cook_animation_keys_and_settings`,
-  `cook_animation_errors`, `cook_skinned_model`, `cook_retarget_map_and_errors`, `cook_retarget_onto_itself`,
-  `cook_retarget_proportions_and_rest_poses`, `cook_retarget_mannequin_onto_strider` (both characters written at
+  interpolated against held poses, root motion spread over the frames, the thresholds' hysteresis and IK off; float
+  channels: version 2 written only with channels, read back to the same bytes, version 1 still read, a newer version
+  and bad channels refused, sampling at and between keys, rest values for missing names and before the clips are
+  ready, a blend tree and a cross-fade from a clip without them, override and additive layers, LOD interpolated and
+  held, and in the parallel crowd); `cook.cook_skeleton_from_skins`, `cook_animation_keys_and_settings`,
+  `cook_animation_errors`, `cook_animation_morph_weights` (linear, step and cubic weights through the runtime within
+  3e-3, the names from extras and the fallback, the dropped node noted), `cook_skinned_model`,
+  `cook_retarget_map_and_errors`, `cook_retarget_onto_itself` (channels copied), `cook_retarget_proportions_and_rest_poses`, `cook_retarget_mannequin_onto_strider` (both characters written at
   build time; skipped without Python), and `cook_cli` (the demo's character cooked twice, the same bytes);
   `render.renderer_skins_on_the_gpu`, `renderer_reuses_unchanged_skins` (the same image from copied vertices,
   also when an instance's range in the buffer moves), `renderer_dual_quaternion_skinning` (a twisted bar keeps its
@@ -395,8 +423,9 @@ characters that use the asset and keeps their parameters.
   the characters sampled and the reused skins from the hero's view and from 45 m, 18 checks, no capture);
   `demo_animation_skinning_<backend>` (the twisted pair, 9 checks and a golden capture);
   `demo_animation_retarget_<backend>` (the retargeting pair abreast, the strider's hips 1.15 times as high, 10
-  checks and a golden capture); `demo_animation_blendshapes_<backend>` (the blob puffed, spiked and squashed while
-  it sways, 9 checks and a golden capture). The blend shape tests are listed in
+  checks and a golden capture); `demo_animation_blendshapes_<backend>` (the blob puffed, spiked and squashed by the
+  sliders while it sways, then its clip's weights: squash and stretch in turn, never both, the sliders added; 19
+  checks and a golden capture of the sliders' shapes). The blend shape tests are listed in
   [Render module](render.md#blend-shapes) and [Assets](assets.md#demo-content-and-tests).
 
 ## Platforms
@@ -419,8 +448,11 @@ characters that use the asset and keeps their parameters.
 - **Skinning**: four joints per vertex, linear blend or dual quaternions (a joint's non-uniform scale or shear is
   lost under dual quaternions; their culling bounds have a margin, not a proof). Dual quaternion skinning was checked
   by numbers and a still capture; nobody has looked at it in motion.
-- **Blend shapes**: weights are set by the game (clips do not animate them yet); checked by numbers and a still
-  capture, not looked at in motion by a person (the demo's check mode has an item).
+- **Blend shapes**: weights from clips or set by the game; checked by numbers and still captures (the clip's
+  squash and stretch only in two captures looked at by an agent, not golden), not looked at in motion by a person
+  (the demo's check mode has an item). Float channels are blended linearly (no other curve between keys at run
+  time), ignore layer masks, and are found by name per character (a linear search when the clips bind, none per
+  update).
 - **Animation LOD** has three rates (1, 2, 4) by screen size only (no visibility: a character outside the view or in
   a shadow only still updates at its size's rate), interpolation still poses every frame, and its look in motion
   was not seen by a person (the demo's check mode has an item).

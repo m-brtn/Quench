@@ -1,8 +1,9 @@
 #pragma once
 
 // Animation clips: keyframes for every joint of one skeleton, compressed by ozz-animation (keys removed within a
-// tolerance, quantized), with named events on their timeline and optional root motion. A clip set holds the clips of
-// one source file (a cooked .qanim) and the signature of the skeleton they were made for.
+// tolerance, quantized), with named events on their timeline, optional root motion and named float channels (blend
+// shape weights). A clip set holds the clips of one source file (a cooked .qanim) and the signature of the skeleton
+// they were made for.
 
 #include <quench/animation/Skeleton.h>
 #include <quench/core/Result.h>
@@ -44,6 +45,13 @@ struct JointTrack {
     std::vector<Key<glm::vec3>> scales;
 };
 
+// Keys of one named float channel: a blend shape's weight, named like the model's blend shape. Linear between keys,
+// held before the first and after the last.
+struct ChannelTrack {
+    std::string name;
+    std::vector<Key<float>> keys; // at least one
+};
+
 struct RootMotionDesc {
     std::string joint;     // the joint whose horizontal motion becomes root motion (its parent at the model origin)
     bool rotation = false; // also its rotation about Y (turns)
@@ -57,12 +65,14 @@ struct ClipDesc {
     bool loop = true;               // plays on from the start after the end
     bool additive = false;          // stored as the difference to its first frame, for additive layers
     std::optional<RootMotionDesc> rootMotion;
+    std::vector<ChannelTrack> channels; // names unique within the clip
 };
 
 struct ClipBuildOptions {
-    float tolerance = 0.001f; // largest error of the key reduction at `distance` from a joint (m)
-    float distance = 0.1f;    // m
-    bool optimize = true;     // false: every key is kept
+    float tolerance = 0.001f;        // largest error of the key reduction at `distance` from a joint (m)
+    float distance = 0.1f;           // m
+    float channelTolerance = 0.001f; // largest error of the key reduction of channels (in their own unit)
+    bool optimize = true;            // false: every key is kept
 };
 
 class Clip {
@@ -77,6 +87,8 @@ public:
     bool loops() const;
     bool additive() const;
     bool hasRootMotion() const;
+    // The names of its float channels, in the order of the description.
+    std::span<const std::string> channels() const;
     // Sorted by time.
     std::span<const ClipEvent> events() const;
     std::uint64_t memoryBytes() const;
@@ -109,7 +121,8 @@ Result<std::shared_ptr<const ClipSet>> buildClipSet(const Skeleton& skeleton, co
                                                     std::span<const ClipDesc> clips,
                                                     const ClipBuildOptions& options = {});
 
-// .qanim files: a header, a checksum, the clips' names, flags and events and their ozz-animation archives.
+// .qanim files: a header, a checksum, the clips' names, flags and events and their ozz-animation archives. Written as
+// version 2 when a clip has channels, else as version 1 (which engines before channels read); both are read.
 Result<std::shared_ptr<const ClipSet>> readClipSet(std::span<const std::uint8_t> file);
 std::vector<std::uint8_t> writeClipSet(const ClipSet& clips);
 

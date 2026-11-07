@@ -1,4 +1,5 @@
-// One character's update: state machines, sampling, layers, events, root motion, then IK (Ik.cpp) and palettes.
+// One character's update: state machines, sampling, layers, events, root motion, float channels, then IK (Ik.cpp) and
+// palettes.
 
 #include "Character.h"
 
@@ -159,6 +160,46 @@ bool sampleState(Character& c, const Character::StateRuntime& s, const Active& a
     return true;
 }
 
+// Samples a state's float channels at `time` into `out` (per character channel: weight times value, weight), the
+// clips at the ratios sampleState uses.
+void sampleChannels(const Character::StateRuntime& s, const Active& a, float time, std::vector<glm::vec2>& out) {
+    std::fill(out.begin(), out.end(), glm::vec2(0.0f));
+    for (int k = 0; k < a.count; ++k) {
+        const Character::ClipSlot& slot = s.clips[std::size_t(a.slot[std::size_t(k)])];
+        if (!slot.clip || slot.channels.empty()) continue;
+        const float w = a.weight[std::size_t(k)];
+        const detail::ClipImpl& impl = slot.clip->impl();
+        for (std::size_t j = 0; j < slot.channels.size(); ++j) {
+            float value = 0.0f;
+            ozz::animation::FloatTrackSamplingJob job;
+            job.track = &impl.channels[j];
+            job.ratio = ratioAt(s.loop, time + slot.phase);
+            job.result = &value;
+            [[maybe_unused]] const bool ok = job.Run();
+            QUENCH_ASSERT(ok, "channel sampling job");
+            out[std::size_t(slot.channels[j])] += glm::vec2(w * value, w);
+        }
+    }
+}
+
+// The float channels of a layer above the first into c.channels: an override layer moves a channel toward its own
+// value by its weight times the share of its clips that have the channel (a clip without it leaves it to the layers
+// below), an additive layer adds its difference.
+void layerChannels(Character& c, const LayerDef& def, float ea, float eb, float w) {
+    const float total = ea + eb;
+    for (std::size_t i = 0; i < c.channels.size(); ++i) {
+        glm::vec2 l(0.0f);
+        if (ea > 0.0f) l += ea * c.stateChannels[0][i];
+        if (eb > 0.0f) l += eb * c.stateChannels[1][i];
+        l /= total;
+        glm::vec2& ch = c.channels[i];
+        if (def.blend == LayerBlend::Override)
+            ch = (1.0f - w * l.y) * ch + w * l;
+        else
+            ch.x += w * l.x;
+    }
+}
+
 // How often a marker at normalized position u lies in (t0, t1] (from t0 itself when the state was just entered).
 std::uint32_t crossings(bool loop, float t0, float t1, float u, bool entered) {
     if (entered) t0 -= 1e-6f;
@@ -310,6 +351,10 @@ void fillWeights(const Character::LayerRuntime& layer, float w, ozz::vector<ozz:
     }
 }
 
+void writeAllChannels(Character& c) {
+    for (Character::ChannelSet& set : c.channelSets) writeChannels(c, set);
+}
+
 void writePalettes(Character& c) {
     for (Character::Skin& skin : c.skins)
         for (std::size_t i = 0; i < skin.map.size(); ++i)
@@ -372,6 +417,11 @@ void evaluate(Character& c, float dt, const AnimationSettings& settings, const G
 
         const bool hasCur = sampleState(c, cur, a, t1, c.statePose[0]);
         const bool hasNext = next && sampleState(c, *next, an, n1, c.statePose[1]);
+        const bool channels = !c.channels.empty();
+        if (channels) {
+            sampleChannels(cur, a, t1, c.stateChannels[0]);
+            if (next) sampleChannels(*next, an, n1, c.stateChannels[1]);
+        }
         if (l == 0) {
             const ozz::span<const SoaTransform> poseA = hasCur ? ozz::make_span(c.statePose[0]) : rest;
             const ozz::span<const SoaTransform> poseB = hasNext ? ozz::make_span(c.statePose[1]) : rest;
@@ -379,9 +429,14 @@ void evaluate(Character& c, float dt, const AnimationSettings& settings, const G
                 blend2(c, poseA, wCur, poseB, wNext, c.pose);
             else
                 copyPose(poseA, c.pose);
+            // An empty state's clips are the rest pose: none has a channel.
+            for (std::size_t i = 0; channels && i < c.channels.size(); ++i)
+                c.channels[i] = (hasCur ? wCur * c.stateChannels[0][i] : glm::vec2(0.0f)) +
+                                (hasNext ? wNext * c.stateChannels[1][i] : glm::vec2(0.0f));
         } else {
             const float ea = hasCur ? wCur : 0.0f, eb = hasNext ? wNext : 0.0f;
             const float w = lw * (ea + eb);
+            if (w > 1e-4f && channels) layerChannels(c, *layer.def, ea, eb, std::min(w, 1.0f));
             if (w > 1e-4f) {
                 ozz::span<const SoaTransform> layerPose;
                 if (ea > 0.0f && eb > 0.0f) {
@@ -469,14 +524,20 @@ void update(Character& c, const AnimationSettings& settings, const GroundQuery& 
     if (!c.skeleton) return;
     // An evaluation ahead of the time shown is reached from the pose shown last frame (lodSpan before it).
     const bool ahead = c.lodEvaluate && c.lodLag > 1e-6f;
-    if (ahead) copyPose(ozz::make_span(c.pose), c.lodFrom);
+    if (ahead) {
+        copyPose(ozz::make_span(c.pose), c.lodFrom);
+        c.lodChannelsFrom = c.channels;
+    }
     if (c.lodEvaluate) {
         evaluate(c, c.lodDt, settings, ground);
         c.owedMotion.translation += c.evaluatedMotion.translation;
         c.owedMotion.rotation = c.owedMotion.rotation * c.evaluatedMotion.rotation;
         c.owedFrames = std::max(c.lodFrames, 1);
         c.lodBlending = ahead;
-        if (ahead) copyPose(ozz::make_span(c.pose), c.lodTo);
+        if (ahead) {
+            copyPose(ozz::make_span(c.pose), c.lodTo);
+            c.lodChannelsTo = c.channels;
+        }
     }
     reportMotion(c);
 
@@ -486,15 +547,31 @@ void update(Character& c, const AnimationSettings& settings, const GroundQuery& 
         const float f = c.lodSpan > 0.0f ? std::clamp(1.0f - c.lodLag / c.lodSpan, 0.0f, 1.0f) : 1.0f;
         if (f >= 1.0f) {
             copyPose(ozz::make_span(c.lodTo), c.pose);
+            c.channels = c.lodChannelsTo;
             c.lodBlending = false;
         } else {
             blend2(c, ozz::make_span(c.lodFrom), 1.0f - f, ozz::make_span(c.lodTo), f, c.pose);
+            for (std::size_t i = 0; i < c.channels.size() && i < c.lodChannelsFrom.size(); ++i)
+                c.channels[i] = (1.0f - f) * c.lodChannelsFrom[i] + f * c.lodChannelsTo[i];
         }
         updateModels(c);
     }
     if (!c.poseChanged) return;
     for (std::size_t j = 0; j < c.models.size(); ++j) c.modelMatrices[j] = toGlm(c.models[j]);
     writePalettes(c);
+    writeAllChannels(c);
+}
+
+void writeChannels(const Character& c, Character::ChannelSet& set) {
+    for (std::size_t i = 0; i < set.map.size(); ++i) {
+        const int channel = set.map[i];
+        if (channel < 0 || std::size_t(channel) >= c.channels.size()) {
+            set.values[i] = set.rest[i];
+            continue;
+        }
+        const glm::vec2 ch = c.channels[std::size_t(channel)];
+        set.values[i] = ch.x + (1.0f - ch.y) * set.rest[i];
+    }
 }
 
 } // namespace quench::animation::detail

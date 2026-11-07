@@ -12,6 +12,8 @@
 #include <ozz/base/maths/simd_math.h>
 #include <ozz/base/maths/soa_transform.h>
 
+#include <glm/vec2.hpp>
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -26,6 +28,7 @@ struct AnimationSystem::Character {
         float at = 0.0f;            // blend trees: the parameter value
         float phase = 0.0f;         // added to the state's normalized time
         int context = 0;
+        std::vector<int> channels; // per channel of the clip: the character's channel
     };
     struct StateRuntime {
         const StateDef* def = nullptr;
@@ -57,6 +60,12 @@ struct AnimationSystem::Character {
         std::vector<glm::mat4> inverseBind;
         std::vector<int> map; // skin joint -> skeleton joint (-1: none)
         std::vector<glm::mat4> palette;
+    };
+    struct ChannelSet {
+        std::vector<std::string> names;
+        std::vector<float> rest;
+        std::vector<int> map; // name -> the character's channel (-1: no bound clip has it)
+        std::vector<float> values;
     };
     struct Leg {
         int hip = -1, knee = -1, ankle = -1;
@@ -107,6 +116,12 @@ struct AnimationSystem::Character {
     std::vector<glm::mat4> modelMatrices;
     std::vector<Skin> skins;
 
+    // Float channels: the names the bound clips have (their union), and per update each one's weighted sum of values
+    // (x) and the weight of the clips that have it (y); the rest value fills the other 1 - y (ChannelSet::rest).
+    std::vector<std::string> channelNames;
+    std::vector<glm::vec2> channels, stateChannels[2], layerChannels;
+    std::vector<ChannelSet> channelSets;
+
     // Animation LOD, decided by AnimationSystem::update before the characters update.
     int lodLevel = 0;          // rate 1 << lodLevel
     int lodEvaluatedLevel = 0; // at the last evaluation
@@ -119,6 +134,7 @@ struct AnimationSystem::Character {
     float lodSpan = 0.0f;     // s from the previous evaluated pose to the latest
     bool lodBlending = false; // the pose shown is between lodFrom and lodTo
     ozz::vector<ozz::math::SoaTransform> lodFrom, lodTo;
+    std::vector<glm::vec2> lodChannelsFrom, lodChannelsTo;
     RootMotion evaluatedMotion, owedMotion; // of the last evaluation; not reported yet
     int owedFrames = 0;
 
@@ -140,6 +156,8 @@ void placeFeet(AnimationSystem::Character& c, float dt, const GroundQuery& groun
 void lookAt(AnimationSystem::Character& c, float dt);
 // Recomputes the model-space matrices of `from` and the joints below it (every joint for -1).
 void updateModels(AnimationSystem::Character& c, int from = -1);
+// A channel set's values from the last evaluation's channels (its rest values where no clip has a channel).
+void writeChannels(const AnimationSystem::Character& c, AnimationSystem::Character::ChannelSet& set);
 
 } // namespace detail
 

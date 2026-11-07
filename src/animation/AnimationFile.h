@@ -22,12 +22,18 @@ namespace quench::animation::detail {
 
 inline constexpr std::uint32_t kSkeletonMagic = 0x4C4B5351; // "QSKL"
 inline constexpr std::uint32_t kClipSetMagic = 0x4D4E4151;  // "QANM"
-inline constexpr std::uint32_t kFileVersion = 1;
+inline constexpr std::uint32_t kSkeletonVersion = 1;
+inline constexpr std::uint32_t kClipSetVersion = 2; // 2: clips with float channels; 1 is still read
 
-std::vector<std::uint8_t> wrapPayload(std::uint32_t magic, std::span<const std::uint8_t> payload);
-// Checks magic, version, size and checksum; `what` names the file kind in errors.
-Result<std::span<const std::uint8_t>> unwrapPayload(std::uint32_t magic, std::span<const std::uint8_t> file,
-                                                    const char* what);
+std::vector<std::uint8_t> wrapPayload(std::uint32_t magic, std::uint32_t version,
+                                      std::span<const std::uint8_t> payload);
+struct Payload {
+    std::span<const std::uint8_t> bytes;
+    std::uint32_t version = 0;
+};
+// Checks magic, a version from 1 to `latest`, size and checksum; `what` names the file kind in errors.
+Result<Payload> unwrapPayload(std::uint32_t magic, std::uint32_t latest, std::span<const std::uint8_t> file,
+                              const char* what);
 
 class ByteWriter {
 public:

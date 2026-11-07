@@ -293,6 +293,13 @@ public:
                 std::span<const glm::mat4> inverseBindMatrices);
     std::span<const glm::mat4> skinPalette(CharacterId character, int skin) const;
 
+    // Channel sets: float channels of the clips by name (a model's blend shape names, render::SceneAssets has them),
+    // with a rest value each (0 without `rest`). Each value is computed in update() and blended like the pose: a
+    // channel a clip does not have takes the value below it (the rest value under the first layer); layer masks do
+    // not apply to channels. The rest values until the clips are ready and for names no bound clip has.
+    int addChannels(CharacterId character, std::span<const std::string> names, std::span<const float> rest = {});
+    std::span<const float> channels(CharacterId character, int set) const;
+
     const AnimationStats& stats() const { return m_stats; }
 
     struct Character; // internal (src/animation/Character.h)

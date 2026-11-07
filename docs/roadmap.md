@@ -196,7 +196,7 @@ the user was away: the decisions are in the devlog of 2026-11-06 ("decided witho
   2026-11-06, as recommended); they are listed as not verified in the release notes.
 - Done: version 0.5.0, release notes in [docs/releases/v0.5.0.md](releases/v0.5.0.md).
 
-## Stage 8: animation (done 2026-11-06 except retargeting and the checks in motion and on the iPhone, version 0.6.0)
+## Stage 8: animation (done 2026-11-06, version 0.6.0; its remaining work on 2026-11-07, after 0.9.0; except the checks in motion and on the iPhone)
 
 Requested as P0 (skinning, state machines, blending, events) and P1 (partial and additive blending, IK and foot
 placement, retargeting, attachments) by the user (2026-11-05). Written for the engine: neither game has skeletal
@@ -232,8 +232,10 @@ the user"). Described in [Animation](animation.md).
 - Done after 0.9.0 (not released): blend shapes (glTF morph targets cooked into `.qmodel` version 4, applied by the
   skinning pass before the joints, weights set per instance or by name for a cooked model) with the demo's blob, its
   scripted check and golden captures.
-- Not done, remaining: blend shape weights from clips; the look in motion of animation LOD, of the retargeted walk
-  and of the blend shapes; the check in motion by the user (foot sliding, blend pops, IK) and on
+- Done after 0.9.0 (not released): blend shape weights from clips (float channels in clips, cooked from glTF
+  `weights` animations, blended like the pose, `AnimationSystem::addChannels`), the demo's blob squashed and
+  stretched by its clip.
+- Not done, remaining: the look in motion of animation LOD, of the retargeted walk and of the blend shapes; the check in motion by the user (foot sliding, blend pops, IK) and on
   the iPhone. The release went ahead before those checks (decided without the user, 2026-11-06, as recommended);
   the release notes list them as not verified.
 - Done: version 0.6.0 (with the cut-out and translucent shadows), release notes in
@@ -485,8 +487,7 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); blend shape
-   weights from clips (stage 8); normal maps
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray
    tracing, normal maps in ray hits (stage 12).

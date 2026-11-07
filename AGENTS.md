@@ -22,7 +22,7 @@ skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`
 
 **Current state (2026-11-07, version 0.9.0): stages 1 to 3, 5 to 7, 9 and 10 of `docs/roadmap.md` are in place
 (stage 6's shader hot reload, ASTC and asset hot reload on a device, stage 7's Vorbis, reverb and HRTF after 0.9.0, not released), stage
-4 for TrailForge only, stage 8 except blend shape weights from clips (its retargeting and blend shapes after 0.9.0, not released), stage 11 (full ray tracing)
+4 for TrailForge only, stage 8 (its retargeting, blend shapes and their weights from clips after 0.9.0, not released), stage 11 (full ray tracing)
 except its runs on the iPhone 18 Pro Max, stage 12 (area lights and anisotropic GGX, after 0.9.0, not released) except
 its checks by eye; the plan the user left (stages 6 to 10) and stages 11 and 12 have been worked through, apart from
 the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the iPhone 18 Pro Max and the
@@ -37,7 +37,7 @@ in development builds, on a device through an asset overlay in the user director
 (checked on the iPhone 17), streaming by distance; KTX2 textures and cooked `.qmodel` models, version 4 with skins, blend shapes (after 0.9.0, not released) and MikkTSpace tangents in a
 64-byte vertex), `quench_cook` (the host
 tool: glTF, GLB, PNG, JPEG, KTX2 to BC7, ASTC 4x4 (iOS builds, through astc-encoder) or RGBA8 KTX2 with mips and meshoptimizer models with tangents and blend shapes; sounds; skeletons and clips
-from glTF, clips retargeted onto another skeleton by a bone map (after 0.9.0, not released); `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
+(with morph target weights) from glTF, clips retargeted onto another skeleton by a bone map (after 0.9.0, not released); `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
 ray query entries through DXC built from source, a manifest per set for shader hot reload) and the engine shader
 library in `shaders/quench/` (uniform structs
 shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain compositions for HDR and compute;
@@ -73,7 +73,8 @@ and signal analysis), `quench_audio_device` (output through miniaudio, the iOS a
 `--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`), `quench_animation`
 (headless, on ozz-animation: skeletons, clips and graphs as assets, blend trees, 2D blend spaces (after 0.9.0, not
 released), JSON state machines with
-cross-fades, events, root motion, masked and additive layers, two-bone and aim IK, look-at, foot placement, bone
+cross-fades, events, root motion, masked and additive layers, float channels in clips for blend shape weights
+(after 0.9.0, not released), two-bone and aim IK, look-at, foot placement, bone
 attachments, the update in parallel on the job system, animation LOD by screen size (after 0.9.0, not released))
 and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons and clips).
@@ -113,7 +114,6 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
-work), blend shape weights from clips (stage 8 remaining
 work), the native backend as the default, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
 ray tracing (stage 9 and 11 remaining work) or shadows of area lights without ray tracing (stage 12 remaining work)

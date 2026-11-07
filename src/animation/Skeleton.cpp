@@ -156,17 +156,20 @@ std::uint64_t Skeleton::memoryBytes() const {
 
 Result<std::shared_ptr<const Skeleton>> readSkeleton(std::span<const std::uint8_t> file) {
     detail::quietOzz();
-    Result<std::span<const std::uint8_t>> payload = detail::unwrapPayload(detail::kSkeletonMagic, file, "skeleton");
+    Result<detail::Payload> payload =
+        detail::unwrapPayload(detail::kSkeletonMagic, detail::kSkeletonVersion, file, "skeleton");
     if (!payload) return Error{payload.error()};
     auto impl = std::make_unique<detail::SkeletonImpl>();
-    if (!detail::loadOzz(*payload, impl->skeleton)) return Error{"corrupt skeleton: the ozz archive does not load"};
+    if (!detail::loadOzz(payload->bytes, impl->skeleton))
+        return Error{"corrupt skeleton: the ozz archive does not load"};
     if (impl->skeleton.num_joints() == 0) return Error{"skeleton without joints"};
     detail::describeSkeleton(*impl);
     return std::shared_ptr<const Skeleton>(std::make_shared<Skeleton>(std::move(impl)));
 }
 
 std::vector<std::uint8_t> writeSkeleton(const Skeleton& skeleton) {
-    return detail::wrapPayload(detail::kSkeletonMagic, detail::saveOzz(skeleton.impl().skeleton));
+    return detail::wrapPayload(detail::kSkeletonMagic, detail::kSkeletonVersion,
+                               detail::saveOzz(skeleton.impl().skeleton));
 }
 
 } // namespace quench::animation

@@ -8,13 +8,14 @@
 
 // .qanim payload: u32 joint count, u32 skeleton signature low, high, u32 clip count; per clip: string name, u32 flags
 // (1 loop, 2 additive, 4 root motion), f32 duration, u32 event count, events (f32 time, f32 value, string name), blob
-// ozz animation, with root motion also blob ozz position track and blob ozz rotation track.
+// ozz animation, with root motion also blob ozz position track and blob ozz rotation track; from version 2 then u32
+// channel count, channels (string name, blob ozz float track).
 namespace quench::animation {
 
 namespace {
 
 constexpr std::uint32_t kLoop = 1, kAdditive = 2, kRootMotion = 4;
-constexpr std::uint32_t kMaxClips = 4096, kMaxEvents = 65536;
+constexpr std::uint32_t kMaxClips = 4096, kMaxEvents = 65536, kMaxChannels = 4096;
 
 } // namespace
 
@@ -29,11 +30,14 @@ bool Clip::loops() const { return m_impl->loop; }
 bool Clip::additive() const { return m_impl->additive; }
 bool Clip::hasRootMotion() const { return m_impl->rootMotion; }
 std::span<const ClipEvent> Clip::events() const { return m_impl->events; }
+std::span<const std::string> Clip::channels() const { return m_impl->channelNames; }
 
 std::uint64_t Clip::memoryBytes() const {
     std::uint64_t bytes = sizeof(detail::ClipImpl) + m_impl->animation.size() + m_impl->name.size();
     for (const ClipEvent& e : m_impl->events) bytes += sizeof(ClipEvent) + e.name.size();
     if (m_impl->rootMotion) bytes += m_impl->motionPosition.size() + m_impl->motionRotation.size();
+    for (std::size_t i = 0; i < m_impl->channels.size(); ++i)
+        bytes += m_impl->channels[i].size() + sizeof(std::string) + m_impl->channelNames[i].size();
     return bytes;
 }
 
@@ -52,6 +56,7 @@ std::uint64_t ClipSet::memoryBytes() const {
 }
 
 std::vector<std::uint8_t> writeClipSet(const ClipSet& set) {
+    const bool channels = std::ranges::any_of(set.clips(), [](const Clip& c) { return !c.impl().channels.empty(); });
     detail::ByteWriter w;
     w.u32(std::uint32_t(set.jointCount()));
     w.u32(std::uint32_t(set.skeletonSignature()));
@@ -73,15 +78,23 @@ std::vector<std::uint8_t> writeClipSet(const ClipSet& set) {
             w.blob(detail::saveOzz(c.motionPosition));
             w.blob(detail::saveOzz(c.motionRotation));
         }
+        if (channels) {
+            w.u32(std::uint32_t(c.channels.size()));
+            for (std::size_t k = 0; k < c.channels.size(); ++k) {
+                w.string(c.channelNames[k]);
+                w.blob(detail::saveOzz(c.channels[k]));
+            }
+        }
     }
-    return detail::wrapPayload(detail::kClipSetMagic, w.out);
+    return detail::wrapPayload(detail::kClipSetMagic, channels ? detail::kClipSetVersion : 1, w.out);
 }
 
 Result<std::shared_ptr<const ClipSet>> readClipSet(std::span<const std::uint8_t> file) {
     detail::quietOzz();
-    Result<std::span<const std::uint8_t>> payload = detail::unwrapPayload(detail::kClipSetMagic, file, "clip set");
+    Result<detail::Payload> payload =
+        detail::unwrapPayload(detail::kClipSetMagic, detail::kClipSetVersion, file, "clip set");
     if (!payload) return Error{payload.error()};
-    detail::ByteReader r(*payload);
+    detail::ByteReader r(payload->bytes);
     std::uint32_t joints = 0, lo = 0, hi = 0, count = 0;
     if (!r.u32(joints) || !r.u32(lo) || !r.u32(hi) || !r.u32(count)) return Error{"truncated clip set"};
     if (joints == 0 || joints > std::uint32_t(kMaxJoints) || count > kMaxClips)
@@ -111,6 +124,15 @@ Result<std::shared_ptr<const ClipSet>> readClipSet(std::span<const std::uint8_t>
                 !detail::loadOzz(blob, c->motionRotation))
                 return Error{std::format("corrupt clip set: root motion of '{}'", c->name)};
         }
+        std::uint32_t channels = 0;
+        if (payload->version >= 2 && (!r.u32(channels) || channels > kMaxChannels))
+            return Error{std::format("corrupt clip set: channels of '{}'", c->name)};
+        c->channelNames.resize(channels);
+        c->channels.resize(channels);
+        for (std::uint32_t k = 0; k < channels; ++k)
+            if (!r.string(c->channelNames[k]) || c->channelNames[k].empty() || !r.blob(blob) ||
+                !detail::loadOzz(blob, c->channels[k]))
+                return Error{std::format("corrupt clip set: channel {} of '{}'", k, c->name)};
         clips.emplace_back(std::move(c));
     }
     if (r.remaining() != 0) return Error{std::format("corrupt clip set: {} bytes after the last clip", r.remaining())};

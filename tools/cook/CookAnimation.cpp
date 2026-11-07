@@ -1,4 +1,5 @@
-// Skeletons and clips from glTF skins and animations (Cook.h), built by the animation module's offline path.
+// Skeletons and clips from glTF skins and animations (Cook.h), built by the animation module's offline path; morph
+// target weights become the clips' float channels, named like the model cook names the blend shapes.
 
 #include "Cook.h"
 #include "Gltf.h"
@@ -19,6 +20,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <type_traits>
 #include <utility>
@@ -113,16 +115,20 @@ Result<std::vector<float>> readTimes(const fastgltf::Asset& asset, std::size_t a
 template <class V>
 Result<std::vector<V>> readValues(const fastgltf::Asset& asset, std::size_t accessorIndex, std::size_t count,
                                   std::string_view what) {
-    constexpr fastgltf::AccessorType kType =
-        sizeof(V) == 12 ? fastgltf::AccessorType::Vec3 : fastgltf::AccessorType::Vec4;
+    constexpr fastgltf::AccessorType kType = std::is_same_v<V, float> ? fastgltf::AccessorType::Scalar
+                                             : sizeof(V) == 12        ? fastgltf::AccessorType::Vec3
+                                                                      : fastgltf::AccessorType::Vec4;
     if (accessorIndex >= asset.accessors.size()) return Error{std::format("{}: no such accessor", what)};
     const fastgltf::Accessor& accessor = asset.accessors[accessorIndex];
     if (accessor.type != kType || accessor.count != count)
         return Error{std::format("{}: {} values for {} keys", what, accessor.count, count)};
-    using Gltf = std::conditional_t<sizeof(V) == 12, fastgltf::math::fvec3, fastgltf::math::fvec4>;
+    using Gltf = std::conditional_t<std::is_same_v<V, float>, float,
+                                    std::conditional_t<sizeof(V) == 12, fastgltf::math::fvec3, fastgltf::math::fvec4>>;
     std::vector<V> values(count);
     fastgltf::iterateAccessorWithIndex<Gltf>(asset, accessor, [&](const Gltf& v, std::size_t i) {
-        if constexpr (sizeof(V) == 12)
+        if constexpr (std::is_same_v<V, float>)
+            values[i] = v;
+        else if constexpr (sizeof(V) == 12)
             values[i] = V(v[0], v[1], v[2]);
         else
             values[i] = V(v[3], v[0], v[1], v[2]); // glTF quaternions are x, y, z, w
@@ -262,8 +268,42 @@ Result<ClipSettings> readSettings(const std::filesystem::path& source, const Ani
     return out;
 }
 
-Result<std::vector<ClipDesc>> clipsOf(const fastgltf::Asset& asset, const GltfSkeleton& skeleton,
-                                      std::vector<std::string>& notes) {
+// A weights channel's keys as one float channel per morph target of the node's mesh; false with a note when the node
+// has no mesh with morph targets.
+Result<bool> weightChannels(const fastgltf::Asset& asset, const GltfExtras& extras, std::size_t node,
+                            const fastgltf::AnimationSampler& sampler, float start, const std::string& where,
+                            ClipDesc& clip, std::vector<std::string>& notes) {
+    const std::optional<std::size_t> mesh = asset.nodes[node].meshIndex;
+    if (!mesh || *mesh >= asset.meshes.size() || asset.meshes[*mesh].primitives.empty() ||
+        asset.meshes[*mesh].primitives[0].targets.empty()) {
+        notes.push_back(std::format("{}: weights of a node without blend shapes; dropped", where));
+        return false;
+    }
+    const std::size_t targets = asset.meshes[*mesh].primitives[0].targets.size();
+    Result<std::vector<float>> times = readTimes(asset, sampler.inputAccessor, where);
+    if (!times) return Error{times.error()};
+    const std::size_t parts = sampler.interpolation == fastgltf::AnimationInterpolation::CubicSpline ? 3 : 1;
+    Result<std::vector<float>> values =
+        readValues<float>(asset, sampler.outputAccessor, times->size() * parts * targets,
+                          std::format("{} (weights of {} blend shapes)", where, targets));
+    if (!values) return Error{values.error()};
+    std::vector<float> one(times->size() * parts);
+    for (std::size_t k = 0; k < targets; ++k) {
+        animation::ChannelTrack channel{morphTargetName(asset, extras, *mesh, k), {}};
+        if (std::ranges::find(clip.channels, channel.name, &animation::ChannelTrack::name) != clip.channels.end()) {
+            notes.push_back(
+                std::format("{}: blend shape '{}' is animated twice; the first is kept", where, channel.name));
+            continue;
+        }
+        for (std::size_t i = 0; i < one.size(); ++i) one[i] = (*values)[i * targets + k];
+        channel.keys = channelKeys(*times, one, sampler.interpolation, start);
+        clip.channels.push_back(std::move(channel));
+    }
+    return true;
+}
+
+Result<std::vector<ClipDesc>> clipsOf(const fastgltf::Asset& asset, const GltfExtras& extras,
+                                      const GltfSkeleton& skeleton, std::vector<std::string>& notes) {
     const std::vector<std::string> names = jointNames(asset);
     std::vector<ClipDesc> clips;
     for (std::size_t a = 0; a < asset.animations.size(); ++a) {
@@ -294,8 +334,13 @@ Result<std::vector<ClipDesc>> clipsOf(const fastgltf::Asset& asset, const GltfSk
         for (const fastgltf::AnimationChannel& channel : animation.channels) {
             if (!channel.nodeIndex || *channel.nodeIndex >= names.size()) continue;
             const std::string& node = names[*channel.nodeIndex];
+            if (channel.samplerIndex >= animation.samplers.size())
+                return Error{std::format("{}: no sampler {}", what, channel.samplerIndex)};
             if (channel.path == fastgltf::AnimationPath::Weights) {
-                notes.push_back(std::format("{}: morph target weights of '{}' are not cooked", what, node));
+                Result<bool> r =
+                    weightChannels(asset, extras, *channel.nodeIndex, animation.samplers[channel.samplerIndex], start,
+                                   std::format("{} '{}'", what, node), clip, notes);
+                if (!r) return Error{r.error()};
                 continue;
             }
             const auto joint = skeleton.jointOfName.find(node);
@@ -304,8 +349,6 @@ Result<std::vector<ClipDesc>> clipsOf(const fastgltf::Asset& asset, const GltfSk
                     std::format("{}: '{}' is not a joint of the skeleton; its keys are dropped", what, node));
                 continue;
             }
-            if (channel.samplerIndex >= animation.samplers.size())
-                return Error{std::format("{}: no sampler {}", what, channel.samplerIndex)};
             const fastgltf::AnimationSampler& sampler = animation.samplers[channel.samplerIndex];
             Result<std::vector<float>> times = readTimes(asset, sampler.inputAccessor, what);
             if (!times) return Error{times.error()};
@@ -332,9 +375,10 @@ Result<std::vector<ClipDesc>> clipsOf(const fastgltf::Asset& asset, const GltfSk
     return clips;
 }
 
-Result<fastgltf::Asset> load(const std::filesystem::path& source, std::vector<std::filesystem::path>& inputs) {
+Result<fastgltf::Asset> load(const std::filesystem::path& source, std::vector<std::filesystem::path>& inputs,
+                             GltfExtras* extras = nullptr) {
     inputs.push_back(source);
-    return loadGltf(source, fastgltf::Options::DecomposeNodeMatrices, inputs);
+    return loadGltf(source, fastgltf::Options::DecomposeNodeMatrices, inputs, extras);
 }
 
 } // namespace
@@ -356,7 +400,8 @@ Result<CookedAnimation> cookAnimation(const std::filesystem::path& source, const
     CookedAnimation out;
     if (!options.retarget.empty() && options.skeleton.empty())
         return Error{"retargeting needs the target's skeleton (--skeleton)"};
-    Result<fastgltf::Asset> asset = load(source, out.inputs);
+    GltfExtras extras;
+    Result<fastgltf::Asset> asset = load(source, out.inputs, &extras);
     if (!asset) return Error{asset.error()};
     const std::filesystem::path& skeletonSource = options.skeleton.empty() ? source : options.skeleton;
     Result<fastgltf::Asset> other =
@@ -370,7 +415,8 @@ Result<CookedAnimation> cookAnimation(const std::filesystem::path& source, const
     // Retargeted: the clips are read for the input's own skeleton (and its clip settings name its joints).
     Result<GltfSkeleton> own = options.retarget.empty() ? Result<GltfSkeleton>(Error{""}) : skeletonOf(*asset);
     if (!options.retarget.empty() && !own) return Error{std::format("{}: {}", source.string(), own.error())};
-    Result<std::vector<ClipDesc>> clips = clipsOf(*asset, options.retarget.empty() ? *skeleton : *own, out.notes);
+    Result<std::vector<ClipDesc>> clips =
+        clipsOf(*asset, extras, options.retarget.empty() ? *skeleton : *own, out.notes);
     if (!clips) return Error{std::format("{}: {}", source.string(), clips.error())};
     Result<ClipSettings> settings = readSettings(source, options, out.inputs);
     if (!settings) return Error{settings.error()};

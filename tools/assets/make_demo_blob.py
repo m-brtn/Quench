@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Writes the engine demo's blend shape creature, the blob: a jelly body with two eyes as glTF (one skin of three
-joints, one material, vertex colors), a clip that sways it, and four blend shapes (morph targets). Procedural, CC0
+joints, one material, vertex colors), four blend shapes (morph targets) and a clip that sways it and, through the blend
+shapes' weights, squashes it at the ends of its sway and stretches it in between. Procedural, CC0
 (see examples/demo/assets/CREDITS.md); standard library only. The demo's build runs it (examples/demo/CMakeLists.txt)
 and cooks the output; nothing it writes is committed.
 
@@ -131,6 +132,13 @@ def sway(t):
                         qaxis((0.0, 0.0, 1.0), 0.1 * math.sin(w)))}
 
 
+def bounce(t):
+    """The blend shapes' weights at t (squash, stretch, puff, spikes): squashed where the sway turns, stretched where
+    it passes the middle."""
+    c = math.cos(2.0 * TAU * t / SWAY)
+    return [0.35 * max(0.0, -c), 0.3 * max(0.0, c), 0.0, 0.0]
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__, file=sys.stderr)
@@ -171,6 +179,11 @@ def main() -> int:
                          "output": w.accessor([rounded((q[1], q[2], q[3], q[0])) for q in rotations], "VEC4"),
                          "interpolation": "LINEAR"})
         channels.append({"sampler": len(samplers) - 1, "target": {"node": INDEX[joint], "path": "rotation"}})
+    # The node's weights: per key one value per blend shape, in the mesh's order.
+    samplers.append({"input": time_accessor, "output": w.accessor([round(x, 5) for t in times for x in bounce(t)],
+                                                                  "SCALAR"),
+                     "interpolation": "LINEAR"})
+    channels.append({"sampler": len(samplers) - 1, "target": {"node": body, "path": "weights"}})
 
     doc = {
         "asset": {"version": "2.0", "generator": "tools/assets/make_demo_blob.py"},

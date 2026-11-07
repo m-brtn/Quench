@@ -14,8 +14,10 @@
 #include <ozz/animation/offline/raw_track.h>
 #include <ozz/animation/offline/skeleton_builder.h>
 #include <ozz/animation/offline/track_builder.h>
+#include <ozz/animation/offline/track_optimizer.h>
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <map>
 
@@ -58,6 +60,40 @@ void addKeys(const std::vector<Key<In>>& keys, float duration, const In& rest, C
             out.push_back({time, convert(k.value)});
     }
     if (out.empty()) out.push_back({0.0f, convert(rest)});
+}
+
+// A channel's keys by ratio, sorted and clamped like a joint's; additive clips store the difference to the value at 0
+// (the first key's: values before it are held).
+Result<ozz::animation::FloatTrack> buildChannel(const ChannelTrack& channel, float duration, bool additive,
+                                                const ClipBuildOptions& options, const std::string& what) {
+    if (channel.keys.empty()) return Error{std::format("{}: channel '{}' has no keys", what, channel.name)};
+    std::vector<Key<float>> sorted(channel.keys);
+    std::ranges::stable_sort(sorted, {}, &Key<float>::time);
+    offline::RawFloatTrack raw;
+    for (const Key<float>& k : sorted) {
+        if (!std::isfinite(k.value))
+            return Error{std::format("{}: channel '{}' has a key of {}", what, channel.name, k.value)};
+        const float ratio = std::clamp(k.time, 0.0f, duration) / duration;
+        if (!raw.keyframes.empty() && raw.keyframes.back().ratio >= ratio)
+            raw.keyframes.back().value = k.value;
+        else
+            raw.keyframes.push_back({offline::RawTrackInterpolation::kLinear, ratio, k.value});
+    }
+    if (additive) {
+        const float first = raw.keyframes.front().value;
+        for (auto& key : raw.keyframes) key.value -= first;
+    }
+    if (options.optimize) {
+        offline::TrackOptimizer optimizer;
+        optimizer.tolerance = options.channelTolerance;
+        offline::RawFloatTrack optimized;
+        if (!optimizer(raw, &optimized))
+            return Error{std::format("{}: channel '{}': optimization failed", what, channel.name)};
+        raw = std::move(optimized);
+    }
+    ozz::unique_ptr<ozz::animation::FloatTrack> track = offline::TrackBuilder()(raw);
+    if (!track) return Error{std::format("{}: channel '{}': ozz-animation refuses the keys", what, channel.name)};
+    return std::move(*track);
 }
 
 } // namespace
@@ -178,6 +214,16 @@ Result<std::shared_ptr<const ClipSet>> buildClipSet(const Skeleton& skeleton, co
             e.time = std::clamp(e.time, 0.0f, desc.duration);
         }
         std::ranges::stable_sort(impl->events, {}, &ClipEvent::time);
+        for (const ChannelTrack& channel : desc.channels) {
+            if (channel.name.empty()) return Error{std::format("{}: a channel has no name", what)};
+            if (std::ranges::find(impl->channelNames, channel.name) != impl->channelNames.end())
+                return Error{std::format("{}: two channels are named '{}'", what, channel.name)};
+            Result<ozz::animation::FloatTrack> track =
+                buildChannel(channel, desc.duration, desc.additive, options, what);
+            if (!track) return Error{track.error()};
+            impl->channelNames.push_back(channel.name);
+            impl->channels.push_back(std::move(*track));
+        }
         out.emplace_back(std::move(impl));
     }
     return std::shared_ptr<const ClipSet>(std::make_shared<ClipSet>(std::move(out), joints, skeleton.signature()));

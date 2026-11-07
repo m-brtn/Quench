@@ -13,7 +13,8 @@
 // hero's camera the mannequin walks beside a second character of other joint names, proportions and rest pose
 // (tools/assets/make_demo_strider.py), which plays the same walk retargeted onto it at cook time. In its own view a
 // swaying jelly creature (tools/assets/make_demo_blob.py) is reshaped by four blend shapes, applied before its
-// skinning; it is drawn in that view only.
+// skinning: its clip squashes and stretches it through their weights, the sliders add to them; it is drawn in that
+// view only.
 
 #include "Demo.h"
 
@@ -345,6 +346,7 @@ public:
         ImGui::SliderFloat("Ahead", &m_steerVelocity.y, kSteerMin.y, kSteerMax.y, "%.2f m/s");
         ImGui::EndDisabled();
         ImGui::SeparatorText("Blend shapes");
+        ImGui::Checkbox("Weights from the clip", &m_blobClip);
         for (std::size_t k = 0; k < kBlobShapes.size(); ++k) {
             const std::string label = std::format("{}##blob", kBlobShapes[k]);
             ImGui::SliderFloat(label.c_str(), &m_blobWeights[k], 0.0f, 1.0f, "%.2f");
@@ -444,12 +446,21 @@ public:
             return double(glm::length(glm::vec3(m_stickTransform[3]) - glm::vec3(hand[3])));
         }
         if (name == "view") return double(m_view);
-        // The blend shape creature: its model's blend shapes and the weight of one by name (blob_weight_squash).
+        // The blend shape creature: its model's blend shapes, the weight one is drawn with by name (blob_weight_squash)
+        // and its clip's value (blob_clip_squash, also while the clip does not drive the weights).
         if (name == "blob_shapes") return m_blobModel.ready() ? double(m_blobModel->morphTargets().size()) : 0.0;
+        if (name == "blob_clip") return m_blobClip ? 1.0 : 0.0;
         if (name.starts_with("blob_weight_")) {
             const auto it = std::ranges::find(kBlobShapes, name.substr(12));
             if (it == kBlobShapes.end()) return std::nullopt;
-            return double(m_blobWeights[std::size_t(it - kBlobShapes.begin())]);
+            return double(blobWeight(std::size_t(it - kBlobShapes.begin())));
+        }
+        if (name.starts_with("blob_clip_")) {
+            const auto it = std::ranges::find(kBlobShapes, name.substr(10));
+            if (it == kBlobShapes.end() || !m_blob.id) return std::nullopt;
+            const std::span<const float> clip = m_anim->channels(m_blob.id, m_blobChannels);
+            const auto shape = std::size_t(it - kBlobShapes.begin());
+            return shape < clip.size() ? double(clip[shape]) : 0.0;
         }
         // The steered character: the velocity asked for (after the circle's edge), the one its clips move it by
         // (smoothed over 0.2 s), the angle between the two (degrees) and its distance from the circle's center.
@@ -517,6 +528,8 @@ public:
             m_steerVelocity.x = std::clamp(*number, kSteerMin.x, kSteerMax.x);
         } else if (name == "steer_vz" && number) {
             m_steerVelocity.y = std::clamp(*number, kSteerMin.y, kSteerMax.y);
+        } else if (name == "blob_clip" && flag) {
+            m_blobClip = *flag;
         } else if (name.starts_with("blob_") && number) {
             // blob_squash 0.8: a blend shape's weight (any value, also outside 0..1).
             const auto it = std::ranges::find(kBlobShapes, name.substr(5));
@@ -788,6 +801,8 @@ private:
         blob.events = false;
         blob.height = 1.0f;
         m_blob.id = m_anim->addCharacter(std::move(blob));
+        m_blobChannels =
+            m_anim->addChannels(m_blob.id, std::vector<std::string>(kBlobShapes.begin(), kBlobShapes.end()));
         m_blob.transform = placed(kBlobAt);
         m_blob.model = m_assets->addModel(m_blobModel, m_blob.transform, false);
         if (std::string_view(kViews[std::size_t(m_view)].id) == "retarget") setView(m_view);
@@ -839,8 +854,17 @@ private:
             m_blob.skin = m_anim->addSkin(m_blob.id, skin->joints, skin->inverseBindMatrices);
     }
 
-    // The blob: drawn in its view only, posed by its clip, its blend shapes' weights from the sliders (by name, in
-    // its model's order).
+    // A blend shape's weight: the slider's, plus the clip's while it drives them.
+    float blobWeight(std::size_t shape) const {
+        float weight = m_blobWeights[shape];
+        if (m_blobClip && m_blob.id) {
+            const std::span<const float> clip = m_anim->channels(m_blob.id, m_blobChannels);
+            if (shape < clip.size()) weight += clip[shape];
+        }
+        return weight;
+    }
+
+    // The blob: drawn in its view only, posed by its clip, its blend shapes' weights by name, in its model's order.
     void updateBlob() {
         if (!m_blob.model) return;
         m_assets->setVisible(m_blob.model, std::string_view(kViews[std::size_t(m_view)].id) == "blendshapes");
@@ -849,8 +873,8 @@ private:
         m_blobModelWeights.clear();
         for (const std::string& name : m_blobModel->morphTargets()) {
             const auto it = std::ranges::find(kBlobShapes, name);
-            m_blobModelWeights.push_back(
-                it == kBlobShapes.end() ? 0.0f : m_blobWeights[std::size_t(it - kBlobShapes.begin())]);
+            m_blobModelWeights.push_back(it == kBlobShapes.end() ? 0.0f
+                                                                 : blobWeight(std::size_t(it - kBlobShapes.begin())));
         }
         m_assets->setMorphWeights(m_blob.model, m_blobModelWeights);
     }
@@ -956,6 +980,8 @@ private:
     std::vector<Walker> m_crowd;
     Walker m_blob;
     std::array<float, kBlobShapes.size()> m_blobWeights{};
+    int m_blobChannels = -1; // AnimationSystem::addChannels: the clip's weights by kBlobShapes' names
+    bool m_blobClip = true;
     std::vector<float> m_blobModelWeights;
     std::vector<std::size_t> m_forearmJoints; // in the model's skin
     std::vector<glm::mat4> m_twisted;

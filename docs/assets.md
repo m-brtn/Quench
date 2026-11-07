@@ -218,15 +218,18 @@ quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skele
   its transformed base vector). Without the file's normals the cook computes the targets' normals as it does the
   base's, from the moved positions; without the file's tangents (MikkTSpace) the tangent offsets are 0. A mesh with
   blend shapes is a part of its own per node (its weights are the node's); its vertices are welded with their
-  offsets, so two vertices alike except in a target stay apart. Weight animations (`weights` channels) are not
-  cooked yet. `quench_cook model --verbose` counts the blend shapes.
+  offsets, so two vertices alike except in a target stay apart. Weight animations (`weights` channels) are cooked
+  by `quench_cook animation` into the clips' float channels, named like the blend shapes
+  ([Animation](animation.md#cooking)). `quench_cook model --verbose` counts the blend shapes.
 - **Skeletons** (stage 8): the joints of the file's skins with their ancestors and the non-mesh nodes below joints
   (attachment points such as a hand socket), or the animated nodes of a file without skins; rest transforms from
   the nodes.
 - **Animations** (stage 8): every animation of the file becomes a clip of one `.qanim`, for the skeleton of
   `--skeleton` (another glTF with the same joints) or of the input. Step and linear keys are kept, cubic splines
   sampled at 30 Hz, linear rotation steps wider than 0.2 rad subdivided spherically (glTF slerps, ozz does not);
-  ozz's optimizer reduces the keys (1 mm at 10 cm by default). Clip settings (loop, additive, events, root motion,
+  ozz's optimizer reduces the keys (1 mm at 10 cm by default). Morph target weights (glTF `weights` channels,
+  since 2026-11-07) become float channels named like the model's blend shapes (`.qanim` version 2 when a clip has
+  them). Clip settings (loop, additive, events, root motion,
   the tolerance) come from `<input stem>.anim.json` or `--clips` ([Animation](animation.md#cooking)); unknown keys
   and unknown clips are errors. With `--retarget` (a bone map, since 2026-11-07) the clips are retargeted onto
   `--skeleton`'s skeleton, which may have other joint names, proportions and rest pose

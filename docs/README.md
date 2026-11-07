@@ -2,7 +2,7 @@
 
 Stages 1 to 3, 5, 6, 7, 9, 10 and 11 of the [Roadmap](roadmap.md) are implemented (stage 11 except the iPhone runs;
 stage 6's shader hot reload since 2026-11-07, after 0.9.0), stage 4 (games on the engine) for one game and stage 8
-except blend shapes (retargeting since 2026-11-07, after 0.9.0)
+(retargeting, blend shapes and their weights from clips since 2026-11-07, after 0.9.0)
 (version 0.9.0): the core and physics modules, the job system, the asset system and the asset
 cooker, the GPU layer over SDL GPU (and a native Metal backend with GPU timestamps per pass, acceleration structures
 and MetalFX; not the default yet), the app shell with HDR display output, the render module (a retained scene and

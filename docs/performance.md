@@ -244,6 +244,12 @@ without joints. What is left, +2% of CPU and +2.5% of skinning GPU time, is with
 of the spread of one binary's regions. The cost of the blend shapes themselves (one dispatch of 1094 vertices with
 four targets in the demo) was not measured. Not measured on the screen or on the iPhone.
 
+Weights from clips (2026-11-07 05:48, the same scene and method, the blend shape commit `c2b1fee` against the change,
+4 regions each; the crowd's characters have no channels, the blob's four are sampled in every update): CPU p50 1.074
+to 1.151 before and 1.062 to 1.115 after, p99 1.47 to 1.73 and 1.39 to 1.64, `AnimationSystem::update` 0.151 to
+0.168 and 0.157 to 0.162 ms, skinning GPU 2.35 to 2.47 and 2.34 to 2.41 ms: no difference beyond the regions'
+spread.
+
 ### On the screen after the bug packages
 
 2026-11-07 00:00-00:06, Release, Mac (Mac mini, Apple M4 Pro), its one display (the LG UltraFine 5K at 60 Hz; no

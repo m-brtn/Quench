@@ -10,10 +10,11 @@ namespace quench::animation::detail {
 
 static_assert(std::endian::native == std::endian::little, "cooked animation files are little endian");
 
-std::vector<std::uint8_t> wrapPayload(std::uint32_t magic, std::span<const std::uint8_t> payload) {
+std::vector<std::uint8_t> wrapPayload(std::uint32_t magic, std::uint32_t version,
+                                      std::span<const std::uint8_t> payload) {
     ByteWriter w;
     w.u32(magic);
-    w.u32(kFileVersion);
+    w.u32(version);
     const std::uint64_t size = payload.size();
     const std::uint64_t hash = XXH64(payload.data(), payload.size(), 0);
     w.bytes(&size, 8);
@@ -22,20 +23,21 @@ std::vector<std::uint8_t> wrapPayload(std::uint32_t magic, std::span<const std::
     return std::move(w.out);
 }
 
-Result<std::span<const std::uint8_t>> unwrapPayload(std::uint32_t magic, std::span<const std::uint8_t> file,
-                                                    const char* what) {
+Result<Payload> unwrapPayload(std::uint32_t magic, std::uint32_t latest, std::span<const std::uint8_t> file,
+                              const char* what) {
     ByteReader r(file);
     std::uint32_t fileMagic = 0, version = 0;
     std::uint64_t size = 0, hash = 0;
     if (!r.u32(fileMagic) || fileMagic != magic) return Error{std::format("not a {}", what)};
-    if (!r.u32(version) || version != kFileVersion)
-        return Error{std::format("{} version {} (this engine reads {})", what, version, kFileVersion)};
+    if (!r.u32(version) || version == 0 || version > latest)
+        return Error{latest == 1 ? std::format("{} version {} (this engine reads 1)", what, version)
+                                 : std::format("{} version {} (this engine reads 1 to {})", what, version, latest)};
     if (!r.bytes(&size, 8) || !r.bytes(&hash, 8)) return Error{std::format("truncated {} header", what)};
     if (size != r.remaining())
         return Error{std::format("corrupt {}: {} payload bytes, the header says {}", what, r.remaining(), size)};
     const std::span<const std::uint8_t> payload = file.subspan(24);
     if (XXH64(payload.data(), payload.size(), 0) != hash) return Error{std::format("corrupt {}: checksum", what)};
-    return payload;
+    return Payload{payload, version};
 }
 
 std::size_t SpanStream::Read(void* buffer, std::size_t size) {

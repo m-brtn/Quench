@@ -34,6 +34,31 @@ void resolveSkin(const Skeleton* skeleton, Character::Skin& skin) {
     for (std::size_t i = 0; i < skin.joints.size(); ++i) skin.map[i] = skeleton->findJoint(skin.joints[i]);
 }
 
+void resolveChannels(const Character& c, Character::ChannelSet& set) {
+    set.map.assign(set.names.size(), -1);
+    for (std::size_t i = 0; i < set.names.size(); ++i) {
+        const auto it = std::ranges::find(c.channelNames, set.names[i]);
+        if (it != c.channelNames.end()) set.map[i] = int(it - c.channelNames.begin());
+    }
+}
+
+// The union of the bound clips' channels, and each slot's map into it.
+void collectChannels(Character& c) {
+    for (Character::LayerRuntime& layer : c.layers)
+        for (Character::StateRuntime& state : layer.states)
+            for (Character::ClipSlot& slot : state.clips) {
+                if (!slot.clip) continue;
+                for (const std::string& name : slot.clip->channels()) {
+                    auto it = std::ranges::find(c.channelNames, name);
+                    if (it == c.channelNames.end()) it = c.channelNames.insert(c.channelNames.end(), name);
+                    slot.channels.push_back(int(it - c.channelNames.begin()));
+                }
+            }
+    for (auto* channels : {&c.channels, &c.stateChannels[0], &c.stateChannels[1], &c.layerChannels})
+        channels->assign(c.channelNames.size(), glm::vec2(0.0f));
+    for (Character::ChannelSet& set : c.channelSets) resolveChannels(c, set);
+}
+
 } // namespace
 
 AnimationSystem::AnimationSystem(assets::AssetManager& assets, JobSystem& jobs, const AnimationSettings& settings)
@@ -346,6 +371,9 @@ void AnimationSystem::bind(Character& c) {
     c.lodBlending = false;
     c.layers.clear();
     c.contexts.clear();
+    c.channelNames.clear();
+    collectChannels(c);
+    for (Character::ChannelSet& set : c.channelSets) set.values = set.rest;
     if (!skeleton || !graph || std::ranges::any_of(clipSets, [](const auto& s) { return !s; })) {
         logFailure();
         return;
@@ -398,7 +426,7 @@ void AnimationSystem::bind(Character& c) {
             s.def = &state;
             const auto addSlot = [&](const std::string& clipName, float at, float phase) {
                 const Clip* clip = findClip(clipName);
-                s.clips.push_back({clip, at, phase, int(c.contexts.size())});
+                s.clips.push_back({clip, at, phase, int(c.contexts.size()), {}});
                 c.contexts.push_back(std::make_unique<ozz::animation::SamplingJob::Context>(jointCount));
                 if (clip && (def.blend == LayerBlend::Additive) != clip->additive())
                     log::warning("animation", "character {}: clip '{}' is {}additive in the {} layer '{}'", c.id.index,
@@ -434,6 +462,7 @@ void AnimationSystem::bind(Character& c) {
         }
         c.layers.push_back(std::move(layer));
     }
+    collectChannels(c);
 }
 
 int AnimationSystem::addSkin(CharacterId id, std::span<const std::string> joints,
@@ -448,6 +477,20 @@ int AnimationSystem::addSkin(CharacterId id, std::span<const std::string> joints
     resolveSkin(c->skeleton.get(), skin);
     c->skins.push_back(std::move(skin));
     return int(c->skins.size()) - 1;
+}
+
+int AnimationSystem::addChannels(CharacterId id, std::span<const std::string> names, std::span<const float> rest) {
+    QUENCH_CHARACTER(id, -1);
+    QUENCH_ASSERT(rest.empty() || rest.size() == names.size(), "one rest value per channel name");
+    Character::ChannelSet set;
+    set.names.assign(names.begin(), names.end());
+    set.rest.assign(names.size(), 0.0f);
+    if (rest.size() == names.size()) set.rest.assign(rest.begin(), rest.end());
+    set.values = set.rest;
+    resolveChannels(*c, set);
+    if (c->bound && !c->channels.empty()) detail::writeChannels(*c, set);
+    c->channelSets.push_back(std::move(set));
+    return int(c->channelSets.size()) - 1;
 }
 
 // ---- update
@@ -580,6 +623,13 @@ std::span<const glm::mat4> AnimationSystem::skinPalette(CharacterId id, int skin
     QUENCH_ASSERT(c && skin >= 0 && std::size_t(skin) < c->skins.size(), "stale character or skin");
     if (!c || skin < 0 || std::size_t(skin) >= c->skins.size()) return {};
     return c->skins[std::size_t(skin)].palette;
+}
+
+std::span<const float> AnimationSystem::channels(CharacterId id, int set) const {
+    const Character* c = get(id);
+    QUENCH_ASSERT(c && set >= 0 && std::size_t(set) < c->channelSets.size(), "stale character or channel set");
+    if (!c || set < 0 || std::size_t(set) >= c->channelSets.size()) return {};
+    return c->channelSets[std::size_t(set)].values;
 }
 
 } // namespace quench::animation

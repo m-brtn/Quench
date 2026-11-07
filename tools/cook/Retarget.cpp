@@ -233,6 +233,7 @@ Result<std::vector<ClipDesc>> retargetClips(const SkeletonDesc& source, const Sk
         result.name = clip.name;
         result.duration = clip.duration;
         result.events = clip.events;
+        result.channels = clip.channels;
         result.loop = clip.loop;
         result.additive = clip.additive;
         if (clip.rootMotion) {

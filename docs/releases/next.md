@@ -123,6 +123,16 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   ray-traced shadows follow the weights. The demo's Animation section has a view "Blend shapes" (a swaying blob
   with four shapes on sliders), a scripted check with golden captures (`animation_blendshapes.txt`) and a check
   mode item. Nobody has looked at it in motion.
+- Blend shape weights from clips (stage 8 remaining work): clips carry named float channels (`ClipDesc::channels`,
+  ozz float tracks), the cook turns glTF `weights` animations into them (one per target, named like the model's
+  blend shapes), and `AnimationSystem::addChannels` / `channels` give a game their values after each update,
+  blended like the pose (blend trees and spaces, cross-fades, override and additive layers, animation LOD; a clip
+  without a channel leaves its weight to the rest value). Checked by numbers: exact at and between keys, the blends'
+  expected values within 1e-5, a newer file version refused; cooked linear, step and cubic weights through the
+  runtime within 3e-3; LOD interpolation within 1e-5 of an update every frame. The demo's blob takes its sway
+  clip's squash and stretch (a "Weights from the clip" option, on by default; the sliders add to them), with 10 more
+  checks in its scripted check; its golden capture (the sliders' shapes, the clip's weights off) did not change.
+  Nobody has looked at it in motion.
 
 ## Fixes
 
@@ -289,3 +299,14 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
 - **The cook library** links fastgltf's simdjson (for glTF extras); `cook::loadGltf` takes an optional
   `GltfExtras*`, and `cook::morphTargetName` is new. `quench_cook model --verbose` prints the blend shape count
   before the byte count.
+- **`.qanim` version 2:** a clip set with float channels is written as version 2, which an engine before this
+  release cannot read; one without channels is still written as version 1, byte for byte as before (clips cooked
+  from glTF files without `weights` animations, and every retargeted clip set of such files). glTF `weights`
+  animations, a note before ("morph target weights ... are not cooked"), now cook into channels: a game whose files
+  have them gets version 2 clip sets. In a file without skins a node animated only by weights is now a joint of the
+  skeleton, as any animated node.
+- **`animation::ClipDesc`** has `channels` at its end and **`animation::ChannelTrack`** is new;
+  **`ClipBuildOptions`** has `channelTolerance` before `optimize` (designated initializers compile unchanged, a
+  positional aggregate initialization would put `optimize` into it); **`Clip::channels()`**,
+  **`AnimationSystem::addChannels`** and **`AnimationSystem::channels`** are new. Characters without channel sets
+  update as before.
