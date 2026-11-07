@@ -538,8 +538,9 @@ The engine adds:
   posed vertices. It needed compute in `quench::gpu` and the shader build (above);
 - cooking of glTF skins, skeletons and animations in `quench_cook`.
 
-Not done: retargeting between skeletons (not in ozz: bone name mapping and rest pose correction), 2D blend spaces,
-animation LOD.
+Since 2026-11-07 (after 0.9.0): 2D blend spaces, animation LOD, dual quaternion skinning, and retargeting between
+skeletons at cook time (not in ozz: a bone map by name, rest pose and bone direction correction, scaled root and
+hips translations; [Animation](animation.md#retargeting)). Not done: blend shapes.
 
 ## Coordinate system and units
 

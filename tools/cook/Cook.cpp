@@ -50,6 +50,8 @@ constexpr const char* kUsage =
     "  --scale S            model: scales the positions (default 1)\n"
     "  --skeleton FILE      animation: the glTF or GLB whose skeleton the clips are for (default: the input)\n"
     "  --clips FILE         animation: the clip settings (default: <input stem>.anim.json)\n"
+    "  --retarget FILE      animation: a bone map (JSON) from --skeleton's joints to the input's; the clips are\n"
+    "                       retargeted onto --skeleton (other names, proportions and rest poses)\n"
     "  --channels 1|2       sound: mixes down to mono or up to stereo (a .wav output)\n"
     "  --depfile FILE       writes the files read, for the build system\n"
     "  --verbose            one line per file written\n";
@@ -168,13 +170,15 @@ std::optional<Options> parseArgs(int argc, char** argv, std::string& error) {
             (arg == "--lod-ratio"   ? o.model.lodRatio
              : arg == "--lod-error" ? o.model.lodError
                                     : o.model.scale) = float(*v);
-        } else if (arg == "--asset-root" || arg == "--depfile" || arg == "--skeleton" || arg == "--clips") {
+        } else if (arg == "--asset-root" || arg == "--depfile" || arg == "--skeleton" || arg == "--clips" ||
+                   arg == "--retarget") {
             const std::optional<std::string_view> v = value();
             if (!v) return bad(std::format("{}: a path", arg));
             (arg == "--asset-root" ? o.assetRoot
              : arg == "--depfile"  ? o.depfile
              : arg == "--skeleton" ? o.animation.skeleton
-                                   : o.animation.clips) = fs::path(*v);
+             : arg == "--clips"    ? o.animation.clips
+                                   : o.animation.retarget) = fs::path(*v);
         } else if (arg.starts_with("--")) {
             return bad(std::format("unknown option {}", arg));
         } else {

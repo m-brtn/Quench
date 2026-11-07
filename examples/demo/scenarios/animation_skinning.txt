@@ -11,8 +11,8 @@ set restart 1
 set crowd 0
 set view skinning
 wait 0.05
-expect anim_characters == 6
-until anim_bound == 6 1
+expect anim_characters == 8
+until anim_bound == 8 1
 until anim_ready == 1 3
 wait 1
 windows off

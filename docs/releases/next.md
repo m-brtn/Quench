@@ -101,6 +101,17 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   Animation section has a view "Skinning" (two characters with a forearm twisted by 170 degrees, linear against dual
   quaternions), an option for the other characters, a scripted check with golden captures
   (`animation_skinning.txt`) and a check mode item. Nobody has looked at it in motion.
+- Retargeting at cook time (stage 8 remaining work): `quench_cook animation IN OUT --skeleton TARGET --retarget
+  MAP.json` and `quench_cook_assets(... ANIMATIONS ... SKELETON target.gltf RETARGET map.json)` (output
+  `<path>.<target>.qanim`) cook clips for a skeleton with other joint names, proportions and rest pose: a JSON bone
+  map by name, the source's model-space rotations with the rest poses and the bones' directions corrected, the root's
+  and hips' translations scaled by the hips' height ratio (or a given scale); unmapped joints keep their rest
+  ([Animation](../animation.md#retargeting)). The demo's mannequin's walk on its second character (legs 1.15 times
+  as long, other names, a T-pose, an extra spine joint), through the runtime: feet within 5.1 mm of 1.15 times the
+  mannequin's in world space, hands within 0.8 mm of 1.1 times from the shoulders, planted feet moving at most
+  0.46 mm per frame (the mannequin's 0.44 mm). The demo's Animation section has a view "Retargeting" (the two walking
+  abreast, the camera following them), a scripted check with golden captures (`animation_retarget.txt`) and a check
+  mode item. Nobody has looked at it in motion.
 
 ## Fixes
 
@@ -241,3 +252,6 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   initializers compile unchanged. **`render::Skinning`**, **`Scene::setSkinning`** and **`SceneAssets::setSkinning`**
   are new. A game's own compute shader that reads the renderer's palette buffer gets dual quaternions for instances
   that use them (`SkinUniforms::counts.w` 1); nothing changes for instances left linear.
+- **`quench_cook_assets`** takes `RETARGET` (needs `SKELETON`); calls without it cook as before. In the cook library
+  (`tools/cook/Cook.h`), **`cook::AnimationOptions`** has `retarget` at its end, and `RetargetMap`,
+  `parseRetargetMap` and `retargetClips` are new.

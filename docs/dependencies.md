@@ -288,7 +288,8 @@ Already pinned and kept: Dear ImGui (diagnostics). miniaudio was pinned with sta
   `track_triggering_job` (events from user channel tracks), `ik_two_bone_job` and `ik_aim_job`; the samples include
   additive blending, partial blending, attachments, foot IK, two-bone IK, user channels, motion extraction and
   skinning. Its runtime needs C++17; the engine's `wasm-node` check runs it under Node.js. It has no state machine,
-  no retargeting and no GPU skinning: the engine implements the first and the last; retargeting is not done.
+  no retargeting and no GPU skinning: the engine implements all three (retargeting at cook time, in
+  `tools/cook/Retarget.cpp`).
 - **fastgltf**: current versions require C++20 (`cxx_std_20` in its CMake); C++17 support ended with the 0.9 series.
   The engine is C++20, so this is fine. Checked in the 1.0.0 source: unless a `simdjson` or `simdutf` package is
   found, its configure downloads their single-file releases (5.1.0, 9.3.3) from GitHub with `EXPECTED_HASH SHA256`;

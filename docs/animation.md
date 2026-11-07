@@ -205,8 +205,56 @@ inverse bind matrices, four joints and 16-bit weights per vertex that sum to 655
   Unknown keys, clips the file does not have and events outside a clip are errors.
 - **Deterministic**: the same input gives the same bytes (checked by `cook_cli` on the demo's character).
 - **In CMake**: `quench_cook_assets(name SOURCE_DIR dir SKELETONS a.gltf ANIMATIONS a.gltf [SKELETON a.gltf]
-  MODELS a.gltf)`.
+  [RETARGET map.json] MODELS a.gltf)`.
 - `--scale` is refused for skinned models (scale the source).
+
+## Retargeting
+
+Since 2026-11-07 the cook retargets clips onto a skeleton with other joint names, proportions and rest pose (ozz
+has no retargeting). `quench_cook animation walk.gltf hero.walk.qanim --skeleton hero.gltf --retarget hero.json`
+cooks the clips of `walk.gltf` (with their settings) for `hero.gltf`'s skeleton through a bone map:
+
+```json
+{"joints": {"Root": "root", "Hips": "pelvis", "Spine": "spine", "LeftArm": "upperarm_l", "LeftForeArm": "lowerarm_l"},
+ "translations": ["Root", "Hips"],
+ "scale": "Hips"}
+```
+
+- **joints**: target joint (of `--skeleton`) to source joint (of the input). Unmapped target joints keep their rest
+  pose (the cook notes them); a name that is in neither skeleton is an error.
+- **Rotations**: a mapped joint's model-space rotation is the source joint's, less the source's rest rotation, turned
+  by the rotation that lays the target's rest bone onto the source's, times the target's rest rotation. The bone of
+  a joint runs to the one mapped joint below it (through unmapped ones, such as an extra spine joint); a joint with
+  several (hips, chest) is not turned; one with none (a hand, a head) turns as its nearest mapped ancestor. So a
+  T-pose arm plays an A-pose clip with its arm where the source's is, and limbs whose joints point along other axes
+  (a leg's joints turned by half a turn) play the same motion.
+- **translations**: the joints whose translation is retargeted (normally the root and the hips): the target's rest
+  position plus the source's offset from its rest, times `scale`. The other joints keep the target's own bone
+  lengths.
+- **scale**: a number, or a mapped joint whose rest heights (target over source) give it; by default the first
+  translation joint above the ground (the hips: their height ratio). Root motion is scaled with it.
+- Root motion (renamed to the target's joint), events, loops and additive clips come along; the clips are sampled at
+  the source's key times and at least 30 times per second, then the cook's key reduction runs as for any clip.
+  Scale keys are not retargeted (noted).
+- **In CMake**: `RETARGET map.json` with `SKELETON` (both under `SOURCE_DIR`) writes the clips of each of the call's
+  `ANIMATIONS` as `<path>.<skeleton name>.qanim` (the demo: `characters/mannequin.strider.qanim`).
+
+Verified by numbers (`cook.cook_retarget_*`): a skeleton retargeted onto itself gives the same pose (largest
+difference of a model matrix column 6.5e-5 over 61 times); an in-memory skeleton 1.5 times as large, with other
+names, a knee turned by half a turn at rest and a T-pose arm under an unmapped joint: the foot 1.5 times as far from
+the origin and the hand 1.5 times as far from its shoulder, within 3e-7 m at the keys and 4.9e-5 m between them
+(the resampled keys interpolate the source's curve). The demo's mannequin's
+walk on its strider (`tools/assets/make_demo_strider.py`: legs and hips 1.15 times as high, arms 1.1 times as long, a
+shorter torso with an extra unmapped joint, a T-pose, other joint names), cooked and played through the runtime for
+two cycles at 120 Hz: the hips' height within 0.6 mm of 1.15 times the mannequin's, the feet from the hip joints
+within 0.1 mm and the hands from the shoulders within 0.8 mm of 1.15 and 1.1 times the mannequin's, the feet in
+world space (with the root motion) within 5.1 mm of 1.15 times (the hip joints' sideways offset is 0.11 m, not
+1.15 times 0.1), 2.277 m travelled against 1.15 times 1.980 m; over the 232 frames in which a mannequin's foot is
+planted (moves less than 0.5 mm per frame) the strider's moves at most 0.46 mm per frame and drifts at most 1.5 mm
+over a stance (the mannequin's 0.44 mm and 0.8 mm). Three deliberate mistakes (no bone alignment, a scale of 1, the
+target's rest rotation left out) each fail these cases by 0.5 m to 2 m. Decided without the user (2026-11-07):
+retargeting at cook time (no runtime cost, the clip set binds to the target as any other), a JSON map by name, and
+one uniform scale for the translations.
 
 ## Files
 
@@ -312,9 +360,12 @@ characters that use the asset and keeps their parameters.
   and dual quaternion skinning as options (off by default; LOD interpolated or held); in the view
   "2D blend space", a character steered by its velocity through a blend space while it faces one way; in the view
   "Skinning", two characters whose left forearms the section twists by 170 degrees, skinned linearly and by dual
-  quaternions
+  quaternions; in the view "Retargeting", the mannequin and the strider walking the same clip abreast, the camera
+  following them
   ([Engine demo](demo.md)). Its character is procedural (`tools/assets/make_demo_character.py`, generated and cooked
-  at build time; 20 joints, 836 vertices, clips idle, walk, run, jump, wave, lean, walk_back, strafe_l, strafe_r).
+  at build time; 20 joints, 836 vertices, clips idle, walk, run, jump, wave, lean, walk_back, strafe_l, strafe_r);
+  so is the strider (`tools/assets/make_demo_strider.py`: 21 joints, 836 vertices, no clips of its own; the
+  mannequin's are retargeted onto it at build time through its bone map).
 - **Tests**: `animation.*` (29 cases: sampling at and between keys, blend weights and phase sync, 2D blend space
   weights (on a grid: in 0..1, a sum of 1 within 1.2e-7, at most 0.0018 of change per mm, exact at the points,
   mirror symmetric) and their pose, phases and root motion, graph errors, masked and additive
@@ -323,7 +374,9 @@ characters that use the asset and keeps their parameters.
   corrupt assets, clips for another skeleton, reload, a parallel update equal to a single-threaded one (with LOD off
   and on), a crowd on one thread, skin palettes; animation LOD: the rates and the updates per frame by screen size,
   interpolated against held poses, root motion spread over the frames, the thresholds' hysteresis and IK off); `cook.cook_skeleton_from_skins`, `cook_animation_keys_and_settings`,
-  `cook_animation_errors`, `cook_skinned_model`, and `cook_cli` (the demo's character cooked twice, the same bytes);
+  `cook_animation_errors`, `cook_skinned_model`, `cook_retarget_map_and_errors`, `cook_retarget_onto_itself`,
+  `cook_retarget_proportions_and_rest_poses`, `cook_retarget_mannequin_onto_strider` (both characters written at
+  build time; skipped without Python), and `cook_cli` (the demo's character cooked twice, the same bytes);
   `render.renderer_skins_on_the_gpu`, `renderer_reuses_unchanged_skins` (the same image from copied vertices,
   also when an instance's range in the buffer moves), `renderer_dual_quaternion_skinning` (a twisted bar keeps its
   width; rigid motions and a uniform scale as with linear skinning), `renderer_skinned_motion_vectors`, `renderer_rejects_bad_skins`
@@ -331,7 +384,9 @@ characters that use the asset and keeps their parameters.
   and a golden capture); `demo_animation_blend2d_<backend>` (the steered character's root motion against its
   velocity, 17 checks and a golden capture); `demo_animation_lod_<backend>` (the crowd of 256 with LOD: the rates,
   the characters sampled and the reused skins from the hero's view and from 45 m, 18 checks, no capture);
-  `demo_animation_skinning_<backend>` (the twisted pair, 9 checks and a golden capture).
+  `demo_animation_skinning_<backend>` (the twisted pair, 9 checks and a golden capture);
+  `demo_animation_retarget_<backend>` (the retargeting pair abreast, the strider's hips 1.15 times as high, 10
+  checks and a golden capture).
 
 ## Platforms
 
@@ -344,8 +399,10 @@ characters that use the asset and keeps their parameters.
 
 - **Not looked at in motion by the user**: foot sliding, blend pops, the IK on the ramp and the step were checked by
   numbers and still captures only.
-- **Retargeting** (clips of one skeleton on another) is not done: clip sets bind to the skeleton they were cooked
-  for. Different proportions with the same joint names need a rest-pose correction (not in ozz).
+- **Retargeting** is at cook time only, with one uniform scale for the translated joints: a target whose legs are
+  longer than its hips' height ratio would make them slides its feet (no IK pass corrects contacts), no per-chain
+  scale, no twist spread over extra joints (an unmapped joint holds its rest), and scale keys are not retargeted.
+  Checked by numbers and a still capture; nobody has looked at the retargeted walk in motion.
 - **No sync markers** beyond normalized time (and a point's `phase`): clips whose foot contacts are not at the same
   phases do not stay in step. No directional blend spaces (polar gradient bands): a space's weights are Cartesian.
 - **Skinning**: four joints per vertex, linear blend or dual quaternions (a joint's non-uniform scale or shear is

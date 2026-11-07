@@ -225,7 +225,11 @@ the user"). Described in [Animation](animation.md).
   of unchanged skinned vertices; the demo's option and its scripted check (no capture), measured on the crowd of 256.
 - Done after 0.9.0 (not released): dual quaternion skinning (per instance or per skin of a cooked model, linear the
   default) with the demo's twisted pair, its scripted check and golden captures.
-- Not done, remaining: retargeting (clips bind to the skeleton they were cooked for), blend shapes; animation LOD's look in motion; the check in motion by the user (foot sliding, blend pops, IK) and on
+- Done after 0.9.0 (not released): retargeting at cook time (`quench_cook animation --retarget`, `quench_cook_assets(...
+  RETARGET ...)`: a JSON bone map by name, rest pose and bone direction correction, root and hips translations
+  scaled) with the demo's second character (the strider: other names, proportions and a T-pose) walking beside the
+  mannequin, its scripted check and golden captures.
+- Not done, remaining: blend shapes; the look in motion of animation LOD and of the retargeted walk; the check in motion by the user (foot sliding, blend pops, IK) and on
   the iPhone. The release went ahead before those checks (decided without the user, 2026-11-06, as recommended);
   the release notes list them as not verified.
 - Done: version 0.6.0 (with the cut-out and translucent shadows), release notes in

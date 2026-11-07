@@ -13,7 +13,8 @@ endif()
 
 # quench_cook_assets(<name> SOURCE_DIR <dir> [OUTPUT_DIR <dir>]
 #                    [TEXTURES <file>...] [DATA_TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...]
-#                    [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>] [FILES <file>...]
+#                    [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>] [RETARGET <file>]
+#                    [FILES <file>...]
 #                    [TEXTURE_FORMAT auto|bc7|astc|rgba8] [TEXTURE_MAX_SIZE <n>]
 #                    [MODEL_OPTIONS <quench_cook option>...])
 #
@@ -25,13 +26,15 @@ endif()
 # (glTF, GLB) <path>.qmodel with their textures as <path>_<image>.ktx2. SKELETONS (glTF, GLB) become <path>.qskel
 # (the joints of their skins), ANIMATIONS (glTF, GLB) <path>.qanim (their animations as clips, with the settings of
 # <path without extension>.anim.json when it exists), for their own skeleton or for SKELETON's (a file under
-# SOURCE_DIR). SOUNDS (WAV, FLAC, MP3, Ogg Vorbis) are decoded to check them and copied with their extension; FILES
+# SOURCE_DIR). With RETARGET (a bone map under SOURCE_DIR, docs/animation.md "Retargeting") the clips are retargeted
+# onto SKELETON's skeleton and become <path>.<SKELETON's name without extension>.qanim. SOUNDS (WAV, FLAC, MP3, Ogg
+# Vorbis) are decoded to check them and copied with their extension; FILES
 # (texts, settings, licences) are copied as they are (a call with FILES only needs no quench_cook). The run-time asset
 # path of a file is its path under OUTPUT_DIR. Creates the custom target <name>; quench_add_game(... COOKED_ASSETS
 # <name>) copies its output into the game's assets. Every file and everything it reads (glTF buffers and images, clip
 # settings) is tracked: a change re-cooks it.
 function(quench_cook_assets name)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "SOURCE_DIR;OUTPUT_DIR;TEXTURE_FORMAT;TEXTURE_MAX_SIZE;SKELETON"
+    cmake_parse_arguments(PARSE_ARGV 1 arg "" "SOURCE_DIR;OUTPUT_DIR;TEXTURE_FORMAT;TEXTURE_MAX_SIZE;SKELETON;RETARGET"
                           "TEXTURES;DATA_TEXTURES;MODELS;SOUNDS;SKELETONS;ANIMATIONS;FILES;MODEL_OPTIONS")
     if(NOT arg_SOURCE_DIR)
         message(FATAL_ERROR "quench_cook_assets: SOURCE_DIR is required")
@@ -83,6 +86,19 @@ function(quench_cook_assets name)
         set(skeleton_args --skeleton ${source_dir}/${arg_SKELETON})
         set(skeleton_depends ${source_dir}/${arg_SKELETON})
     endif()
+    set(animation_suffix "")
+    if(arg_RETARGET)
+        if(NOT arg_SKELETON)
+            message(FATAL_ERROR "quench_cook_assets: RETARGET needs SKELETON (the skeleton the clips are retargeted onto)")
+        endif()
+        if(IS_ABSOLUTE ${arg_RETARGET} OR arg_RETARGET MATCHES "(^|/)\\.\\.(/|$)")
+            message(FATAL_ERROR "quench_cook_assets: RETARGET '${arg_RETARGET}' must be relative to SOURCE_DIR")
+        endif()
+        list(APPEND skeleton_args --retarget ${source_dir}/${arg_RETARGET})
+        list(APPEND skeleton_depends ${source_dir}/${arg_RETARGET})
+        get_filename_component(target_name ${arg_SKELETON} NAME_WLE)
+        set(animation_suffix .${target_name})
+    endif()
 
     set(outputs "")
     foreach(kind TEXTURES DATA_TEXTURES MODELS SOUNDS SKELETONS ANIMATIONS)
@@ -104,7 +120,7 @@ function(quench_cook_assets name)
                 set(output ${output_dir}/${stem}.qskel)
                 set(args skeleton ${input} ${output})
             elseif(kind STREQUAL "ANIMATIONS")
-                set(output ${output_dir}/${stem}.qanim)
+                set(output ${output_dir}/${stem}${animation_suffix}.qanim)
                 set(args animation ${input} ${output} ${skeleton_args})
                 list(APPEND depends ${skeleton_depends})
             else()

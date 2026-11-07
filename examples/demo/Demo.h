@@ -185,6 +185,14 @@ constexpr const char* kSkeleton = "characters/mannequin.qskel";
 constexpr const char* kClips = "characters/mannequin.qanim";
 constexpr const char* kGraph = "characters/mannequin.graph.json";
 constexpr const char* kGraph2d = "characters/mannequin_2d.graph.json"; // a 2D blend space over its velocity
+constexpr const char* kWalkGraph = "characters/walk.graph.json";       // only the walk (also the strider's)
 } // namespace mannequin
+
+// The second character, with the mannequin's clips retargeted onto it (tools/assets/make_demo_strider.py).
+namespace strider {
+constexpr const char* kModel = "characters/strider.qmodel";
+constexpr const char* kSkeleton = "characters/strider.qskel";
+constexpr const char* kClips = "characters/mannequin.strider.qanim";
+} // namespace strider
 
 } // namespace demo

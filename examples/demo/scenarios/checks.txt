@@ -2,7 +2,7 @@
 # window's buttons, every mark written to checks.json; tests/DemoUserFiles.cmake reads the file afterwards.
 
 expect mode == 2
-expect check_items == 38
+expect check_items == 39
 expect check_index == 0
 expect section == 0
 check ok
@@ -15,7 +15,7 @@ check skip
 expect checks_ok == 1
 expect checks_problem == 1
 expect checks_skipped == 1
-expect checks_pending == 35
+expect checks_pending == 36
 wait 0.1
 click @ui:check_ok
 until checks_ok == 2 1

@@ -320,7 +320,7 @@ quench_add_game(<target> NAME <display name> SOURCES <file>...
                 [ICON <square png, 1024 px or larger>] [ORIENTATIONS landscape|portrait|all] [CUSTOM_MAIN])
 quench_add_shaders(<target> NAME <set> SOURCE <file.hlsl> ENTRIES <entry>:vertex <entry>:fragment <entry>:compute ...)
 quench_cook_assets(<name> SOURCE_DIR <dir> [TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...]
-                   [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>] ...)
+                   [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>] [RETARGET <file>] ...)
 ```
 
 `ASSETS` is copied as it is; `COOKED_ASSETS` names `quench_cook_assets()` targets, whose output (KTX2 textures and

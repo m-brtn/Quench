@@ -105,6 +105,12 @@ constexpr std::array kItems{
               "quaternion skinning: elbows, knees and hips keep their shape as they bend, with no flicker or pop at "
               "the switch.",
               "set view skinning"},
+    CheckItem{"animation.retarget", "animation", "Retargeting",
+              "View Retargeting: the blue strider (longer legs, other joint names, a T-pose rest; the mannequin's "
+              "walk retargeted onto it at cook time) walks beside the mannequin in step and stays abreast. Its feet "
+              "plant and lift without sliding or sinking into the floor, its knees bend forward, its arms hang and "
+              "swing like the mannequin's without twisting, and its body stays upright.",
+              "set view retarget"},
     CheckItem{"raytracing.noise", "raytracing", "Ray-traced noise",
               "Native Metal backend: with Shadow rays 1 and then 2 the soft shadows stay calm while the sun turns "
               "(little crawling noise).",

@@ -60,6 +60,7 @@ add_library(quench_cook_lib STATIC EXCLUDE_FROM_ALL
     ${Quench_SOURCE_DIR}/tools/cook/CookModel.cpp
     ${Quench_SOURCE_DIR}/tools/cook/Gltf.cpp
     ${Quench_SOURCE_DIR}/tools/cook/CookTexture.cpp
+    ${Quench_SOURCE_DIR}/tools/cook/Retarget.cpp
     ${Quench_SOURCE_DIR}/tools/cook/ThirdParty.cpp
     ${bc7enc_SOURCE_DIR}/bc7enc.cpp
     ${_astcenc_sources})

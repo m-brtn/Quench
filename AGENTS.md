@@ -22,7 +22,7 @@ skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`
 
 **Current state (2026-11-07, version 0.9.0): stages 1 to 3, 5 to 7, 9 and 10 of `docs/roadmap.md` are in place
 (stage 6's shader hot reload, ASTC and asset hot reload on a device, stage 7's Vorbis, reverb and HRTF after 0.9.0, not released), stage
-4 for TrailForge only, stage 8 except retargeting, stage 11 (full ray tracing)
+4 for TrailForge only, stage 8 except blend shapes (its retargeting after 0.9.0, not released), stage 11 (full ray tracing)
 except its runs on the iPhone 18 Pro Max, stage 12 (area lights and anisotropic GGX, after 0.9.0, not released) except
 its checks by eye; the plan the user left (stages 6 to 10) and stages 11 and 12 have been worked through, apart from
 the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the iPhone 18 Pro Max and the
@@ -37,7 +37,7 @@ in development builds, on a device through an asset overlay in the user director
 (checked on the iPhone 17), streaming by distance; KTX2 textures and cooked `.qmodel` models, version 3 with skins and MikkTSpace tangents in a
 64-byte vertex), `quench_cook` (the host
 tool: glTF, GLB, PNG, JPEG, KTX2 to BC7, ASTC 4x4 (iOS builds, through astc-encoder) or RGBA8 KTX2 with mips and meshoptimizer models with tangents; sounds; skeletons and clips
-from glTF; `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
+from glTF, clips retargeted onto another skeleton by a bone map (after 0.9.0, not released); `quench_cook_assets()`), the shader build (`quench_shaderc`, `quench_add_shaders()`, compute entries,
 ray query entries through DXC built from source, a manifest per set for shader hot reload) and the engine shader
 library in `shaders/quench/` (uniform structs
 shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain compositions for HDR and compute;
@@ -113,7 +113,7 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
-work), retargeting or blend shapes (stage 8 remaining
+work), blend shapes (stage 8 remaining
 work), the native backend as the default, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
 ray tracing (stage 9 and 11 remaining work) or shadows of area lights without ray tracing (stage 12 remaining work)
@@ -559,10 +559,12 @@ examples/demo/         the engine demo: a menu of sections (rendering features, 
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
 tools/cook/            quench_cook, the build-time asset cooker (glTF, GLB, PNG, JPEG, KTX2 -> KTX2, .qmodel;
-                       glTF, GLB -> .qskel skeletons, .qanim clip sets; WAV, FLAC, MP3 checked or converted to WAV)
+                       glTF, GLB -> .qskel skeletons, .qanim clip sets, also retargeted by a bone map; WAV, FLAC,
+                       MP3 checked or converted to WAV)
 tools/assets/          make_demo_assets.py: writes the demo's procedural source assets; make_demo_sounds.py: the
                        demo's procedural sounds; make_demo_character.py: the demo's animated mannequin as glTF;
-                       make_demo_tunnel.py: the tunnel's textures (the last three run at build time)
+                       make_demo_strider.py: its second character (other names and proportions) and bone map;
+                       make_demo_tunnel.py: the tunnel's textures (the last four run at build time)
 tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the icons of the sample and the demo
 tools/make_ltc_table.py writes src/render/LtcTable.inc from selfshadow/ltc_code's fit (checks its SHA256)

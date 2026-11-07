@@ -78,8 +78,8 @@ wait 5
 perf_end
 expect perf_frames >= 150
 
-# A crowd of 256 walking characters, the hero, the foot placement stand, the character steered in 2D and the
-# skinning pair (262 characters, 20 joints each): their
+# A crowd of 256 walking characters, the hero, the foot placement stand, the character steered in 2D, the skinning
+# pair and the retargeting pair (264 characters, 20 joints each, the strider 21): their
 # update on the job system and the compute skinning pass.
 section animation
 until anim_ready == 1 3

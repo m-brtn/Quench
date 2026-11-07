@@ -38,6 +38,25 @@ quench_cook_assets(quench_demo_character SOURCE_DIR ${demo_character_dir}
     MODELS characters/mannequin.gltf
     SKELETONS characters/mannequin.gltf
     ANIMATIONS characters/mannequin.gltf)
+# The retargeting pair's second character (tools/assets/make_demo_strider.py): its model and skeleton, and the
+# mannequin's clips retargeted onto it through its bone map (characters/mannequin.strider.qanim).
+set(demo_strider_files strider.gltf strider.bin strider.retarget.json)
+list(TRANSFORM demo_strider_files PREPEND ${demo_character_dir}/characters/)
+add_custom_command(
+    OUTPUT ${demo_strider_files}
+    COMMAND ${Python3_EXECUTABLE} ${Quench_SOURCE_DIR}/tools/assets/make_demo_strider.py
+            ${demo_character_dir}/characters
+    DEPENDS ${Quench_SOURCE_DIR}/tools/assets/make_demo_strider.py
+            ${Quench_SOURCE_DIR}/tools/assets/make_demo_character.py
+    COMMENT "Writing the demo's second character"
+    VERBATIM)
+quench_cook_assets(quench_demo_strider SOURCE_DIR ${demo_character_dir}
+    MODELS characters/strider.gltf
+    SKELETONS characters/strider.gltf)
+quench_cook_assets(quench_demo_retargeted SOURCE_DIR ${demo_character_dir}
+    ANIMATIONS characters/mannequin.gltf
+    SKELETON characters/strider.gltf
+    RETARGET characters/strider.retarget.json)
 
 # The Tunnel section's textures: procedural PNG files written at build time (tools/assets/make_demo_tunnel.py) and
 # cooked into KTX2: colors in sRGB, normal and metallic-roughness maps linear.
@@ -78,7 +97,8 @@ quench_add_game(quench_demo
     ICON icon/icon.png
     ORIENTATIONS all
     ASSETS assets
-    COOKED_ASSETS quench_demo_cooked quench_demo_sounds quench_demo_character quench_demo_tunnel quench_demo_licences
+    COOKED_ASSETS quench_demo_cooked quench_demo_sounds quench_demo_character quench_demo_strider
+                  quench_demo_retargeted quench_demo_tunnel quench_demo_licences
     SOURCES
         Camera.cpp
         Checks.cpp

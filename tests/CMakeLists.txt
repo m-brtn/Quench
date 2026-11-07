@@ -165,10 +165,27 @@ if(TARGET quench_cook_lib)
     target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_SOURCE_DIR="${Quench_SOURCE_DIR}")
     find_package(Python3 COMPONENTS Interpreter)
     set(_character_args)
+    # The demo's two characters for the retargeting cases, written at build time (the cases skip without Python).
+    set(_characters "")
     if(Python3_Interpreter_FOUND)
         set(_character_args -DPYTHON=${Python3_EXECUTABLE}
             -DCHARACTER=${Quench_SOURCE_DIR}/tools/assets/make_demo_character.py)
+        set(_characters ${CMAKE_CURRENT_BINARY_DIR}/characters)
+        set(_character_files mannequin.gltf mannequin.bin mannequin.anim.json strider.gltf strider.bin
+            strider.retarget.json)
+        list(TRANSFORM _character_files PREPEND ${_characters}/)
+        add_custom_command(
+            OUTPUT ${_character_files}
+            COMMAND ${Python3_EXECUTABLE} ${Quench_SOURCE_DIR}/tools/assets/make_demo_character.py ${_characters}
+            COMMAND ${Python3_EXECUTABLE} ${Quench_SOURCE_DIR}/tools/assets/make_demo_strider.py ${_characters}
+            DEPENDS ${Quench_SOURCE_DIR}/tools/assets/make_demo_character.py
+                    ${Quench_SOURCE_DIR}/tools/assets/make_demo_strider.py
+            COMMENT "Writing the demo's characters for quench_cook_tests"
+            VERBATIM)
+        add_custom_target(quench_cook_test_characters DEPENDS ${_character_files})
+        add_dependencies(quench_cook_tests quench_cook_test_characters)
     endif()
+    target_compile_definitions(quench_cook_tests PRIVATE QUENCH_TEST_CHARACTER_DIR="${_characters}")
     add_test(NAME cook_cli COMMAND ${CMAKE_COMMAND} -DCOOK=$<TARGET_FILE:quench_cook>
              -DSOURCES=${Quench_SOURCE_DIR}/examples/demo/assets_src -DSOUNDS=${CMAKE_CURRENT_SOURCE_DIR}/audio/data
              ${_character_args}
@@ -401,6 +418,7 @@ if(NOT QUENCH_HEADLESS)
                 hdr_on:demo_hdr_on physics:demo_physics input:demo_input assets:demo_assets audio:demo_audio
                 animation:demo_animation animation_blend2d:demo_animation_blend2d animation_lod
                 animation_skinning:demo_animation_skinning
+                animation_retarget:demo_animation_retarget
                 ui:demo_ui compact_portrait:demo_compact_portrait
                 compact_landscape:demo_compact_landscape menu audio_tone audio_flyby audio_music audio_reverb
                 audio_hrtf)

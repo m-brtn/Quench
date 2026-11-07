@@ -183,6 +183,7 @@ quench_cook sound sounds/hit.flac assets/sounds/hit.flac            # checked, c
 quench_cook sound sounds/engine.mp3 assets/sounds/engine.wav [--channels 1|2]
 quench_cook skeleton characters/hero.gltf assets/characters/hero.qskel
 quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skeleton FILE] [--clips FILE]
+            [--retarget FILE]
 # all: [--depfile FILE] [--verbose]; --version, --help
 ```
 
@@ -212,7 +213,9 @@ quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skele
   sampled at 30 Hz, linear rotation steps wider than 0.2 rad subdivided spherically (glTF slerps, ozz does not);
   ozz's optimizer reduces the keys (1 mm at 10 cm by default). Clip settings (loop, additive, events, root motion,
   the tolerance) come from `<input stem>.anim.json` or `--clips` ([Animation](animation.md#cooking)); unknown keys
-  and unknown clips are errors.
+  and unknown clips are errors. With `--retarget` (a bone map, since 2026-11-07) the clips are retargeted onto
+  `--skeleton`'s skeleton, which may have other joint names, proportions and rest pose
+  ([Animation](animation.md#retargeting)).
 - **Sounds**: WAV, FLAC, MP3 or Ogg Vorbis (miniaudio's decoders, Vorbis through stb_vorbis). The file is decoded
   completely to check it (a file that does not decode, or decodes to no frames, fails the cook). An output with the
   input's extension gets the input's bytes; a `.wav` output from another format, or with `--channels 1|2` (mix down
@@ -223,8 +226,8 @@ quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skele
 - **Deterministic**: the output depends only on the inputs and the options (no time stamps, no thread order; a test
   cooks with 0 and 3 worker threads and compares). Files are written to a temporary file and renamed, so a running
   game with hot reload never reads half a file; a model's textures are rewritten only when they change.
-- **Depfile**: `--depfile` lists every file read (the glTF, its buffers and images, the clip settings), so Ninja
-  cooks again when any of them changes.
+- **Depfile**: `--depfile` lists every file read (the glTF, its buffers and images, the clip settings, the bone
+  map), so Ninja cooks again when any of them changes.
 
 ### In CMake
 
@@ -237,6 +240,7 @@ quench_cook_assets(my_game_cooked SOURCE_DIR assets_src
     SKELETONS characters/hero.gltf         # .qskel
     ANIMATIONS characters/hero.gltf characters/hero_extra.glb  # .qanim, settings from <stem>.anim.json
     [SKELETON characters/hero.gltf]        # the skeleton the ANIMATIONS are for (default: their own)
+    [RETARGET characters/hero.map.json]    # retargeted onto SKELETON: <path>.<SKELETON's name>.qanim
     [FILES credits.txt levels/one.json]    # copied as they are
     [OUTPUT_DIR dir] [TEXTURE_FORMAT auto|bc7|astc|rgba8] [TEXTURE_MAX_SIZE n] [MODEL_OPTIONS --lods 2 ...])
 quench_add_game(my_game ... ASSETS assets COOKED_ASSETS my_game_cooked)

@@ -354,6 +354,8 @@ Result<CookedAnimation> cookSkeleton(const std::filesystem::path& source) {
 
 Result<CookedAnimation> cookAnimation(const std::filesystem::path& source, const AnimationOptions& options) {
     CookedAnimation out;
+    if (!options.retarget.empty() && options.skeleton.empty())
+        return Error{"retargeting needs the target's skeleton (--skeleton)"};
     Result<fastgltf::Asset> asset = load(source, out.inputs);
     if (!asset) return Error{asset.error()};
     const std::filesystem::path& skeletonSource = options.skeleton.empty() ? source : options.skeleton;
@@ -365,7 +367,10 @@ Result<CookedAnimation> cookAnimation(const std::filesystem::path& source, const
     Result<std::shared_ptr<const animation::Skeleton>> built = animation::buildSkeleton(skeleton->desc);
     if (!built) return Error{std::format("{}: {}", skeletonSource.string(), built.error())};
 
-    Result<std::vector<ClipDesc>> clips = clipsOf(*asset, *skeleton, out.notes);
+    // Retargeted: the clips are read for the input's own skeleton (and its clip settings name its joints).
+    Result<GltfSkeleton> own = options.retarget.empty() ? Result<GltfSkeleton>(Error{""}) : skeletonOf(*asset);
+    if (!options.retarget.empty() && !own) return Error{std::format("{}: {}", source.string(), own.error())};
+    Result<std::vector<ClipDesc>> clips = clipsOf(*asset, options.retarget.empty() ? *skeleton : *own, out.notes);
     if (!clips) return Error{std::format("{}: {}", source.string(), clips.error())};
     Result<ClipSettings> settings = readSettings(source, options, out.inputs);
     if (!settings) return Error{settings.error()};
@@ -376,6 +381,17 @@ Result<CookedAnimation> cookAnimation(const std::filesystem::path& source, const
                                      source.string(), name)};
         if (Result<void> r = applySettings(*value, *clip); !r)
             return Error{std::format("{}: {}", source.string(), r.error())};
+    }
+    if (!options.retarget.empty()) {
+        std::ifstream in(options.retarget, std::ios::binary);
+        if (!in) return Error{std::format("cannot open {}", options.retarget.string())};
+        out.inputs.push_back(options.retarget);
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        Result<RetargetMap> map = parseRetargetMap(text);
+        if (!map) return Error{std::format("{}: {}", options.retarget.string(), map.error())};
+        Result<std::vector<ClipDesc>> retargeted = retargetClips(own->desc, skeleton->desc, *clips, *map, &out.notes);
+        if (!retargeted) return Error{std::format("{}: {}", options.retarget.string(), retargeted.error())};
+        clips = std::move(retargeted);
     }
     Result<std::shared_ptr<const animation::ClipSet>> set =
         animation::buildClipSet(**built, skeleton->desc, *clips, settings->build);

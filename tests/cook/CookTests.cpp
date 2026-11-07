@@ -1,6 +1,7 @@
 // quench_cook's library: textures (mips, BC7, ASTC 4x4, the RGBA8 fallback, KTX2 pass-through), models (the demo's
-// glTF and GLB sources), skeletons, clips and skinned models (a small glTF written by the test), and that the output
-// does not depend on the number of threads.
+// glTF and GLB sources), skeletons, clips and skinned models (a small glTF written by the test), retargeting (small
+// skeletons in memory, and the demo's mannequin's walk on its strider), and that the output does not depend on the
+// number of threads.
 
 #include "Test.h"
 
@@ -14,6 +15,9 @@
 #include <quench/core/Jobs.h>
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +29,7 @@
 #include <iterator>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -408,16 +413,19 @@ struct Sampled {
     glm::vec3 kneeUp; // the knee's y axis
 };
 
-std::vector<Sampled> sampleCooked(const std::filesystem::path& dir, const CookedAnimation& skeleton,
-                                  const CookedAnimation& clips, std::span<const float> phases) {
+// Writes a cooked skeleton and clip set into `dir` and calls fn(manager, animation, character) with a character
+// whose one state plays `clip`, after its assets have loaded.
+template <class F>
+void withCooked(const std::filesystem::path& dir, const CookedAnimation& skeleton, const CookedAnimation& clips,
+                std::string_view clip, bool loop, F&& fn) {
+    std::filesystem::create_directories(dir);
     std::ofstream(dir / "s.qskel", std::ios::binary)
         .write(reinterpret_cast<const char*>(skeleton.file.data()), std::streamsize(skeleton.file.size()));
     std::ofstream(dir / "s.qanim", std::ios::binary)
         .write(reinterpret_cast<const char*>(clips.file.data()), std::streamsize(clips.file.size()));
-    std::ofstream(dir / "g.json", std::ios::binary)
-        << R"({"layers": [{"name": "base", "states": [{"name": "s", "clip": "bend", "loop": false}]}]})";
+    std::ofstream(dir / "g.json", std::ios::binary) << std::format(
+        R"({{"layers": [{{"name": "base", "states": [{{"name": "s", "clip": "{}", "loop": {}}}]}}]}})", clip, loop);
     fs::setBackend(fs::makeStdBackend(dir, {}));
-    std::vector<Sampled> out;
     {
         JobSystem jobs(JobSystemDesc{.workerThreads = 0});
         assets::AssetManager manager(jobs);
@@ -428,19 +436,56 @@ std::vector<Sampled> sampleCooked(const std::filesystem::path& dir, const Cooked
         desc.graph = anim.loadGraph("g.json");
         const animation::CharacterId id = anim.addCharacter(std::move(desc));
         for (int i = 0; i < 100 && !manager.idle(); ++i) manager.update();
-        for (const float phase : phases) {
-            anim.setPhase(id, phase);
-            manager.update();
-            anim.update(0.0f);
-            const std::span<const glm::mat4> m = anim.modelMatrices(id);
-            const auto at = [&](const char* name) { return m[std::size_t(anim.findJoint(id, name))]; };
-            if (!anim.state(id).bound || m.empty()) break;
-            out.push_back({glm::vec3(at("root")[3]), glm::vec3(at("hip")[3]), glm::vec3(at("knee")[1])});
-        }
+        fn(manager, anim, id);
     }
     fs::setBackend(nullptr);
+}
+
+std::vector<Sampled> sampleCooked(const std::filesystem::path& dir, const CookedAnimation& skeleton,
+                                  const CookedAnimation& clips, std::span<const float> phases) {
+    std::vector<Sampled> out;
+    withCooked(dir, skeleton, clips, "bend", false,
+               [&](assets::AssetManager& manager, animation::AnimationSystem& anim, animation::CharacterId id) {
+                   for (const float phase : phases) {
+                       anim.setPhase(id, phase);
+                       manager.update();
+                       anim.update(0.0f);
+                       const std::span<const glm::mat4> m = anim.modelMatrices(id);
+                       const auto at = [&](const char* name) { return m[std::size_t(anim.findJoint(id, name))]; };
+                       if (!anim.state(id).bound || m.empty()) break;
+                       out.push_back({glm::vec3(at("root")[3]), glm::vec3(at("hip")[3]), glm::vec3(at("knee")[1])});
+                   }
+               });
     return out;
 }
+
+// Plays a cooked clip for `frames` updates of `dt` and records the named joints' world positions per frame: their
+// model positions moved by the root motion added up (the clips played here do not turn).
+std::vector<std::vector<glm::vec3>> playCooked(const std::filesystem::path& dir, const CookedAnimation& skeleton,
+                                               const CookedAnimation& clips, std::string_view clip,
+                                               std::span<const char* const> joints, int frames, float dt) {
+    std::vector<std::vector<glm::vec3>> out;
+    withCooked(dir, skeleton, clips, clip, true,
+               [&](assets::AssetManager& manager, animation::AnimationSystem& anim, animation::CharacterId id) {
+                   glm::vec3 moved(0.0f);
+                   for (int frame = 0; frame <= frames; ++frame) {
+                       manager.update();
+                       anim.update(frame == 0 ? 0.0f : dt);
+                       const std::span<const glm::mat4> m = anim.modelMatrices(id);
+                       if (!anim.state(id).bound || m.empty()) return;
+                       moved += anim.rootMotion(id).translation;
+                       std::vector<glm::vec3>& row = out.emplace_back();
+                       for (const char* name : joints) {
+                           const int joint = anim.findJoint(id, name);
+                           CHECK(joint >= 0, "%s: no joint %s", std::string(clip).c_str(), name);
+                           row.push_back(joint >= 0 ? moved + glm::vec3(m[std::size_t(joint)][3]) : glm::vec3(0.0f));
+                       }
+                   }
+               });
+    return out;
+}
+
+const std::filesystem::path kCharacters = QUENCH_TEST_CHARACTER_DIR; // empty when the build had no Python
 
 } // namespace
 
@@ -518,6 +563,281 @@ QUENCH_TEST(cook_animation_errors) {
     CHECK(!cookAnimation(gltf, otherSkeleton), "a missing skeleton file");
     std::filesystem::remove(dir / "skinned.anim.json");
     CHECK(cookAnimation(gltf, {}), "without settings");
+}
+
+// ---- retargeting
+
+namespace {
+
+using animation::ClipDesc;
+using animation::SkeletonDesc;
+
+glm::quat axisAngle(float angle, glm::vec3 axis) { return glm::angleAxis(angle, glm::normalize(axis)); }
+
+template <class V>
+V sampleKeys(const std::vector<animation::Key<V>>& keys, float time, const V& rest) {
+    if (keys.empty()) return rest;
+    if (time <= keys.front().time) return keys.front().value;
+    if (time >= keys.back().time) return keys.back().value;
+    std::size_t b = 1;
+    while (keys[b].time < time) ++b;
+    const float u = (time - keys[b - 1].time) / (keys[b].time - keys[b - 1].time);
+    if constexpr (std::is_same_v<V, glm::quat>) {
+        const glm::quat to = glm::dot(keys[b - 1].value, keys[b].value) < 0.0f ? -keys[b].value : keys[b].value;
+        return glm::normalize(keys[b - 1].value * (1.0f - u) + to * u);
+    } else {
+        return keys[b - 1].value + (keys[b].value - keys[b - 1].value) * u;
+    }
+}
+
+// Model matrices of a clip description at a time (linear keys, normalized-linear rotations, as the runtime).
+std::vector<glm::mat4> modelAt(const SkeletonDesc& skeleton, const ClipDesc& clip, float time) {
+    std::vector<glm::mat4> out(skeleton.joints.size());
+    for (std::size_t j = 0; j < out.size(); ++j) {
+        const animation::Transform& rest = skeleton.joints[j].rest;
+        const glm::mat4 m =
+            glm::translate(glm::mat4(1.0f), sampleKeys(clip.tracks[j].translations, time, rest.translation)) *
+            glm::mat4_cast(sampleKeys(clip.tracks[j].rotations, time, rest.rotation));
+        const int p = skeleton.joints[j].parent;
+        out[j] = p >= 0 ? out[std::size_t(p)] * m : m;
+    }
+    return out;
+}
+
+glm::vec3 at(const std::vector<glm::mat4>& model, int joint) { return glm::vec3(model[std::size_t(joint)][3]); }
+
+// root > hip > knee > foot, and an arm hanging from the hip (arm > hand); one clip that walks, bends the knee,
+// sways the hip and swings the arm, with root motion and an event.
+SkeletonDesc sourceSkeleton() {
+    SkeletonDesc s;
+    s.joints = {{"root", -1, {}},
+                {"hip", 0, {{0, 1, 0}}},
+                {"knee", 1, {{0, -0.5f, 0}}},
+                {"foot", 2, {{0, -0.5f, 0}}},
+                {"arm", 1, {{0.2f, 0.5f, 0}}},
+                {"hand", 4, {{0, -0.3f, 0}}}};
+    return s;
+}
+
+ClipDesc sourceClip() {
+    ClipDesc c;
+    c.name = "walk";
+    c.duration = 1.0f;
+    c.tracks.resize(6);
+    c.tracks[0].translations = {{0.0f, {0, 0, 0}}, {1.0f, {1, 0, 0}}};
+    c.tracks[1].translations = {{0.0f, {0, 1, 0}}, {0.5f, {0, 0.9f, 0}}, {1.0f, {0, 1, 0}}};
+    c.tracks[1].rotations = {
+        {0.0f, {1, 0, 0, 0}}, {0.5f, axisAngle(0.3f, {0, 1, 0}) * axisAngle(0.1f, {0, 0, 1})}, {1.0f, {1, 0, 0, 0}}};
+    c.tracks[2].rotations = {
+        {0.0f, {1, 0, 0, 0}}, {0.5f, axisAngle(0.8f, {1, 0, 0})}, {1.0f, axisAngle(0.2f, {1, 0, 0})}};
+    c.tracks[4].rotations = {{0.0f, axisAngle(0.2f, {0, 0, 1})}, {1.0f, axisAngle(-0.6f, {1, 0, 0})}};
+    c.events = {{0.25f, "footstep", 1.0f}};
+    c.rootMotion = animation::RootMotionDesc{"root", false};
+    return c;
+}
+
+} // namespace
+
+QUENCH_TEST(cook_retarget_map_and_errors) {
+    Result<RetargetMap> map = parseRetargetMap(
+        R"({"joints": {"Root": "root", "Hips": "pelvis"}, "translations": ["Root", "Hips"], "scale": "Hips"})");
+    REQUIRE(map, "%s", map ? "" : map.error().c_str());
+    CHECK(map->joints.size() == 2 &&
+              std::ranges::find(map->joints, std::pair<std::string, std::string>{"Hips", "pelvis"}) !=
+                  map->joints.end(),
+          "joints: %zu", map->joints.size());
+    CHECK(map->translations == (std::vector<std::string>{"Root", "Hips"}) && map->scaleJoint == "Hips" &&
+              map->scale == 0.0f,
+          "translations and the scale joint");
+    Result<RetargetMap> number = parseRetargetMap(R"({"joints": {"a": "b"}, "scale": 1.5})");
+    CHECK(number && number->scale == 1.5f && number->scaleJoint.empty(), "a scale as a number");
+    for (const char* text :
+         {R"({"joints": {"a": "b"}, "scales": 2})", R"({"joints": {}})", R"({"joints": {"a": 3}})",
+          R"({"joints": {"a": "b"}, "translations": ["c"]})", R"({"joints": {"a": "b"}, "scale": -1})",
+          R"({"joints": {"a": "b"}, "scale": "c"})", R"({"joints": )", R"(["a"])"})
+        CHECK(!parseRetargetMap(text), "accepted: %s", text);
+
+    const SkeletonDesc source = sourceSkeleton();
+    const ClipDesc clip = sourceClip();
+    const auto retarget = [&](std::string_view text, std::span<const ClipDesc> clips) -> Result<std::vector<ClipDesc>> {
+        Result<RetargetMap> m = parseRetargetMap(text);
+        if (!m) return Error{"the map: " + m.error()};
+        return retargetClips(source, source, clips, *m, nullptr);
+    };
+    const ClipDesc one[] = {clip};
+    Result<std::vector<ClipDesc>> missingTarget = retarget(R"({"joints": {"Ankle": "foot", "root": "root"}})", one);
+    CHECK(!missingTarget && missingTarget.error().find("Ankle") != std::string::npos, "a joint the target lacks: %s",
+          missingTarget ? "accepted" : missingTarget.error().c_str());
+    Result<std::vector<ClipDesc>> missingSource = retarget(R"({"joints": {"foot": "ankle", "root": "root"}})", one);
+    CHECK(!missingSource && missingSource.error().find("ankle") != std::string::npos, "a joint the source lacks: %s",
+          missingSource ? "accepted" : missingSource.error().c_str());
+    Result<std::vector<ClipDesc>> noRootMotion = retarget(R"({"joints": {"hip": "hip"}})", one);
+    CHECK(!noRootMotion && noRootMotion.error().find("root motion") != std::string::npos,
+          "the root motion joint not mapped: %s", noRootMotion ? "accepted" : noRootMotion.error().c_str());
+    ClipDesc short_ = clip;
+    short_.tracks.pop_back();
+    const ClipDesc shortOne[] = {short_};
+    CHECK(!retarget(R"({"joints": {"root": "root"}})", shortOne), "a clip with too few tracks");
+}
+
+QUENCH_TEST(cook_retarget_onto_itself) {
+    const SkeletonDesc skeleton = sourceSkeleton();
+    const ClipDesc clips[] = {sourceClip()};
+    Result<RetargetMap> map = parseRetargetMap(R"({"joints": {"root": "root", "hip": "hip", "knee": "knee",
+        "foot": "foot", "arm": "arm", "hand": "hand"}, "translations": ["root", "hip"]})");
+    REQUIRE(map, "%s", map ? "" : map.error().c_str());
+    std::vector<std::string> notes;
+    Result<std::vector<ClipDesc>> out = retargetClips(skeleton, skeleton, clips, *map, &notes);
+    REQUIRE(out && out->size() == 1, "%s", out ? "" : out.error().c_str());
+    const ClipDesc& c = (*out)[0];
+    CHECK(notes.empty(), "no notes (%zu)", notes.size());
+    CHECK(c.name == "walk" && c.duration == 1.0f && c.loop && c.events.size() == 1 && c.events[0].name == "footstep" &&
+              c.rootMotion && c.rootMotion->joint == "root",
+          "name, duration, loop, events and root motion copied");
+    float worst = 0.0f;
+    for (int i = 0; i <= 60; ++i) {
+        const float t = float(i) / 60.0f;
+        const std::vector<glm::mat4> a = modelAt(skeleton, clips[0], t), b = modelAt(skeleton, c, t);
+        for (std::size_t j = 0; j < a.size(); ++j)
+            for (int k = 0; k < 4; ++k) worst = std::max(worst, glm::length(a[j][k] - b[j][k]));
+    }
+    std::printf("retarget onto itself: largest difference %.7f\n", worst);
+    CHECK(worst < 5e-4f, "the same pose at 61 times: largest difference %.6f", worst);
+}
+
+QUENCH_TEST(cook_retarget_proportions_and_rest_poses) {
+    // The target: other names, 1.5 times the size, the knee's rest turned by half a turn about X (its child lies
+    // along its +Y), an unmapped joint above a T-pose arm whose rest points along +X, 1.5 times as long.
+    const SkeletonDesc source = sourceSkeleton();
+    SkeletonDesc target;
+    target.joints = {{"Root", -1, {}},
+                     {"Hips", 0, {{0, 1.5f, 0}}},
+                     {"Knee", 1, {{0, -0.75f, 0}, axisAngle(glm::pi<float>(), {1, 0, 0})}},
+                     {"Foot", 2, {{0, 0.75f, 0}}},
+                     {"Chest", 1, {{0, 0.2f, 0}}},
+                     {"Arm", 4, {{0.3f, 0.25f, 0}, axisAngle(-0.5f * glm::pi<float>(), {0, 0, 1})}},
+                     {"Hand", 5, {{0, 0.45f, 0}}}};
+    const ClipDesc clips[] = {sourceClip()};
+    Result<RetargetMap> map = parseRetargetMap(R"({"joints": {"Root": "root", "Hips": "hip", "Knee": "knee",
+        "Foot": "foot", "Arm": "arm", "Hand": "hand"}, "translations": ["Root", "Hips"], "scale": "Hips"})");
+    REQUIRE(map, "%s", map ? "" : map.error().c_str());
+    std::vector<std::string> notes;
+    Result<std::vector<ClipDesc>> out = retargetClips(source, target, clips, *map, &notes);
+    REQUIRE(out && out->size() == 1, "%s", out ? "" : out.error().c_str());
+    const ClipDesc& c = (*out)[0];
+    CHECK(c.rootMotion && c.rootMotion->joint == "Root", "the root motion joint renamed");
+    CHECK(notes.size() == 1 && notes[0].find("Chest") != std::string::npos, "the unmapped joint is noted");
+
+    // At the keys (30 per second and the source's) and between them: the foot 1.5 times as far from the origin
+    // (the root motion, the hips' height and the leg scaled), the hand 1.5 times as far from the arm's joint.
+    float atKeys = 0.0f, between = 0.0f, chest = 0.0f;
+    for (int i = 0; i <= 60; ++i) {
+        const float t = float(i) / 60.0f;
+        const std::vector<glm::mat4> s = modelAt(source, clips[0], t), r = modelAt(target, c, t);
+        const float e = std::max(glm::length(at(r, 3) - 1.5f * at(s, 3)),
+                                 glm::length((at(r, 6) - at(r, 5)) - 1.5f * (at(s, 5) - at(s, 4))));
+        (i % 2 == 0 ? atKeys : between) = std::max(i % 2 == 0 ? atKeys : between, e);
+        chest = std::max(
+            chest, glm::length(glm::vec3(r[4] * glm::vec4(0, 1, 0, 0)) - glm::vec3(r[1] * glm::vec4(0, 1, 0, 0))));
+    }
+    std::printf("retarget proportions: end effectors at the keys %.7f m, between them %.7f m, unmapped joint %.7f\n",
+                atKeys, between, chest);
+    CHECK(atKeys < 1e-5f, "at the keys: largest end effector error %.6f m", atKeys);
+    CHECK(between < 5e-4f, "between the keys: largest end effector error %.6f m", between);
+    CHECK(chest < 1e-5f, "the unmapped joint keeps its rest relative to its parent (%.6f)", chest);
+}
+
+QUENCH_TEST(cook_retarget_mannequin_onto_strider) {
+    if (kCharacters.empty()) QUENCH_SKIP("the build found no Python: the demo's characters were not written");
+    const std::filesystem::path mannequin = kCharacters / "mannequin.gltf", strider = kCharacters / "strider.gltf";
+    Result<CookedAnimation> mSkeleton = cookSkeleton(mannequin), sSkeleton = cookSkeleton(strider);
+    Result<CookedAnimation> mClips = cookAnimation(mannequin, {});
+    AnimationOptions options;
+    options.skeleton = strider;
+    options.retarget = kCharacters / "strider.retarget.json";
+    Result<CookedAnimation> sClips = cookAnimation(mannequin, options);
+    REQUIRE(mSkeleton && sSkeleton && mClips && sClips, "%s",
+            !mSkeleton   ? mSkeleton.error().c_str()
+            : !sSkeleton ? sSkeleton.error().c_str()
+            : !mClips    ? mClips.error().c_str()
+            : sClips     ? ""
+                         : sClips.error().c_str());
+    CHECK(sClips->names == mClips->names, "the same %zu clips", sClips->names.size());
+    CHECK(std::ranges::any_of(sClips->notes, [](const std::string& n) { return n.find("Spine2") != n.npos; }),
+          "the unmapped Spine2 is noted");
+    CHECK(std::ranges::any_of(sClips->inputs, [](const auto& p) { return p.filename() == "strider.retarget.json"; }),
+          "the bone map is an input (%zu inputs)", sClips->inputs.size());
+    Result<CookedAnimation> again = cookAnimation(mannequin, options);
+    CHECK(again && again->file == sClips->file, "two cooks write the same bytes");
+    AnimationOptions noSkeleton;
+    noSkeleton.retarget = options.retarget;
+    CHECK(!cookAnimation(mannequin, noSkeleton), "a bone map without the target's skeleton");
+
+    // Two cycles of the walk at 120 Hz on both characters, through the runtime.
+    Result<std::shared_ptr<const animation::ClipSet>> set = animation::readClipSet(mClips->file);
+    REQUIRE(set && (*set)->find("walk"), "the walk");
+    const float dt = 1.0f / 120.0f, period = (*set)->find("walk")->duration();
+    const int frames = int(std::lround(2.0f * period / dt));
+    const char* const mJoints[] = {"pelvis",     "thigh_l", "foot_l",     "thigh_r", "foot_r",
+                                   "upperarm_l", "hand_l",  "upperarm_r", "hand_r"};
+    const char* const sJoints[] = {"Hips",    "LeftUpLeg", "LeftFoot", "RightUpLeg", "RightFoot",
+                                   "LeftArm", "LeftHand",  "RightArm", "RightHand"};
+    const auto m = playCooked(tmpPath("retarget_mannequin"), *mSkeleton, *mClips, "walk", mJoints, frames, dt);
+    const auto s = playCooked(tmpPath("retarget_strider"), *sSkeleton, *sClips, "walk", sJoints, frames, dt);
+    REQUIRE(m.size() == std::size_t(frames + 1) && s.size() == m.size(), "played %zu and %zu frames", m.size(),
+            s.size());
+
+    // The strider's legs and hips are 1.15 times the mannequin's, its arms 1.1 times: its hips' height, its feet in
+    // world space (with the root motion), its feet from its hip joints and its hands from its shoulders scale so.
+    constexpr float kLeg = 1.15f, kArm = 1.1f;
+    float hips = 0.0f, feet = 0.0f, legs = 0.0f, arms = 0.0f;
+    for (std::size_t f = 0; f < m.size(); ++f) {
+        hips = std::max(hips, std::abs(s[f][0].y - kLeg * m[f][0].y));
+        for (std::size_t side = 0; side < 2; ++side) {
+            const std::size_t hip = 1 + 2 * side, foot = 2 + 2 * side, arm = 5 + 2 * side, hand = 6 + 2 * side;
+            feet = std::max(feet, glm::length(s[f][foot] - kLeg * m[f][foot]));
+            legs = std::max(legs, glm::length((s[f][foot] - s[f][hip]) - kLeg * (m[f][foot] - m[f][hip])));
+            arms = std::max(arms, glm::length((s[f][hand] - s[f][arm]) - kArm * (m[f][hand] - m[f][arm])));
+        }
+    }
+    const glm::vec3 mTravel = m.back()[0] - m.front()[0], sTravel = s.back()[0] - s.front()[0];
+    // Foot contact: the frames where the mannequin's foot stays within 0.5 mm of the last frame's position (planted),
+    // how far each foot moves per frame over them, and how far it gets from where its run of planted frames started
+    // (the drift of a stance).
+    int planted = 0, stances = 0;
+    float mSlide = 0.0f, sSlide = 0.0f, mDrift = 0.0f, sDrift = 0.0f;
+    for (const std::size_t foot : {std::size_t(2), std::size_t(4)}) {
+        constexpr std::size_t kNone = ~std::size_t(0);
+        std::size_t start = kNone;
+        for (std::size_t f = 1; f < m.size(); ++f) {
+            if (glm::length(m[f][foot] - m[f - 1][foot]) >= 5e-4f) {
+                start = kNone;
+                continue;
+            }
+            if (start == kNone) {
+                start = f - 1;
+                ++stances;
+            }
+            ++planted;
+            mSlide = std::max(mSlide, glm::length(m[f][foot] - m[f - 1][foot]));
+            sSlide = std::max(sSlide, glm::length(s[f][foot] - s[f - 1][foot]));
+            mDrift = std::max(mDrift, glm::length(m[f][foot] - m[start][foot]));
+            sDrift = std::max(sDrift, glm::length(s[f][foot] - s[start][foot]));
+        }
+    }
+    std::printf("retarget walk: hips %.4f, feet %.4f, legs %.4f, arms %.4f m; travel %.4f / %.4f m; %d planted "
+                "frames in %d stances, slide per frame %.5f / %.5f m, drift %.4f / %.4f m (strider / mannequin)\n",
+                hips, feet, legs, arms, glm::length(sTravel), glm::length(mTravel), planted, stances, sSlide, mSlide,
+                sDrift, mDrift);
+    CHECK(hips < 3e-3f, "the hips' height: largest error %.4f m", hips);
+    CHECK(legs < 5e-3f, "the feet from the hip joints: largest error %.4f m", legs);
+    CHECK(arms < 5e-3f, "the hands from the shoulders: largest error %.4f m", arms);
+    CHECK(feet < 1.5e-2f, "the feet in world space: largest error %.4f m", feet);
+    CHECK(std::abs(glm::length(sTravel) - kLeg * glm::length(mTravel)) < 5e-3f, "two cycles: %.4f m, expected %.4f m",
+          glm::length(sTravel), kLeg * glm::length(mTravel));
+    CHECK(planted > frames / 2, "planted foot frames: %d of %d", planted, 2 * frames);
+    CHECK(sSlide < 1e-3f, "the strider's planted feet: largest motion per frame %.5f m", sSlide);
+    CHECK(sDrift < kLeg * mDrift + 3e-3f, "the strider's stances drift %.4f m, the mannequin's %.4f m", sDrift, mDrift);
 }
 
 QUENCH_TEST(cook_skinned_model) {

@@ -7,6 +7,8 @@
 // (include/quench/animation/). The output depends only on the input files and the options (no time stamps, no
 // thread order).
 
+#include <quench/animation/Clip.h>
+#include <quench/animation/Skeleton.h>
 #include <quench/assets/Model.h>
 #include <quench/assets/Texture.h>
 #include <quench/core/Jobs.h>
@@ -17,6 +19,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace quench::cook {
@@ -88,6 +91,9 @@ Result<CookedModel> cookModel(const std::filesystem::path& source, std::string_v
 struct AnimationOptions {
     std::filesystem::path skeleton; // glTF or GLB whose skeleton the clips are for; empty: the input's own
     std::filesystem::path clips;    // clip settings (docs/animation.md); empty: <input stem>.anim.json, if it exists
+    // A bone map (parseRetargetMap): the clips are made for the input's own skeleton and retargeted onto
+    // `skeleton`'s, which may have other names, proportions and rest poses. Empty: joints matched by name.
+    std::filesystem::path retarget;
 };
 
 struct CookedAnimation {
@@ -102,7 +108,34 @@ struct CookedAnimation {
 // and their ancestors. Joints are named after their nodes (unnamed or with a name used twice: node<index>).
 Result<CookedAnimation> cookSkeleton(const std::filesystem::path& source);
 // Every animation of a glTF file as a clip (.qanim) for its own skeleton or for `options.skeleton`'s, joints matched
-// by name. Linear, step and cubic spline keys (the last resampled at 30 Hz); morph target weights are dropped.
+// by name, or retargeted through `options.retarget`. Linear, step and cubic spline keys (the last resampled at 30 Hz);
+// morph target weights are dropped.
 Result<CookedAnimation> cookAnimation(const std::filesystem::path& source, const AnimationOptions& options);
+
+// Retargeting (docs/animation.md, "Retargeting"): a JSON bone map from the joints of a target skeleton to those of
+// the skeleton the clips were made for,
+//     {"joints": {"<target joint>": "<source joint>", ...}, "translations": ["<target joint>", ...],
+//      "scale": "<target joint>" | <number>}
+// Every mapped joint takes the source joint's rotation in model space, corrected for the two rest poses: a joint
+// whose bone runs to one mapped joint below it is turned so that its rest bone points where the source's does (a
+// T-pose arm follows an arm that hangs at rest); a joint with several (hips, chest) keeps the difference of the two
+// rest orientations; one with none (a hand, a head) turns as its nearest mapped ancestor. The translations' joints
+// (the root and the hips) move as the source's do, times `scale`: a number, or the named joint's rest height in the
+// target over its source's (default: the first translation joint above the ground in both). Other joints keep the
+// target's rest translations (its bone lengths) and scales; unmapped joints keep their rest pose. Root motion and
+// events carry over (the root motion joint through the map).
+struct RetargetMap {
+    std::vector<std::pair<std::string, std::string>> joints; // target joint, source joint
+    std::vector<std::string> translations;                   // target joints
+    std::string scaleJoint;                                  // the translations' scale from its rest heights
+    float scale = 0.0f;                                      // > 0: this scale instead
+};
+Result<RetargetMap> parseRetargetMap(std::string_view json);
+// Clips for `source` (tracks in its description's order) as clips for `target`, resampled at the source's key times
+// and at least 30 Hz. Notes: unmapped joints, dropped scale keys.
+Result<std::vector<animation::ClipDesc>> retargetClips(const animation::SkeletonDesc& source,
+                                                       const animation::SkeletonDesc& target,
+                                                       std::span<const animation::ClipDesc> clips,
+                                                       const RetargetMap& map, std::vector<std::string>* notes);
 
 } // namespace quench::cook

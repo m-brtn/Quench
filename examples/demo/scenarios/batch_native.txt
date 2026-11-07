@@ -31,4 +31,5 @@ include tunnel_motion.txt
 include animation_blend2d.txt
 include animation_lod.txt
 include animation_skinning.txt
+include animation_retarget.txt
 quit

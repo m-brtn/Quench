@@ -9,7 +9,9 @@
 // (the views other than the hero's) has a character steered in 2D through a blend space over its velocity (idle,
 // walk, run, walk back, strafes), facing one way while it walks in every direction. Another one, on the other side,
 // has two standing characters whose left forearms the section turns by 170 degrees, skinned linearly (the elbow
-// collapses) and by dual quaternions (it keeps its volume); the other characters' skinning is a choice.
+// collapses) and by dual quaternions (it keeps its volume); the other characters' skinning is a choice. Behind the
+// hero's camera the mannequin walks beside a second character of other joint names, proportions and rest pose
+// (tools/assets/make_demo_strider.py), which plays the same walk retargeted onto it at cook time.
 
 #include "Demo.h"
 
@@ -86,8 +88,16 @@ const glm::vec2 kSteerMin(-0.75f, -0.9f), kSteerMax(0.75f, 2.7f); // the blend s
 const glm::vec3 kTwistAt(18.0f, 0.0f, 0.0f);
 constexpr float kTwistApart = 0.8f;                  // m between the two
 constexpr float kTwistAngle = 170.0f * kPi / 180.0f; // radians
+// The retargeting pair, behind the hero's camera: the mannequin and the strider walk the same clip on circles around
+// kPairCenter. The strider's clips move it kStriderScale times as far (its legs are that much longer), so on a circle
+// that much wider the two stay abreast.
+const glm::vec2 kPairCenter(0.0f, 18.0f);
+constexpr float kPairRadius = 5.0f;    // m: the mannequin's circle
+constexpr float kStriderScale = 1.15f; // make_demo_strider.py's LEG
+constexpr float kPairStart = kPi;      // radians: the circles' points nearest the hero's stage
 
-// The camera's places: the hero's stage and the showcase's spots (`set view ID`).
+// The camera's places: the hero's stage and the showcase's spots (`set view ID`). In the retargeting view the camera
+// follows the pair and turns with it.
 struct View {
     const char* id;
     const char* label;
@@ -98,6 +108,7 @@ const std::array kViews{
     View{"hero", "Hero", {0.0f, 0.5f, -0.6f}, 2.0f, 22.0f, 9.0f},
     View{"blend2d", "2D blend space", {-18.0f, 0.6f, 0.0f}, 18.0f, 26.0f, 7.5f},
     View{"skinning", "Skinning", {18.0f, 1.1f, 0.0f}, 0.0f, 6.0f, 2.1f},
+    View{"retarget", "Retargeting", {0.0f, 1.0f, 18.0f - 1.075f * kPairRadius}, -120.0f, 10.0f, 4.6f},
 };
 
 glm::mat4 yawed(const glm::vec3& position, float yaw) {
@@ -121,6 +132,7 @@ struct Walker {
     glm::mat4 transform{1.0f};
     std::optional<Skinning> skinning; // unset: the section's choice
     float twist = 0.0f;               // radians the left forearm is turned about its length (the showcase)
+    bool strider = false;             // the second character (its own model, skeleton and retargeted clips)
 };
 
 class AnimationSection final : public Section {
@@ -139,8 +151,8 @@ public:
         return "Cooked glTF clips on quench::animation: speed blend, jump and wave with cross-fades, a masked arm "
                "layer, an additive lean, root motion, footstep events with sound, look-at, foot placement on a slope "
                "and a step (ray queries into Jolt), a held torch; a crowd updated on jobs and skinned on the GPU; a "
-               "character steered through a 2D blend space and a forearm twisted under linear and dual quaternion "
-               "skinning (View).";
+               "character steered through a 2D blend space, a forearm twisted under linear and dual quaternion "
+               "skinning, and a walk retargeted at cook time onto a character of other proportions (View).";
     }
 
     Result<void> init(Context& c) override {
@@ -211,6 +223,10 @@ public:
         m_clips = m_anim->loadClips(mannequin::kClips);
         m_graph = m_anim->loadGraph(mannequin::kGraph);
         m_graph2d = m_anim->loadGraph(mannequin::kGraph2d);
+        m_walkGraph = m_anim->loadGraph(mannequin::kWalkGraph);
+        m_striderModel = m_assets->loadModel(strider::kModel);
+        m_striderSkeleton = m_anim->loadSkeleton(strider::kSkeleton);
+        m_striderClips = m_anim->loadClips(strider::kClips);
         m_step = c.app.audio().load(kStep);
 
         app::Input& input = c.app.input();
@@ -251,11 +267,13 @@ public:
 
         // Draw at the transform the update used (IK, look-at and the attachments match it), then move on by the
         // root motion for the next update.
+        const float pairAngle = m_pairMannequin.angle;
         forEachWalker([&](Walker& w) {
             if (w.skin >= 0) m_assets->setJointPalette(w.model, 0, palette(w), m_teleport);
             m_assets->setTransform(w.model, w.transform, m_teleport);
             walk(w);
         });
+        if (std::string_view(kViews[std::size_t(m_view)].id) == "retarget") followPair(pairAngle);
         moveStrafer(dt);
         m_teleport = false;
         const glm::mat4 hand = m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, "hand_l"));
@@ -366,7 +384,10 @@ public:
         const animation::AnimationStats& stats = m_anim->stats();
         const animation::CharacterState hero = m_anim->state(m_hero.id);
         if (name == "anim_ready")
-            return m_model.ready() && m_step.ready() && stats.bound == stats.characters && allSkinned() ? 1.0 : 0.0;
+            return m_model.ready() && m_striderModel.ready() && m_step.ready() && stats.bound == stats.characters &&
+                           allSkinned()
+                       ? 1.0
+                       : 0.0;
         if (name == "anim_failed") return double(failedAssets());
         if (name == "anim_characters") return double(stats.characters);
         if (name == "anim_bound") return double(stats.bound);
@@ -386,6 +407,19 @@ public:
         if (name == "anim_lod_rate4") return double(stats.lodRates[2]);
         if (name == "skinned_reused") return double(m_skinnedReused);
         if (name == "dual_quaternion") return m_skinning == Skinning::DualQuaternion ? 1.0 : 0.0;
+        // The retargeting pair: the strider's angle on its circle ahead of the mannequin's (degrees; 0 while they
+        // walk abreast) and its hips' height over the mannequin's pelvis' (1.15 from its proportions).
+        if (name == "pair_gap") {
+            const float gap = std::remainder(m_pairStrider.angle - m_pairMannequin.angle, 2.0f * kPi);
+            return double(glm::degrees(gap));
+        }
+        if (name == "pair_height_ratio") {
+            const int pelvis = m_anim->findJoint(m_pairMannequin.id, "pelvis");
+            const int hips = m_anim->findJoint(m_pairStrider.id, "Hips");
+            if (pelvis < 0 || hips < 0) return 0.0;
+            return double(m_anim->modelMatrices(m_pairStrider.id)[std::size_t(hips)][3].y /
+                          m_anim->modelMatrices(m_pairMannequin.id)[std::size_t(pelvis)][3].y);
+        }
         if (name == "held_distance") {
             // The torch's grip from the hand joint (m): 0.096 when attached.
             const glm::mat4 hand = m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, "hand_l"));
@@ -479,6 +513,10 @@ public:
         m_clips = {};
         m_graph = {};
         m_graph2d = {};
+        m_walkGraph = {};
+        m_striderModel = {};
+        m_striderSkeleton = {};
+        m_striderClips = {};
         m_step = {};
         m_anim.reset();
         m_assets.reset();
@@ -540,22 +578,30 @@ private:
         return {.position = eye, .forward = glm::normalize(camera.target - eye)};
     }
 
+    // The characters other than the crowd.
+    template <class Self>
+    static auto singles(Self& self) {
+        return std::array{&self.m_hero,        &self.m_slopeStand, &self.m_stepStand,     &self.m_strafer,
+                          &self.m_twistLinear, &self.m_twistDual,  &self.m_pairMannequin, &self.m_pairStrider};
+    }
+
     template <class F>
     void forEachWalker(F&& f) {
-        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer, &m_twistLinear, &m_twistDual}) f(*w);
+        for (Walker* w : singles(*this)) f(*w);
         for (Walker& w : m_crowd) f(w);
     }
 
     bool allSkinned() const {
-        for (const Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer, &m_twistLinear, &m_twistDual})
+        for (const Walker* w : singles(*this))
             if (w->skin < 0) return false;
         return std::ranges::all_of(m_crowd, [](const Walker& w) { return w.skin >= 0; });
     }
 
     int failedAssets() const {
         int n = 0;
-        for (const assets::AssetState s :
-             {m_model.state(), m_skeleton.state(), m_clips.state(), m_graph.state(), m_graph2d.state(), m_step.state()})
+        for (const assets::AssetState s : {m_model.state(), m_skeleton.state(), m_clips.state(), m_graph.state(),
+                                           m_graph2d.state(), m_walkGraph.state(), m_striderModel.state(),
+                                           m_striderSkeleton.state(), m_striderClips.state(), m_step.state()})
             n += s == assets::AssetState::Failed ? 1 : 0;
         return n;
     }
@@ -647,10 +693,40 @@ private:
         w = {};
     }
 
+    // One of the retargeting pair, on its circle at kPairStart: the mannequin or the strider, walking only.
+    Walker makePairWalker(bool strider) {
+        Walker w;
+        w.center = kPairCenter;
+        w.radius = strider ? kStriderScale * kPairRadius : kPairRadius;
+        w.angle = kPairStart;
+        w.position =
+            glm::vec3(kPairCenter.x + w.radius * std::sin(w.angle), 0.0f, kPairCenter.y + w.radius * std::cos(w.angle));
+        w.yaw = w.angle + 0.5f * kPi;
+        w.transform = yawed(w.position, w.yaw);
+        w.strider = strider;
+        animation::CharacterDesc desc;
+        desc.skeleton = strider ? m_striderSkeleton : m_skeleton;
+        desc.clips.push_back(strider ? m_striderClips : m_clips);
+        desc.graph = m_walkGraph;
+        desc.transform = w.transform;
+        w.id = m_anim->addCharacter(std::move(desc));
+        w.model = m_assets->addModel(strider ? m_striderModel : m_model, w.transform);
+        if (m_skinning != Skinning::Linear) m_assets->setSkinning(w.model, 0, m_skinning);
+        return w;
+    }
+
+    // The camera of the retargeting view on the pair's midpoint, turned as far as the pair turned on its circles
+    // (from `angle`, the mannequin's angle before its last move).
+    void followPair(float angle) {
+        if (!m_pairMannequin.id) return;
+        const glm::vec3 mid = 0.5f * (m_pairMannequin.position + m_pairStrider.position);
+        camera.target = glm::vec3(mid.x, camera.target.y, mid.z);
+        camera.yaw += std::remainder(m_pairMannequin.angle - angle, 2.0f * kPi);
+    }
+
     // Every character from the start: new state machines, phases and foot placement, the same on every run.
     void restart() {
-        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer, &m_twistLinear, &m_twistDual})
-            removeWalker(*w);
+        for (Walker* w : singles(*this)) removeWalker(*w);
         m_hero = makeCircleWalker(kHeroCenter, kHeroRadius, kHeroStart, 1.0f, true, true);
         m_slopeStand = makeWalker(slopeTop(), 0.0f, true, false);
         // Across the step's edge: the left foot (+X) above the step, the right one on the floor.
@@ -664,6 +740,9 @@ private:
         m_steerInput = m_strafeMotion = glm::vec2(0.0f);
         m_twistLinear = makeTwisted(kTwistAt - glm::vec3(0.5f * kTwistApart, 0.0f, 0.0f), Skinning::Linear);
         m_twistDual = makeTwisted(kTwistAt + glm::vec3(0.5f * kTwistApart, 0.0f, 0.0f), Skinning::DualQuaternion);
+        m_pairMannequin = makePairWalker(false);
+        m_pairStrider = makePairWalker(true);
+        if (std::string_view(kViews[std::size_t(m_view)].id) == "retarget") setView(m_view);
         setCrowd(m_crowdSize);
         m_footsteps = 0;
         m_landings = 0;
@@ -695,13 +774,18 @@ private:
 
     // Skins need the model's joint names and inverse bind matrices: added once it is ready.
     void bindSkins() {
-        if (!m_model.ready() || m_model->skins().empty()) return;
-        const assets::ModelSkin& skin = m_model->skins()[0];
-        if (m_forearmJoints.empty())
-            for (std::size_t k = 0; k < skin.joints.size(); ++k)
-                if (skin.joints[k] == "lowerarm_l" || skin.joints[k] == "hand_l") m_forearmJoints.push_back(k);
+        const auto skinOf = [](const assets::AssetRef<ModelAsset>& model) -> const assets::ModelSkin* {
+            return model.ready() && !model->skins().empty() ? &model->skins()[0] : nullptr;
+        };
+        const assets::ModelSkin* mannequinSkin = skinOf(m_model);
+        const assets::ModelSkin* striderSkin = skinOf(m_striderModel);
+        if (mannequinSkin && m_forearmJoints.empty())
+            for (std::size_t k = 0; k < mannequinSkin->joints.size(); ++k)
+                if (mannequinSkin->joints[k] == "lowerarm_l" || mannequinSkin->joints[k] == "hand_l")
+                    m_forearmJoints.push_back(k);
         forEachWalker([&](Walker& w) {
-            if (w.skin < 0 && w.id) w.skin = m_anim->addSkin(w.id, skin.joints, skin.inverseBindMatrices);
+            const assets::ModelSkin* skin = w.strider ? striderSkin : mannequinSkin;
+            if (w.skin < 0 && w.id && skin) w.skin = m_anim->addSkin(w.id, skin->joints, skin->inverseBindMatrices);
         });
     }
 
@@ -793,9 +877,12 @@ private:
     assets::AssetRef<ModelAsset> m_model;
     assets::AssetRef<animation::SkeletonAsset> m_skeleton;
     assets::AssetRef<animation::ClipSetAsset> m_clips;
-    assets::AssetRef<animation::GraphAsset> m_graph, m_graph2d;
+    assets::AssetRef<animation::GraphAsset> m_graph, m_graph2d, m_walkGraph;
+    assets::AssetRef<ModelAsset> m_striderModel;
+    assets::AssetRef<animation::SkeletonAsset> m_striderSkeleton;
+    assets::AssetRef<animation::ClipSetAsset> m_striderClips;
     assets::AssetRef<audio::SoundAsset> m_step;
-    Walker m_hero, m_slopeStand, m_stepStand, m_strafer, m_twistLinear, m_twistDual;
+    Walker m_hero, m_slopeStand, m_stepStand, m_strafer, m_twistLinear, m_twistDual, m_pairMannequin, m_pairStrider;
     std::vector<Walker> m_crowd;
     std::vector<std::size_t> m_forearmJoints; // in the model's skin
     std::vector<glm::mat4> m_twisted;

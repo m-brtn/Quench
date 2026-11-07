@@ -15,8 +15,8 @@ set restart 1
 set crowd 24
 set speed 1.6
 wait 0.05
-expect anim_characters == 30
-until anim_bound == 30 1
+expect anim_characters == 32
+until anim_bound == 32 1
 expect hero_state == 0
 
 # A jump from the walk: a cross-fade into it, the landing event, back to the walk.
