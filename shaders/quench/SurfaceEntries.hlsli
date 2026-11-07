@@ -2,8 +2,8 @@
 #define QUENCH_SURFACE_ENTRIES_HLSLI
 
 // The entry points of a surface shader (quench/Surface.hlsli): surface_vs, surface_fs, surface_basic_fs,
-// surface_shadow_vs, surface_shadow_fs, surface_transmittance_fs and surface_gbuffer_fs. Include it after the surface
-// function; QUENCH_SURFACE names it (default: quenchStandardSurface).
+// surface_local_shadows_fs, surface_shadow_vs, surface_shadow_fs, surface_transmittance_fs and surface_gbuffer_fs.
+// Include it after the surface function; QUENCH_SURFACE names it (default: quenchStandardSurface).
 
 #include "quench/Surface.hlsli"
 
@@ -71,11 +71,14 @@ QuenchSurfaceInput quenchSurfaceInput(QuenchVaryings v, bool front, float3 view)
 }
 #endif
 
-#if defined(QUENCH_ENTRY_surface_fs) || defined(QUENCH_ENTRY_surface_basic_fs)
+#if defined(QUENCH_ENTRY_surface_fs) || defined(QUENCH_ENTRY_surface_basic_fs) ||                                     \
+    defined(QUENCH_ENTRY_surface_local_shadows_fs)
 #if defined(QUENCH_ENTRY_surface_fs)
 #define QUENCH_SURFACE_FS surface_fs
-#else
+#elif defined(QUENCH_ENTRY_surface_basic_fs)
 #define QUENCH_SURFACE_FS surface_basic_fs
+#else
+#define QUENCH_SURFACE_FS surface_local_shadows_fs
 #endif
 float4 QUENCH_SURFACE_FS(QuenchVaryings v, bool front : SV_IsFrontFace) : SV_Target0 {
     const QuenchSurfaceInput i = quenchSurfaceInput(v, front, normalize(quenchFrame.cameraPos.xyz - v.world));

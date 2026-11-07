@@ -98,6 +98,7 @@ Result<void> DemoGame::init(App& app) {
         .vertexShader = shaders::demo_checker.find("surface_vs"),
         .fragmentShader = shaders::demo_checker.find("surface_fs"),
         .basicFragmentShader = shaders::demo_checker.find("surface_basic_fs"),
+        .localShadowFragmentShader = shaders::demo_checker.find("surface_local_shadows_fs"),
         .name = "checker",
     });
     if (surface)
@@ -423,6 +424,8 @@ bool DemoGame::setRenderSetting(std::string_view name, std::string_view value) {
             return false;
     } else if (name == "local_shadows" && number) {
         s.localLightShadows = std::clamp(int(*number), 0, render::kMaxRayLocalShadows);
+    } else if (name == "local_shadow_maps" && (value == "off" || value == "256" || value == "512" || value == "1024")) {
+        s.localShadowMapSize = value == "off" ? 0u : std::uint32_t(std::stoul(std::string(value)));
     } else if (name == "reflections") {
         if (value == "sky")
             s.reflections = render::Reflections::Sky;
@@ -630,6 +633,9 @@ std::optional<double> DemoGame::scenarioValue(std::string_view name) const {
     if (name == "ray_memory_mb") return double(s.rayMemoryBytes) / (1024.0 * 1024.0);
     if (name == "hit_textures") return double(s.hitTextures);
     if (name == "local_shadows") return double(e.localLightShadows);
+    if (name == "local_map_lights") return double(s.localShadowLights);
+    if (name == "local_maps") return double(s.localShadowMaps);
+    if (name == "local_map_draws") return double(s.localShadowDraws);
     if (name == "reflections") return double(int(e.reflections));
     if (name == "indirect") return double(int(e.indirectLight));
     if (name == "probes") return double(s.probes);

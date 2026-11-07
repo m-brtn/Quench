@@ -126,8 +126,12 @@ struct RenderSettings {
     float occlusionRadius = 1.0f; // m
     float occlusionStrength = 1.0f;
     // Ray-traced shadows of the frame's nearest local lights with castsShadows (0..kMaxRayLocalShadows; one ray per
-    // pixel and light, soft by LightDesc::sourceRadius; gpu::Caps::rayTracing, else unshadowed).
+    // pixel and light, soft by LightDesc::sourceRadius; gpu::Caps::rayTracing, else localShadowMapSize's maps).
     int localLightShadows = 0;
+    // Where those shadows cannot be ray traced: shadow maps of this many texels per side (64..4096) for the point and
+    // spot lights among them, one per spot light and six per point light (the faces of a cube), filtered over 4 x 4
+    // texels. 0: unshadowed there. Area lights stay unshadowed without ray tracing.
+    std::uint32_t localShadowMapSize = 0;
     Reflections reflections = Reflections::Sky;
     float reflectionRoughness = 0.5f; // traced reflections up to this roughness, faded into the sky's above
     IndirectLight indirectLight = IndirectLight::Sky;
@@ -172,6 +176,9 @@ struct ActiveEffects {
     // The traced lighting needs gpu::Caps::rayTracing and the ray query shaders, like RayTraced shadows; the path
     // tracer replaces the frame's lighting (the other traced effects are not run then).
     int localLightShadows = 0;
+    // Local lights with shadow maps in place of traced shadows (RenderSettings::localShadowMapSize, without ray
+    // tracing; needs a depth texture array to sample, like the cascades).
+    int localShadowMaps = 0;
     Reflections reflections = Reflections::Sky;
     IndirectLight indirectLight = IndirectLight::Sky;
     bool pathTracer = false; // then no TAA and no temporal upscaling
@@ -191,6 +198,9 @@ struct SurfaceDesc {
     // surface_basic_fs: surface_fs without the area lights and anisotropy, drawn in frames without area lights for
     // materials without anisotropy. Without it surface_fs draws everything, paying for those paths in every pixel.
     const ShaderBlob* basicFragmentShader = nullptr;
+    // surface_local_shadows_fs: surface_fs with the local lights' shadow maps (RenderSettings::localShadowMapSize),
+    // drawn in frames that have them. Without it the surface's local lights stay unshadowed in those frames.
+    const ShaderBlob* localShadowFragmentShader = nullptr;
     const ShaderBlob* shadowVertexShader = nullptr; // surface_shadow_vs, for surfaces with QUENCH_SURFACE_VERTEX
     // The shadows of cut-out and translucent materials of this surface: surface_shadow_fs and
     // surface_transmittance_fs. Without them those shadows take the standard surface's opacity (base color alpha
@@ -263,6 +273,12 @@ struct RenderStats {
     // Lights with ray-traced shadows (RenderSettings::localLightShadows) that took a channel another light, or none,
     // had in the previous frame: the channel's history was another light's shadow.
     std::uint32_t localShadowChanges = 0;
+    // Local lights with shadow maps (RenderSettings::localShadowMapSize), the maps rendered (a spot light's one, a
+    // point light's six), the instances drawn into them (summed over the maps) and their draw calls.
+    std::uint32_t localShadowLights = 0;
+    std::uint32_t localShadowMaps = 0;
+    std::uint32_t localShadowInstances = 0;
+    std::uint32_t localShadowDraws = 0;
     std::uint32_t renderWidth = 0; // the 3D resolution
     std::uint32_t renderHeight = 0;
     std::uint32_t pipelines = 0;        // pipelines created so far

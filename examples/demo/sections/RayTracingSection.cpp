@@ -79,8 +79,8 @@ public:
                "walking character), ambient occlusion, reflections (the mirror, the gold spheres from smooth to "
                "rough), indirect light (the red and green corner, the glowing panel), the engine's denoisers, "
                "MetalFX upscaling and denoising, and a reference path tracer: the native Metal backend on a GPU "
-               "with ray queries. Elsewhere: cascaded shadow maps, no occlusion, unshadowed lamps, the sky's "
-               "reflections and ambient light, bilinear scaling.";
+               "with ray queries. Elsewhere: cascaded shadow maps, no occlusion, unshadowed lamps (or their shadow "
+               "maps, an option), the sky's reflections and ambient light, bilinear scaling.";
     }
 
     Result<void> init(Context& c) override {
@@ -281,7 +281,20 @@ public:
             settings.ambientOcclusion = occlusion ? AmbientOcclusion::RayTraced : AmbientOcclusion::None;
         fallback(settings.ambientOcclusion == e.ambientOcclusion, "none");
         ImGui::SliderInt("Lamp shadows", &settings.localLightShadows, 0, kMaxRayLocalShadows);
-        fallback(settings.localLightShadows == 0 || e.localLightShadows > 0, "unshadowed");
+        fallback(settings.localLightShadows == 0 || e.localLightShadows > 0,
+                 e.localShadowMaps > 0 ? "shadow maps" : "unshadowed");
+        if (!caps.rayTracing) {
+            int maps = settings.localShadowMapSize >= 1024  ? 3
+                       : settings.localShadowMapSize >= 512 ? 2
+                       : settings.localShadowMapSize > 0    ? 1
+                                                            : 0;
+            if (ImGui::Combo("Lamp shadow maps", &maps,
+                             "Off\0"
+                             "256\0"
+                             "512\0"
+                             "1024\0"))
+                settings.localShadowMapSize = maps == 0 ? 0u : 128u << maps;
+        }
         bool reflections = settings.reflections == Reflections::RayTraced;
         if (ImGui::Checkbox("Traced reflections", &reflections))
             settings.reflections = reflections ? Reflections::RayTraced : Reflections::Sky;

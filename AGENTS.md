@@ -60,7 +60,7 @@ and TAA or FXAA, with fallbacks by device capability; where `gpu::Caps` allow it
 occlusion and MetalFX upscaling, and since stage 11 ray-traced shadows of up to 4 local lights, reflections,
 indirect light by a probe grid (DDGI-like; traced in turns on request, after 0.9.0, not released) or per-pixel rays, the engine's temporal denoiser (the default; a spatial
 one), MetalFX's denoising upscaler and a reference path tracer, falling back to shadow maps, no occlusion,
-unshadowed local lights, the sky's reflection and ambient light and bilinear scaling; since stage 12 area lights
+unshadowed local lights (or, as an option, shadow maps for point and spot lights, after 0.9.0, not released), the sky's reflection and ambient light and bilinear scaling; since stage 12 area lights
 (rect, disk, tube: LTC shading, soft traced shadows, in the path tracer; unshadowed as the fallback) and anisotropic
 GGX; game passes and surface
 shaders (with a G-buffer entry for the rays); GPU skinning by compute (linear or dual quaternion; blend shapes before it; unchanged poses copied); `SceneAssets` puts asset textures and models
@@ -115,7 +115,7 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
 work), the native backend as the default, custom
-surface shading in ray hits (normal maps are read there since 2026-11-07, after 0.9.0), shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
+surface shading in ray hits (normal maps are read there since 2026-11-07, after 0.9.0), screen-space fallbacks (SSR, GTAO) for devices without
 ray tracing (stage 9 and 11 remaining work) or shadows of area lights without ray tracing (stage 12 remaining work)
 yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,

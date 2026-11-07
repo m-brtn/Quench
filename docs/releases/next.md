@@ -151,6 +151,18 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   ([Performance](../performance.md#probe-grid-in-turns)). The default frame is the one before, bit for bit; the
   `probes` range reads 0.01 ms more. The demo's Graphics panel has "Probe updates" (`set probe_updates`);
   `scenarios/raytracing_phone_probes.txt` measures it on a phone (not run yet).
+- Shadow maps for spot and point lights (stage 9 and 11 remaining work): where local light shadows cannot be ray
+  traced (SDL GPU, Vulkan through MoltenVK, the native backend without ray tracing),
+  `RenderSettings::localShadowMapSize` (off by default; 64..4096) gives the same `localLightShadows` lights shadow
+  maps: one per spot light under 60 degrees, six per point light or wider spot, filtered 4 x 4
+  ([Render module](../render.md#local-light-shadow-maps)). Area lights stay unshadowed there. The lookup is in a
+  surface variant of its own (`surface_local_shadows_fs`), so frames without maps cost what they did (the M4 Pro,
+  offscreen at 1080p: `hdr` within 0.3 % on the native backend in four sections, SDL GPU's frame and CPU times
+  within noise); the demo's ray tracing section's two lamps (7 maps of 512) cost 0.3 to 0.4 ms of the frame on SDL
+  GPU ([Performance](../performance.md#local-light-shadow-maps)). In `renderer_local_light_shadow_maps` the shadowed
+  points read 0 where the open ground reads 375 to 687 and the open ground matches the unshadowed image (no acne or
+  seams). The demo's Graphics panel and the ray tracing section have "Shadow maps" (`set local_shadow_maps`), and the
+  batches a part `raytracing_maps` with new golden images for Metal and Vulkan through MoltenVK. Not run on a phone.
 
 ## Fixes
 
@@ -205,6 +217,16 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   material with a normal map (texture 2) looks different in reflections and bounced light than before (its normal
   map was ignored there); captures of such scenes change. The renderer makes three more pipelines when ray-traced
   lighting starts and the path tracer one more (`RenderStats::pipelines`).
+- **Local light shadow maps** (all additions; nothing changes while `localShadowMapSize` is 0):
+  `RenderSettings::localShadowMapSize` (after `localLightShadows`), `ActiveEffects::localShadowMaps`,
+  `RenderStats::localShadowLights`, `localShadowMaps`, `localShadowInstances` and `localShadowDraws` (after
+  `localShadowChanges`), `SurfaceDesc::localShadowFragmentShader` (after `basicFragmentShader`; designated
+  initializers keep working). A surface shader of a game's own builds `surface_local_shadows_fs:fragment` and
+  passes it there to get these shadows; without it its local lights stay unshadowed in frames with maps. Shader
+  side: `FrameUniforms::localShadows` is appended (a `float4` after `rayLighting`), fragment texture and sampler 13
+  of `Surface.hlsli` are taken (`quenchLocalShadowMaps`), `LocalLight::shape` of a point or spot light now carries
+  its maps (x the first layer + 1, y the spot map's tangent, z the near plane) and `LocalLight::cone.y` the channel
+  of its maps as of its traced shadow.
 - **`render::RenderSettings::probeUpdatePeriod`** is new (after `probeSpacing`; default 1, as before).
   `RenderStats::probes` is the probes traced this frame: 2048 as before by default, 2048 / n in turns. A shader of
   a game's own that reads the probe atlases through `quenchProbeIrradiance` needs nothing; one that reads the

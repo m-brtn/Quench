@@ -388,7 +388,13 @@ scaler.
 - [x] Temporal ray denoiser (SVGF-like without the variance estimate, with anti-lag; `RenderSettings::rayDenoiser`,
   the default) on every traced signal ([Render module](render.md#denoising)).
 - [x] Ray-traced shadows for up to 4 local lights (`localLightShadows`, `LightDesc::sourceRadius`); fallback
-  unshadowed (spot and point shadow maps later, open).
+  unshadowed.
+- [x] Shadow maps for spot and point lights as that fallback (after 0.9.0, 2026-11-07, on the Mac):
+  `RenderSettings::localShadowMapSize` (off by default) gives the same lights one map per narrow spot light and six
+  (a cube) per point or wide spot light, filtered 4 x 4, through their own surface variant so frames without them
+  pay nothing; 7 maps cost 0.3 to 0.4 ms of the M4 Pro's 1080p frame on SDL GPU
+  ([Render module](render.md#local-light-shadow-maps), [Performance](performance.md#local-light-shadow-maps)).
+  Area lights stay unshadowed without ray tracing. Open: the cost on a phone.
 - [x] Ray-traced reflections with hit lighting and a roughness cut-off; sky fallback (no SSR this stage).
 - [x] Indirect light: DDGI-like probes (16 x 8 x 16, 64 rays each per frame), then per-pixel rays; sky ambient
   fallback; furnace test against the sky's light.
@@ -499,8 +505,8 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    traced in turns since 2026-11-07 (`probeUpdatePeriod`, measured on the Mac only); its phone default waits for
    `scenarios/raytracing_phone_probes.txt` on the iPhone 17 (proposed: 4 turns at half size, 60 Hz).
 3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); custom surfaces
-   in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for devices without ray
-   tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray tracing (stage 12).
+   in ray hits, screen-space fallbacks (SSR, GTAO) for devices without ray tracing, a denser or cascaded probe grid
+   (stage 11); shadows of area lights without ray tracing (stage 12).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. The

@@ -290,8 +290,9 @@ by default until measured on the iPhone, and each runs from the prepass at the r
 - **Local light shadows** (`localLightShadows`, 0..4, default 0): the nearest point and spot lights with
   `castsShadows` get one shadow ray per pixel each toward a random point of their sphere (`LightDesc::sourceRadius`,
   0: hard), cut-out and translucent casters as for the sun; the result is one channel per light of a second mask,
-  filtered like the sun's (fragment sampler 9, `options.w` bit 4). Without ray tracing they are unshadowed; there are
-  no shadow maps for local lights. The channels go to the lights in order of distance each frame: a light that
+  filtered like the sun's (fragment sampler 9, `options.w` bit 4). Without ray tracing they are unshadowed, or since
+  2026-11-07 (after 0.9.0) the point and spot lights among them take shadow maps where `localShadowMapSize` is set
+  (below, "Local light shadow maps"). The channels go to the lights in order of distance each frame: a light that
   takes a channel another light (or none) had starts from that channel's history, counted in
   `RenderStats::localShadowChanges` (in the demo's moving tunnel 4 to 10 times in 34 s, without a visible trace:
   [Performance](performance.md#the-tunnel-in-motion)). Test `renderer_ray_traced_local_light_shadows`: behind a box
@@ -341,6 +342,49 @@ by default until measured on the iPhone, and each runs from the prepass at the r
 
 Every hit's radiance is clipped at 64 (a rare bright hit would stay as a speck in the denoiser's history). The
 passes' GPU costs at 1080p are in [Performance](performance.md#measurements).
+
+### Local light shadow maps
+
+Since 2026-11-07 (after 0.9.0, not released). Where `localLightShadows` cannot be ray traced (SDL GPU, so the
+default backend everywhere, and the native backend without `gpu::Caps::rayTracing`), `RenderSettings::
+localShadowMapSize` (0, the default: off; else 64..4096 texels per side) gives the same lights shadow maps: the
+nearest `localLightShadows` (at most 4) point and spot lights with `castsShadows`, chosen as for the rays.
+`ActiveEffects::localShadowMaps` is that count; `RenderStats::localShadowLights`, `localShadowMaps`,
+`localShadowInstances` and `localShadowDraws` say what a frame drew. Area lights stay unshadowed without ray tracing
+(their soft shadows would need a filter as wide as the shape; that is stage 12's remaining work).
+
+- **Maps.** One layer of a depth texture array (the cascades' format, standard depth) per map: a spot light whose
+  outer cone is under 60 degrees takes one perspective map over its cone, a wider spot and a point light six, the
+  faces of a cube (+x, -x, +y, -y, +z, -z), each 3 texels wider than 90 degrees so that the filter does not read
+  past a face's edge. Near plane: the light's `sourceRadius`, at least 1 % of its range; far plane: the range. The
+  array is made for the frame's count of maps (at most 24) and kept while that count and the size hold: the demo's
+  two lamps at 512 are 7 layers, 7 MB with `Depth32Float`.
+- **Casters** (timed range `local_shadows`, after the cascades): every instance with `castsShadows` whose bounds meet
+  a map's frustum, drawn with the cascades' shadow pipelines and depth bias. Cut-out casters keep their holes
+  (`surface_shadow_fs`), translucent ones are dithered into the depth (no transmittance map for local lights),
+  skinned instances are posed. Game passes of `PassStage::Shadow` draw into the cascades only.
+- **Lookup.** `surface_local_shadows_fs` (`SurfaceDesc::localShadowFragmentShader`: `surface_fs` with
+  `QUENCH_SURFACE_LOCAL_SHADOWS` 1) reads each mapped light's map once per pixel before the light loop
+  (`quenchLocalShadows` in `Surface.hlsli`, `quenchLocalShadow` in `Shadows.hlsli`): the point moved along its normal
+  by 1.5 texels at its depth, four bilinear comparisons two texels apart (`Gather`, 4 x 4 texels), into the light's
+  channel as the traced shadows have (`LocalLight::cone.y`; `shape`: x the first layer + 1, y the spot map's
+  tangent of half its angle or 0 for six maps, z the near plane). Fragment texture and sampler 13,
+  `FrameUniforms::localShadows` (texels, their inverse, the normal offset, the cube faces' tangent). The renderer
+  draws with that variant in frames with maps only, so other frames pay nothing for it (4 sections measured within
+  0.5 % of before on the native backend, [Performance](performance.md#local-light-shadow-maps)); a surface without
+  it leaves its local lights unshadowed in those frames. The standard surface and the demo's checker have it.
+- **Cost** on the M4 Pro at 1080p (SDL GPU's Metal driver, offscreen): the demo's ray tracing section's two lamps (a
+  point light and a spot light, 7 maps) add 0.3 to 0.4 ms to the frame and about 0.1 ms of CPU time; the map size
+  barely matters (256 to 1024).
+- **Test** `renderer_local_light_shadow_maps` (SDL GPU's Metal driver and Vulkan through MoltenVK; on the Mac's native
+  backend the same scene with traced shadows): a point light and a spot light over small casters; behind them 0
+  where the open ground has 411, 687 (under a plate, the -y face), 381 and 375; lit points beside them as without
+  shadows; nine open ground points, among them the edge of two cube faces and the corner of three, 0 apart from the
+  unshadowed image (no acne, no seams). One light with shadows takes the nearer spot light's one map; size 0 leaves
+  them unshadowed and says so in `fallbacks()`.
+- **Limits.** Shadows are as hard as the 4 x 4 filter (`sourceRadius` does not soften them as it does the rays); a
+  caster closer to the light than the near plane is lost; in `surface_shadow_fs` drawn into these maps
+  `QuenchSurfaceInput::view` still points toward the sun.
 
 ### Denoising
 
@@ -425,7 +469,7 @@ maps"), so a game can show them (the demo's "Frame and fallbacks" panel); it is 
 | HDR target | `Rgba16Float` | `Rg11b10Ufloat` |
 | Ray-traced sun shadows | `gpu::Caps::rayTracing`, the ray query shaders, a sampleable depth | shadow cascades |
 | Ray-traced ambient occlusion | the same | none |
-| Ray-traced local light shadows (also area lights) | the same | unshadowed |
+| Ray-traced local light shadows (also area lights) | the same | point and spot lights: shadow maps if `localShadowMapSize` is set and a depth array is sampleable; else (and area lights always) unshadowed |
 | Ray-traced reflections | the same and the hit shaders | the sky's reflection |
 | Probe grid, per-pixel indirect light | the same and the hit shaders | `skyAmbient` and `groundAmbient` |
 | Path tracer | the same and the hit shaders | the real-time frame |
@@ -468,14 +512,15 @@ QuenchSurface checker(QuenchSurfaceInput i) {
 
 ```cmake
 quench_add_shaders(my_game NAME my_surface SOURCE shaders/checker.hlsl
-    ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment)
+    ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment surface_local_shadows_fs:fragment)
 ```
 
 ```cpp
 const render::SurfaceId checker = *renderer.addSurface({
     .vertexShader = quench::shaders::my_surface.find("surface_vs"),
     .fragmentShader = quench::shaders::my_surface.find("surface_fs"),
-    .basicFragmentShader = quench::shaders::my_surface.find("surface_basic_fs"), .name = "checker"});
+    .basicFragmentShader = quench::shaders::my_surface.find("surface_basic_fs"),
+    .localShadowFragmentShader = quench::shaders::my_surface.find("surface_local_shadows_fs"), .name = "checker"});
 scene.addMaterial({.surface = checker, .params = {...}});
 ```
 
@@ -505,6 +550,11 @@ scene.addMaterial({.surface = checker, .params = {...}});
   Without it a surface draws everything with `surface_fs` and pays for those paths in every pixel (5 to 8% of the M4
   Pro's unpaced frame rate at 1080p in the demo's sections; with it within 0.6% of before stage 12;
   [Performance](performance.md#the-tunnel)).
+- `surface_local_shadows_fs:fragment`, passed as `SurfaceDesc::localShadowFragmentShader` (since 2026-11-07, after
+  0.9.0), is `surface_fs` with the local lights' shadow maps (`QUENCH_SURFACE_LOCAL_SHADOWS` is 1 in it; "Local light
+  shadow maps" above). The renderer draws every material of the surface with it in frames with such maps, so
+  `surface_fs` and `surface_basic_fs` carry no code for them. Without it the surface's local lights stay unshadowed
+  in those frames.
 - `addSurface` creates the opaque pipeline at once (and the basic one), so a shader that does not fit the interface
   fails there with an error, not at the first draw.
 
@@ -523,7 +573,8 @@ bytes).
 `RenderSettings`: render scale (0.25..1) and upscaling (bilinear, MetalFX spatial, temporal or temporal denoised),
 sun shadows (shadow maps or ray traced), cascades (0..4), shadow map size, shadow distance, shadow filter (1, 4 or
 12 taps), translucent shadows (transmittance map or dithered), shadow rays and softness, ambient occlusion (none or
-ray traced) with its rays, radius and strength, local light shadows (0..4), reflections (sky or ray traced) and
+ray traced) with its rays, radius and strength, local light shadows (0..4) and the size of their shadow maps where
+they are not traced (`localShadowMapSize`, 0: none), reflections (sky or ray traced) and
 their roughness limit, indirect light (sky, probe grid or ray traced), the probe spacing and the probe updates
 (every probe per frame, 1/2, 1/4 or 1/8), the ray denoiser
 (spatial or temporal), the path tracer with its bounces and samples, anti-aliasing (none, FXAA, TAA) and sharpening,
@@ -542,9 +593,11 @@ and (stage 11) the bottom levels compacted this frame (`rayCompactions`), whethe
 (`rayTopRefit`), the GPU memory of the acceleration structures, tables, hit texture arrays and probe atlases
 (`rayMemoryBytes`), the material textures in the hit arrays (`hitTextures`), the probes traced (`probes`) and the
 path tracer's samples (`pathSamples`), and (stage 12) the area lights among the frame's lights (`areaLights`) and
-the lights that took another light's shadow channel (`localShadowChanges`).
+the lights that took another light's shadow channel (`localShadowChanges`), and (2026-11-07, after 0.9.0) the
+lights with shadow maps, their maps, the instances and draws in them (`localShadowLights`, `localShadowMaps`,
+`localShadowInstances`, `localShadowDraws`).
 The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`,
-`area_lights`, `local_shadow_changes`, `moved`,
+`area_lights`, `local_shadow_changes`, `local_map_lights`, `local_maps`, `local_map_draws`, `moved`,
 `render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`,
 `ray_compactions`, `ray_top_refit`, `ray_memory_mb`, `hit_textures`, `probes`, `path_samples`).
 
@@ -554,7 +607,7 @@ passes in timed ranges of the command buffer it records into, `upload` (the inst
 `prepass` (with the G-buffer, the motion vectors for the temporal denoiser and the denoising upscaler's inputs) and
 `raytrace` (ray tracing; `rays`, `denoise`, `probes`, `reflections` and `indirect` inside it), `path` (the path
 tracer), `shadows` (the cascades and their
-transmittance maps), `hdr` (opaque, sky, transparent and the game's passes in them), `taa` (motion vectors and the
+transmittance maps), `local_shadows` (the local lights' shadow maps), `hdr` (opaque, sky, transparent and the game's passes in them), `taa` (motion vectors and the
 resolve), `upscale` (MetalFX), `bloom` and `tonemap` (with FXAA and the overlay passes). A range whose effect is off
 records nothing; the game's `PostHdr` passes are in no range of the renderer. The app reads them per frame
 (`app::FrameStats::gpuPasses`, inside its `game` range); the skinning pass has its own command buffer and stays in
@@ -640,8 +693,10 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   about 70 n), and its probes are not moved out of walls (a probe inside a wall is dark and its neighbours'
   visibility hides it). Turns are a fixed round-robin, not chosen by priority (a probe near the camera or in changing
   light is not traced sooner), and the hysteresis does not shorten with n. The temporal denoiser has no variance estimate and no disocclusion boost: newly
-  visible areas are noisy for a few frames. Local lights have no shadow maps, so without ray tracing they are
-  unshadowed. The path tracer has no refraction, and its translucency is a coin flip.
+  visible areas are noisy for a few frames. Without ray tracing local lights are unshadowed unless
+  `localShadowMapSize` is set; their shadow maps are hard (a 4 x 4 filter, not softened by `sourceRadius`), dither
+  translucent casters and leave area lights unshadowed. The path tracer has no refraction, and its translucency is
+  a coin flip.
 - Area lights: a tube's LTC has no end caps (-4.7 % against the integral for a 1.2 m tube of 5 cm); the traced
   shadow is the light's mean visibility, not weighted over the shape; anisotropic surfaces take the LTC with a bent
   normal and the mean roughness; rays do not see the shapes' emission in the real-time frame; at most 8 area lights

@@ -87,6 +87,66 @@ float shadowFactor(Texture2DArray<float> sm, SamplerState s, float3 P, float3 N,
     return lerp(lit, 1.0, sc.fade);
 }
 
+// The local lights' shadow maps (render::RenderSettings::localShadowMapSize, where their shadows are not ray traced):
+// one layer of a Texture2DArray per map, standard depth of a perspective projection from the light's position (0 at
+// the near plane LocalLight::shape.z, 1 at its range). A spot light has one map along its direction, a point light
+// six, one per face of a cube around it (+x, -x, +y, -y, +z, -z). The renderer projects with the same up vectors.
+float quenchLocalShadowTap(Texture2DArray<float> maps, SamplerState s, float2 uv, float layer, float z) {
+    const float size = quenchFrame.localShadows.x;
+    const float2 t = uv * size - 0.5;
+    const float2 f = frac(t);
+    const float4 d = maps.Gather(s, float3((floor(t) + 1.0) / size, layer));
+    const float4 lit = step(z, d); // x (0,1), y (1,1), z (1,0), w (0,0)
+    return lerp(lerp(lit.w, lit.z, f.x), lerp(lit.x, lit.y, f.x), f.y);
+}
+
+// 1 = lit: four bilinear taps two texels apart (4 x 4 texels). P and N in world space.
+float quenchLocalShadow(Texture2DArray<float> maps, SamplerState s, LocalLight light, float3 P, float3 N) {
+    const bool cube = light.shape.y <= 0.0;
+    const float tanHalf = cube ? quenchFrame.localShadows.w : light.shape.y;
+    // The normal offset scales with the world size of a texel at P's depth in its map.
+    const float3 toP = P - light.positionRange.xyz;
+    if (dot(toP, toP) >= light.positionRange.w * light.positionRange.w) return 1.0;
+    const float3 a = abs(toP);
+    const float depth = cube ? max(a.x, max(a.y, a.z)) : dot(toP, light.direction.xyz);
+    const float3 v =
+        toP + N * (2.0 * max(depth, 0.0) * tanHalf * quenchFrame.localShadows.y * quenchFrame.localShadows.z);
+    float3 forward = light.direction.xyz;
+    float3 up = abs(forward.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+    float layer = light.shape.x - 1.0;
+    if (cube) {
+        const float3 b = abs(v);
+        if (b.x >= b.y && b.x >= b.z) {
+            forward = float3(v.x >= 0.0 ? 1.0 : -1.0, 0.0, 0.0);
+            up = float3(0.0, 1.0, 0.0);
+            layer += v.x >= 0.0 ? 0.0 : 1.0;
+        } else if (b.y >= b.z) {
+            forward = float3(0.0, v.y >= 0.0 ? 1.0 : -1.0, 0.0);
+            up = float3(0.0, 0.0, 1.0);
+            layer += v.y >= 0.0 ? 2.0 : 3.0;
+        } else {
+            forward = float3(0.0, 0.0, v.z >= 0.0 ? 1.0 : -1.0);
+            up = float3(0.0, 1.0, 0.0);
+            layer += v.z >= 0.0 ? 4.0 : 5.0;
+        }
+    }
+    const float3 right = normalize(cross(forward, up));
+    const float3 upward = cross(right, forward);
+    const float z = dot(v, forward);
+    const float zNear = light.shape.z;
+    const float zFar = light.positionRange.w;
+    if (z <= zNear) return 1.0;
+    const float2 ndc = float2(dot(v, right), dot(v, upward)) / (z * tanHalf);
+    if (any(abs(ndc) >= 1.0)) return 1.0;
+    const float2 uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    const float ref = zFar * (z - zNear) / (z * (zFar - zNear));
+    const float o = quenchFrame.localShadows.y;
+    return 0.25 * (quenchLocalShadowTap(maps, s, uv + float2(-o, -o), layer, ref) +
+                   quenchLocalShadowTap(maps, s, uv + float2(o, -o), layer, ref) +
+                   quenchLocalShadowTap(maps, s, uv + float2(-o, o), layer, ref) +
+                   quenchLocalShadowTap(maps, s, uv + float2(o, o), layer, ref));
+}
+
 // rgb: the part of the sun's light that reaches P through translucent casters (1: none in front of P). The map is
 // read bilinearly (four taps with the 4 and 12 tap filters); P is behind the casters when its depth is more than
 // FrameUniforms::transmittanceBias beyond the nearest caster of the four texels around it. A receiver between two

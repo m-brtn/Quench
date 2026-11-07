@@ -1,0 +1,68 @@
+# Local light shadow maps on a phone (RenderSettings::localShadowMapSize; docs/performance.md, "Local light shadow
+# maps") on SDL GPU, the default backend, where the lamps' shadows are not traced: the ray tracing section's two
+# lamps (a point light, 6 maps, and a spot light, 1 map) and the tunnel's two spots (1 map each), unshadowed and with
+# maps of 256 and 512, at the display's rate in 4 s regions, each section from the nominal thermal state; then the
+# tunnel with maps of 256 at the section's 60 Hz for 20 s and a capture of the ray tracing section's lamps:
+#   copy this file into the app's user directory, launch with --script lamp_maps_phone.txt (no --gpu-backend)
+# On the native backend with ray tracing the lamps' shadows are traced and the map checks fail.
+
+section raytracing
+until rt_ready == 1 5
+set limit_60hz 0
+max_frame_rate 20
+until thermal_state <= 0 300
+max_frame_rate 0
+set local_shadows 2
+set local_shadow_maps off
+wait 0.5
+perf_begin rt_lamps_unshadowed
+wait 4
+perf_end
+set local_shadow_maps 256
+wait 0.5
+perf_begin rt_lamps_maps_256
+wait 4
+perf_end
+expect local_map_lights == 2
+expect local_maps == 7
+set local_shadow_maps 512
+wait 0.5
+perf_begin rt_lamps_maps_512
+wait 4
+perf_end
+windows off
+capture lamp_maps_phone.png
+windows on
+set local_shadow_maps off
+
+section tunnel
+until tunnel_ready == 1 10
+set limit_60hz 0
+max_frame_rate 20
+until thermal_state <= 0 300
+max_frame_rate 0
+set local_shadow_maps off
+wait 0.5
+perf_begin tunnel_unshadowed
+wait 4
+perf_end
+set local_shadow_maps 256
+wait 0.5
+perf_begin tunnel_maps_256
+wait 4
+perf_end
+expect local_map_lights == 2
+expect local_maps == 2
+set local_shadow_maps 512
+wait 0.5
+perf_begin tunnel_maps_512
+wait 4
+perf_end
+set local_shadow_maps 256
+set limit_60hz 1
+wait 0.5
+perf_begin tunnel_maps_256_60hz
+wait 20
+perf_end
+set local_shadow_maps off
+quit

@@ -29,11 +29,21 @@
 // Optional: the entry surface_basic_fs:fragment, passed as SurfaceDesc::basicFragmentShader, is surface_fs without
 // the area lights and anisotropy (QUENCH_SURFACE_FULL is 0 in it); the renderer draws with it in frames without area
 // lights and for materials without anisotropy, which then pay nothing for those paths.
+//
+// Optional: the entry surface_local_shadows_fs:fragment, passed as SurfaceDesc::localShadowFragmentShader, is
+// surface_fs with the local lights' shadow maps (QUENCH_SURFACE_LOCAL_SHADOWS is 1 in it; RenderSettings::
+// localShadowMapSize, where those shadows are not ray traced); the renderer draws with it in frames with such maps.
+// Without it the surface's local lights stay unshadowed there, and the other variants pay nothing for the maps.
 
 #if defined(QUENCH_ENTRY_surface_basic_fs)
 #define QUENCH_SURFACE_FULL 0
 #else
 #define QUENCH_SURFACE_FULL 1
+#endif
+#if defined(QUENCH_ENTRY_surface_local_shadows_fs)
+#define QUENCH_SURFACE_LOCAL_SHADOWS 1
+#else
+#define QUENCH_SURFACE_LOCAL_SHADOWS 0
 #endif
 
 #include "quench/AreaLights.hlsli"
@@ -131,9 +141,27 @@ SamplerState quenchProbeDistanceSampler : QUENCH_SAMPLER(11);
 // The area lights' table (quench/AreaLights.hlsli), read with Load.
 Texture2DArray<float4> quenchAreaTable : QUENCH_TEXTURE(12);
 SamplerState quenchAreaSampler : QUENCH_SAMPLER(12);
+// The local lights' shadow maps (quenchLocalShadows), read where FrameUniforms::localShadows.x is not 0.
+Texture2DArray<float> quenchLocalShadowMaps : QUENCH_TEXTURE(13);
+SamplerState quenchLocalShadowSampler : QUENCH_SAMPLER(13);
 
 // True when the material has texture n (MaterialDesc::textures); unset textures sample white.
 bool quenchHasTexture(int n) { return (uint(quenchMaterial.surface.w) & (1u << uint(n))) != 0u; }
+
+// In a frame with local light shadow maps (FrameUniforms::localShadows.x is not 0): the shadows of the lights that
+// have them, in their channels (LocalLight::cone.y = channel + 1), 1 = lit.
+float4 quenchLocalShadows(Texture2DArray<float> maps, SamplerState s, float3 P, float3 N) {
+    float4 lit = float4(1.0, 1.0, 1.0, 1.0);
+    const int lights = int(quenchLights.count.x);
+    for (int k = 0; k < lights; ++k) {
+        const LocalLight light = quenchLights.lights[k];
+        if (light.cone.y <= 0.0) continue;
+        const int c = int(light.cone.y) - 1;
+        const float v = quenchLocalShadow(maps, s, light, P, N);
+        lit = min(lit, float4(c == 0 ? v : 1.0, c == 1 ? v : 1.0, c == 2 ? v : 1.0, c == 3 ? v : 1.0));
+    }
+    return lit;
+}
 
 // The shading normal of a tangent-space normal map texel (glTF's encoding: xyz * 0.5 + 0.5, +y toward -v) in the
 // frame of the input's normal and tangent; the geometric normal where the tangent gives no frame.
@@ -255,12 +283,19 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
         }
     }
     const int lights = int(quenchLights.count.x);
-    const bool localRays = (rayTraced & 4u) != 0u;
+    // The local lights' shadows, traced or (surface_local_shadows_fs) from shadow maps: a channel each
+    // (LocalLight::cone.y = channel + 1).
+#if QUENCH_SURFACE_LOCAL_SHADOWS
+    const bool localChannels = true;
+    float4 localShadows = quenchLocalShadows(quenchLocalShadowMaps, quenchLocalShadowSampler, i.world, i.normal);
+#else
+    const bool localChannels = (rayTraced & 4u) != 0u;
     float4 localShadows = float4(1.0, 1.0, 1.0, 1.0);
-    [branch] if (localRays) {
+    [branch] if (localChannels) {
         localShadows = quenchRayLocalShadows.SampleLevel(quenchRayLocalShadowsSampler, i.pixel * quenchFrame.screen.zw,
                                                          0.0);
     }
+#endif
     for (int k = 0; k < lights; ++k) {
         const LocalLight light = quenchLights.lights[k];
         const int type = int(light.color.w);
@@ -281,8 +316,8 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
                 const float t = saturate((dot(-L, light.direction.xyz) - light.direction.w) * light.cone.x);
                 attenuation *= t * t;
             }
-            // A light with ray-traced shadows: its channel in sampler 9 (LocalLight::cone.y = channel + 1).
-            if (localRays && light.cone.y > 0.0) {
+            // A light with shadows: its channel (LocalLight::cone.y = channel + 1).
+            if (localChannels && light.cone.y > 0.0) {
                 const int c = int(light.cone.y) - 1;
                 attenuation *= dot(localShadows, float4(c == 0, c == 1, c == 2, c == 3));
             }
@@ -297,7 +332,7 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
             const LocalLight light = quenchLights.lights[k];
             if (int(light.color.w) < QUENCH_LIGHT_RECT) continue;
             float a = quenchAreaWindow(light, i.world);
-            if (localRays && light.cone.y > 0.0) {
+            if (localChannels && light.cone.y > 0.0) {
                 const int c = int(light.cone.y) - 1;
                 a *= dot(localShadows, float4(c == 0, c == 1, c == 2, c == 3));
             }

@@ -1,0 +1,25 @@
+# Lamp shadow maps on SDL GPU (ctest: demo_raytracing_maps_<backend>, a part of batch.txt): without ray tracing the
+# section's two lamp shadows (RenderSettings::localLightShadows 2) become shadow maps (localShadowMapSize 512): the
+# spot behind the fence throws the fence's holes forward through its one map, the lamp in the corner shadows the
+# white block onto the walls through six. The capture is taken at 2.5 s, as in raytracing_fallback.txt; the maps are
+# switched off again before the part ends.
+section raytracing
+
+set dither 0
+until rt_ready == 1 5
+set local_shadow_maps 512
+wait 0.1
+expect local_shadows == 0
+expect local_map_lights == 2
+expect local_maps == 7
+expect local_map_draws > 0
+expect cascades == 3
+expect ray_instances == 0
+until time >= 2.5 3
+windows off
+capture demo_raytracing_maps.png
+windows on
+set local_shadow_maps off
+wait 0.05
+expect local_maps == 0
+quit

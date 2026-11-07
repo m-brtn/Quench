@@ -42,11 +42,20 @@ constexpr ShaderStage kFragment = ShaderStage::Fragment;
 constexpr int kBloomLevels = 5;
 constexpr float kTaaCurrentWeight = 0.1f;
 constexpr float kShadowNormalOffset = 1.6f; // in shadow texels of the cascade
-constexpr std::uint32_t kVariants = 12;     // 3 blend modes x single / double sided x full / basic shading
+constexpr std::uint32_t kVariants = 18;     // 3 blend modes x single / double sided x 3 Shading
 // The transmittance maps of translucent casters have 1 / kTransmittanceScale of the shadow map size per side: their
 // shadows are soft, and a full-size Rgba16Float array would take twice the depth array's memory.
 constexpr std::uint32_t kTransmittanceScale = 2;
 constexpr float kTransmittanceBias = 2.0f; // in transmittance texels: receivers nearer behind a caster stay lit
+// Local light shadow maps: a spot light has one up to this cone angle (its outer cone's cosine above it), six maps
+// (a cube) beyond; a point light's six maps reach this many texels past the cube's faces, so that the filter's taps
+// at a face's edge stay inside its map; the normal offset in texels of the map at the receiver's distance; the near
+// plane at least the light's source radius, and at least this part of its range.
+constexpr int kMaxLocalShadowMaps = kMaxRayLocalShadows * 6;
+constexpr float kSpotMapMinCos = 0.5f;
+constexpr float kLocalShadowEdge = 3.0f;
+constexpr float kLocalShadowNormalOffset = 1.5f;
+constexpr float kLocalShadowNear = 0.01f;
 // Ray-traced shadows: how far rays toward the sun look (m), the ray origin's offset along the normal per meter of
 // view distance (the depth's precision and the normal reconstructed from it), and the denoise pass.
 constexpr float kRayShadowLength = 1000.0f;
@@ -87,9 +96,12 @@ constexpr std::uint32_t kSkinGroup = 64;     // [numthreads] of skin_cs
 constexpr std::uint32_t kNotSkinned = ~0u;   // RendererImpl::skinnedOffsets
 constexpr std::size_t kSkinTimingFences = 4; // skinning passes whose GPU time is still to be read
 
-// basic: the surface's basicFragment (no area lights, no anisotropy).
-std::uint32_t variantOf(BlendMode blend, bool doubleSided, bool basic) {
-    return std::uint32_t(blend) * 2 + (doubleSided ? 1 : 0) + (basic ? 6 : 0);
+// The fragment shader of a surface variant: surface_fs, surface_basic_fs (no area lights, no anisotropy) or
+// surface_local_shadows_fs (surface_fs with the local lights' shadow maps).
+enum class Shading : std::uint32_t { Full, Basic, LocalShadows };
+
+std::uint32_t variantOf(BlendMode blend, bool doubleSided, Shading shading) {
+    return std::uint32_t(blend) * 2 + (doubleSided ? 1 : 0) + std::uint32_t(shading) * 6;
 }
 
 ShadowMode shadowModeOf(const MaterialDesc& m) {
@@ -115,7 +127,8 @@ gpu::RasterizerState shadowRasterizer(const gpu::Caps& caps) {
 struct SurfaceEntry {
     const ShaderBlob* vertex = nullptr;
     const ShaderBlob* fragment = nullptr;
-    const ShaderBlob* basicFragment = nullptr; // null: fragment draws the basic variants too
+    const ShaderBlob* basicFragment = nullptr;       // null: fragment draws the basic variants too
+    const ShaderBlob* localShadowFragment = nullptr; // null: fragment draws frames with local shadow maps (unshadowed)
     const ShaderBlob* shadowVertex = nullptr;
     const ShaderBlob* shadowFragment = nullptr;        // null: the standard surface's
     const ShaderBlob* transmittanceFragment = nullptr; // null: the standard surface's
@@ -321,6 +334,16 @@ struct RendererImpl {
     std::array<std::vector<Item>, kMaxCascades> shadowItems, transmittanceItems;
     std::vector<Batch> opaqueBatches, transparentBatches, velocityBatches, velocityCutoutBatches;
     std::array<std::vector<Batch>, kMaxCascades> shadowBatches, transmittanceBatches;
+    // Local light shadow maps (RenderSettings::localShadowMapSize, without ray tracing): one layer each.
+    struct LocalShadowMap {
+        glm::mat4 viewProj;
+        std::array<Plane, 5> planes; // the sides and the far plane (the light's range)
+    };
+    std::vector<LocalShadowMap> localMaps;
+    std::array<std::vector<Item>, kMaxLocalShadowMaps> localShadowItems;
+    std::array<std::vector<Batch>, kMaxLocalShadowMaps> localShadowBatches;
+    gpu::Texture localShadowMap;
+    std::uint32_t localShadowFailedSize = 0; // the size whose maps could not be made
 
     // Skinning: every frame writes the skinned vertices of the instances it draws into skinned[frameIndex & 1], so the
     // other buffer still holds the previous frame's for the motion vectors.
@@ -373,13 +396,16 @@ struct RendererImpl {
                                                 const char* entry, TextureFormat format);
     bool ensureTargets(std::uint32_t rw, std::uint32_t rh, std::uint32_t ow, std::uint32_t oh, TextureFormat ldrTarget);
     bool ensureTransmittance();
+    bool ensureLocalShadowMaps(std::uint32_t size, std::uint32_t layers);
     bool ensureBuffers(gpu::CommandBuffer& commands);
     std::uint32_t skinnedOffset(const InstanceEntry& inst, std::uint32_t slot, const MeshEntry& mesh);
     bool skin(gpu::CommandBuffer& commands);
     gpu::BufferBinding skinnedVerticesOf(std::uint32_t slot) const;
     void runPasses(PassStage stage, PassContext& context, const shader::FrameUniforms& frame);
     void buildBatches(const SceneImpl& scene, std::vector<Item>& items, std::vector<Batch>& batches);
-    void bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, const MaterialEntry& material, bool shadowPass);
+    // localMap: a local light's shadow map, where translucent casters are always dithered.
+    void bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, const MaterialEntry& material, bool shadowPass,
+                      bool localMap = false);
     void render(SceneImpl& scene, const View& view, gpu::CommandBuffer& commands, const gpu::TextureRef& target,
                 const gpu::DisplayOutput& output);
 };
@@ -642,12 +668,13 @@ Result<void> RendererImpl::init() {
     standard.vertex = shaders::render_standard.find("surface_vs");
     standard.fragment = shaders::render_standard.find("surface_fs");
     standard.basicFragment = shaders::render_standard.find("surface_basic_fs");
+    standard.localShadowFragment = shaders::render_standard.find("surface_local_shadows_fs");
     standard.shadowFragment = shaders::render_standard.find("surface_shadow_fs");
     standard.transmittanceFragment = shaders::render_standard.find("surface_transmittance_fs");
     standard.gbufferFragment = shaders::render_standard.find("surface_gbuffer_fs");
     standard.name = "standard";
-    if (!surfacePipeline(standard, variantOf(BlendMode::Opaque, false, false)) ||
-        !surfacePipeline(standard, variantOf(BlendMode::Opaque, false, true)))
+    if (!surfacePipeline(standard, variantOf(BlendMode::Opaque, false, Shading::Full)) ||
+        !surfacePipeline(standard, variantOf(BlendMode::Opaque, false, Shading::Basic)))
         return Error{"render: the standard surface pipeline failed (logged)"};
     applySettings();
     log::info("render",
@@ -678,7 +705,9 @@ void RendererImpl::applySettings() {
     if (settings.ambientOcclusion == AmbientOcclusion::RayTraced && next.ambientOcclusion != settings.ambientOcclusion)
         fallbacks.push_back(std::format("ray-traced ambient occlusion: {}; none", noRays));
     if (settings.localLightShadows > 0 && next.localLightShadows == 0)
-        fallbacks.push_back(std::format("ray-traced local light shadows: {}; unshadowed", noRays));
+        fallbacks.push_back(
+            std::format("ray-traced local light shadows: {}; {}", noRays,
+                        next.localShadowMaps > 0 ? "shadow maps (area lights unshadowed)" : "unshadowed"));
     const char* noLighting = support.rayTracing ? "this build has no ray query shaders for traced lighting" : noRays;
     if (settings.reflections == Reflections::RayTraced && next.reflections != Reflections::RayTraced)
         fallbacks.push_back(std::format("ray-traced reflections: {}; the sky's", noLighting));
@@ -728,14 +757,17 @@ const gpu::GraphicsPipeline* RendererImpl::surfacePipeline(SurfaceEntry& surface
     if (surface.failed[variant]) return nullptr;
     const auto blend = BlendMode(variant % 6 / 2);
     const bool doubleSided = variant % 2 != 0;
-    const bool basic = variant >= 6 && surface.basicFragment;
+    const auto shading = Shading(variant / 6);
+    const ShaderBlob* fragment = surface.fragment;
+    if (shading == Shading::Basic && surface.basicFragment) fragment = surface.basicFragment;
+    if (shading == Shading::LocalShadows && surface.localShadowFragment) fragment = surface.localShadowFragment;
     gpu::ColorTargetDesc color{hdrFormat};
     if (blend == BlendMode::AlphaBlend) color.blend = gpu::BlendState::alpha();
     if (blend == BlendMode::Additive) color.blend = gpu::BlendState::additive();
     const std::string name = std::format("surface {} ({})", surface.name, variant);
     Result<gpu::GraphicsPipeline> p = createPipeline({
         .vertexShader = surface.vertex,
-        .fragmentShader = basic ? surface.basicFragment : surface.fragment,
+        .fragmentShader = fragment,
         .vertexBuffers = {&kVertexLayout, 1},
         .vertexAttributes = kVertexAttributes,
         .rasterizer = {.cull = doubleSided ? gpu::CullMode::None : gpu::CullMode::Back},
@@ -1077,6 +1109,29 @@ bool RendererImpl::ensureTransmittance() {
     return true;
 }
 
+// The local lights' shadow maps: grown to the layers a frame needs, made again when the size changes; false: none
+// (logged once per size).
+bool RendererImpl::ensureLocalShadowMaps(std::uint32_t size, std::uint32_t layers) {
+    if (localShadowMap && localShadowMap.desc().width == size && localShadowMap.desc().layers >= layers) return true;
+    if (localShadowFailedSize == size) return false;
+    localShadowMap = {};
+    Result<gpu::Texture> t = device->createTexture({.type = gpu::TextureType::Texture2DArray,
+                                                    .format = shadowFormat,
+                                                    .usage = TextureUsage::DepthStencilTarget | TextureUsage::Sampled,
+                                                    .width = size,
+                                                    .height = size,
+                                                    .layers = layers,
+                                                    .name = "render local shadow maps"});
+    if (!t) {
+        log::error("render", "target 'render local shadow maps' {} x {} x {}: {}; local lights unshadowed", size, size,
+                   layers, t.error());
+        localShadowFailedSize = size;
+        return false;
+    }
+    localShadowMap = std::move(*t);
+    return true;
+}
+
 bool RendererImpl::ensureBuffers(gpu::CommandBuffer& commands) {
     const auto grow = [](std::uint32_t capacity, std::size_t needed) {
         std::uint32_t c = std::max(capacity, 64u);
@@ -1349,12 +1404,12 @@ void RendererImpl::buildBatches(const SceneImpl& scene, std::vector<Item>& items
 }
 
 void RendererImpl::bindMaterial(gpu::RenderPass& pass, const SceneImpl& scene, const MaterialEntry& material,
-                                bool shadowPass) {
+                                bool shadowPass, bool localMap) {
     const MaterialDesc& m = material.desc;
     shader::MaterialUniforms u{};
     u.baseColor = m.baseColor;
     const bool dithered = shadowPass && shadowModeOf(m) == ShadowMode::Translucent &&
-                          effects.translucentShadows == TranslucentShadows::Dithered;
+                          (localMap || effects.translucentShadows == TranslucentShadows::Dithered);
     u.emissive = glm::vec4(m.emissive, dithered ? 1.0f : 0.0f);
     std::array<gpu::TextureSamplerBinding, 4> bindings{};
     std::uint32_t mask = 0;
@@ -1586,6 +1641,54 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (owners[c] != 0 && owners[c] != shadowChannels[c]) ++stats.localShadowChanges;
     shadowChannels = owners;
     localShadows = channels;
+    // Without ray tracing: shadow maps for the nearest point and spot lights that cast shadows.
+    localMaps.clear();
+    const int mapLights = pathTracing ? 0 : effects.localShadowMaps;
+    const std::uint32_t mapSize = std::clamp(settings.localShadowMapSize, 64u, 4096u);
+    const float cubeTan = 1.0f + 2.0f * kLocalShadowEdge / float(mapSize);
+    for (std::size_t i = 0; i < lightCount && int(stats.localShadowLights) < mapLights; ++i) {
+        shader::LocalLight& l = lu.lights[i];
+        const int type = int(l.color.w);
+        if ((type != 1 && type != 2) || !candidates[i].shadows) continue;
+        const glm::vec3 origin(l.positionRange);
+        const float range = l.positionRange.w;
+        const float near = std::min(std::max(l.cone.z, kLocalShadowNear * range), 0.5f * range);
+        const bool single = type == 2 && l.direction.w > kSpotMapMinCos;
+        const float spotTan = single ? std::tan(std::acos(l.direction.w)) * cubeTan : 0.0f;
+        const auto addMap = [&](const glm::vec3& forward, const glm::vec3& up, float tanHalf) {
+            const glm::mat4 viewProj = glm::perspectiveRH_ZO(2.0f * std::atan(tanHalf), 1.0f, near, range) *
+                                       glm::lookAtRH(origin, origin + forward, up);
+            localMaps.push_back({viewProj, frustumPlanes(viewProj)});
+        };
+        l.shape = glm::vec4(float(localMaps.size() + 1), spotTan, near, 0.0f);
+        l.cone.y = float(stats.localShadowLights + 1); // a channel, as the traced shadows have
+        if (single) {
+            // The up vector of quenchLocalShadow (quench/Shadows.hlsli).
+            const glm::vec3 forward(l.direction);
+            addMap(forward, std::abs(forward.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0), spotTan);
+        } else {
+            // +x, -x, +y, -y, +z, -z with quenchLocalShadow's up vectors.
+            for (int f = 0; f < 6; ++f) {
+                glm::vec3 forward(0.0f);
+                forward[f / 2] = f % 2 == 0 ? 1.0f : -1.0f;
+                addMap(forward, f / 2 == 1 ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0), cubeTan);
+            }
+        }
+        ++stats.localShadowLights;
+    }
+    if (!localMaps.empty() && !ensureLocalShadowMaps(mapSize, std::uint32_t(localMaps.size()))) {
+        for (std::size_t i = 0; i < lightCount; ++i)
+            if (!candidates[i].area && lu.lights[i].shape.x > 0.0f) {
+                lu.lights[i].shape = glm::vec4(0.0f);
+                lu.lights[i].cone.y = 0.0f;
+            }
+        localMaps.clear();
+        stats.localShadowLights = 0;
+    }
+    if (mapLights == 0) localShadowMap = {};
+    stats.localShadowMaps = std::uint32_t(localMaps.size());
+    if (!localMaps.empty())
+        fu.localShadows = glm::vec4(float(mapSize), 1.0f / float(mapSize), kLocalShadowNormalOffset, cubeTan);
     bool rayTraced = anyTraced();
     // Hits are shaded (not only tested for shadows): every visible instance is in the top level, with its material.
     const bool hitData = rayReflections || probes || pathTracing;
@@ -1615,6 +1718,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     moved.clear();
     for (auto& s : shadowItems) s.clear();
     for (auto& s : transmittanceItems) s.clear();
+    for (std::size_t f = 0; f < localMaps.size(); ++f) localShadowItems[f].clear();
     if (effects.translucentShadows != TranslucentShadows::Map) transmittanceMap = {};
     const std::uint32_t slots = scene.instances.capacity();
     normalMatrices.resize(slots);
@@ -1645,12 +1749,15 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         const glm::vec3 center(model * glm::vec4(inst->center, 1.0f));
         const float radius = inst->radius * maxScale(model);
         const bool inView = sphereVisible(planes, center, radius);
-        const bool needNormal = inView || (cascades > 0 && inst->desc.castsShadows);
+        const bool needNormal = inView || ((cascades > 0 || !localMaps.empty()) && inst->desc.castsShadows);
         if (needNormal) normalMatrices[i] = glm::transpose(glm::inverse(model));
         if (inView) {
-            const bool basic =
-                areaCount == 0 && !(m.anisotropy > 0.0f) && material->light == 0 && surface->basicFragment;
-            const std::uint32_t variant = variantOf(m.blend, m.doubleSided, basic);
+            const Shading shading =
+                !localMaps.empty() && surface->localShadowFragment ? Shading::LocalShadows
+                : areaCount == 0 && !(m.anisotropy > 0.0f) && material->light == 0 && surface->basicFragment
+                    ? Shading::Basic
+                    : Shading::Full;
+            const std::uint32_t variant = variantOf(m.blend, m.doubleSided, shading);
             const gpu::GraphicsPipeline* pipeline = surfacePipeline(*surface, variant);
             if (pipeline) {
                 const bool skinnedHere = skinnedOffset(*inst, i, *mesh) != kNotSkinned;
@@ -1662,7 +1769,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                     item.depthMaterial = gbuffer || cutOut;
                 }
                 if (m.blend == BlendMode::Opaque) {
-                    item.key = (std::uint64_t(surfaceIndex & 0xfff) << 52) | (std::uint64_t(variant) << 48) |
+                    item.key = (std::uint64_t(surfaceIndex & 0x7ff) << 53) | (std::uint64_t(variant) << 48) |
                                (std::uint64_t(inst->desc.material.index & 0xffffff) << 24) |
                                std::uint64_t(inst->desc.mesh.index & 0xffffff);
                     opaque.push_back(item);
@@ -1689,12 +1796,32 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 rayCasters.push_back({i, inst, mesh, material, {}, caster, translucent, m.doubleSided});
             }
         }
-        if (cascades == 0 || !inst->desc.castsShadows || shadowMode == ShadowMode::None) continue;
+        if (!inst->desc.castsShadows || shadowMode == ShadowMode::None) continue;
         // Plain casters write depth with the position only; cut-out ones (and translucent ones dithered into the
         // depth) run the surface to discard; translucent ones go into the transmittance maps.
         const std::uint64_t materialKey = std::uint64_t(inst->desc.material.index & 0xffffff) << 24;
         const std::uint64_t meshKey = std::uint64_t(inst->desc.mesh.index & 0xffffff);
         const bool translucent = shadowMode == ShadowMode::Translucent;
+        if (!localMaps.empty()) {
+            // The local lights' maps have no transmittance: translucent casters are dithered into them.
+            Item local{0, 0.0f, i, nullptr, true};
+            if (translucent || m.alphaCutoff > 0.0f) {
+                local.pipeline = surfaceMaskPipeline(*surface);
+                local.key =
+                    (std::uint64_t(1) << 62) | (std::uint64_t(surfaceIndex & 0xfff) << 48) | materialKey | meshKey;
+            } else {
+                local.pipeline = surfaceShadowPipeline(*surface, m.doubleSided);
+                local.key = (std::uint64_t(surface->shadowVertex ? surfaceIndex : 0) << 49) |
+                            (std::uint64_t(m.doubleSided ? 1 : 0) << 48) | meshKey;
+                local.material = false;
+            }
+            for (std::size_t f = 0; local.pipeline && f < localMaps.size(); ++f) {
+                if (!sphereVisible(localMaps[f].planes, center, radius)) continue;
+                skinnedOffset(*inst, i, *mesh);
+                localShadowItems[f].push_back(local);
+            }
+        }
+        if (cascades == 0) continue;
         const bool mapped = translucent && effects.translucentShadows == TranslucentShadows::Map;
         if (mapped && !ensureTransmittance()) continue;
         Item item{0, 0.0f, i, nullptr, true};
@@ -1753,6 +1880,11 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     if (transmittanceMask != 0)
         fu.shadowTransmittance =
             glm::vec4(float(transmittanceMask), 1.0f / float(transmittanceMap.desc().width), 0.0f, 0.0f);
+    for (std::size_t f = 0; f < localMaps.size(); ++f) {
+        std::sort(localShadowItems[f].begin(), localShadowItems[f].end(), byKey);
+        buildBatches(scene, localShadowItems[f], localShadowBatches[f]);
+        stats.localShadowInstances += std::uint32_t(localShadowItems[f].size());
+    }
     velocityData.clear();
     velocityBatches.clear();
     velocityCutoutBatches.clear();
@@ -1843,9 +1975,9 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     commands.pushUniforms(kFragment, 1, lu);
 
     // cascade: the shadow map layer the batches are drawn into; -1: the camera's passes. prepass: the batches'
-    // depth pipelines (the ray tracing prepass).
+    // depth pipelines (the ray tracing prepass). localMap: a local light's shadow map (projected as cascade 0).
     const auto drawBatches = [&](gpu::RenderPass& pass, const std::vector<Batch>& batches, int cascade,
-                                 std::uint32_t& counter, bool prepass = false) {
+                                 std::uint32_t& counter, bool prepass = false, bool localMap = false) {
         const bool shadowPass = cascade >= 0;
         const gpu::GraphicsPipeline* pipeline = nullptr;
         const MaterialEntry* material = nullptr;
@@ -1859,7 +1991,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             }
             const MaterialEntry* batchMaterial = prepass && !b.depthMaterial ? nullptr : b.material;
             if (batchMaterial && batchMaterial != material) {
-                bindMaterial(pass, scene, *batchMaterial, shadowPass);
+                bindMaterial(pass, scene, *batchMaterial, shadowPass, localMap);
                 material = batchMaterial;
             }
             if (b.vertices.buffer) {
@@ -2017,6 +2149,30 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         tpass.end();
     }
     commands.endTiming();
+    // ---- 1b. The local lights' shadow maps: each drawn as cascade 0 of a frame with the map's projection.
+    if (!localMaps.empty()) {
+        commands.beginTiming("local_shadows");
+        shader::FrameUniforms mapFrame = fu;
+        for (std::size_t f = 0; f < localMaps.size(); ++f) {
+            const gpu::DepthTarget dt{.texture = localShadowMap,
+                                      .layer = std::uint32_t(f),
+                                      .store = gpu::StoreOp::Store,
+                                      .clearDepth = 1.0f,
+                                      .cycle = f == 0};
+            gpu::RenderPass pass = commands.beginRenderPass(std::span<const gpu::ColorTarget>{}, &dt);
+            if (!pass) continue;
+            mapFrame.shadowViewProj[0] = localMaps[f].viewProj;
+            pass.pushUniforms(kVertex, 0, mapFrame);
+            pass.pushUniforms(kFragment, 0, mapFrame);
+            pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
+            pass.bindSampler(kFragment, 0, noShadowBinding);
+            drawBatches(pass, localShadowBatches[f], 0, stats.localShadowDraws, false, true);
+            pass.end();
+        }
+        commands.pushUniforms(kVertex, 0, fu);
+        commands.pushUniforms(kFragment, 0, fu);
+        commands.endTiming();
+    }
 
     // ---- 2. HDR pass: opaque surfaces, game passes, sky, transparent surfaces
     bool hasLaterPasses = false;
@@ -2075,6 +2231,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (pass) {
             const gpu::TextureSamplerBinding shadowBinding{
                 shadow.count > 0 ? gpu::TextureRef(shadowMap) : gpu::TextureRef(dummyShadow), shadowSampler};
+            const gpu::TextureSamplerBinding localMapBinding{
+                !localMaps.empty() ? gpu::TextureRef(localShadowMap) : gpu::TextureRef(dummyShadow), shadowSampler};
             const gpu::TextureSamplerBinding transmittanceBinding{
                 transmittanceMask != 0 ? gpu::TextureRef(transmittanceMap) : gpu::TextureRef(dummyTransmittance),
                 linearClamp};
@@ -2103,6 +2261,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.bindSamplers(kFragment, 6, opaqueSurfaces ? opaqueTraced : noTraced);
                 pass.bindSamplers(kFragment, 10, probeBindings);
                 pass.bindSampler(kFragment, 12, {areaTable, pointClamp});
+                pass.bindSampler(kFragment, 13, localMapBinding);
                 pass.bindStorageBuffers(kVertex, 0, {&instances, 1});
             };
             bindFrame(true);
@@ -2361,6 +2520,7 @@ Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
     if (!desc.vertexShader || !desc.fragmentShader || desc.vertexShader->stage != ShaderStage::Vertex ||
         desc.fragmentShader->stage != ShaderStage::Fragment ||
         (desc.basicFragmentShader && desc.basicFragmentShader->stage != ShaderStage::Fragment) ||
+        (desc.localShadowFragmentShader && desc.localShadowFragmentShader->stage != ShaderStage::Fragment) ||
         (desc.shadowVertexShader && desc.shadowVertexShader->stage != ShaderStage::Vertex) ||
         (desc.shadowFragmentShader && desc.shadowFragmentShader->stage != ShaderStage::Fragment) ||
         (desc.transmittanceShader && desc.transmittanceShader->stage != ShaderStage::Fragment) ||
@@ -2370,13 +2530,15 @@ Result<SurfaceId> Renderer::addSurface(const SurfaceDesc& desc) {
     entry.vertex = desc.vertexShader;
     entry.fragment = desc.fragmentShader;
     entry.basicFragment = desc.basicFragmentShader;
+    entry.localShadowFragment = desc.localShadowFragmentShader;
     entry.shadowVertex = desc.shadowVertexShader;
     entry.shadowFragment = desc.shadowFragmentShader;
     entry.transmittanceFragment = desc.transmittanceShader;
     entry.gbufferFragment = desc.gbufferShader;
     entry.name = name;
-    if (!m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false, false)) ||
-        (entry.basicFragment && !m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false, true))))
+    if (!m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false, detail::Shading::Full)) ||
+        (entry.basicFragment &&
+         !m_impl->surfacePipeline(entry, detail::variantOf(BlendMode::Opaque, false, detail::Shading::Basic))))
         return Error{std::format("surface '{}': the pipeline could not be created (logged)", name)};
     return m_impl->surfaces.add(std::move(entry));
 }

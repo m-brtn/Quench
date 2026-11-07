@@ -504,7 +504,9 @@ public:
         if (e.pathTracer)
             ImGui::TextWrapped("%u samples; everything stands still while it runs", c.renderer.stats().pathSamples);
         ImGui::SliderInt("Lamp shadows", &settings.localLightShadows, 0, kMaxRayLocalShadows);
-        if (settings.localLightShadows > 0 && e.localLightShadows == 0) ImGui::TextDisabled("  fallback: unshadowed");
+        if (settings.localLightShadows > 0 && e.localLightShadows == 0)
+            ImGui::TextDisabled(e.localShadowMaps > 0 ? "  fallback: shadow maps (the area lights unshadowed)"
+                                                      : "  fallback: unshadowed");
         bool reflections = settings.reflections == Reflections::RayTraced;
         if (ImGui::Checkbox("Traced reflections", &reflections))
             settings.reflections = reflections ? Reflections::RayTraced : Reflections::Sky;

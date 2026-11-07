@@ -35,6 +35,7 @@ enum class GraphicsOption : std::uint8_t {
     OcclusionRadius,
     OcclusionStrength,
     LocalShadows,
+    LocalShadowMaps,
     Reflections,
     ReflectionRoughness,
     IndirectLight,

@@ -105,6 +105,16 @@ constexpr std::array<OptionInfo, kGraphicsOptions> kOptions{{
     {O::OcclusionStrength, "ao_strength", "occlusion strength", "AO strength", Kind::Number, 0, 1},
     {O::LocalShadows, "local_shadows", "local light shadows", "Local shadows", Kind::Integer, 0,
      render::kMaxRayLocalShadows},
+    // RenderSettings::localShadowMapSize: off, 256, 512 or 1024.
+    {O::LocalShadowMaps,
+     "local_shadow_maps",
+     "local light shadow maps",
+     "Shadow maps",
+     Kind::Choice,
+     0,
+     3,
+     {"off", "256", "512", "1024"},
+     {"Off (unshadowed)", "256", "512", "1024"}},
     {O::Reflections,
      "reflections",
      "reflections",
@@ -184,6 +194,7 @@ void setValue(RenderSettings& s, GraphicsOption option, double v) {
     case O::OcclusionRadius: s.occlusionRadius = float(v); break;
     case O::OcclusionStrength: s.occlusionStrength = float(v); break;
     case O::LocalShadows: s.localLightShadows = int(v); break;
+    case O::LocalShadowMaps: s.localShadowMapSize = v < 0.5 ? 0u : 128u << std::clamp(int(v), 1, 3); break;
     case O::Reflections: s.reflections = render::Reflections(int(v)); break;
     case O::ReflectionRoughness: s.reflectionRoughness = float(v); break;
     case O::IndirectLight: s.indirectLight = render::IndirectLight(int(v)); break;
@@ -375,6 +386,11 @@ double graphicsValue(const RenderSettings& s, GraphicsOption option) {
     case O::OcclusionRadius: return double(s.occlusionRadius);
     case O::OcclusionStrength: return double(s.occlusionStrength);
     case O::LocalShadows: return double(s.localLightShadows);
+    case O::LocalShadowMaps:
+        return s.localShadowMapSize >= 1024  ? 3.0
+               : s.localShadowMapSize >= 512 ? 2.0
+               : s.localShadowMapSize > 0    ? 1.0
+                                             : 0.0;
     case O::Reflections: return double(int(s.reflections));
     case O::ReflectionRoughness: return double(s.reflectionRoughness);
     case O::IndirectLight: return double(int(s.indirectLight));
@@ -688,12 +704,21 @@ void DemoGame::graphicsContents(App& app, bool sheet) {
         const std::string whyNot = caps.rayTracing ? std::string() : std::string(rayTracingWhyNot(caps));
         rows.row(O::LocalShadows, [&] { return sliderInt(s.localLightShadows, 0, render::kMaxRayLocalShadows); });
         if (s.localLightShadows > 0 && e.localLightShadows == 0)
-            note(std::format("-> unshadowed: {}", caps.rayTracing
-                                                      ? reason("ray-traced local light shadows", "no ray tracing here")
-                                                      : whyNot),
-                 true);
+            note(
+                std::format("-> {}: {}", e.localShadowMaps > 0 ? "shadow maps" : "unshadowed",
+                            caps.rayTracing ? reason("ray-traced local light shadows", "no ray tracing here") : whyNot),
+                true);
         else if (e.localLightShadows > 0)
             note(std::format("The {} nearest point and spot lights that cast shadows", e.localLightShadows), false);
+        rows.row(O::LocalShadowMaps,
+                 [&] { return combo(O::LocalShadowMaps, int(graphicsValue(s, O::LocalShadowMaps))); });
+        if (e.localShadowMaps > 0)
+            note(std::format("{} lights with {} maps this frame (a spot light one, a point light six); area lights "
+                             "unshadowed",
+                             stats.localShadowLights, stats.localShadowMaps),
+                 false);
+        else
+            note("Where local light shadows cannot be ray traced", false);
         rows.row(O::Reflections, [&] { return combo(O::Reflections, int(s.reflections)); });
         if (s.reflections == render::Reflections::RayTraced && e.reflections != render::Reflections::RayTraced)
             note(std::format("-> the sky's: {}",

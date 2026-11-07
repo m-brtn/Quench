@@ -106,7 +106,8 @@ buffers), `accel` (acceleration structure builds, refits and compactions; inside
 `tlas`, the top level), `prepass` (the depth prepass for the
 rays, with the G-buffer, the motion vectors and the denoising upscaler's inputs where those are needed), `raytrace`
 (with `rays` (sun, occlusion and local light shadows), `denoise`, `probes`, `reflections` and `indirect` inside; the
-last two include their own filters), `path` (the path tracer), `shadows` (all cascades), `hdr` (the main pass with
+last two include their own filters), `path` (the path tracer), `shadows` (all cascades), `local_shadows` (the local
+lights' shadow maps, where they are not traced), `hdr` (the main pass with
 the sky), `taa`, `upscale` (MetalFX), `bloom` and `tonemap`; the ray tracing and MetalFX ranges only where those
 run. A range's time is its busy
 time: how long any stage of its passes ran, from timestamps at the stage boundaries.
@@ -315,6 +316,46 @@ On a phone (not run yet): the iPhone 17 measured the probe grid at 3.3 ms of `pr
 and 1/2 to about 1.9 ms; that is an estimate. Proposed for the ray tracing section's phone defaults, not set: the
 probe grid on in 4 turns at half size, at 60 Hz, if `scenarios/raytracing_phone_probes.txt` shows it fits the
 16.7 ms frame with room (light then settles within 10 % in about 4.6 s); else 2 turns or off as now.
+
+### Local light shadow maps
+
+`RenderSettings::localShadowMapSize` ([Render module](render.md#local-light-shadow-maps)). 2026-11-07 07:28-07:33,
+Release, Mac (Apple M4 Pro), **offscreen** at 1920 x 1080 (`--frame-size 1920x1080 --audio-device null --script`,
+unpaced), 4 s regions after a second each, thermal state nominal.
+
+**Frames without maps** (the 5% rule and "no cost where unused"): the commit before (`fbb8fb4`) and this change
+alternating, two pairs per backend; the demo's materials and shadows sections, the ray tracing section and the
+tunnel at their defaults (on the native backend traced, so no maps anywhere). Native backend, GPU busy time p50 of
+`hdr`, ms; SDL GPU, frame p50 and CPU p50, ms:
+
+| Section | native `hdr` before | after | SDL GPU frame before | after | SDL GPU CPU before | after |
+|---|---|---|---|---|---|---|
+| materials | 0.932, 0.931 | 0.932, 0.933 | 1.648, 1.648 | 1.671, 1.651 | 0.466, 0.470 | 0.465, 0.449 |
+| shadows | 0.644, 0.643 | 0.643, 0.643 | 1.325, 1.313 | 1.331, 1.318 | 0.425, 0.443 | 0.291, 0.430 |
+| ray tracing | 0.765, 0.765 | 0.765, 0.765 | 1.585, 1.599 | 1.582, 1.581 | 0.544, 0.586 | 0.571, 0.592 |
+| tunnel | 1.995, 1.995 | 1.990, 1.990 | 0.956, 0.977 | 0.963, 0.993 | 0.596, 0.581 | 0.606, 0.582 |
+
+(The SDL GPU tunnel's frame p50 is bimodal, p10 0.53 against p50 0.96, and says little.) Two earlier versions of
+the lookup cost frames without maps: inside the light loop of `surface_fs` 3.4 % of the materials section's `hdr`
+(0.962 against 0.930), and outside the loop but in `surface_fs` 3.2 % of the tunnel's (2.057 against 1.992), so the
+maps have their own variant, `surface_local_shadows_fs`.
+
+**Frames with maps** (SDL GPU's Metal driver, the ray tracing section at full size with bilinear scaling, its point
+lamp (6 maps) and spot lamp (1 map); the tunnel's two spot lamps, 1 map each; two runs):
+
+| Region | frame p50 | CPU p50 | SDL GPU's GPU time p50 |
+|---|---|---|---|
+| ray tracing section, lamps without shadows | 2.018, 2.071 | 0.623, 0.632 | 5.437, 5.604 |
+| the same, maps of 256 | 2.444, 2.408 | 0.749, 0.779 | 6.629, 6.458 |
+| the same, maps of 512 | 2.405, 2.382 | 0.765, 0.731 | 6.475, 6.429 |
+| the same, maps of 1024 | 2.476, 2.425 | 0.772, 0.786 | 6.704, 6.480 |
+| tunnel, lamps without shadows | (bimodal) | 0.675, 0.654 | 11.961, 11.396 |
+| the same, maps of 512 | (bimodal) | 0.717, 0.660 | 12.711, 12.634 |
+
+Seven maps add 0.3 to 0.4 ms to the frame and 0.1 to 0.15 ms of CPU time (seven depth passes with their culling and
+draws); the size matters little at these counts of casters. The native backend's timed range `local_shadows`
+splits it per pass where it runs, but on the Mac the native backend traces these shadows instead. Not measured on
+a phone (the reason to have the maps: phones on the default SDL GPU backend).
 
 ### On the screen after the bug packages
 

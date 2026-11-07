@@ -22,6 +22,9 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
                              ? AmbientOcclusion::RayTraced
                              : AmbientOcclusion::None;
     e.localLightShadows = support.rayTracing ? std::clamp(settings.localLightShadows, 0, kMaxRayLocalShadows) : 0;
+    e.localShadowMaps = !support.rayTracing && support.shadowArray && settings.localShadowMapSize > 0
+                            ? std::clamp(settings.localLightShadows, 0, kMaxRayLocalShadows)
+                            : 0;
     const bool lighting = support.rayTracing && support.rayLighting;
     e.reflections = lighting ? settings.reflections : Reflections::Sky;
     e.indirectLight = lighting ? settings.indirectLight : IndirectLight::Sky;

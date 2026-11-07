@@ -291,8 +291,10 @@ are noted below.
   creates their pipelines only where `Caps::rayTracing` holds, so the other backends never load them.
 - **Fallback slots** in `render::RenderSettings` and `render::ActiveEffects`: `SunShadows::ShadowMaps | RayTraced`
   (shadow maps are the fallback and stay the default until the user has looked at the traced ones on the iPhone),
-  `AmbientOcclusion::None | RayTraced`, and since stage 11 `localLightShadows` (unshadowed without rays; since
-  stage 12 also the area lights' soft shadows),
+  `AmbientOcclusion::None | RayTraced`, and since stage 11 `localLightShadows` (unshadowed without rays, or since
+  2026-11-07 shadow maps for its point and spot lights where `localShadowMapSize` asks for them, drawn through a
+  surface variant of their own so that frames without them pay nothing; since stage 12 also the area lights' soft
+  shadows, unshadowed without rays),
   `Reflections::Sky | RayTraced`, `IndirectLight::Sky | Probes | RayTraced` (the sky's ambient values without rays),
   `RayDenoiser::Spatial | Temporal` and `pathTracer`. Without the capability the renderer takes the fallback and logs
   why, as for TAA and depth clamp ([Render module](render.md#fallbacks)). The screen-space fallbacks the design

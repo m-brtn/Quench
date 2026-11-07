@@ -1971,6 +1971,124 @@ QUENCH_TEST(renderer_ray_traced_local_light_shadows) {
           "the open ground is as lit with shadows: %d vs %d", sum(at(traced, lit)), sum(at(open, lit)));
 }
 
+// Local light shadows without ray tracing: a point light low over the ground on the left (its +x, -y and -z maps each
+// have a caster) and a tilted spot light on the right (one map, the second light's layers). Where rays run, the same
+// shadows are traced, and the checks hold for them too.
+QUENCH_TEST(renderer_local_light_shadow_maps) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.localLightShadows = 2;
+    settings.localShadowMapSize = 512;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    const bool maps = renderer->effects().localShadowMaps > 0;
+    std::printf("  %s\n", maps ? "shadow maps" : "ray traced");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(12.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.15f)));
+    const MeshId plate = addMesh(scene, boxMesh(glm::vec3(0.15f, 0.01f, 0.15f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.6f, 0.6f, 0.6f, 1.0f), .roughness = 0.9f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    const auto place = [&](MeshId mesh, glm::vec3 p) {
+        scene.addInstance({.mesh = mesh, .material = grey, .transform = glm::translate(glm::mat4(1.0f), p)});
+    };
+    const glm::vec3 pointAt(-2.5f, 1.0f, 0.0f), spotAt(2.0f, 3.0f, 0.0f);
+    const glm::vec3 spotDir = glm::normalize(glm::vec3(0.25f, -1.0f, 0.0f));
+    // Each caster halfway between its light and the ground point it shadows.
+    const glm::vec3 plusX(-1.0f, 0, 0), minusY(-2.5f, 0, 0.4f), minusZ(-2.5f, 0, -1.5f), spotted(2.75f, 0, 0.8f);
+    place(box, 0.5f * (pointAt + plusX));
+    place(plate, {-2.5f, 0.75f, 0.0f});
+    place(box, 0.5f * (pointAt + minusZ));
+    place(box, 0.5f * (spotAt + spotted));
+    scene.addLight(
+        {.type = LightType::Point, .color = glm::vec3(1.0f), .intensity = 10.0f, .position = pointAt, .range = 3.5f});
+    scene.addLight({.type = LightType::Spot,
+                    .color = glm::vec3(1.0f),
+                    .intensity = 20.0f,
+                    .position = spotAt,
+                    .direction = spotDir,
+                    .range = 5.0f,
+                    .innerAngle = 0.35f,
+                    .outerAngle = 0.45f});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+
+    // The traced shadows settle over the temporal denoiser's history; the maps are there in the first frame.
+    const std::vector<Rgba8> shadowed = settle(device, *renderer, scene, kTopView, *target, maps ? 1 : 8);
+    REQUIRE(shadowed.size() == kSize * kSize, "%zu pixels", shadowed.size());
+    const RenderStats stats = renderer->stats();
+    if (maps) {
+        CHECK(stats.localShadowLights == 2 && stats.localShadowMaps == 7, "2 lights, 7 maps: %u, %u",
+              stats.localShadowLights, stats.localShadowMaps);
+        CHECK(stats.localShadowInstances >= 4 && stats.localShadowDraws > 0, "casters drawn: %u instances, %u draws",
+              stats.localShadowInstances, stats.localShadowDraws);
+    }
+    settings.localLightShadows = 0;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> open = settle(device, *renderer, scene, kTopView, *target, 2);
+    CHECK(renderer->stats().localShadowMaps == 0, "no maps without local light shadows: %u",
+          renderer->stats().localShadowMaps);
+
+    const auto value = [](const std::vector<Rgba8>& pixels, glm::vec3 p) {
+        return sum(at(pixels, pixelOf(kTopView, p)));
+    };
+    struct Spot {
+        const char* name;
+        glm::vec3 shadow, mirror; // the shadowed point and one lit alike without the caster
+    };
+    const Spot spots[] = {{"point +x", plusX, {-4.0f, 0, 0}},
+                          {"point -y", minusY, minusY},
+                          {"point -z", minusZ, {-2.5f, 0, 1.5f}},
+                          {"spot", spotted, {2.75f, 0, -0.8f}}};
+    for (const Spot& s : spots) {
+        const int dark = value(shadowed, s.shadow), unshadowed = value(open, s.shadow);
+        const int lit = value(shadowed, s.mirror), litOpen = value(open, s.mirror);
+        std::printf("  %s: shadow %d (unshadowed %d)", s.name, dark, unshadowed);
+        if (s.mirror != s.shadow) std::printf(", lit %d (unshadowed %d)", lit, litOpen);
+        std::printf("\n");
+        // The traced shadows of these small casters are blurred by the denoiser at this size: half as dark.
+        CHECK(dark * (maps ? 4 : 2) < unshadowed, "%s: shadowed %d vs unshadowed %d", s.name, dark, unshadowed);
+        if (s.mirror != s.shadow) {
+            CHECK(std::abs(unshadowed - litOpen) * 10 < litOpen, "%s: lit alike without shadows: %d vs %d", s.name,
+                  unshadowed, litOpen);
+            CHECK(std::abs(lit - litOpen) * 20 < litOpen, "%s: the open ground as lit with shadows: %d vs %d", s.name,
+                  lit, litOpen);
+        }
+    }
+    if (!maps) return;
+    // The open ground around the lights, near and far from them, on the edge of two of the point light's maps and in
+    // the corner of three: no acne, no seams.
+    int worst = 0;
+    for (const glm::vec3 p : {glm::vec3(-3.5f, 0, -0.5f), glm::vec3(-4.2f, 0, 1.0f), glm::vec3(-1.5f, 0, 1.2f),
+                              glm::vec3(-0.6f, 0, -1.0f), glm::vec3(-1.5f, 0, 0.9f), glm::vec3(-3.5f, 0, -1.0f),
+                              glm::vec3(2.0f, 0, -0.2f), glm::vec3(3.6f, 0, -0.6f), glm::vec3(3.0f, 0, 1.3f)}) {
+        const int a = value(shadowed, p), b = value(open, p);
+        worst = std::max(worst, std::abs(a - b));
+        CHECK(std::abs(a - b) * 20 <= b + 20, "open ground at (%.1f, %.1f): %d vs %d unshadowed", p.x, p.z, a, b);
+    }
+    std::printf("  open ground: largest difference %d\n", worst);
+
+    // One light with shadows: the nearest by the distance from the camera to its range, here the spot light.
+    settings.localLightShadows = 1;
+    renderer->setSettings(settings);
+    (void)renderOnce(device, *renderer, scene, kTopView, *target);
+    CHECK(renderer->stats().localShadowLights == 1 && renderer->stats().localShadowMaps == 1,
+          "the spot light's map only: %u lights, %u maps", renderer->stats().localShadowLights,
+          renderer->stats().localShadowMaps);
+    // Without a map size the lights are unshadowed, and the fallback says so.
+    settings.localLightShadows = 2;
+    settings.localShadowMapSize = 0;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> off = renderOnce(device, *renderer, scene, kTopView, *target);
+    CHECK(renderer->stats().localShadowMaps == 0 && renderer->effects().localShadowMaps == 0, "no maps at size 0");
+    CHECK(value(off, plusX) == value(open, plusX), "unshadowed at size 0: %d vs %d", value(off, plusX),
+          value(open, plusX));
+    bool named = false;
+    for (const std::string& f : renderer->fallbacks()) named = named || f.ends_with("; unshadowed");
+    CHECK(named, "the fallback names the unshadowed lights");
+}
+
 // Indirect light: the sun lights a red wall and the ground; the ground in front of the wall turns red with the probe
 // grid and with traced indirect light, not with the sky's (zero) ambient light.
 QUENCH_TEST(renderer_indirect_light_bounces) {

@@ -14,7 +14,8 @@
 //             samplers 6..9 the ray-traced sun visibility and occlusion, reflections, indirect light and local light
 //             shadows at the render size, samplers 10 and 11 the probe grid's irradiance and distance atlases
 //             (each read only where FrameUniforms::options.w says so), sampler 12 the table of the area lights
-//             (quench/AreaLights.hlsli, read where LightUniforms::count.y is not 0)
+//             (quench/AreaLights.hlsli, read where LightUniforms::count.y is not 0), sampler 13 the local lights'
+//             shadow maps (Texture2DArray<float>, read where FrameUniforms::localShadows.x is not 0)
 
 #include "quench/Shared.h"
 
@@ -71,6 +72,10 @@ struct QUENCH_ALIGN16 FrameUniforms {
     float4 probeAtlas;  // x: distance texels per probe side (with the border), y: the sampling bias (m), zw: unused
     // x: the roughness above which surfaces reflect the sky instead of the traced reflections, yzw: unused
     float4 rayLighting;
+    // The local lights' shadow maps (sampler 13): x: texels per side, y: 1 / x, z: the normal offset (texels), w: the
+    // tangent of half the field of view of a point light's six maps (a little over 1, so that the filter's taps at a
+    // map's edge stay inside it).
+    float4 localShadows;
 };
 
 // One registered instance in the frame's instance buffer.
@@ -105,11 +110,13 @@ struct QUENCH_ALIGN16 LocalLight {
     // disk: 1 when two-sided
     float4 direction;
     // x: spot: 1 / (cos inner - cos outer); rect: half width, disk: radius, tube: half length (m); y: the channel of
-    // its ray-traced shadow + 1 (0: none); z: point, spot: radius of the emitting sphere; rect: half height, tube:
-    // radius (m)
+    // its ray-traced shadow or of its shadow maps + 1 (0: none); z: point, spot: radius of the emitting sphere; rect:
+    // half height, tube: radius (m)
     float4 cone;
     // Area lights: xyz the unit tangent (rect: along the width, tube: the axis), w: 1 + the light's id (the id its
-    // shape's RayInstanceData refers to)
+    // shape's RayInstanceData refers to). Point and spot lights with shadow maps (FrameUniforms::localShadows): x: the
+    // layer of the first map + 1 (0: none), y: a spot light's one map: the tangent of half its field of view, 0: six
+    // maps (+x, -x, +y, -y, +z, -z), z: the maps' near plane (m), w: unused.
     float4 shape;
 };
 
