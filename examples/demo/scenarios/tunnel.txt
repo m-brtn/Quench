@@ -2,7 +2,7 @@
 # and two spots with ray-traced lamp shadows, traced reflections (the puddle, the metal) and the probe grid; lamp
 # groups turn off and on, the aluminium's anisotropy changes, the path tracer accumulates while nothing moves. The
 # capture is taken at 2.5 s at full size (bilinear, the engine's temporal denoiser) from the overview (Reset camera
-# ends the drive), the lamps standing at their clock's start. The fallbacks on SDL GPU run tunnel_fallback.txt, the
+# ends the drive), the lamps standing at their clock's start, 180 frames after a camera cut at 1 s. The fallbacks on SDL GPU run tunnel_fallback.txt, the
 # path tracer's reference tunnel_path.txt, the motion tunnel_motion.txt.
 section tunnel
 
@@ -47,7 +47,10 @@ set scale 1
 wait 0.05
 expect upscaling == 0
 expect render_scale == 1
-until time >= 2.5 3
+# A second cut at a fixed time: the frames from it to the capture do not depend on how long the textures took.
+until time >= 1.0042 3
+reset_camera
+until time >= 2.5042 3
 windows off
 capture demo_tunnel_native.png
 windows on

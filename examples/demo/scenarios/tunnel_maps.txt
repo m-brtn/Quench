@@ -3,8 +3,8 @@
 # (localShadowMapSize 512, the panel's "Lamp shadow maps") for the four nearest lamps: the two floor strips and the
 # ceiling square (five maps each, one-sided) and the orange tube (six). They are read in a screen-space pass after a
 # depth prepass and are soft by each lamp's size: the crates, the plinth and the pillars throw soft shadows. The
-# capture is taken at 2.5 s from the overview with the lamps at their clock's start, as in tunnel_fallback.txt; the
-# maps are switched off again before the part ends.
+# capture is taken at 2.5 s from the overview with the lamps at their clock's start, 180 frames after a camera cut at
+# 1 s, as in tunnel_fallback.txt; the maps are switched off again before the part ends.
 section tunnel
 
 set dither 0
@@ -20,7 +20,10 @@ expect local_maps == 21
 expect local_map_draws > 0
 expect screen_prepass_draws > 0
 expect ray_instances == 0
-until time >= 2.5 3
+# A second cut at a fixed time: the frames from it to the capture do not depend on how long the textures took.
+until time >= 1.0042 3
+reset_camera
+until time >= 2.5042 3
 windows off
 capture demo_tunnel_maps.png
 windows on

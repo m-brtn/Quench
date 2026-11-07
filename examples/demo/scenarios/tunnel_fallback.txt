@@ -2,7 +2,7 @@
 # lights still light and shine (LTC: diffuse and specular) but cast no shadows, reflections are the night sky's,
 # indirect light its ambient light, and the path tracer falls back to the real-time frame; the renderer names each
 # fallback (Renderer::fallbacks). The capture is taken at 2.5 s from the overview, the lamps standing at their clock's
-# start, as in tunnel.txt.
+# start, 180 frames after a camera cut at 1 s, as in tunnel.txt.
 section tunnel
 
 set dither 0
@@ -33,7 +33,10 @@ set tubes 1
 set portal 1
 wait 0.05
 expect area_lights == 8
-until time >= 2.5 3
+# A second cut at a fixed time: the frames from it to the capture do not depend on how long the textures took.
+until time >= 1.0042 3
+reset_camera
+until time >= 2.5042 3
 windows off
 capture demo_tunnel.png
 windows on
