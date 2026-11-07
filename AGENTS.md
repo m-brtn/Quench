@@ -102,8 +102,8 @@ tests on both backends, 0 failed; the cost of each effect, about 3 times the M4 
 section defaults on phones chosen from them: half size with MetalFX spatial, no probe grid, 60 Hz), not on the
 iPhone 18 Pro Max; the user played with that section at its phone defaults on the iPhone 17 (2026-11-06: "it's
 fine"), nobody has looked at the other effects in motion. The default backend on Apple platforms is the native one
-since 2026-11-07 (the user's decision; checked on the Mac and in the iOS Simulator, not yet run as the default on
-an iPhone), SDL GPU
+since 2026-11-07 (the user's decision; checked on the Mac, in the iOS Simulator and on the iPhone 17, not yet on
+the iPhone 18 Pro Max or by eye on a phone), SDL GPU
 elsewhere; the default stays shadow maps, every stage 11 effect off, until the user has looked at them on the
 iPhone. The stage 12 area lights (the demo's
 tunnel, whose lamps move and whose camera drives a loop since the same day) ran on the Mac and on the iPhone 17

@@ -204,6 +204,82 @@ demo's Adapt to heat (Settings, off) uses them as they are, and its check mode h
 
 ## Measurements
 
+### The native default on the screen and on the iPhone 17
+
+2026-11-07 14:49-15:12, the code of `c42b2c5` (the native Metal backend as the default on Apple platforms), Release,
+no backend flag unless named.
+
+**hello on the Mac's screen** (14:49-14:50, Apple M4 Pro, the display at 60 Hz, `--onscreen --frame-size 1920x1080
+--audio-device null`, vsync, thermal nominal), the backends alternated; started once the 1-minute load average,
+raised by another agent's builds, had fallen below 4 (3.77 at the start, 3.00 at the end):
+
+| Run | Backend | Frames | Frame p50 / p99 | CPU p50 / p99 | On performance cores | GPU p50 / p95 |
+|---|---|---|---|---|---|---|
+| 1 | native (default) | 600 | 16.621 / 17.799 | 0.230 / 0.496 | 44 % | 0.549 / 0.575 |
+| 2 | SDL GPU | 601 | 16.637 / 17.737 | 0.235 / 0.507 | 37 % | 0.548 / 0.557 |
+| 3 | native (default) | 600 | 16.583 / 17.835 | 0.366 / 0.554 | 10 % | 0.549 / 0.556 |
+| 4 | SDL GPU | 601 | 16.607 / 17.827 | 0.361 / 0.517 | 7 % | 0.549 / 0.557 |
+
+The same GPU time on both backends, as in the earlier on-screen runs (0.550 ms on both at 120 Hz on 2026-11-06,
+0.551 to 0.552 ms on SDL GPU at 60 Hz, [below](#on-the-screen-after-the-bug-packages)). The CPU p50 of the two
+backends is within 2 % in each pair and follows the share on performance cores, not the backend (0.23 ms at 37 to
+44 %, 0.36 ms at 7 to 10 %); means of the two runs: p50 0.298 ms on both, p99 0.525 against 0.512 ms (+2.5 %). Two
+runs per backend, not the three of [Comparing runs](#comparing-runs). The native backend's ranges: `game` 0.342,
+`ui` 0.041, `blit` 0.203 ms. Within the Mac budget.
+
+**The iPhone 17** (A19, iOS 27.2, 1206 x 2622 in portrait, 120 Hz, `--audio-device null`, launched through
+`devicectl` on its cable, no validation layer in the demo; nobody looked at the screen during the runs; the device
+tests in [Platforms](platforms.md#native-metal-backend)). The benchmark of every section (14:58-15:00, `mode
+benchmark 5` in a copy of `benchmark_all.txt`, one run) against 2026-11-06 17:15-17:19 (`5aea212`, the 0.8.0 demo,
+`--benchmark-all` with the native backend by flag; [The iPhone 17 baseline](#the-iphone-17-baseline-stage-9-and-10-code)):
+
+| Section | Frames / 5 s | Frame p50 / p99 | CPU p50 / p99 | GPU p50 | 2026-11-06 CPU p50 / p99, GPU p50 |
+|---|---|---|---|---|---|
+| materials | 600 | 8.315 / 9.112 | 1.333 / 1.693 | 5.796 | 1.294 / 1.668, 5.825 |
+| shadows | 601 | 8.334 / 8.428 | 1.124 / 1.476 | 5.710 | 1.134 / 1.484, 5.693 |
+| sky | 601 | 8.333 / 8.956 | 1.097 / 1.397 | 5.748 | 1.036 / 1.444, 5.632 |
+| post | 601 | 8.335 / 8.422 | 1.150 / 1.427 | 5.711 | 1.188 / 1.532, 5.683 |
+| hdr | 601 | 8.334 / 8.448 | 1.130 / 1.398 | 5.698 | 1.126 / 1.444, 5.788 |
+| physics | 601 | 8.334 / 8.418 | 1.175 / 1.462 | 5.700 | 1.166 / 1.484, 5.803 |
+| input | 601 | 8.334 / 8.414 | 1.140 / 1.451 | 5.647 | 1.127 / 1.502, 5.761 |
+| assets | 601 | 8.335 / 8.441 | 1.244 / 1.531 | 5.749 | 1.280 / 1.696, 5.738 |
+| audio | 601 | 8.334 / 8.438 | 1.124 / 1.432 | 5.730 | 1.154 / 1.511, 5.795 |
+| animation | 601 | 8.334 / 8.437 | 1.913 / 2.206 | 5.773 | 1.783 / 2.890, 5.786 |
+| raytracing (phone defaults, 60 Hz) | 300 | 16.669 / 16.761 | 2.580 / 2.840 | 7.709 | full size then, not compared |
+| tunnel (phone defaults, 60 Hz; fair) | 300 | 16.670 / 16.760 | 2.168 / 2.502 | 8.670 | not run then |
+
+Thermal nominal in every section but the tunnel (fair from the ray tracing section's end). The two runs are two
+stages of code apart on the same backend, so they show the default holding the phone's numbers, not a same-build
+A/B; the animation section's CPU p50 +7.3 % (p99 lower) was not examined. `benchmark_all.txt` as it is (0.1 s per
+section, the form of the report) passed too.
+
+The cost of each effect (`raytracing_phone.txt`, 15:00-15:05, 5 passed, 0 failed) against 2026-11-06 18:42
+([Stage 11 on the iPhone](#stage-11-on-the-iphone), the native backend by flag): every region's `game` within 3 %
+but the first (`rt_shadows_ao` 10.971 against 11.604 ms, 376 frames in 4 s against 352), for example everything
+traced 34.952 against 34.370 ms, MetalFX spatial at 0.5 13.458 against 13.432 ms, the denoising upscaler at 0.67
+27.256 against 28.008 ms.
+
+The tunnel (`tunnel_phone.txt`, 15:05-15:12, 11 passed, 1 failed) against 2026-11-06 21:43
+([The tunnel in motion](#the-tunnel-in-motion)), GPU busy time in ms:
+
+| Region | Thermal | Frames | Frame p50 / p99 | CPU p50 / p99 | game | 2026-11-06 frames, game |
+|---|---|---|---|---|---|---|
+| the lamps unshadowed, MetalFX spatial at 0.5 | nominal | 469 / 4 s | 8.331 / 14.729 | 1.275 / 1.527 | 7.242 | 481, 5.463 |
+| two lamp shadows | nominal | 473 / 4 s | 8.328 / 13.888 | 1.763 / 2.019 | 7.969 | 457, 8.863 |
+| four lamp shadows | nominal | 419 / 4 s | 8.344 / 17.755 | 1.684 / 1.976 | 9.603 | 399, 10.250 |
+| everything traced | nominal | 171 / 4 s | 24.998 / 25.093 | 2.029 / 2.320 | 23.809 | 169, 23.961 |
+| the defaults at 60 Hz, 0-20 s | nominal | 1159 / 20 s | 16.669 / 16.763 | 2.108 / 2.433 | 7.986 | 1159, 7.986 |
+| the defaults at 60 Hz, 20-40 s | nominal | 1200 / 20 s | 16.668 / 16.753 | 1.756 / 2.009 | 15.167 | 1200, 15.165 |
+| the defaults in motion, 40-60 s | nominal -> fair | 1200 / 20 s | 16.669 / 16.761 | 1.741 / 2.006 | 15.259 | 1200, 15.253 |
+
+The minute at 60 Hz reads as on 2026-11-06, and every frame made its interval (max 16.820 ms), but the phone turned
+fair 56 s into it, and the scenario's check of the state after the motion failed (nominal throughout on 2026-11-06).
+This run came after about 15 minutes of other load on the phone and started at fair (2.5 minutes to nominal at 20
+frames per second); not repeated from a cold phone. The first two regions at about the display's rate read the
+clock, not costs (every range of the first 1.3 to 1.4 times the earlier run's); the slower ones are 0.6 to 6.3 %
+below 2026-11-06's. The captures (the defaults still and in motion, the path tracer) were copied from the phone and
+looked at.
+
 ### SDL GPU and the native backend, before it became the default
 
 2026-11-07 13:41-14:03, Release, Mac (Apple M4 Pro), **offscreen** (`--audio-device null --script`, frames not
@@ -256,8 +332,7 @@ buffers since ([Architecture](architecture.md#native-metal-backend)); after it, 
 footprint in the animation section (256 characters, 1920 x 1080): 504 to 505 MB on the native backend, 761 to
 763 MB on SDL GPU.
 
-Not measured on the screen (the hello benchmark on both backends at the display's rate is still to run, with
-`--onscreen`) or on an iPhone with the native backend as the default.
+On the screen and on the iPhone 17 with the native backend as the default: [above](#the-native-default-on-the-screen-and-on-the-iphone-17).
 
 ### Animation LOD
 

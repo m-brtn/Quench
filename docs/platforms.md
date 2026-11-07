@@ -36,8 +36,8 @@ on the iPhone (the device test app, 2026-11-06) and under Node.js; nothing was l
 skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator, on the iPhone (the device test app
 and the demo's benchmark, 2026-11-06) and (without rendering) under Node.js. The native Metal backend (stage 9, the
 default on Apple platforms since 2026-11-07; see "Native Metal backend" below) ran on the Mac, in the iOS Simulator
-and on the iPhone (2026-11-06, as an option; as the default on the Mac and in the iOS Simulator, not yet on an
-iPhone;
+and on the iPhone (2026-11-06, as an option; as the default on the Mac, in the iOS Simulator and on the iPhone 17
+(2026-11-07), not yet on the iPhone 18 Pro Max;
 it crashes in builds of the Xcode generator before the ARC fix of that day, the 0.8.0 iOS package among them). Its
 ray tracing and MetalFX (see "Hardware ray tracing" below) ran on the Mac and both iPhones; the stage 11 effects
 (0.9.0: local light shadows, reflections, indirect light, the temporal denoiser, MetalFX denoising, the path
@@ -53,7 +53,9 @@ tracing, MetalFX spatial, temporal and the denoised scaler); its GPU and CPU are
 occlusion at the native size: about 100 frames per second cold against 120; CPU about 1.5 times), its recommended
 working set is 5461 MB (8192 MB on the A20 Pro), and under sustained ray tracing it lowers its clocks within a
 minute (about 1.6 times every GPU range from the second minute on; serious after a 65 s benchmark, 5 to 11 minutes
-back to nominal).
+back to nominal). On 2026-11-07 (iOS 27.2 by then) it ran the code of `c42b2c5` with the native backend as the
+default: the device tests, hello, the demo's smoke run, its benchmark of every section and its ray tracing and
+tunnel phone scenarios, with the same numbers as before ([Performance](performance.md#the-native-default-on-the-screen-and-on-the-iphone-17)).
 
 | Platform | SDL GPU backend | Shader format | Run so far (engine) | Run so far (games) |
 |---|---|---|---|---|
@@ -175,16 +177,19 @@ the default on macOS, iOS and the iOS Simulator since 2026-11-07 (the user's dec
 `--gpu-backend sdl` or `QUENCH_GPU_BACKEND=sdl`, and for `--gpu-driver vulkan`). A native device that fails to start
 falls back to SDL GPU with one warning. Built for macOS and iOS (device and Simulator); nothing of it exists
 elsewhere, and a request for it there creates SDL GPU with a warning. As the default (no flag) it has run on the Mac
-(hello and the demo offscreen) and in the iOS Simulator (hello and the demo's smoke scenario, 17 of 17, with
-captures; 2026-11-07). The tests and batches name their backend, so it has not run as the default on an iPhone; the
-runs below chose it explicitly.
+(hello and the demo offscreen, hello's benchmark on the screen against SDL GPU: the same GPU time), in the iOS
+Simulator (hello and the demo's smoke scenario, 17 of 17, with captures) and on the iPhone 17 (the device tests,
+hello, the demo's smoke run and phone scenarios; all 2026-11-07,
+[Performance](performance.md#the-native-default-on-the-screen-and-on-the-iphone-17)). The Mac's tests and batches
+name their backend; the iPhone 18 Pro Max has run it only when chosen; nobody has looked at it as the default on
+a phone's screen yet.
 
 | Where | Run so far |
 |---|---|
 | Mac, M4 Pro | `gpu_metal_native.*` and `render_metal_native.*` with the Metal API validation layer; hello and every demo section's capture identical to the Metal golden images in Release (2026-11-06); the four swapchain compositions created and presented; `Caps::gpuPassTiming` true (timestamp period 1.0000 ns); `Caps::rayTracing`, `spatialUpscaling` and `temporalUpscaling` true; the ray tracing section against its own golden image; benchmarks in [Performance](performance.md#measurements) |
 | iOS Simulator (iPhone 18 Pro Max) | `gpu_metal_native.*` and `render_metal_native.*` in `ios-sim-tests` (the two window cases skipped as on SDL GPU: no app lifecycle in a test executable; since the second half also the ray tracing and upscaling cases); `Caps::gpuPassTiming` false (the Simulator's GPU has no stage boundary sampling), no depth clamp, no indirect draws, as on SDL GPU there; `rayTracing`, `spatialUpscaling`, `temporalUpscaling` false |
 | iPhone 18 Pro Max | `quench_device_tests` with the Metal API validation layer, 2026-11-06: 198 cases, 196 passed, 0 failed, 2 skipped (as on SDL GPU: the read-only bundle, the opt-in audio output), the window cases and the ray tracing and upscaling cases included; `Caps::gpuPassTiming`, `rayTracing`, `spatialUpscaling`, `temporalUpscaling` true; the demo's smoke run (15 of 15) and benchmarks ([Performance](performance.md#measurements)); not looked at on the screen yet. Builds of the Xcode generator before that day's fix crash at the first copy pass (see below) |
-| iPhone 17 (A19) | `quench_device_tests` with the Metal API validation layer, 2026-11-06: the stage 10 code 198 cases, 196 passed, 0 failed, 2 skipped; the stage 11 code 215 cases, 213 passed, 0 failed, 2 skipped (on SDL GPU 193 passed, 22 skipped: the ray tracing and MetalFX cases); the same caps as the iPhone 18 Pro Max; the demo's benchmarks and ray tracing runs ([Performance](performance.md#stage-11-on-the-iphone)); not looked at on the screen |
+| iPhone 17 (A19) | `quench_device_tests` with the Metal API validation layer, 2026-11-06: the stage 10 code 198 cases, 196 passed, 0 failed, 2 skipped; the stage 11 code 215 cases, 213 passed, 0 failed, 2 skipped (on SDL GPU 193 passed, 22 skipped: the ray tracing and MetalFX cases); the same caps as the iPhone 18 Pro Max; the demo's benchmarks and ray tracing runs ([Performance](performance.md#stage-11-on-the-iphone)); as the default (2026-11-07, iOS 27.2, `c42b2c5`, `MTL_DEBUG_LAYER=1 QUENCH_TEST_GPU_DRIVER=metal` without `QUENCH_GPU_BACKEND`): 262 cases, 258 passed, 0 failed, 4 skipped, every device native (SDL GPU by the variable: 232 passed, 0 failed, 30 skipped); hello and the demo's smoke run on it without a flag; not looked at on the screen |
 
 - **ARC in Xcode builds** (found on the iPhone, fixed 2026-11-06). The backend's Objective-C++ keeps Metal objects as
   strong members of plain C++ structs and needs ARC. It was enabled only by `-fobjc-arc` under

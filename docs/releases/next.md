@@ -124,6 +124,15 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
 - **The native backend as the default in the iOS Simulator** (iPhone 18 Pro Max Simulator, iOS 27.0, no backend
   flag): hello and the demo's smoke scenario (every section once, 17 of 17) ran on it, the ray tracing section and
   the tunnel with their fallbacks (no ray tracing there); the captures were looked at.
+- **The native backend as the default on the iPhone 17** (iOS 27.2, no backend flag; [Performance](../performance.md#the-native-default-on-the-screen-and-on-the-iphone-17)):
+  the device tests with the Metal API validation layer, 262 cases, 258 passed, 0 failed, 4 skipped (SDL GPU by
+  `QUENCH_GPU_BACKEND=sdl`: 232 passed, 0 failed, 30 skipped); hello and the demo's smoke run on it; every section
+  of the demo's benchmark but the two that trace held 120 Hz, GPU p50 as on 2026-11-06 and CPU p50 within -3 to
+  +7 % (0.8.0's demo then), and the ray tracing section and the tunnel held 60 Hz at their phone defaults; the costs
+  of the ray-traced effects within 3 % of 2026-11-06's but the first region's (5.5 % lower; the native backend by
+  flag then). Numbers only; nobody looked at the screen during the runs.
+- **The hello benchmark on the Mac's screen, both backends** (60 Hz, vsync, two runs each, alternated): GPU p50
+  0.549 ms on both; CPU p50 0.298 ms on both (means of the runs), p99 0.525 against 0.512 ms.
 - **Performance against SDL GPU** (offscreen, unpaced; [Performance](../performance.md#sdl-gpu-and-the-native-backend-before-it-became-the-default)):
   at 480 x 270 (CPU-bound) the native backend's CPU p50 is within -11 to +2 % of SDL GPU's without per-pass
   timestamps and +2 to +8.5 % (8 to 12 µs) with them, as in every perf region; the animation section 0.646 against
@@ -174,10 +183,11 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   limit frames, so the checks read `frame_rate_limit`, not the frame rate. Nobody has looked at the demo's
   Performance and Graphics lines on a phone.
 
-- **The native backend as the default on an iPhone:** the tests and batches name their backend, so no iPhone ran it
-  as the default (the iOS Simulator did), and nobody has looked at it on a phone's screen. The iPhone 18 Pro Max has not
-  run the ray tracing section's and the tunnel's phone defaults, which the demo now shows there without a flag
-  (the iPhone 17 has, 2026-11-06). The hello benchmark on the Mac's screen on both backends is still to run.
+- **The native backend as the default on the iPhone 18 Pro Max:** it ran there only when chosen, and nobody has
+  looked at the default on a phone's screen. The iPhone 18 Pro Max has not run the ray tracing section's and the
+  tunnel's phone defaults, which the demo now shows there without a flag (the iPhone 17 has). On the iPhone 17 the
+  tunnel's phone defaults turned the phone fair within their minute at 60 Hz in a run that followed a quarter of an
+  hour of other load (nominal on 2026-11-06); not repeated from a cold phone.
 - Per-pass timestamps cost the native backend 8 to 12 µs of CPU per frame, and 6.5 % of the frames in the animation
   section (perf regions and `App::requestPassTiming` only); `cycle` on a texture is still a no-op there.
 
