@@ -7,7 +7,9 @@
 // The rain (stage 13 part 2) at a place on the ground behind the sky view's camera: a paved square with a shelter, a
 // pond and a dark block behind them, wet where the rain reaches, puddles and rings on the water, the rain's streaks
 // and splashes, a rainbow in a sun shower, and the engine's rain sound (audio::WeatherAudio) by the rain at the camera,
-// the distance to the nearest rain and the roof over it.
+// the distance to the nearest rain and the roof over it. The snow (part 3) by the weather's temperature: flakes that
+// drift with the wind, a cover that builds on the paving, the roof and the crates while it snows (none under the
+// shelter) and melts in a thaw, and snow showers seen from the air.
 
 #include "Demo.h"
 
@@ -37,15 +39,26 @@ enum class Quality : int { Full, Reduced, Layer, Off };
 constexpr std::array<const char*, 4> kQualityNames{"Volumetric, full size", "Volumetric, half size", "2D layer", "Off"};
 constexpr std::array<const char*, 4> kQualityIds{"full", "reduced", "layer", "off"};
 constexpr std::array<const char*, 4> kTypeNames{"Stratus", "Cumulus", "Towering cumulus", "Cumulonimbus"};
-constexpr std::array<const char*, 9> kPresets{"fair",   "shower",    "towering", "storm",  "overcast",
-                                              "cirrus", "rain_here", "downpour", "passing"};
-constexpr std::array<const char*, 9> kPresetNames{"Fair weather", "Sun shower", "Towering", "Storm",         "Overcast",
-                                                  "Cirrus",       "Rain here",  "Downpour", "Passing shower"};
-enum class View : int { Sky, Ground, Cloud, Shelter };
-constexpr std::array<const char*, 4> kViewNames{"From the air", "On the ground", "Toward the cloud", "Under the roof"};
-constexpr std::array<const char*, 4> kViewIds{"sky", "ground", "cloud", "shelter"};
+constexpr std::array<const char*, 12> kPresets{"fair",     "shower",   "towering",  "storm",
+                                               "overcast", "cirrus",   "rain_here", "downpour",
+                                               "passing",  "snowfall", "thaw",      "snow_showers"};
+constexpr std::array<const char*, 12> kPresetNames{"Fair weather",   "Sun shower", "Towering",  "Storm",
+                                                   "Overcast",       "Cirrus",     "Rain here", "Downpour",
+                                                   "Passing shower", "Snowfall",   "Thaw",      "Snow showers"};
+enum class View : int { Sky, Ground, Cloud, Shelter, Above };
+constexpr std::array<const char*, 5> kViewNames{"From the air", "On the ground", "Toward the cloud", "Under the roof",
+                                                "Over the shelter"};
+constexpr std::array<const char*, 5> kViewIds{"sky", "ground", "cloud", "shelter", "above"};
 constexpr std::array<const char*, 4> kRainNames{"Off", "Low", "Medium", "High"};
 constexpr std::array<const char*, 4> kRainIds{"off", "low", "medium", "high"};
+// The weather's temperature at the ground in the rain and cloud presets (the standard atmosphere's), and in the snow
+// presets.
+constexpr float kMildTemperature = 15.0f;
+constexpr float kSnowTemperature = -4.0f;
+// The wind at the cloud base (m/s; about half of it near the ground): the presets', and a lighter one for the
+// snowfall and the thaw, so the flakes drift rather than race.
+constexpr float kWindSpeed = 12.0f;
+constexpr float kSnowWindSpeed = 2.0f;
 // The weather's clock at the start: the field after 20 minutes, so the clouds are not at their seed's first shape.
 constexpr double kStartTime = 1200.0;
 // The single raining cloud: ahead of the camera, right of the view's centre; its shadow falls ahead on the left.
@@ -67,6 +80,7 @@ public:
         settings.clearColor = glm::vec3(0.25f, 0.3f, 0.36f);
         settings.rain = Rain::Medium;
         settings.rainbow = true;
+        settings.snow = Snow::Medium;
         setView(View::Sky);
         applyQuality();
     }
@@ -78,7 +92,9 @@ public:
                "overcast deck, cirrus, a single raining cloud in a blue sky. Their shadows cross the plain, the sun "
                "dims and the light greys as the cover closes, the lake reflects them, and the sky's own light tints "
                "them at sunset. On the ground: rain only where a cloud rains, none under the roof, wet paving, "
-               "puddles and rings on the pond that dry after the shower, a rainbow, and the rain's sound.";
+               "puddles and rings on the pond that dry after the shower, a rainbow, and the rain's sound. Below "
+               "freezing it snows: flakes drifting in the wind, a cover building on the paving, the roof and the "
+               "crates but not under the roof, melting in a thaw, and snow showers seen from the air.";
     }
 
     Result<void> init(Context& c) override {
@@ -91,6 +107,7 @@ public:
             m_limit60 = true;
             settings.rain = Rain::Low;
             settings.rainShafts = false;
+            settings.snow = Snow::Low;
             applyQuality();
         }
         m_scene.emplace(c.app.device());
@@ -228,6 +245,7 @@ public:
         changed |= ImGui::SliderFloat("Cirrus", &w.cirrus, 0.0f, 1.0f);
         bool shower = m_shower != wx::kNoCell;
         if (ImGui::Checkbox("A raining cumulonimbus", &shower)) setShower(shower);
+        changed |= ImGui::SliderFloat("Temperature (C)", &w.temperature, -15.0f, 25.0f, "%.1f");
         ImGui::Separator();
         changed |= ImGui::SliderFloat("Wind (m/s)", &w.wind.speed, 0.0f, 40.0f, "%.0f");
         if (ImGui::SliderFloat("Wind from (deg)", &m_windFrom, 0.0f, 360.0f, "%.0f")) {
@@ -262,6 +280,9 @@ public:
         int rain = int(settings.rain);
         ImGui::SetNextItemWidth(itemWidth());
         if (ImGui::Combo("Rain", &rain, kRainNames.data(), int(kRainNames.size()))) settings.rain = Rain(rain);
+        int snow = int(settings.snow);
+        ImGui::SetNextItemWidth(itemWidth());
+        if (ImGui::Combo("Snow", &snow, kRainNames.data(), int(kRainNames.size()))) settings.snow = Snow(snow);
         ImGui::Checkbox("Rain shafts", &settings.rainShafts);
         ImGui::SameLine();
         ImGui::Checkbox("Rainbow", &settings.rainbow);
@@ -284,12 +305,19 @@ public:
         ImGui::TextWrapped("Precipitation at the camera %.2f, nearest rain %.1f km away", double(rainHere()),
                            double(m_rainDistance) / 1000.0);
         const wx::Wetness wet = m_weather.wetness(cameraGround());
-        ImGui::TextWrapped("Ground wetness %.2f, standing water %.2f", double(wet.ground), double(wet.water));
+        ImGui::TextWrapped("Ground wetness %.2f, standing water %.2f, snow cover %.2f", double(wet.ground),
+                           double(wet.water), double(wet.snow));
+        ImGui::TextWrapped("%.1f C at the camera, %.0f %% of the precipitation as snow",
+                           double(m_weather.temperature(camera.eye())),
+                           double(m_weather.snowShare(camera.eye())) * 100.0);
         if (m_stats.rain != Rain::Off)
             ImGui::TextWrapped("Rain %s: %u streaks, %u splashes, %u objects in the rain map, cover %.2f%s%s",
                                kRainNames[std::size_t(m_stats.rain)], m_stats.rainStreaks, m_stats.rainSplashes,
                                m_stats.rainOccluders, double(std::max(m_stats.rainCover, 0.0f)),
                                m_stats.rainShafts ? ", shafts" : "", m_stats.rainbow ? ", rainbow" : "");
+        if (m_stats.snow != Snow::Off)
+            ImGui::TextWrapped("Snow %s: %u flakes, snowfall %.2f at the camera", kRainNames[std::size_t(m_stats.snow)],
+                               m_stats.snowFlakes, double(m_stats.snowAtCamera));
         if (m_sound && m_sound->enabled())
             ImGui::TextWrapped("Rain sound: light %.2f, heavy %.2f, far %.2f, on the roof %.2f",
                                double(m_sound->gain(audio::WeatherLayer::RainLight)),
@@ -333,6 +361,12 @@ public:
         if (name == "rainbow") return m_stats.rainbow ? 1.0 : 0.0;
         if (name == "wetness") return double(m_weather.wetness(cameraGround()).ground);
         if (name == "standing_water") return double(m_weather.wetness(cameraGround()).water);
+        if (name == "snow") return double(int(m_stats.snow));
+        if (name == "snow_at_camera") return double(m_stats.snowAtCamera);
+        if (name == "snow_share") return double(m_stats.snowShareAtCamera);
+        if (name == "snow_flakes") return double(m_stats.snowFlakes);
+        if (name == "snow_cover") return double(m_weather.wetness(cameraGround()).snow);
+        if (name == "temperature") return double(m_weather.settings().temperature);
         if (name.starts_with("sound_") && m_sound) {
             for (std::size_t i = 0; i < audio::kWeatherLayers; ++i)
                 if (name.substr(6) == kSoundValues[i]) return double(m_sound->gain(audio::WeatherLayer(i)));
@@ -426,6 +460,13 @@ public:
             if (it == kRainIds.end()) return false;
             settings.rain = Rain(it - kRainIds.begin());
             return true;
+        } else if (name == "snow") {
+            const auto it = std::find(kRainIds.begin(), kRainIds.end(), value);
+            if (it == kRainIds.end()) return false;
+            settings.snow = Snow(it - kRainIds.begin());
+            return true;
+        } else if (name == "temperature" && number) {
+            w.temperature = *number;
         } else if (name == "rain_shafts" && flag) {
             settings.rainShafts = *flag;
             return true;
@@ -444,10 +485,11 @@ public:
     }
 
     std::string perfDetails() const override {
-        return std::format("clouds={} steps={} cube_faces={} limit_60hz={} view={} rain={} shafts={} rainbow={}",
-                           kQualityIds[std::size_t(m_quality)], m_steps, m_cubeFaces, m_limit60 ? 1 : 0,
-                           kViewIds[std::size_t(m_view)], kRainIds[std::size_t(settings.rain)],
-                           settings.rainShafts ? 1 : 0, settings.rainbow ? 1 : 0);
+        return std::format(
+            "clouds={} steps={} cube_faces={} limit_60hz={} view={} rain={} shafts={} rainbow={} snow={}",
+            kQualityIds[std::size_t(m_quality)], m_steps, m_cubeFaces, m_limit60 ? 1 : 0, kViewIds[std::size_t(m_view)],
+            kRainIds[std::size_t(settings.rain)], settings.rainShafts ? 1 : 0, settings.rainbow ? 1 : 0,
+            kRainIds[std::size_t(settings.snow)]);
     }
 
     void shutdown(Context& c) override {
@@ -462,6 +504,8 @@ private:
         w.typeVariation = 0.15f;
         w.precipitation = 0.0f;
         w.cirrus = 0.15f;
+        w.temperature = kMildTemperature;
+        w.wind.speed = kWindSpeed;
         std::optional<wx::Cell> shower;
         const wx::Cell showerCell{.position = kShowerAt,
                                   .radius = 3200.0f,
@@ -527,6 +571,30 @@ private:
             w.coverage = 0.03f;
             w.type = wx::CloudType::Cumulus;
             w.cirrus = 0.9f;
+        } else if (name == "snowfall") {
+            // A grey deck snowing steadily in a light wind: the cover builds over the place as long as it snows.
+            w.coverage = 1.0f;
+            w.type = wx::CloudType::Stratus;
+            w.typeVariation = 0.1f;
+            w.precipitation = 1.0f;
+            w.cirrus = 0.0f;
+            w.temperature = kSnowTemperature;
+            w.wind.speed = kSnowWindSpeed;
+        } else if (name == "thaw") {
+            // Sun and a mild wind after the snow: the cover melts into wet ground and puddles.
+            w.coverage = 0.25f;
+            w.type = wx::CloudType::Cumulus;
+            w.cirrus = 0.2f;
+            w.temperature = 6.0f;
+            w.wind.speed = kSnowWindSpeed;
+        } else if (name == "snow_showers") {
+            // Cumulus and towering cumulus snowing in a cold blue sky: white shafts under them from the air.
+            w.coverage = 0.45f;
+            w.type = wx::CloudType::Towering;
+            w.typeVariation = 0.35f;
+            w.precipitation = 0.6f;
+            w.cirrus = 0.1f;
+            w.temperature = -2.0f;
         } else {
             return false;
         }
@@ -589,6 +657,16 @@ private:
             camera.maxDistance = 400.0f;
             settings.shadowDistance = 120.0f;
             break;
+        case View::Above:
+            // Above the place, looking down over the roof, the crates and the paving: what lies on top of them.
+            camera.target = kShelter + glm::vec3(-3.5f, 0.5f, 0.5f);
+            camera.distance = 11.0f;
+            camera.yaw = glm::radians(-25.0f);
+            camera.pitch = glm::radians(38.0f);
+            camera.minDistance = 1.5f;
+            camera.maxDistance = 400.0f;
+            settings.shadowDistance = 120.0f;
+            break;
         }
         cameraCut = true;
     }
@@ -596,18 +674,20 @@ private:
     // Precipitation at the camera (none above the cloud base).
     float rainHere() const { return m_weather.precipitation(camera.eye()); }
 
-    // The rain sound from the weather at the camera: the distance to the nearest rain is searched four times a
-    // second (a search costs up to a few tenths of a millisecond), the cover is the renderer's.
+    // The rain sound from the weather at the camera: the distance to the nearest rain (not snow) is searched four times
+    // a second (a search costs up to a few tenths of a millisecond), the cover is the renderer's; snow is quiet.
     void updateSound(double frameDt) {
         m_rainSearch -= frameDt;
         if (m_rainSearch <= 0.0) {
-            m_rainDistance = m_weather.distanceToPrecipitation(cameraGround(), 0.1f, 8000.0f);
+            m_rainDistance = m_weather.distanceToPrecipitation(cameraGround(), 0.1f, 8000.0f, wx::Precipitation::Rain);
             m_rainSearch = 0.25;
         }
         if (!m_sound) return;
+        const bool drawn = m_stats.rain != Rain::Off || m_stats.snow != Snow::Off;
         m_sound->update({.precipitation = rainHere(),
                          .distanceToRain = m_rainDistance,
-                         .cover = m_stats.rain != Rain::Off ? std::max(m_stats.rainCover, 0.0f) : 0.0f},
+                         .cover = drawn ? std::max(m_stats.rainCover, 0.0f) : 0.0f,
+                         .snow = m_weather.snowShare(camera.eye())},
                         frameDt);
     }
 
@@ -667,7 +747,7 @@ private:
     std::optional<Scene> m_scene;
     LightId m_sun;
     wx::Weather m_weather{
-        wx::Settings{.seed = 7, .wind = {.direction = {0.0f, 1.0f}, .speed = 12.0f}, .evolution = 1.0f}};
+        wx::Settings{.seed = 7, .wind = {.direction = {0.0f, 1.0f}, .speed = kWindSpeed}, .evolution = 1.0f}};
     wx::CellId m_shower = wx::kNoCell;
     wx::Cell m_showerCell{};
     View m_view = View::Sky;

@@ -1,0 +1,109 @@
+# Snow (ctest: demo_snow_<backend>, a part of batch.txt and batch_native.txt): the Weather section's place on the
+# ground below freezing. The weather's clock is stopped (time scale 0) and set, or run at 60 times its speed for a few
+# seconds on the fixed frame clock, so every capture shows the same snow: a steady snowfall from a grey deck after an
+# hour of it, the flakes against the dark block, the paving, the grass and the crate in the open white, the floor
+# under the shelter and the crate under it bare (demo_snow.png); from above, five minutes into a snowfall on bare
+# ground, the cover in patches on the paving, the roof and the crate tops, not on their sides (demo_snow_building.png);
+# a minute of a thaw after it, the patches melting on wet paving (demo_snow_thaw.png); snow showers from
+# the air, white shafts under the clouds over a white plain (demo_snow_sky.png). By numbers: snow is quiet (no rain
+# layer plays, none on the roof), the cover builds and melts at its rates, and the snow's drawing turns off.
+section weather
+reset_section
+
+set dither 0
+set quality reduced
+set rain medium
+set snow medium
+set rain_shafts 1
+set rainbow 0
+set sound 1
+set time_scale 0
+set view ground
+set preset snowfall
+set sun_elevation 25
+set sun_azimuth 50
+set weather_time 4000
+until time >= 1.5 3
+expect snow == 2
+expect temperature == -4
+expect snow_share == 1
+expect snow_at_camera > 0.4
+expect rain_at_camera == 0
+expect snow_flakes == 16384
+expect rain_streaks == 0
+expect snow_cover > 0.99
+expect wetness == 0
+expect rain_cover < 0.1
+expect sound_light < 0.01
+expect sound_heavy < 0.01
+expect sound_far < 0.01
+windows off
+capture demo_snow.png
+windows on
+
+# Under the roof: covered, and the snow on it is silent.
+set view shelter
+wait 1.5
+expect rain_cover > 0.8
+expect sound_cover < 0.01
+
+# From bare ground: the thaw's past (no snow, dry), then five minutes of the snowfall in 5 s, seen from above.
+set view above
+set preset thaw
+set weather_time 8000
+wait 0.1
+expect snow_cover == 0
+expect wetness == 0
+set preset snowfall
+set time_scale 60
+wait 5
+set time_scale 0
+expect snow_cover > 0.2
+expect snow_cover < 0.32
+expect wetness == 0
+wait 1.5
+windows off
+capture demo_snow_building.png
+windows on
+
+# A minute of a thaw at 6 degrees: a third of that cover melts into wet ground and some standing water.
+set view ground
+set preset thaw
+set time_scale 60
+wait 1
+set time_scale 0
+expect snow_cover > 0.12
+expect snow_cover < 0.24
+expect wetness > 0.1
+expect standing_water > 0.02
+expect snow_at_camera == 0
+wait 1.5
+windows off
+capture demo_snow_thaw.png
+windows on
+
+# Snow showers from the air.
+set preset snow_showers
+set view sky
+set weather_time 4000
+wait 1.5
+expect rain_shafts == 1
+expect snow_share == 1
+windows off
+capture demo_snow_sky.png
+windows on
+
+# The snow's drawing off: no flakes, no cover drawn, the weather goes on.
+set preset snowfall
+set view ground
+set snow off
+wait 0.5
+expect snow == 0
+expect snow_flakes == 0
+expect snow_at_camera == 0
+expect rain_streaks == 0
+expect rain_at_camera == 0
+set snow medium
+expect audio_underruns == 0
+expect audio_clipped == 0
+quit

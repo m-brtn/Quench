@@ -235,6 +235,15 @@ constexpr std::array kItems{
               "hiss is softer. Passing shower: as the cell drifts away the near rain fades into a distant rumble "
               "without a jump. Rain sound off: silence within a second.",
               "set preset rain_here\nset view ground\nset sound 1"},
+    CheckItem{"weather.snow", "weather", "Snow in motion",
+              "Snowfall, from the ground, at Time scale 10: flakes drift down slowly with the wind, each fluttering "
+              "on its own path, soft and white against the dark block, without flicker, streaks that look like rain "
+              "or popping at the edge of the box around the camera; none fall under the roof. The paving, the "
+              "crate in the open and the grass whiten in patches that close as the snow deepens; the floor under the "
+              "shelter and the crate under it stay bare. View Over the shelter: snow on the roof and the crate tops, "
+              "not on their sides. Thaw: the cover melts into wet paving and puddles. Snow showers from the air: "
+              "soft white shafts under the clouds. Snow sound: silence where it snows (no rain hiss).",
+              "set preset snowfall\nset view ground\nset snow medium\nset time_scale 10\nset sound 1"},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",

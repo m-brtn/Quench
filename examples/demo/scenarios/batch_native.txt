@@ -41,4 +41,5 @@ include assets_basis.txt
 include navigation.txt
 include weather.txt
 include rain.txt
+include snow.txt
 quit
