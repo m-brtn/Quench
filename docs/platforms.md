@@ -34,8 +34,9 @@ Nothing of the engine has run in a browser.
 Audio (stage 7, see "Audio" below) has run only on the null backend and offline, on the Mac, in the iOS Simulator,
 on the iPhone (the device test app, 2026-11-06) and under Node.js; nothing was listened to. Animation and GPU
 skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator, on the iPhone (the device test app
-and the demo's benchmark, 2026-11-06) and (without rendering) under Node.js. The native Metal backend (stage 9, not
-the default; see "Native Metal backend" below) ran on the Mac, in the iOS Simulator and on the iPhone (2026-11-06;
+and the demo's benchmark, 2026-11-06) and (without rendering) under Node.js. The native Metal backend (stage 9, the
+default on Apple platforms since 2026-11-07; see "Native Metal backend" below) ran on the Mac, in the iOS Simulator
+and on the iPhone (2026-11-06, as an option; not yet as the default;
 it crashes in builds of the Xcode generator before the ARC fix of that day, the 0.8.0 iOS package among them). Its
 ray tracing and MetalFX (see "Hardware ray tracing" below) ran on the Mac and both iPhones; the stage 11 effects
 (0.9.0: local light shadows, reflections, indirect light, the temporal denoiser, MetalFX denoising, the path
@@ -71,7 +72,7 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
 - GPU time is measured through SDL's internal Metal fence struct (`GpuTimingMetal.m` in the games,
   `src/gpu/sdlgpu/SdlGpuTimingMetal.m` in the engine), tied to the SDL 3.4.18 layout. The native Metal backend
   (stage 9, `--gpu-backend metal`, see "Native Metal backend" below) reads the command buffer's own GPU times and
-  timestamps per pass; while SDL GPU stays the default, the hack stays for it.
+  timestamps per pass; SDL GPU (`--gpu-backend sdl`, no longer the default here since 2026-11-07) keeps the hack.
 - Present modes on Metal: `vsync` and `immediate`; `mailbox` is not supported and falls back to vsync. A window is
   paced to its display (60 Hz on the LG UltraFine 5K used here) even with `immediate`, and then the measured GPU time
   grows to about 15.5 ms (0.6 ms with vsync), probably a drawable wait counted inside the command buffer (not
@@ -167,8 +168,12 @@ iOS and HDR10 (PQ) on macOS only; the Vulkan backend needs `VK_EXT_swapchain_col
 ## Native Metal backend
 
 The engine's own Metal backend of `quench::gpu` (stage 9, `--gpu-backend metal`, [Architecture](architecture.md#native-metal-backend));
-SDL GPU stays the default. Built for macOS and iOS (device and Simulator); nothing of it exists elsewhere, and a
-request for it there creates SDL GPU with a warning.
+the default on macOS, iOS and the iOS Simulator since 2026-11-07 (the user's decision; SDL GPU with
+`--gpu-backend sdl` or `QUENCH_GPU_BACKEND=sdl`, and for `--gpu-driver vulkan`). A native device that fails to start
+falls back to SDL GPU with one warning. Built for macOS and iOS (device and Simulator); nothing of it exists
+elsewhere, and a request for it there creates SDL GPU with a warning. As the default (no flag) it has run on the Mac
+only: hello and the demo started offscreen without `--gpu-backend` (2026-11-07). The tests and batches name their
+backend, so it has not run as the default in the iOS Simulator or on an iPhone; the runs below chose it explicitly.
 
 | Where | Run so far |
 |---|---|
@@ -183,7 +188,7 @@ request for it there creates SDL GPU with a warning.
   `ios-device-release`) had it, the `ios-xcode` builds that go onto the iPhone did not. There the command buffer
   from `[m_queue commandBuffer]` was freed with its autorelease pool, and the first copy pass crashed with
   `EXC_BAD_ACCESS` (the device tests at `buffer_round_trip`, the demo in `Renderer::create`). The 0.8.0 iOS package
-  (`tools/package_demo.sh --ios`) has this crash with `--gpu-backend metal`; on the default SDL GPU backend it works.
+  (`tools/package_demo.sh --ios`) has this crash with `--gpu-backend metal`; on SDL GPU (its default) it works.
   Since the fix `quench_configure_target` sets `-fobjc-arc` and `XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC` on every
   engine target, and every engine Objective-C(++) file stops with `#error` when it is compiled without ARC.
 - **The window cases' one failure on the iPhone 18 Pro Max** (2026-11-06, a portrait drawable in a landscape

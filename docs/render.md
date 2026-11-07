@@ -225,11 +225,12 @@ and the area lights' LTC use a bent normal and the mean roughness instead (appro
 
 `RenderSettings::sunShadows = SunShadows::RayTraced` and `ambientOcclusion = AmbientOcclusion::RayTraced` run where
 `gpu::Caps::rayTracing` holds and the build has the ray query shaders (`cmake/QuenchDxc.cmake`): today the native
-Metal backend on a GPU with ray tracing: the Mac's M4 Pro and the user's iPhone (stage 9's shadows and occlusion
-measured there on 2026-11-06: 8.0 ms GPU p50 at the native 1320 x 2868, over the 7.5 ms budget). Elsewhere the frame
-takes shadow maps and no occlusion (GTAO with `screenSpaceFallbacks`, [below](#screen-space-ambient-occlusion)),
-with one log line that says why (`Renderer::effects()` tells which runs). The
-default stays shadow maps until the user has looked at them on the iPhone
+Metal backend (the default on Apple platforms since 2026-11-07) on a GPU with ray tracing: the Mac's M4 Pro and the
+user's iPhone (stage 9's shadows and occlusion measured there on 2026-11-06: 8.0 ms GPU p50 at the native 1320 x
+2868, over the 7.5 ms budget). Elsewhere the frame takes shadow maps and no occlusion (GTAO with
+`screenSpaceFallbacks`, [below](#screen-space-ambient-occlusion)), with one log line that says why
+(`Renderer::effects()` tells which runs). The default stays shadow maps, also on the native backend, until the user
+has looked at them on the iPhone
 ([Roadmap](roadmap.md#stage-9-native-metal-backend-and-ray-tracing)).
 
 - **Acceleration structures** (`src/render/RayTracing.cpp`, timed range `accel`): every instance that casts shadows is
@@ -349,8 +350,8 @@ passes' GPU costs at 1080p are in [Performance](performance.md#measurements).
 
 ### Local light shadow maps
 
-Since 2026-11-07 (0.10.0). Where `localLightShadows` cannot be ray traced (SDL GPU, so the
-default backend everywhere, and the native backend without `gpu::Caps::rayTracing`), `RenderSettings::
+Since 2026-11-07 (0.10.0). Where `localLightShadows` cannot be ray traced (SDL GPU, the default
+off Apple platforms, and the native backend without `gpu::Caps::rayTracing`), `RenderSettings::
 localShadowMapSize` (0, the default: off; else 64..4096 texels per side) gives the same lights shadow maps: the
 nearest `localLightShadows` (at most 4) point and spot lights with `castsShadows`, chosen as for the rays.
 `ActiveEffects::localShadowMaps` is that count; `RenderStats::localShadowLights`, `localShadowMaps`,
@@ -393,8 +394,8 @@ nearest `localLightShadows` (at most 4) point and spot lights with `castsShadows
 ### Screen-space ambient occlusion
 
 Since 2026-11-07 (0.10.0). `AmbientOcclusion::ScreenSpace`, or `AmbientOcclusion::RayTraced`
-with `RenderSettings::screenSpaceFallbacks` (off by default) where the rays are not available (SDL GPU, so the
-default backend everywhere, and the native backend without `gpu::Caps::rayTracing`): GTAO from the depth of the
+with `RenderSettings::screenSpaceFallbacks` (off by default) where the rays are not available (SDL GPU, the
+default off Apple platforms, and the native backend without `gpu::Caps::rayTracing`): GTAO from the depth of the
 opaque surfaces. It needs a sampleable depth and `Rg16Float` targets; else none, with a line in `fallbacks()`.
 Where the device traces, `RayTraced` stays traced; `ScreenSpace` set by the game runs GTAO there too.
 `RenderStats::screenOcclusion` says whether it ran, `screenPrepassDraws` the draws of its own prepass.
@@ -433,7 +434,7 @@ Where the device traces, `RayTraced` stays traced; `ScreenSpace` set by the game
 
 Since 2026-11-07 (0.10.0). `Reflections::ScreenSpace`, or `Reflections::RayTraced` with
 `RenderSettings::screenSpaceFallbacks` (off by default; the same flag as GTAO's) where the rays are not available
-(SDL GPU, so the default backend everywhere, and the native backend without `gpu::Caps::rayTracing`): reflections of
+(SDL GPU, the default off Apple platforms, and the native backend without `gpu::Caps::rayTracing`): reflections of
 what the previous frame showed. They need a sampleable depth and `Rgba16Float` targets; else the sky's reflection,
 with a line in `fallbacks()`. Where the device traces, `RayTraced` stays traced; `ScreenSpace` set by the game runs
 SSR there too. `RenderStats::screenReflections` says whether it ran: not in a frame without a previous image (the

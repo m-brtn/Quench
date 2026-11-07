@@ -1,9 +1,9 @@
-# The tunnel on a phone on SDL GPU (the default backend; docs/performance.md, "The tunnel on the iPhone"): the
+# The tunnel on a phone on SDL GPU (docs/performance.md, "The tunnel on the iPhone"): the
 # fallback frame (the area lights unshadowed, the sky's reflections; the phone default of three quarters of the
 # size) at the display's rate for 8 s from the nominal
 # thermal state, then at the section's 60 Hz for 20 s, and its capture, from the overview with the lamps standing
 # still; then 20 s at 60 Hz in motion (the lamps moving, the camera driving its loop) and the thermal state after it:
-#   copy this file into the app's user directory, launch with --script tunnel_phone_fallback.txt
+#   copy this file into the app's user directory, launch with --gpu-backend sdl --script tunnel_phone_fallback.txt
 
 section tunnel
 until tunnel_ready == 1 10

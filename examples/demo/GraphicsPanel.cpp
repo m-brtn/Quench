@@ -866,15 +866,19 @@ void DemoGame::outputControls(App& app) {
 void DemoGame::relaunchButtons(App& app) {
     const gpu::Caps& caps = app.device().caps();
     if (!app.canRelaunch()) {
+        const char* other = gpu::defaultBackend() == gpu::Backend::Metal ? "sdl" : "metal";
         ImGui::TextWrapped("This platform cannot start the app again from inside: the backend is chosen at launch, "
-                           "with --gpu-backend metal or the environment variable QUENCH_GPU_BACKEND=metal "
-                           "(docs/demo.md: devicectl with --environment-variables).");
+                           "%s by default, the other one with --gpu-backend %s or the environment variable "
+                           "QUENCH_GPU_BACKEND=%s (docs/demo.md: devicectl with --environment-variables).",
+                           gpu::defaultBackend() == gpu::Backend::Metal ? "the native Metal backend" : "SDL GPU", other,
+                           other);
         return;
     }
-    for (const gpu::Backend backend : {gpu::Backend::SdlGpu, gpu::Backend::Metal}) {
+    for (const gpu::Backend backend : {gpu::Backend::Metal, gpu::Backend::SdlGpu}) {
         if (!gpu::backendAvailable(backend) || backend == caps.backend) continue;
         const std::string label =
-            std::format("Relaunch with {}", backend == gpu::Backend::Metal ? "the native Metal backend" : "SDL GPU");
+            std::format("Relaunch with {}{}", backend == gpu::Backend::Metal ? "the native Metal backend" : "SDL GPU",
+                        backend == gpu::defaultBackend() ? " (the default)" : "");
         if (ImGui::Button(label.c_str())) {
             std::vector<std::string> args;
             const std::span<const std::string> old = app.arguments();

@@ -1,10 +1,10 @@
 # Local light shadow maps on a phone (RenderSettings::localShadowMapSize; docs/performance.md, "Local light shadow
-# maps") on SDL GPU, the default backend, where the lamps' shadows are not traced: the ray tracing section's two
+# maps") on SDL GPU, where the lamps' shadows are not traced: the ray tracing section's two
 # lamps (a point light, 6 maps, and a spot light, 1 map) and the tunnel's two spots (1 map each), unshadowed and with
 # maps of 256 and 512, at the display's rate in 4 s regions, each section from the nominal thermal state; then the
 # tunnel with maps of 256 at the section's 60 Hz for 20 s and a capture of the ray tracing section's lamps:
-#   copy this file into the app's user directory, launch with --script lamp_maps_phone.txt (no --gpu-backend)
-# On the native backend with ray tracing the lamps' shadows are traced and the map checks fail.
+#   copy this file into the app's user directory, launch with --gpu-backend sdl --script lamp_maps_phone.txt
+# On the native backend (the default on Apple platforms) the lamps' shadows are traced and the map checks fail.
 
 section raytracing
 until rt_ready == 1 5

@@ -1,8 +1,8 @@
 # Screen-space ambient occlusion on a phone (AmbientOcclusion::ScreenSpace; docs/performance.md, "Screen-space
-# ambient occlusion") on SDL GPU, the default backend: the shadows section, the ray tracing section and the tunnel
+# ambient occlusion") on SDL GPU: the shadows section, the ray tracing section and the tunnel
 # without occlusion and with GTAO, at the display's rate in 4 s regions, each section from the nominal thermal state;
 # then a capture of the ray tracing section with GTAO:
-#   copy this file into the app's user directory, launch with --script gtao_phone.txt (no --gpu-backend)
+#   copy this file into the app's user directory, launch with --gpu-backend sdl --script gtao_phone.txt
 # On the native backend GTAO runs too (set ao screen asks for it explicitly).
 
 section shadows

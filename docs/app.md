@@ -106,7 +106,7 @@ draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and
 | `--frame-size WxH` | render every frame offscreen at W x H pixels and scale it to the window, so captures do not depend on the display density |
 | `--offscreen` | no window on the screen ([Offscreen runs](#offscreen-runs)); the default on desktops with `--script`, `--capture` or `--quit-after` |
 | `--onscreen` | a visible window also with `--script`, `--capture` or `--quit-after`: to watch a scenario, and for benchmarks |
-| `--gpu-backend NAME` | `sdl` (SDL GPU) or `metal` (the native Metal backend, [Architecture](architecture.md#native-metal-backend); Apple platforms, elsewhere SDL GPU with a warning); default `AppDesc::gpuBackend`, which reads the `QUENCH_GPU_BACKEND` environment variable and otherwise takes SDL GPU |
+| `--gpu-backend NAME` | `sdl` (SDL GPU) or `metal` (the native Metal backend, [Architecture](architecture.md#native-metal-backend); Apple platforms, elsewhere SDL GPU with a warning); default `AppDesc::gpuBackend`, which reads the `QUENCH_GPU_BACKEND` environment variable, else takes SDL GPU for `--gpu-driver vulkan` or `direct3d12`, else the platform's default (since 2026-11-07: the native Metal backend on Apple platforms, SDL GPU elsewhere). A native device that fails to start falls back to SDL GPU with one warning |
 | `--gpu-driver NAME` | SDL GPU's driver: `metal`, `vulkan` or `direct3d12` (the native backend has only `metal`) |
 | `--gpu-debug` | GPU validation (the backend's debug mode) |
 | `--gpu-pass-timing` | record the GPU time per pass in every frame (`gpu::Caps::gpuPassTiming`: the native Metal backend); without it only while the game asks (`App::requestPassTiming`) or a scenario's perf region runs, since recording costs CPU time ([Performance](performance.md#gpu-time-per-pass)) |
@@ -290,13 +290,18 @@ and writes an RGBA PNG with opaque alpha (HDR frames: [HDR output](#hdr-output))
 The apps' checks run in **batches** (`tests/CMakeLists.txt`, `quench_add_batch`): one offscreen app process per GPU
 backend runs a scenario that `include`s every check as a part, with a fresh `--user-dir` that collects the parts'
 captures (`build/<preset>/tests/captures/<batch>/`, the log next to it as `<batch>.log`). The batch is a CTest fixture
-(`<app>_batch_<backend>`, `tests/RunBatch.cmake`: it fails when the app crashes or the log has no result line), and
-each part is a test of its own (`<app>_<part>_<backend>`, `tests/CheckPart.cmake`): the part's checks passed, and its
-capture matches the golden image (a part may have several: `PARTS <file>:<golden>:<golden>`). Running one part's test runs its batch first. For hello, `hello_batch_metal`,
-`hello_batch_metal_native` and `hello_batch_vulkan` run `examples/hello/scenarios/check.txt` (`hello --window 640x360
---frame-size 1280x720 --gpu-debug`): `hello_frame_*` compares the frame at 1 s with `hello.png`, `hello_input_*` runs
-the scripted input. The demo's batches: [Engine demo](demo.md#checks). Batches are registered where the captures are
-compared: `QUENCH_TEST_CAPTURES`, on in Release builds; other builds run the demo's smoke run only.
+(`<app>_batch_<backend>`, `tests/RunBatch.cmake`: it fails when the app crashes, the log has no result line or the
+app ran on another backend or driver than the batch names, a fallback included: `GPU <backend>:<driver>` in
+`quench_add_batch`, checked against the log's `gpu: backend ...` line), and each part is a test of its own
+(`<app>_<part>_<backend>`, `tests/CheckPart.cmake`): the part's checks passed, and its capture matches the golden
+image (a part may have several: `PARTS <file>:<golden>:<golden>`). Running one part's test runs its batch first. Every batch names its backend explicitly, so none moves with
+the default: `*_metal` runs SDL GPU's Metal driver (`--gpu-backend sdl`), `*_metal_native` the native Metal backend
+(`--gpu-backend metal`), `*_vulkan` SDL GPU's Vulkan driver through MoltenVK (`--gpu-driver vulkan`, which selects
+SDL GPU). For hello, `hello_batch_metal`, `hello_batch_metal_native` and `hello_batch_vulkan` run
+`examples/hello/scenarios/check.txt` (`hello --window 640x360 --frame-size 1280x720 --gpu-debug`): `hello_frame_*`
+compares the frame at 1 s with `hello.png`, `hello_input_*` runs the scripted input. The demo's batches:
+[Engine demo](demo.md#checks). Batches are registered where the captures are compared: `QUENCH_TEST_CAPTURES`, on in
+Release builds; other builds run the demo's smoke runs only (on Apple platforms one per backend).
 
 Captures are compared with `quench_image_compare` (`tools/imagecompare`): a pixel differs when a channel differs by
 more than 16; the test fails when the mean difference exceeds 0.5 or more than 0.1% of the pixels differ. On failure

@@ -1,8 +1,9 @@
 #pragma once
 
-// Shared setup of the GPU device tests. A case runs on the driver SDL picks (SDL_GPU_DRIVER overrides it) with the
-// backend's validation, and is skipped when no device can be created, unless QUENCH_TEST_GPU_DRIVER names the driver
-// that must work: then it fails.
+// Shared setup of the GPU device tests. A case runs on the default backend (QUENCH_GPU_BACKEND overrides it) and
+// driver (SDL_GPU_DRIVER overrides it) with the backend's validation, and is skipped when no device can be created,
+// unless QUENCH_TEST_GPU_DRIVER names the driver that must work: then it fails, and so does a device on another
+// backend than the one asked for (a native Metal device that fell back to SDL GPU).
 
 #include "Test.h"
 

@@ -106,8 +106,10 @@ Link what the game uses beside `quench_add_game()`:
   a retained `render::Scene` (meshes, materials, instances, lights and the environment registered once by handle;
   per frame only what moved), and `Renderer::render(scene, view, frame.commands, frame.target, frame.output)` in
   `Game::render`. Effects are `RenderSettings`; the renderer falls back by `gpu::Caps` and `effects()` and
-  `fallbacks()` say what runs, so never choose effects by platform. The defaults (SDL GPU, shadow maps) run
-  everywhere; ray-traced effects need `--gpu-backend metal` on a GPU with ray tracing. Own shading: surface shaders
+  `fallbacks()` say what runs, so never choose effects by platform. The default backend is the native Metal one on
+  Apple platforms (SDL GPU elsewhere, and with `--gpu-backend sdl`); the default effects (shadow maps, nothing
+  traced) run on both. Ray-traced effects need a `RenderSettings` choice on the native backend and a GPU with ray
+  tracing. Own shading: surface shaders
   (`Renderer::addSurface`, `docs/render.md`, "Surface shaders") and game passes (`Renderer::addPass`).
 - **Assets.** Sources are cooked at build time by `quench_cook_assets()` (`cmake/QuenchCook.cmake`: `TEXTURES`,
   `DATA_TEXTURES`, `MODELS`, `SOUNDS`, `SKELETONS`, `ANIMATIONS`, `FILES`) and merged into the game's assets by

@@ -1,6 +1,7 @@
 #include "GpuTest.h"
 
 #include "core/Platform.h"
+#include "gpu/Backend.h"
 #include "render_shaders.h"
 
 #include <array>
@@ -73,6 +74,28 @@ QUENCH_TEST(caps) {
           "Depth32Float depth target");
     CHECK(device.supportsSampleCount(TextureFormat::Rgba8Unorm, 4), "4x MSAA");
     CHECK(!device.supportsSampleCount(TextureFormat::Rgba8Unorm, 3), "3 samples");
+}
+
+// Backend::Default stands for the platform's backend: the native Metal backend on Apple platforms, else SDL GPU.
+QUENCH_TEST(default_backend) {
+    CHECK(defaultBackend() == (QUENCH_PLATFORM_APPLE ? Backend::Metal : Backend::SdlGpu), "default backend %s",
+          backendName(defaultBackend()));
+    CHECK(backendAvailable(defaultBackend()) && backendAvailable(Backend::SdlGpu), "backends not available");
+}
+
+// A native Metal device that cannot start gives an SDL GPU device (with a warning), not an error.
+QUENCH_TEST(native_fallback) {
+    if (!QUENCH_PLATFORM_APPLE) QUENCH_SKIP("no native Metal backend on this platform");
+    QUENCH_GPU_DEVICE(device);
+    gpu::detail::setNativeDeviceFailsForTesting(true);
+    Result<Device> fallback = Device::create({.debug = true, .backend = Backend::Metal});
+    gpu::detail::setNativeDeviceFailsForTesting(false);
+    REQUIRE(fallback, "no device after the fallback: %s", fallback.error().c_str());
+    CHECK(fallback->caps().backend == Backend::SdlGpu, "backend %s", backendName(fallback->caps().backend));
+    CHECK(fallback->caps().driver == device.caps().driver, "driver %s, the other device's %s",
+          fallback->caps().driver.c_str(), device.caps().driver.c_str());
+    Result<Buffer> buffer = fallback->createBuffer({.size = 16});
+    CHECK(buffer, "a buffer on the fallback device: %s", buffer ? "" : buffer.error().c_str());
 }
 
 QUENCH_TEST(live_resources) {

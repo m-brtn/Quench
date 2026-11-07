@@ -1,8 +1,8 @@
 # Screen-space reflections on a phone (Reflections::ScreenSpace; docs/performance.md, "Screen-space reflections") on
-# SDL GPU, the default backend: the materials section, the ray tracing section and the tunnel with the sky's
+# SDL GPU: the materials section, the ray tracing section and the tunnel with the sky's
 # reflections and with screen-space ones, at the display's rate in 4 s regions, each section from the nominal thermal
 # state; then a capture of the ray tracing section with them:
-#   copy this file into the app's user directory, launch with --script ssr_phone.txt (no --gpu-backend)
+#   copy this file into the app's user directory, launch with --gpu-backend sdl --script ssr_phone.txt
 # On the native backend they run too (set reflections screen asks for them in place of the traced ones).
 
 section materials

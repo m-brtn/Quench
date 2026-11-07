@@ -515,8 +515,17 @@ void DemoGame::aboutContents(App& app) {
             ImGui::TextWrapped("Thermal state: %s (from fair on, the system lowers clocks and frame times grow)",
                                app::thermalStateName(app.stats().thermal));
             ImGui::SeparatorText("GPU backend");
-            ImGui::TextWrapped("SDL GPU is the default; the native Metal backend (Apple platforms) adds GPU times per "
-                               "pass, ray tracing and MetalFX.");
+            if (gpu::defaultBackend() == gpu::Backend::Metal)
+                ImGui::TextWrapped("The native Metal backend is the default here: GPU times per pass, ray tracing and "
+                                   "MetalFX. SDL GPU (--gpu-backend sdl) is the portable one, the default on other "
+                                   "platforms.");
+            else
+                ImGui::TextWrapped("SDL GPU is the default here; the native Metal backend (Apple platforms only) adds "
+                                   "GPU times per pass, ray tracing and MetalFX.");
+            if (caps.backend != gpu::defaultBackend())
+                ImGui::TextWrapped("This run is not on the default: chosen at launch (--gpu-backend, "
+                                   "QUENCH_GPU_BACKEND, --gpu-driver), or the native backend did not start (the log "
+                                   "says why).");
             relaunchButtons(app);
             ImGui::EndTabItem();
         }

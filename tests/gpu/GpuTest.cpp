@@ -27,6 +27,14 @@ std::optional<gpu::Device> createGpuDevice() {
     }
     CHECK(!expected || device->caps().driver == expected, "driver %s, expected %s", device->caps().driver.c_str(),
           expected);
+    if (expected) {
+        // No silent fallback: the backend QUENCH_GPU_BACKEND names, else the default one for the driver.
+        gpu::Backend backend = std::strcmp(expected, "metal") == 0 ? gpu::defaultBackend() : gpu::Backend::SdlGpu;
+        if (const char* env = std::getenv("QUENCH_GPU_BACKEND"); env && *env)
+            backend = std::strcmp(env, "metal") == 0 ? gpu::Backend::Metal : gpu::Backend::SdlGpu;
+        CHECK(device->caps().backend == backend, "backend %s, expected %s", gpu::backendName(device->caps().backend),
+              gpu::backendName(backend));
+    }
     return std::move(device).value();
 }
 

@@ -45,7 +45,7 @@ first visit. Leaving a section removes its render passes; its scene stays.
 | 8 | `assets` | Cooked assets loaded through the app's asset manager ([Jobs, assets and the cook](assets.md)): a row of models (a crate from a glTF with an external texture, a pillar from a GLB with embedded JPEG and PNG textures, a vertex-colored ball, a corrupt file and a missing one) shows the load states: gray boxes while loading, magenta on failure. Behind it a 6 x 5 grid of tiles, each with one of eight BC7 textures and a model, streams around a moving focus point | simulated latency, texture cache budget (unlimited, 64, 16, 4 KB), uploads per frame (8 MB, 16 KB, 1 byte), focus angle, moving focus, models on and off, hot reload, reload all; counts of ready, loading, failed, queued and in-flight assets, reloads, evictions, memory per type against its budget, streamed cells |
 | 9 | `audio` | The mixer and 3D sound ([Audio](audio.md)): a head with ears at the listener, facing the way the camera looks; an orange emitter circling it at ear height (a motor loop), a blue fly-by passing at speed (a siren, with Doppler), a green box that plays a tone the demo computes (a generator); streamed music A and B with a crossfade; all sounds procedural | emitters on and off, orbit and fly-by speed, tone frequency and position, attenuation model, minimum and maximum distance, Doppler scale; music off, A or B; per bus volume, mute and a peak meter; pause effects; the reverb on or off (the 3D sounds send to a reverb bus under the effects) and its room size; the HRTF for headphones on or off (the panel then shows the HRTF voices); a ping, a burst of 40 pings (voice stealing), a click or tap on the ground plays a ping there; voices, stolen and rejected sounds, underruns, clipped samples, mix time and the output device |
 | 10 | `animation` | Skeletal animation ([Animation](animation.md)) of a procedural mannequin: the hero walks a circle by root motion with a speed blend of idle, walk and run, jumps, waves (a layer masked to the right arm), leans (an additive layer), turns its head toward the camera (look-at), holds a torch on its left hand (an attachment) and plays a step sound at each footstep event (a louder one at the jump's landing); two characters stand with foot placement on a ramp and across a 0.2 m step (rays into a Jolt world); a crowd walks in rings; in the view "2D blend space", away from them, a character steered by its velocity through a 2D blend space of idle, walk, run, walk back and the two strafes walks ahead, sideways and backward inside a ring while it faces one way; in the view "Skinning", on the other side, a close-up of two checkered bars on posts whose upper halves the section turns by 170 degrees about their length, and beside them two standing characters whose inner forearms it turns the same way: the left pair, labelled "Linear (reference)", is always skinned linearly (the twist pinches it to a thin neck), the right pair follows the dual quaternion checkbox and its label ("Linear" or "Dual quaternion"; dual quaternions keep it round, its squares running around it in a spiral), and a slider sets the twist (0 to 180 degrees); in the view "Retargeting", behind the hero's camera, the mannequin and a second character with other joint names, proportions and rest pose (the strider, its walk retargeted from the mannequin's at cook time) walk the same clip abreast, the camera following them; in the view "Blend shapes", behind the skinning pair (and drawn in that view only), a swaying jelly blob on three joints reshaped by four blend shapes (squash, stretch, puff, spikes) before its skinning, its clip squashing it where its sway turns and stretching it in between through their weights; animation LOD as an option (off by default): the characters small on the screen update every 2nd or 4th frame; dual quaternion skinning for the showcase's right pair and the other characters (not the linear reference or the blob) as an option (off by default) | speed, lean, jump (J, gamepad A), wave (K, gamepad X), restart; foot IK, look-at and footstep sound on and off; ramp angle (0 to 30 degrees), crowd size (0 to 512); animation LOD on and off, interpolated or held; dual quaternion skinning on and off and the showcase's twist, with a line on what to look at; the view (the hero's stage, the 2D blend space, the skinning showcase, the retargeting pair or the blob); the blob's weights from its clip on and off, its four blend shape weights (added to the clip's) and a reset; the steered character by itself (around a circle) or by two velocity sliders; the velocity it is asked for and the one its clips move it by; the hero's state and transition, characters, joints, clip samples, ground rays, events, skinned instances, vertices and reused skins, the characters updated and at each rate, the update time and threads, the skinning GPU time |
-| 11 | `raytracing` | Ray tracing where `gpu::Caps` allow it ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)), on the native Metal backend (`--gpu-backend metal`): soft ray-traced sun shadows through a fence's diamond holes (cut-out), tinted amber by a spinning glass torus (translucent) and cast by the animation section's mannequin walking a circle (skinned, refitted every frame), ambient occlusion under a crate and a column; since stage 11 ([Ray-traced lighting](render.md#ray-traced-lighting)) a framed mirror and five gold spheres from roughness 0.02 to 0.48 (traced reflections), a red and green corner with a white block (light bounced by the probe grid), a lamp in the corner and a spot behind the fence (lamp shadows, the spot throws the fence's holes forward), a warm emissive panel that lights the ground through the probes; MetalFX temporal upscaling with the engine's temporal denoiser at render scale 0.67 where the device has MetalFX (MetalFX denoising costs about three times as much on the M4 Pro and is a choice in the panel); on phones and tablets that trace (`App::mobile()`) render scale 0.5 with MetalFX spatial upscaling, no probe grid and 60 frames per second ([Performance](performance.md#stage-11-on-the-iphone)); MetalFX spatial upscaling, the engine's denoisers, and the path tracer as a reference (it stops the sun, the torus and the walk). On SDL GPU (Metal or Vulkan through MoltenVK) the same scene with the fallbacks and a line saying why; there the lamps can have shadow maps, the occlusion GTAO and the reflections SSR (options, off by default) | sun shadows (shadow maps or ray traced), shadow rays, softness, ambient occlusion with its rays and radius (and GTAO where it is not traced), lamp shadows (and their shadow maps where they are not traced), reflections
+| 11 | `raytracing` | Ray tracing where `gpu::Caps` allow it ([Render module](render.md#ray-traced-shadows-and-ambient-occlusion)), on the native Metal backend (the default on Apple platforms since 2026-11-07; `--gpu-backend sdl` gives the fallbacks): soft ray-traced sun shadows through a fence's diamond holes (cut-out), tinted amber by a spinning glass torus (translucent) and cast by the animation section's mannequin walking a circle (skinned, refitted every frame), ambient occlusion under a crate and a column; since stage 11 ([Ray-traced lighting](render.md#ray-traced-lighting)) a framed mirror and five gold spheres from roughness 0.02 to 0.48 (traced reflections), a red and green corner with a white block (light bounced by the probe grid), a lamp in the corner and a spot behind the fence (lamp shadows, the spot throws the fence's holes forward), a warm emissive panel that lights the ground through the probes; MetalFX temporal upscaling with the engine's temporal denoiser at render scale 0.67 where the device has MetalFX (MetalFX denoising costs about three times as much on the M4 Pro and is a choice in the panel); on phones and tablets that trace (`App::mobile()`) render scale 0.5 with MetalFX spatial upscaling, no probe grid and 60 frames per second ([Performance](performance.md#stage-11-on-the-iphone)); MetalFX spatial upscaling, the engine's denoisers, and the path tracer as a reference (it stops the sun, the torus and the walk). On SDL GPU (Metal or Vulkan through MoltenVK) the same scene with the fallbacks and a line saying why; there the lamps can have shadow maps, the occlusion GTAO and the reflections SSR (options, off by default) | sun shadows (shadow maps or ray traced), shadow rays, softness, ambient occlusion with its rays and radius (and GTAO where it is not traced), lamp shadows (and their shadow maps where they are not traced), reflections
 (and SSR where they are not traced), indirect light (sky, probes, rays), the denoiser, upscaling (bilinear, MetalFX spatial, temporal, denoising) and render scale, the path tracer, each with the fallback it got; turn the sun, walk, sun elevation, 60 Hz (on by default on phones and tablets; while the section is current); the top level's instances, builds, refits and compactions (or the shadow draws), the hit textures, probes and path samples, and outside deterministic runs the GPU time of the rays, denoising, probes, reflections, indirect light, the path tracer, the shadow maps, GTAO, MetalFX and the frame |
 | 12 | `tunnel` | Area lights and anisotropic GGX ([Area lights](render.md#area-lights), stage 12): a 27 m tunnel at night lit only by its lamps, eight area lights (two cyan strips in the floor, two warm squares in the ceiling, a magenta panel on a wall, an orange and a violet neon tube, a round blue portal at the end) and two spots; metal wall panels with color, normal and metallic-roughness maps, wet asphalt with a near-mirror puddle, a rubber mat and wheel stops, embossed plastic crates, brushed aluminium (anisotropic: kick plates, ribs, the sphere). The textures are procedural, written at build time. The lamps move on a clock of their own: the violet tube rides two ceiling rails along the tunnel, the orange tube slides in its bay, the amber spot turns its cone, the white one circles a sphere and the portal breathes, their hangers, brackets and spot housings with them (instance transforms, refitted in the top level). The camera drives a loop through the tunnel by default, eased, looking down the tunnel; a drag, Reset camera or a script's camera hands it to the free camera, and everything stands still while the path tracer runs. Where `gpu::Caps` allow it (the native Metal backend) four lamps cast soft traced shadows, reflections are traced and the probe grid lights the rest, at render scale 0.67 with MetalFX temporal; on phones and tablets that trace half size with MetalFX spatial, two lamp shadows, no traced reflections and the sky's light; phones that do not trace at three quarters of the size; every phone at 60 frames per second ([Performance](performance.md#the-tunnel-on-the-iphone)); the path tracer as a reference. On SDL GPU the lamps light and shine (LTC) without shadows (the two spots with shadow maps if the Graphics panel's option is on) and reflect only the night sky | ray traced or path traced, lamp shadows, traced reflections, each lamp group on or off, the aluminium's anisotropy (0 to 1), the puddle, 60 Hz; Pause all, Lamps move, the camera's Drive or Free, Stop and Drive speed; the lamps and area lights in the frame and outside deterministic runs the GPU time of the shading, the rays, the denoiser, the reflections, the path tracer and the frame |
 
@@ -217,7 +217,8 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
 `--tour`, `--checks` and `--benchmark-all` exclude each other. The engine's flags (`--help`,
 [App shell](app.md#command-line)) work as everywhere: for the assets section also `--asset-latency SECONDS`,
 `--hot-reload` and `--worker-threads N`, for the audio section `--audio-device NAME`, `--no-audio` and
-`--audio-capture FILE.wav`; `--gpu-backend metal` for the native Metal backend, `--user-dir DIR` for another user
+`--audio-capture FILE.wav`; `--gpu-backend sdl` for SDL GPU (the native Metal backend is the default on Apple
+platforms since 2026-11-07; `--gpu-backend metal` names it), `--user-dir DIR` for another user
 directory, `--orientation portrait|landscape` on a phone.
 
 ### Files
@@ -254,8 +255,12 @@ device with ray tracing, MetalFX and GPU timing, the window and its pixel densit
 device and the job threads; the controls; the engine's licence and the third-party licences (shipped as assets,
 `quench_cook_assets(... FILES ...)`, read when About first opens). On the Mac it has a button that starts the demo
 again with the other GPU backend (`App::relaunch`: the same command line with another `--gpu-backend`; the settings
-are saved first; the same buttons are in the Graphics panel). iOS cannot start an app again from inside: the backend
-is chosen at launch, with `--gpu-backend metal` or the environment variable `QUENCH_GPU_BACKEND=metal` (below).
+are saved first; the same buttons are in the Graphics panel; the default backend's button says so). About names the
+platform's default and says when a run is not on it (chosen at launch, or the native backend did not start and SDL
+GPU took its place; the log says why). iOS cannot start an app again from inside: the backend is chosen at launch,
+the native Metal backend by default, SDL GPU with `--gpu-backend sdl` or the environment variable
+`QUENCH_GPU_BACKEND=sdl` (below). The settings store no backend (also before 2026-11-07), so nothing is migrated:
+the backend follows the default unless the command line or the environment names one.
 
 Settings: the UI scale (applied when the slider is let go), touch-sized controls (auto, on, off), HDR output, the
 present mode (one piece of code with the Graphics panel's Display group), the tour's time, Defaults (also gives
@@ -273,17 +278,18 @@ xcodebuild -project build/ios-xcode/Quench.xcodeproj -scheme quench_demo -config
     -destination id=<device udid> -allowProvisioningUpdates build
 DEVICECTL=/Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Resources/bin/devicectl
 $DEVICECTL device install app --device <udid> build/ios-xcode/examples/demo/Release-iphoneos/quench-demo.app
+# the native Metal backend, the default (ray tracing, MetalFX, GPU times per pass):
 $DEVICECTL device process launch --device <udid> --console --terminate-existing org.quench.demo --checks
-# the native Metal backend (ray tracing, MetalFX, GPU times per pass) for the ray tracing items:
+# SDL GPU for the fallback items:
 $DEVICECTL device process launch --device <udid> --console --terminate-existing \
-    --environment-variables '{"QUENCH_GPU_BACKEND":"metal"}' org.quench.demo --checks
+    --environment-variables '{"QUENCH_GPU_BACKEND":"sdl"}' org.quench.demo --checks
 # the results back to the Mac:
 $DEVICECTL device copy from --device <udid> --domain-type appDataContainer --domain-identifier org.quench.demo \
     --source "Library/Application Support/Quench/Quench Demo/checks.json" --destination /tmp/checks.json
 ```
 
-The marks survive between runs, so the SDL GPU items and the native Metal items can be done in two launches. On the
-Mac: `build/release/examples/demo/quench-demo --checks` (and `--gpu-backend metal`); the file is in
+The marks survive between runs, so the native Metal items and the SDL GPU items can be done in two launches. On the
+Mac: `build/release/examples/demo/quench-demo --checks` (and `--gpu-backend sdl`); the file is in
 `~/Library/Application Support/Quench/Quench Demo/`.
 
 ## Content
@@ -337,9 +343,12 @@ per GPU backend, `--window 960x540 --gpu-debug --hdr-headroom 4`, runs every che
 
 | Batch | Scenario | Backend |
 |---|---|---|
-| `demo_batch_metal` | `batch.txt` | SDL GPU's Metal driver, with the Metal API validation layer |
-| `demo_batch_metal_native` | `batch_native.txt`: `batch.txt` with `raytracing.txt`, `tunnel.txt`, `tunnel_path.txt` and `tunnel_motion.txt` in place of `raytracing_fallback.txt`, `tunnel_fallback.txt` and `tunnel_motion_fallback.txt`, with `cycle.txt` before `tunnel_motion.txt` | the native Metal backend, with the validation layer; compared with the Metal golden images except ray tracing's own |
-| `demo_batch_vulkan` | `batch.txt` | Vulkan through MoltenVK with the Khronos validation layer (an error or warning fails the batch) |
+| `demo_batch_metal` | `batch.txt` | SDL GPU's Metal driver (`--gpu-backend sdl`), with the Metal API validation layer |
+| `demo_batch_metal_native` | `batch_native.txt`: `batch.txt` with `raytracing.txt`, `tunnel.txt`, `tunnel_path.txt` and `tunnel_motion.txt` in place of `raytracing_fallback.txt`, `tunnel_fallback.txt` and `tunnel_motion_fallback.txt`, with `cycle.txt` before `tunnel_motion.txt` | the native Metal backend (`--gpu-backend metal`; the default on Apple platforms), with the validation layer; compared with the Metal golden images except ray tracing's own |
+| `demo_batch_vulkan` | `batch.txt` | Vulkan through MoltenVK (`--gpu-driver vulkan`, which selects SDL GPU) with the Khronos validation layer (an error or warning fails the batch) |
+
+Each batch fails when the app ran on another backend or driver than its own (a fallback from the native backend
+included), from the log's `gpu: backend ...` line.
 
 `batch.txt` includes, in this order: materials, shadows, sky, post, hdr, hdr_on, physics, input, assets, audio,
 animation, raytracing_fallback, tunnel_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone,
@@ -354,8 +363,10 @@ Every part selects its section first (and resets it where it needs the defaults)
 before it, and its `time` starts at 0. A test per part and backend, `demo_<part>_<backend>`, checks the part's line
 in the batch's log (`part <file>: N passed, 0 failed`) and compares its capture (or captures:
 `animation_skinning` has two) with `tests/golden/<backend>/<device>/<golden>.png`. The batches run in Release builds (`QUENCH_TEST_CAPTURES`); Debug
-and the sanitizer builds run `demo_smoke` instead (`smoke.txt`: every section once, offscreen, with assertions or
-under the sanitizers). The scenarios point at the window in percent or at named points (`@menu:<section>`,
+and the sanitizer builds run smoke runs instead (`smoke.txt`: every section once, offscreen, with assertions or
+under the sanitizers): on Apple platforms `demo_smoke_metal` on SDL GPU and `demo_smoke_metal_native` on the native
+backend (since 2026-11-07; it fails when the native backend falls back), elsewhere `demo_smoke` on the default.
+The scenarios point at the window in percent or at named points (`@menu:<section>`,
 `@floor`), so their checks also pass in a portrait phone window (the captures are compared on the Mac only).
 
 The section captures show the scene only: before each, the part sends `windows off`, which hides the menu, the
@@ -533,8 +544,9 @@ occlusion; and the path tracer. Since stage 12 it goes on to the tunnel at full 
 (`tunnel_lit`), with four traced shadows, with reflections, with the probe grid (`tunnel_all_traced`), the section's
 default at 0.67 with MetalFX temporal, all with the lamps still at their time 0 and the camera free (comparable with
 the runs from before they moved), then the default with the lamps moving (`tunnel_lamps_moving`) and with the camera
-driving too (`tunnel_moving`), and the path tracer. Run it with `--onscreen --gpu-backend metal` (on SDL GPU
-every region measures the fallbacks); the perf lines carry the GPU time per timed range
+driving too (`tunnel_moving`), and the path tracer. Run it with `--onscreen` on the native backend (the default on
+Apple platforms, or `--gpu-backend metal`; on SDL GPU every region measures the fallbacks); the perf lines carry the
+GPU time per timed range
 ([Performance](performance.md#measurements)). For the
 cost of each effect add `--present-mode immediate`: with vsync the GPU's clock follows the load, and light regions
 read slower per range than they are (the stage 11 costs in [Performance](performance.md) come from such a run).
@@ -548,7 +560,9 @@ and 8 turns, then holds it in 4 turns for 20 s at 60 Hz (not run on a phone yet)
 `scenarios/tunnel_phone.txt` measures each option at half size (and the lamps at 0.67 and full size), then holds the
 section's phone defaults at 60 Hz for 40 s with the lamps still, then 20 s in motion (`tunnel_moving_60hz`), and
 captures them and the path tracer; `tunnel_phone_fallback.txt` runs the fallback frame on SDL GPU, still and in
-motion. `scenarios/lamp_maps_phone.txt` measures the lamps' shadow maps on SDL GPU (the ray tracing section's two
+motion. The scenarios on SDL GPU (this one and the three below) need `--gpu-backend sdl` (or
+`QUENCH_GPU_BACKEND=sdl`) since the native backend became the default. `scenarios/lamp_maps_phone.txt` measures the
+lamps' shadow maps on SDL GPU (the ray tracing section's two
 lamps and the tunnel's two spots, unshadowed and with maps of 256 and 512, then the tunnel with maps of 256 at 60 Hz
 for 20 s; not run on a phone yet). `scenarios/gtao_phone.txt` measures GTAO on SDL GPU (the shadows section, the ray
 tracing section and the tunnel without occlusion and with it, and a capture; not run on a phone yet).

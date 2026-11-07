@@ -189,6 +189,8 @@ Result<std::unique_ptr<DeviceImpl>> createSdlGpuDevice(const DeviceDesc& desc);
 #if QUENCH_PLATFORM_APPLE
 Result<std::unique_ptr<DeviceImpl>> createMetalDevice(const DeviceDesc& desc);
 #endif
+// Tests of the fallback: while set, Device::create treats the native Metal backend as failing to start.
+void setNativeDeviceFailsForTesting(bool fails);
 
 inline ShaderCode shaderCodeFor(const ShaderBlob& blob, ShaderFormat format) {
     switch (format) {

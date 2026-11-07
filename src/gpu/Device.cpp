@@ -8,6 +8,7 @@
 #include <quench/core/Log.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -26,7 +27,15 @@ const char* backendName(Backend backend) {
 
 bool backendAvailable(Backend backend) { return backend != Backend::Metal || QUENCH_PLATFORM_APPLE; }
 
+Backend defaultBackend() { return QUENCH_PLATFORM_APPLE ? Backend::Metal : Backend::SdlGpu; }
+
 namespace detail {
+
+namespace {
+std::atomic<bool> g_nativeDeviceFails{false};
+} // namespace
+
+void setNativeDeviceFailsForTesting(bool fails) { g_nativeDeviceFails = fails; }
 
 DeviceImpl::DeviceImpl() = default;
 DeviceImpl::~DeviceImpl() = default;
@@ -56,15 +65,20 @@ R adopt(DeviceImpl* device, void* native) {
     return resource;
 }
 
-Backend chooseBackend(Backend requested) {
+Backend chooseBackend(const DeviceDesc& desc) {
+    Backend requested = desc.backend;
     if (requested == Backend::Default) {
-        requested = Backend::SdlGpu;
+        std::string_view driver = desc.driver;
+        if (const char* env = std::getenv("SDL_GPU_DRIVER"); driver.empty() && env) driver = env;
+        requested = !driver.empty() && driver != "metal" ? Backend::SdlGpu : defaultBackend();
         if (const char* env = std::getenv("QUENCH_GPU_BACKEND"); env && *env) {
             const std::string_view value(env);
             if (value == "metal")
                 requested = Backend::Metal;
-            else if (value != "sdl")
-                log::warning("gpu", "QUENCH_GPU_BACKEND={} is not sdl or metal: SDL GPU", value);
+            else if (value == "sdl")
+                requested = Backend::SdlGpu;
+            else
+                log::warning("gpu", "QUENCH_GPU_BACKEND={} is not sdl or metal: {}", value, backendName(requested));
         }
     }
     if (requested == Backend::Metal && !QUENCH_PLATFORM_APPLE) {
@@ -91,13 +105,26 @@ void TransferBuffer::unmap() {
 // ------------------------------------------------------------------ Device
 
 Result<Device> Device::create(const DeviceDesc& desc) {
-    const Backend backend = chooseBackend(desc.backend);
+    Backend backend = chooseBackend(desc);
     Result<std::unique_ptr<DeviceImpl>> impl = Error{"no backend"};
+    std::string nativeError;
 #if QUENCH_PLATFORM_APPLE
-    if (backend == Backend::Metal) impl = detail::createMetalDevice(desc);
+    if (backend == Backend::Metal) {
+        if (detail::g_nativeDeviceFails)
+            impl = Error{"failing for a test"};
+        else
+            impl = detail::createMetalDevice(desc);
+        if (!impl) {
+            nativeError = impl.error();
+            log::warning("gpu", "the native Metal backend failed to start ({}): SDL GPU instead", nativeError);
+            backend = Backend::SdlGpu;
+        }
+    }
 #endif
     if (backend == Backend::SdlGpu) impl = detail::createSdlGpuDevice(desc);
-    if (!impl) return Error{impl.error()};
+    if (!impl)
+        return Error{nativeError.empty() ? impl.error()
+                                         : std::format("native Metal: {}; SDL GPU: {}", nativeError, impl.error())};
 
     Device device;
     device.m_impl = std::move(*impl);

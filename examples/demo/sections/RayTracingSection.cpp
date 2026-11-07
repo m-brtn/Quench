@@ -1,13 +1,13 @@
 // Ray tracing: the renderer's traced effects and MetalFX upscaling, where gpu::Caps offers them (the native Metal
-// backend, --gpu-backend metal, on a GPU with ray queries in render passes): soft sun shadows, ambient occlusion,
-// shadows of local lights, reflections, indirect light from a probe grid or per pixel, the engine's denoisers and
-// MetalFX's denoising upscaler, and the reference path tracer. Elsewhere the same settings fall back to the cascaded
-// shadow maps, no occlusion (GTAO with the screen-space fallbacks), unshadowed local lights (or their shadow maps),
-// the sky's reflections (screen-space ones with the fallbacks) and ambient light and bilinear scaling, and the section
-// says why. The scene has what the rays must handle: a fence with holes (cut-out) lit by a spot behind it, a glass
-// torus (translucent, tinted), a walking character (skinned, refitted every frame), a mirror, a strip of gold spheres
-// from smooth to rough, a red and green corner with a white block and a lamp (colour bleeding, contact occlusion), a
-// glowing panel (emissive light through the probes), under a turning sun.
+// backend, the default on Apple platforms, on a GPU with ray queries in render passes): soft sun shadows, ambient
+// occlusion, shadows of local lights, reflections, indirect light from a probe grid or per pixel, the engine's
+// denoisers and MetalFX's denoising upscaler, and the reference path tracer. Elsewhere the same settings fall back to
+// the cascaded shadow maps, no occlusion (GTAO with the screen-space fallbacks), unshadowed local lights (or their
+// shadow maps), the sky's reflections (screen-space ones with the fallbacks) and ambient light and bilinear scaling,
+// and the section says why. The scene has what the rays must handle: a fence with holes (cut-out) lit by a spot
+// behind it, a glass torus (translucent, tinted), a walking character (skinned, refitted every frame), a mirror, a
+// strip of gold spheres from smooth to rough, a red and green corner with a white block and a lamp (colour bleeding,
+// contact occlusion), a glowing panel (emissive light through the probes), under a turning sun.
 
 #include "Demo.h"
 

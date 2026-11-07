@@ -223,10 +223,11 @@ if(NOT QUENCH_HEADLESS)
         SOURCES audio/DeviceTests.cpp
         LIBS quench_audio_device)
 
-    # Device tests on the driver SDL picks: Metal on Apple platforms, with the Metal API validation layer.
+    # Device tests on SDL GPU and the driver SDL picks: Metal on Apple platforms (named, since the native Metal backend
+    # is the default there), with the Metal API validation layer.
     set(gpu_environment "")
     if(APPLE)
-        set(gpu_environment MTL_DEBUG_LAYER=1 QUENCH_TEST_GPU_DRIVER=metal)
+        set(gpu_environment QUENCH_GPU_BACKEND=sdl MTL_DEBUG_LAYER=1 QUENCH_TEST_GPU_DRIVER=metal)
     endif()
     quench_add_test_executable(quench_gpu_device_tests PREFIX gpu_device LABEL gpu
         SOURCES
@@ -258,8 +259,8 @@ if(NOT QUENCH_HEADLESS)
     endif()
 
     # The same cases on Vulkan through MoltenVK (macOS with Homebrew's vulkan-loader and molten-vk): checks the SPIR-V
-    # path, not a real Vulkan driver. SDL looks the loader up by bare names, which dlopen does not search for in
-    # Homebrew's lib directory.
+    # path, not a real Vulkan driver. SDL_GPU_DRIVER alone selects SDL GPU (a driver the native backend lacks). SDL
+    # looks the loader up by bare names, which dlopen does not search for in Homebrew's lib directory.
     if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         find_library(QUENCH_TEST_VULKAN_LOADER NAMES vulkan.1 PATHS /opt/homebrew/lib /usr/local/lib NO_DEFAULT_PATH)
         find_library(QUENCH_TEST_VULKAN_VALIDATION NAMES VkLayer_khronos_validation
@@ -281,7 +282,8 @@ if(NOT QUENCH_HEADLESS)
         endif()
     endif()
 
-    # The render module: CPU cases and offscreen renders, on the default driver and on Vulkan through MoltenVK.
+    # The render module: CPU cases and offscreen renders, on SDL GPU's default driver, on Vulkan through MoltenVK and
+    # on the native Metal backend.
     quench_add_test_executable(quench_render_tests PREFIX render LABEL render
         SOURCES
             gpu/GpuTest.cpp
@@ -338,14 +340,18 @@ if(NOT QUENCH_HEADLESS)
         # beside the GPU tests, 53 s in a full run where it started first; 2026-11-06).
         set(app_run_cost 0.001)
 
-        # quench_add_batch(<prefix> <suffix> APP <target> SCRIPT <file> BACKEND <golden backend> ARGS <arg>...
-        #                  [ENVIRONMENT <NAME=value>...] [FAIL_REGEX <regex>] PARTS <file>[:<golden>...]...)
-        # registers <prefix>_batch_<suffix> (the run, in captures/<prefix>_batch_<suffix>/) and per part
-        # <prefix>_<file>_<suffix>: the part <file>.txt passed its checks and each of its captures <golden>.png
-        # matches tests/golden/<backend>/<device>/<golden>.png. All have the label <prefix>, and vulkan for the suffix
-        # vulkan.
+        # quench_add_batch(<prefix> <suffix> APP <target> SCRIPT <file> BACKEND <golden backend>
+        #                  GPU <gpu backend>:<driver> ARGS <arg>... [ENVIRONMENT <NAME=value>...] [FAIL_REGEX <regex>]
+        #                  PARTS <file>[:<golden>...]...)
+        # registers <prefix>_batch_<suffix> (the run, in captures/<prefix>_batch_<suffix>/; it fails unless the device
+        # runs on GPU, `sdl:metal` or `metal:metal` for example, so no backend loses its run to a fallback) and per part
+        # <prefix>_<file>_<suffix>: the part <file>.txt passed its checks and each of its captures <golden>.png matches
+        # tests/golden/<backend>/<device>/<golden>.png. All have the label <prefix>, and vulkan for the suffix vulkan.
         function(quench_add_batch prefix suffix)
-            cmake_parse_arguments(PARSE_ARGV 2 arg "" "APP;SCRIPT;BACKEND;FAIL_REGEX" "ARGS;ENVIRONMENT;PARTS")
+            cmake_parse_arguments(PARSE_ARGV 2 arg "" "APP;SCRIPT;BACKEND;GPU;FAIL_REGEX" "ARGS;ENVIRONMENT;PARTS")
+            string(REPLACE ":" ";" gpu "${arg_GPU}")
+            list(GET gpu 0 gpu_backend)
+            list(GET gpu 1 gpu_driver)
             set(batch ${prefix}_batch_${suffix})
             set(labels ${prefix})
             if(suffix STREQUAL "vulkan")
@@ -356,6 +362,7 @@ if(NOT QUENCH_HEADLESS)
             list(JOIN arg_ENVIRONMENT "|" environment)
             add_test(NAME ${batch} COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:${arg_APP}> "-DARGS=${args}"
                      -DSCRIPT=${arg_SCRIPT} "-DENVIRONMENT=${environment}" -DUSER_DIR=${dir} -DLOG=${dir}.log
+                     -DGPU_BACKEND=${gpu_backend} -DGPU_DRIVER=${gpu_driver}
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/RunBatch.cmake)
             set_tests_properties(${batch} PROPERTIES FIXTURES_SETUP ${batch} LABELS "${labels}" COST ${app_run_cost})
             if(arg_FAIL_REGEX)
@@ -386,17 +393,18 @@ if(NOT QUENCH_HEADLESS)
         endfunction()
 
         # The hello example: its frame at 1 s against the golden image, the input check and the perf region check, on
-        # SDL GPU's Metal driver, on the native Metal backend (the same golden image) and on Vulkan through MoltenVK.
+        # SDL GPU's Metal driver, on the native Metal backend (the same golden image) and on Vulkan through MoltenVK
+        # (--gpu-driver vulkan selects SDL GPU). Every backend is named: the default depends on the platform.
         if(QUENCH_TEST_CAPTURES)
             set(hello_args --window 640x360 --frame-size 1280x720 --gpu-debug)
             set(hello_parts frame:hello input perf)
             set(hello_script ${Quench_SOURCE_DIR}/examples/hello/scenarios/check.txt)
-            quench_add_batch(hello metal APP quench_hello SCRIPT ${hello_script} BACKEND metal ARGS ${hello_args}
-                ENVIRONMENT MTL_DEBUG_LAYER=1 PARTS ${hello_parts})
-            quench_add_batch(hello metal_native APP quench_hello SCRIPT ${hello_script} BACKEND metal
+            quench_add_batch(hello metal APP quench_hello SCRIPT ${hello_script} BACKEND metal GPU sdl:metal
+                ARGS ${hello_args} --gpu-backend sdl ENVIRONMENT MTL_DEBUG_LAYER=1 PARTS ${hello_parts})
+            quench_add_batch(hello metal_native APP quench_hello SCRIPT ${hello_script} BACKEND metal GPU metal:metal
                 ARGS ${hello_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1 PARTS ${hello_parts})
             if(QUENCH_TEST_VULKAN_LOADER)
-                quench_add_batch(hello vulkan APP quench_hello SCRIPT ${hello_script} BACKEND vulkan
+                quench_add_batch(hello vulkan APP quench_hello SCRIPT ${hello_script} BACKEND vulkan GPU sdl:vulkan
                     ARGS ${hello_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment}
                     FAIL_REGEX "Validation (Error|Warning)" PARTS ${hello_parts})
             endif()
@@ -432,19 +440,20 @@ if(NOT QUENCH_HEADLESS)
             set(demo_args --window 960x540 --gpu-debug --hdr-headroom 4)
             if(QUENCH_TEST_CAPTURES)
                 quench_add_batch(demo metal APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND metal
-                    ARGS ${demo_args} ENVIRONMENT MTL_DEBUG_LAYER=1
+                    GPU sdl:metal ARGS ${demo_args} --gpu-backend sdl ENVIRONMENT MTL_DEBUG_LAYER=1
                     PARTS ${demo_parts} raytracing_fallback:demo_raytracing tunnel_fallback:demo_tunnel
                     tunnel_motion_fallback raytracing_maps:demo_raytracing_maps
                     raytracing_screen:demo_raytracing_screen cycle)
                 if(APPLE)
                     quench_add_batch(demo metal_native APP quench_demo SCRIPT ${demo_scenarios}/batch_native.txt
-                        BACKEND metal ARGS ${demo_args} --gpu-backend metal ENVIRONMENT MTL_DEBUG_LAYER=1
+                        BACKEND metal GPU metal:metal ARGS ${demo_args} --gpu-backend metal
+                        ENVIRONMENT MTL_DEBUG_LAYER=1
                         PARTS ${demo_parts} raytracing:demo_raytracing_native tunnel:demo_tunnel_native tunnel_path
                         cycle tunnel_motion:demo_tunnel_motion_native)
                 endif()
                 if(QUENCH_TEST_VULKAN_LOADER)
                     quench_add_batch(demo vulkan APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND vulkan
-                        ARGS ${demo_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment}
+                        GPU sdl:vulkan ARGS ${demo_args} --gpu-driver vulkan ENVIRONMENT ${vulkan_environment}
                         FAIL_REGEX "Validation (Error|Warning)" PARTS ${demo_parts} raytracing_fallback:demo_raytracing
                         tunnel_fallback:demo_tunnel tunnel_motion_fallback raytracing_maps:demo_raytracing_maps
                         raytracing_screen:demo_raytracing_screen cycle)
@@ -462,10 +471,27 @@ if(NOT QUENCH_HEADLESS)
                     set_tests_properties(demo_${kind} PROPERTIES LABELS demo COST ${app_run_cost})
                 endforeach()
             else()
-                # Every section once, offscreen (with assertions in Debug builds, under the sanitizers in theirs).
-                add_test(NAME demo_smoke COMMAND quench_demo --window 960x540 --script ${demo_scenarios}/smoke.txt)
-                set_tests_properties(demo_smoke PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line" LABELS demo
-                                     COST ${app_run_cost})
+                # Every section once, offscreen (with assertions in Debug builds, under the sanitizers in theirs): on
+                # Apple platforms on SDL GPU's Metal driver and on the native Metal backend (a fallback from it fails
+                # the run), elsewhere on the default.
+                set(smoke_runs "demo_smoke:")
+                if(APPLE)
+                    set(smoke_runs "demo_smoke_metal:sdl" "demo_smoke_metal_native:metal")
+                endif()
+                foreach(run IN LISTS smoke_runs)
+                    string(REPLACE ":" ";" run "${run}")
+                    list(GET run 0 name)
+                    list(GET run 1 backend)
+                    set(backend_args "")
+                    if(backend)
+                        set(backend_args --gpu-backend ${backend})
+                    endif()
+                    add_test(NAME ${name} COMMAND quench_demo --window 960x540 ${backend_args}
+                             --script ${demo_scenarios}/smoke.txt)
+                    set_tests_properties(${name} PROPERTIES
+                                         FAIL_REGULAR_EXPRESSION "FAIL line;native Metal backend failed to start"
+                                         LABELS demo COST ${app_run_cost})
+                endforeach()
             endif()
             add_test(NAME demo_version COMMAND quench_demo --offscreen --version)
             set_tests_properties(demo_version PROPERTIES PASS_REGULAR_EXPRESSION

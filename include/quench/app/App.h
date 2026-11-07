@@ -48,7 +48,9 @@ struct AppDesc {
     int width = 1280;                // window size in points (desktop; mobile windows fill the screen)
     int height = 720;
     double fixedStep = 1.0 / 120.0; // simulation tick
-    // Default: SDL GPU, or the QUENCH_GPU_BACKEND environment variable (sdl, metal); --gpu-backend overrides it.
+    // Default: the native Metal backend on Apple platforms, SDL GPU elsewhere and with an SDL GPU driver other than
+    // Metal (--gpu-driver); the QUENCH_GPU_BACKEND environment variable (sdl, metal) and --gpu-backend override it. A
+    // native Metal device that fails to start falls back to SDL GPU (gpu::Backend).
     gpu::Backend gpuBackend = gpu::Backend::Default;
     gpu::PresentMode presentMode = gpu::PresentMode::Vsync;
     HdrMode hdr = HdrMode::Off;    // --hdr overrides it

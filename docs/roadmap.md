@@ -279,8 +279,9 @@ TODO for stage 9:
 - [x] Design the `quench::gpu` surface for acceleration structures (one bottom level per registered mesh, a top level
   per frame from the scene's instances, refit or rebuild) in [Architecture](architecture.md#ray-tracing), with
   the fallback slots (2026-11-06; built the same day, below).
-- [x] Native Metal backend of `quench::gpu` (`src/gpu/metal/`, selected with `--gpu-backend metal`; SDL GPU stays the
-  default) and GPU timestamps per pass (`Caps::gpuPassTiming`), 2026-11-06 ([Architecture](architecture.md#graphics-layer)).
+- [x] Native Metal backend of `quench::gpu` (`src/gpu/metal/`, selected with `--gpu-backend metal`; the default on
+  Apple platforms since 2026-11-07, below) and GPU timestamps per pass (`Caps::gpuPassTiming`), 2026-11-06
+  ([Architecture](architecture.md#graphics-layer)).
 - [x] DXC for the shader entries with ray queries (2026-11-06): v1.9.2609 built from its pinned source archives
   once per machine (macOS has no DXC release binary; not the LunarG SDK); glslang stays for everything else
   ([Architecture](architecture.md#shaders)).
@@ -297,10 +298,12 @@ TODO for stage 9:
 - [x] Demo section 11, "Ray tracing", with checks and golden images for the native backend and the fallbacks
   (2026-11-06, [Engine demo](demo.md)).
 - [ ] Measure ray-traced shadows against shadow maps on the iPhone at 120 Hz and pick the default per device (the
-  default stays shadow maps and SDL GPU until then).
-- [ ] Run the native backend on the iPhone (the device test app with `QUENCH_GPU_BACKEND=metal`, the demo with EDR
-  and at 120 Hz, timestamps on the A20 Pro, `Caps::rayTracing` and MetalFX on the device), then make it the default
-  on Apple platforms.
+  default stays shadow maps until then).
+- [x] Run the native backend on the iPhone (the device test app with `QUENCH_GPU_BACKEND=metal`, the demo's
+  benchmarks at 120 Hz, timestamps on the A20 Pro, `Caps::rayTracing` and MetalFX on the device; 2026-11-06), then
+  make it the default on Apple platforms: done 2026-11-07 (the user's decision; SDL GPU with `--gpu-backend sdl`, a
+  native device that fails to start falls back to it; [Architecture](architecture.md#native-metal-backend)). Not yet
+  run on an iPhone as the default, nor looked at there with EDR.
 - [ ] Look at the ray tracing section in motion (noise and ghosting with 1 and 2 shadow rays, with MetalFX
   temporal): by the user, on the Mac and the iPhone.
 - [x] Ray-traced reflections (fallback: what exists, the sky reflection) and indirect light: done in stage 11 (below).
@@ -514,9 +517,11 @@ open, in the order it is useful (nothing of it is scheduled; the user decides):
    iPhone 17), Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes,
    background).
 2. **Defaults from those runs:** the ray tracing section's phone defaults are chosen (stage 11, on the iPhone 17);
-   open: ray-traced shadows or shadow maps in the other sections, and the native Metal backend as the default on
-   Apple platforms (it ran the device tests and the benchmarks on both iPhones on 2026-11-06; the user has not looked
-   at it there yet). Recommended, not built: a game-level reaction to the thermal state (opt-in, for example 60 Hz
+   the native Metal backend is the default on Apple platforms since 2026-11-07 (the user's decision; it ran the
+   device tests and the benchmarks on both iPhones on 2026-11-06 as an option; open: the device test app, the
+   demo and hello on an iPhone with it as the default, the hello benchmark on the Mac's screen on both backends, and
+   the user's look at it on the phone). Open: ray-traced shadows or shadow maps in the other sections. Recommended,
+   not built: a game-level reaction to the thermal state (opt-in, for example 60 Hz
    or a lower render scale from serious on, with hysteresis and the player's choice first); the engine reports the
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    traced in turns since 2026-11-07 (`probeUpdatePeriod`, measured on the Mac only); its phone default waits for

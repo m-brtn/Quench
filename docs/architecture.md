@@ -89,11 +89,11 @@ intact (no fsync: a power loss right after the rename is not covered).
 All graphics goes through `quench::gpu`: engine-owned handles for buffers, textures, samplers and pipelines,
 descriptor structs, and command recording. Backends:
 
-- **SDL GPU** (first, portable, the default): Metal on Apple platforms, Vulkan and D3D12 elsewhere; WebGPU only if SDL
-  ships it.
-- **Metal** (native, since stage 9; Apple platforms): for what SDL GPU does not offer. Built and at parity with SDL
-  GPU's Metal driver (see "Native Metal backend"), with GPU timestamps per pass, acceleration structures and ray
-  queries, and MetalFX.
+- **SDL GPU** (first, portable, the default off Apple platforms): Metal on Apple platforms, Vulkan and D3D12
+  elsewhere; WebGPU only if SDL ships it.
+- **Metal** (native, since stage 9; Apple platforms, their default since 2026-11-07): for what SDL GPU does not
+  offer. Built and at parity with SDL GPU's Metal driver (see "Native Metal backend"), with GPU timestamps per pass,
+  acceleration structures and ray queries, and MetalFX.
 
 Why a native backend at all: SDL GPU deliberately targets a roughly ten-year-old common feature set. In reply to a
 request for a ray tracing API, its maintainers stated that features missing from the API were omitted intentionally
@@ -164,12 +164,22 @@ Stage 9, first half (2026-11-06): `src/gpu/metal/` (`MetalDevice.mm`: device, re
 3.4.18's Metal backend (`SDL_gpu_metal.m`) wherever the engine could observe a difference.
 
 - **Selection**: `DeviceDesc::backend` (`gpu::Backend::Default`, `SdlGpu`, `Metal`); `Default` reads the
-  `QUENCH_GPU_BACKEND` environment variable (`sdl` or `metal`), else SDL GPU. In the app: `AppDesc::gpuBackend` and the
-  `--gpu-backend sdl|metal` flag ([App shell](app.md#command-line-flags)). Off Apple platforms a request for Metal logs a warning
-  and creates SDL GPU. `Caps::backend` says which one runs; the device's log line names it.
-- **Default stays SDL GPU** (decided without the user, 2026-11-06, as the stage plan says: "until parity is shown on
-  every platform"). Parity is shown on the Mac (below) and in the iOS Simulator's tests, not on the iPhone, which was
-  not available. The switch is a one-line change in `chooseBackend` (`src/gpu/Device.cpp`) after a device run.
+  `QUENCH_GPU_BACKEND` environment variable (`sdl` or `metal`), else takes SDL GPU for a driver only SDL GPU has
+  (`DeviceDesc::driver` or the `SDL_GPU_DRIVER` environment variable other than `metal`: `vulkan`, `direct3d12`), else
+  the platform's backend, `gpu::defaultBackend()`. In the app: `AppDesc::gpuBackend` and the `--gpu-backend sdl|metal`
+  flag ([App shell](app.md#command-line-flags)). Off Apple platforms a request for Metal logs a warning and creates SDL
+  GPU. `Caps::backend` says which one runs; the device's log line names it.
+- **The default** (`gpu::defaultBackend()`, `src/gpu/Device.cpp`, the one place that decides it): the native Metal
+  backend on Apple platforms (macOS, iOS, the iOS Simulator) since 2026-11-07 (the user's decision), SDL GPU
+  elsewhere. Only the backend changed: shadow maps and every ray tracing and MetalFX effect stay off in the engine's
+  defaults (`RenderSettings`), and the demo's ray tracing and tunnel sections, which turn them on where `gpu::Caps`
+  allow, now trace by default on the Mac. Until then SDL GPU was the default everywhere (decided without the user on
+  2026-11-06, as the stage plan said: "until parity is shown on every platform"); parity was then shown on the Mac,
+  in the iOS Simulator's tests and on both iPhones (the device tests and the demo, 2026-11-06).
+- **Fallback**: a native Metal device that fails to start (no Metal device, a GPU family below the minimum, a driver
+  it does not have, its blit shaders) logs one warning (`the native Metal backend failed to start (...): SDL GPU
+  instead`) and SDL GPU starts in its place; only when both fail does `Device::create` return an error, with both
+  reasons. `gpu_device.native_fallback` checks it through a test seam (`detail::setNativeDeviceFailsForTesting`).
 - **Shaders and bindings**: the same `quench_shaderc` metallib (or MSL source) as SDL GPU, so the slots are the ones
   SPIRV-Cross assigns for SDL GPU's register spaces. Per stage: uniform block `b[n]` in `buffer(n)`; sampled texture
   and sampler `t[n]`, `s[n]` in `texture(n)`, `sampler(n)`; storage textures in `texture(numSamplers + k)`; storage

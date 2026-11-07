@@ -35,7 +35,8 @@ expect audio_failed == 0
 section animation
 until anim_ready == 1 3
 expect anim_failed == 0
-# Ray tracing where the backend has it (the package's default, SDL GPU, takes the fallbacks); the character loads.
+# Ray tracing where the backend has it (the native Metal backend, the package's default on the Mac; SDL GPU takes
+# the fallbacks); the character loads.
 section raytracing
 until rt_ready == 1 3
 expect draws > 0

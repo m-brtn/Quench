@@ -1,8 +1,9 @@
 #pragma once
 
-// The GPU device: creates resources and command buffers, presents to windows. Backends: SDL GPU (Metal on Apple
-// platforms, Vulkan, Direct3D 12; the default) and native Metal (Apple platforms). Device capabilities are in caps()
-// and the supports*() queries; effects choose their fallbacks from them, never from the platform or the backend.
+// The GPU device: creates resources and command buffers, presents to windows. Backends: native Metal (Apple
+// platforms, the default there) and SDL GPU (Metal on Apple platforms, Vulkan, Direct3D 12; the default elsewhere).
+// Device capabilities are in caps() and the supports*() queries; effects choose their fallbacks from them, never from
+// the platform or the backend.
 
 #include <quench/core/Result.h>
 #include <quench/gpu/CommandBuffer.h>
@@ -26,13 +27,18 @@ enum class ShaderFormat : std::uint8_t { Spirv, Msl, Metallib, Dxil };
 
 const char* shaderFormatName(ShaderFormat format);
 
-// Default: the QUENCH_GPU_BACKEND environment variable ("sdl" or "metal"), else SDL GPU. Metal is the native backend
-// (Apple platforms only; elsewhere the device falls back to SDL GPU and logs it).
+// Default: the QUENCH_GPU_BACKEND environment variable ("sdl" or "metal"); else SDL GPU for a driver only SDL GPU has
+// (DeviceDesc::driver, or the SDL_GPU_DRIVER environment variable, other than "metal"); else defaultBackend(). Metal
+// is the native backend (Apple platforms only; elsewhere the device falls back to SDL GPU and logs it). A native
+// Metal device that fails to start falls back to SDL GPU with a warning; Caps::backend says which one runs.
 enum class Backend : std::uint8_t { Default, SdlGpu, Metal };
 
 const char* backendName(Backend backend); // "default", "sdl", "metal"
 // Whether this build can create a device on the backend (Metal: Apple platforms only), e.g. for a backend choice.
 bool backendAvailable(Backend backend);
+// The platform's backend for Backend::Default: Metal on Apple platforms (macOS, iOS, the iOS Simulator), SDL GPU
+// elsewhere.
+Backend defaultBackend();
 
 struct DeviceDesc {
     // "metal", "vulkan" or "direct3d12"; empty: the backend's choice (SDL: Metal, then Direct3D 12, then Vulkan; the

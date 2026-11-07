@@ -42,7 +42,8 @@ library in `shaders/quench/` (uniform structs
 shared by C++ and HLSL), `quench_gpu` (the GPU layer over SDL GPU, with swapchain compositions for HDR and compute;
 shader hot reload on desktops with `--hot-reload`, pipelines created again behind their handles, checked on the
 Mac's three backends;
-beside it, opt-in with `--gpu-backend metal`, a native Metal backend with GPU timestamps per pass, acceleration
+beside it, the default on Apple platforms since 2026-11-07 (SDL GPU with `--gpu-backend sdl`, and where the native
+one fails to start), a native Metal backend with GPU timestamps per pass, acceleration
 structures with top-level refits and compaction, ray queries, and MetalFX upscaling and denoising), `quench_app`
 and `quench_main` (SDL main callbacks,
 the game interface, input actions, ImGui, common flags (`--orientation`, `--user-dir` among them), offscreen
@@ -92,13 +93,15 @@ ray tracing and MetalFX ran on the Mac and on both iPhones (2026-11-06: the devi
 120 Hz; ray-traced shadows with occlusion 8.0 ms GPU p50 on the iPhone 18 Pro Max, over the phone's 7.5 ms budget,
 about 100 frames per second on the iPhone 17), the native
 backend also in the iOS Simulator (without ray tracing or MetalFX); builds of the Xcode generator compiled its
-Objective-C++ without ARC until 2026-11-06, so the 0.8.0 iOS package crashes on the native backend (the default SDL
-GPU backend works there). The stage 11 effects (0.9.0) ran on the Mac and on the iPhone 17 (2026-11-06: the device
+Objective-C++ without ARC until 2026-11-06, so the 0.8.0 iOS package crashes on the native backend (SDL GPU, that
+package's default, works there). The stage 11 effects (0.9.0) ran on the Mac and on the iPhone 17 (2026-11-06: the device
 tests on both backends, 0 failed; the cost of each effect, about 3 times the M4 Pro's; the demo's ray tracing
 section defaults on phones chosen from them: half size with MetalFX spatial, no probe grid, 60 Hz), not on the
 iPhone 18 Pro Max; the user played with that section at its phone defaults on the iPhone 17 (2026-11-06: "it's
-fine"), nobody has looked at the other effects in motion. The default stays SDL GPU and shadow maps,
-every stage 11 effect off, until the user has looked at them on the iPhone. The stage 12 area lights (the demo's
+fine"), nobody has looked at the other effects in motion. The default backend on Apple platforms is the native one
+since 2026-11-07 (the user's decision; checked on the Mac, not yet run as the default on an iPhone), SDL GPU
+elsewhere; the default stays shadow maps, every stage 11 effect off, until the user has looked at them on the
+iPhone. The stage 12 area lights (the demo's
 tunnel, whose lamps move and whose camera drives a loop since the same day) ran on the Mac and on the iPhone 17
 (2026-11-06: costs and captures, still and in motion; the tunnel's phone defaults at 60 Hz; ten minutes of the ray
 tracing section's and the tunnel's phone defaults, where the tunnel missed a few intervals after about 8 minutes),
@@ -113,7 +116,7 @@ Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No Basis Universal textures
 (stage 6 remaining work), browser audio (stage 7 remaining
-work), the native backend as the default, custom
+work), custom
 surface shading in ray hits (normal maps are read there since 0.10.0; stage 11 remaining work) or
 shadows of area lights without ray tracing (stage 12 remaining work)
 yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
@@ -286,8 +289,10 @@ Details and rationale: `docs/architecture.md`.
   their own namespaces and prefixes.
 - **Headless core.** Simulation, physics, assets, animation, navigation and the audio mixer must not depend on
   windowing, the GPU or rendering, so they run in CTest without a window (and under Node.js for the web check).
-- **Graphics goes through `quench::gpu`.** Backends: SDL GPU (portable, the first one, the default) and native Metal
-  (since stage 9, `--gpu-backend metal`). The Metal backend exists for hardware ray tracing, GPU timestamps and
+- **Graphics goes through `quench::gpu`.** Backends: SDL GPU (portable, the first one, the default off Apple
+  platforms, `--gpu-backend sdl`) and native Metal (since stage 9, `--gpu-backend metal`; the default on Apple
+  platforms since 2026-11-07, chosen in `gpu::defaultBackend()` only, falling back to SDL GPU with one log line when
+  it fails to start). The Metal backend exists for hardware ray tracing, GPU timestamps and
   MetalFX: SDL GPU does not offer them, and its maintainers decline to expose native object handles
   (libsdl-org/SDL#11147, #12094). SDL GPU types never appear in public engine headers, and games do not call SDL GPU
   directly. A new backend or a native feature is added only for a named need and verified on real hardware.
