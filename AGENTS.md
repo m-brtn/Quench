@@ -1,7 +1,8 @@
 # AGENTS.md
 
-Instructions for coding agents working on Quench. Human-facing documentation is in `README.md` (short overview) and
-`docs/` (index `docs/README.md`). The daily development log is in `devlog/`.
+Instructions for coding agents working on Quench. Human-facing documentation is in `README.md` (the front page, for
+people who want to make games: what the engine does and where it runs; verification notes, dates and internals go to
+`docs/` and the release notes) and `docs/` (index `docs/README.md`). The daily development log is in `devlog/`.
 
 ## Project overview
 
