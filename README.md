@@ -9,26 +9,23 @@
   Version 0.10.0, early · macOS and iOS · MIT
 </p>
 
-## Games made by AI agents
+## Make your game with AI agents
 
-Quench is designed for making games entirely with AI coding agents. A person describes the game; agents build it on
-the engine, run it, look at it and check it; the person plays, looks and listens. What lets an agent do the whole
-loop here:
+You describe the game; an AI coding agent builds it on Quench, runs it, looks at the result and checks it. You play,
+look and listen. The engine gives the agent what it needs for the whole loop:
 
-- **A game starts in one command:** `python3 tools/new_game.py "My Game" ../my-game` copies the template, pins the
+- **A new game in one command:** `python3 tools/new_game.py "My Game" ../my-game` copies the template, pins the
   engine, builds the game and starts it once.
-- **The [quench-game](.agents/skills/quench-game/SKILL.md) agent skill comes with every game.** It tells an agent how
-  to build a game on the engine, module by module, with working code. In its first dry run (2026-11-07) an agent
-  built a small game from the skill alone: a lit scene, physics, sound, input and a scenario with a capture.
-- **Each game gets its own `AGENTS.md` and devlog** from the template: the agents' rules and a record of what was
-  done and verified, like the engine's [AGENTS.md](AGENTS.md) and [devlog](devlog/).
-- **An agent can see and check its own work without a person:** scripted scenarios and offscreen runs, captures it
-  can look at and golden images to compare them with, perf regions with GPU timings, headless tests, and `--help` on
-  every app.
-- **The person does what needs a person:** plays, looks and listens. The demo's check mode lists those checks.
+- **The [quench-game](.agents/skills/quench-game/SKILL.md) skill in every game:** how to build a game on the engine,
+  module by module, with working code. In its first dry run (2026-11-07) an agent built a small game from the skill
+  alone: a lit scene, physics, sound, input and a scenario with a capture.
+- **Rules and a log in every game:** its own `AGENTS.md` and devlog from the template, like the engine's
+  [AGENTS.md](AGENTS.md) and [devlog](devlog/).
+- **The agent checks its own work:** scripted scenarios and offscreen runs, captures it looks at and golden images to
+  compare them with, perf regions with GPU timings, headless tests, and `--help` on every app.
+- **You keep what needs a person:** playing, looking and listening. The demo's check mode lists those checks.
 
-It is early work, and it does not make a game without effort: what the game should be, and whether it is good,
-stays with the person.
+It is early work: what the game should be, and whether it is good, stays with you.
 
 <p align="center">
   <img src="docs/images/tunnel.jpg" alt="The demo's tunnel: area lights, a reflecting puddle and brushed metal" width="100%">
