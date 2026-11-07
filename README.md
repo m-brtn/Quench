@@ -5,20 +5,30 @@
 <h1 align="center">Quench</h1>
 
 <p align="center">
-  A C++20 game engine built with AI coding agents, for games of different genres.<br>
+  A C++20 game engine designed for making games entirely with AI coding agents.<br>
   Version 0.10.0, early · macOS and iOS · MIT
 </p>
 
-## An engine made with AI agents
+## Games made by AI agents
 
-Quench is written by AI coding agents under the direction of its author. [AGENTS.md](AGENTS.md) is their rulebook:
-the architecture, the code rules, the checks each kind of change needs, and what may be claimed and how. The engine is
-built so that a change can be verified without a person at the screen: tests for every module, apps that run
-scripted scenarios offscreen, captures compared with golden images per GPU backend, perf regions with CPU and GPU
-timings, and a [devlog](devlog/) of what was done and verified each day. One command starts a new game from the
-template, so agents and people can build, run and check a game end to end, and every new game gets the agent skill
-[quench-game](.agents/skills/quench-game/SKILL.md) on how to build on the engine. What still needs eyes and ears (motion,
-sound, a phone's screen) waits for a person in the demo's check mode.
+Quench is designed for making games entirely with AI coding agents. A person describes the game; agents build it on
+the engine, run it, look at it and check it; the person plays, looks and listens. What lets an agent do the whole
+loop here:
+
+- **A game starts in one command:** `python3 tools/new_game.py "My Game" ../my-game` copies the template, pins the
+  engine, builds the game and starts it once.
+- **The [quench-game](.agents/skills/quench-game/SKILL.md) agent skill comes with every game.** It tells an agent how
+  to build a game on the engine, module by module, with working code. In its first dry run (2026-11-07) an agent
+  built a small game from the skill alone: a lit scene, physics, sound, input and a scenario with a capture.
+- **Each game gets its own `AGENTS.md` and devlog** from the template: the agents' rules and a record of what was
+  done and verified, like the engine's [AGENTS.md](AGENTS.md) and [devlog](devlog/).
+- **An agent can see and check its own work without a person:** scripted scenarios and offscreen runs, captures it
+  can look at and golden images to compare them with, perf regions with GPU timings, headless tests, and `--help` on
+  every app.
+- **The person does what needs a person:** plays, looks and listens. The demo's check mode lists those checks.
+
+It is early work, and it does not make a game without effort: what the game should be, and whether it is good,
+stays with the person.
 
 <p align="center">
   <img src="docs/images/tunnel.jpg" alt="The demo's tunnel: area lights, a reflecting puddle and brushed metal" width="100%">
