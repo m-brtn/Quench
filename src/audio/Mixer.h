@@ -3,6 +3,7 @@
 // The audio thread's side of the AudioSystem: voices, buses and the mix. Everything is allocated in the constructor;
 // render() only reads commands, mixes and writes events and statistics.
 
+#include "Hrtf.h"
 #include "Queue.h"
 
 #include <quench/audio/AudioSystem.h>
@@ -73,7 +74,11 @@ struct ReverbCommand {
     std::uint8_t index = 0; // the bus
     ReverbDesc reverb;
 };
-using Command = std::variant<PlayCommand, StopCommand, ParamsCommand, BusCommand, ListenerCommand, ReverbCommand>;
+struct HrtfCommand {
+    bool enabled = false;
+};
+using Command =
+    std::variant<PlayCommand, StopCommand, ParamsCommand, BusCommand, ListenerCommand, ReverbCommand, HrtfCommand>;
 
 struct EndEvent {
     std::uint32_t slot = 0, generation = 0;
@@ -88,6 +93,8 @@ struct MixerConfig {
     std::vector<float> busVolumes;
     std::vector<std::optional<ReverbDesc>> busReverbs; // per bus
     std::uint32_t monitorFrames = 0;                   // capacity of the output tap (0: none)
+    std::uint32_t hrtfVoices = 0;                      // HRTF filters (0: no HRTF table)
+    bool hrtf = false;
 };
 
 // verblib's sample rates (its buffers are sized for up to 4 x 44100 Hz).
@@ -116,7 +123,7 @@ public:
 
     // Statistics, written by render() and read by the game thread.
     struct Stats {
-        std::atomic<std::uint32_t> voices{0};
+        std::atomic<std::uint32_t> voices{0}, hrtfVoices{0};
         std::atomic<std::uint64_t> stolen{0}, rejected{0}, underruns{0}, clipped{0};
         std::atomic<std::uint64_t> frames{0}, calls{0}, busyNs{0};
         std::array<std::array<std::atomic<float>, 2>, kMaxBuses> meters{};
@@ -149,7 +156,10 @@ private:
         EndReason stopReason = EndReason::Stopped;
         float pauseGain = 1.0f;
         float audibility = 0.0f;
-        float send = 0.0f; // smoothed send level
+        float send = 0.0f;      // smoothed send level
+        std::int32_t hrtf = -1; // index into m_hrtfFilters, or -1: panned only
+        float hrtfMix = 0.0f;   // smoothed share of the HRTF in its sound
+        float hrtfGain = 0.0f;  // smoothed volume of the HRTF's input
     };
     struct Reverb; // verblib's state, about 400 KB
 
@@ -159,6 +169,7 @@ private:
     void apply(const BusCommand& c);
     void apply(const ListenerCommand& c);
     void apply(const ReverbCommand& c);
+    void apply(const HrtfCommand& c);
     void processReverb(Reverb& reverb, float* samples, std::uint32_t frames);
     Voice* voiceOf(std::uint32_t slot, std::uint32_t generation);
     void beginStop(Voice& voice, float fade, EndReason reason);
@@ -193,6 +204,11 @@ private:
     std::vector<std::unique_ptr<Reverb>> m_reverbs;
     std::vector<float> m_busBuffers; // per bus kBlockFrames stereo frames
     std::vector<float> m_scratch;    // source frames of one voice for one block
+    std::unique_ptr<Hrtf> m_hrtf;    // null without HRTF voices
+    std::vector<HrtfFilter> m_hrtfFilters;
+    std::vector<std::uint32_t> m_hrtfFree; // indices into m_hrtfFilters
+    std::vector<float> m_hrtfPanned;       // one voice's block before the HRTF splits it
+    bool m_hrtfOn = false;
     Listener m_listener;
     float m_speedOfSound = 343.0f;
     float m_dopplerScale = 1.0f;

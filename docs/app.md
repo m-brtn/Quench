@@ -226,7 +226,8 @@ window's display; 0 when unknown), with `gpu::Caps::gpuPassTiming` also
 ([Performance](performance.md#gpu-time-per-pass)), and `perf_thermal_start`, `perf_thermal_end`, `perf_thermal_max`
 (as `thermal_state`); after `audio_measure` `audio_rms`,
 `audio_rms_l`, `audio_rms_r`, `audio_peak` (linear, 1 is full scale), `audio_freq` (Hz), `audio_freq_level` (about 1
-for a full-scale sine) and `audio_measured` (seconds actually measured); at any time `audio_voices`, `audio_sounds`,
+for a full-scale sine) and `audio_measured` (seconds actually measured); at any time `audio_voices`,
+`audio_hrtf_voices`, `audio_sounds`,
 `audio_pending`, `audio_streams`, `audio_played`, `audio_stolen`, `audio_rejected`, `audio_failed`,
 `audio_underruns`, `audio_clipped` (the `AudioStats` counters) and `audio_device` (1 with a device, 0 offline);
 `memory_mb` (`App::memoryFootprint` in MiB; -1 where unknown) and `gpu_resources` (`gpu::Device::liveResources`:

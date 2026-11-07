@@ -2,7 +2,8 @@
 // emitter circling in front of it, a fly-by passing at speed (Doppler) and a tone the demo computes on the audio thread
 // (a Generator) at a position the sliders set. Music streams from a file and crossfades between two tracks; the bus
 // sliders, mute and pause boxes and the meters show the bus tree. A click or tap on the ground plays a ping there.
-// With the reverb on, the 3D sounds send to the demo's reverb bus (under the effects bus, DemoGame's AppDesc).
+// With the reverb on, the 3D sounds send to the demo's reverb bus (under the effects bus, DemoGame's AppDesc). With
+// the HRTF on, the 3D sounds are filtered for headphones instead of panned.
 
 #include "Demo.h"
 
@@ -80,8 +81,8 @@ public:
     std::string_view about() const override {
         return "3D sound around the head (it faces the way the camera looks): the orange emitter circles, the blue "
                "one passes at speed (Doppler), the green box is a tone the demo computes. Music streams and "
-               "crossfades; the buses have volume, mute and pause; the reverb puts the sounds in a room. Tap the "
-               "ground for a ping.";
+               "crossfades; the buses have volume, mute and pause; the reverb puts the sounds in a room; the HRTF "
+               "places them around the head in headphones. Tap the ground for a ping.";
     }
 
     Result<void> init(Context& c) override {
@@ -128,6 +129,8 @@ public:
         }
         m_reverbBus = a.findBus("reverb").value_or(audio::BusId{});
         if (m_reverbBus.index != 0) a.setReverb(m_reverbBus, {.roomSize = m_roomSize});
+        m_savedHrtf = a.hrtf();
+        m_hrtfOn = m_savedHrtf;
         place(c);
         return {};
     }
@@ -191,6 +194,12 @@ public:
             if (ImGui::SliderFloat("Room size", &m_roomSize, 0.0f, 1.0f, "%.2f"))
                 a.setReverb(m_reverbBus, {.roomSize = m_roomSize});
         }
+        if (a.settings().hrtfVoices > 0) {
+            ImGui::SeparatorText("Headphones");
+            if (ImGui::Checkbox("HRTF", &m_hrtfOn)) a.setHrtf(m_hrtfOn);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(3D sound for headphones)");
+        }
 
         ImGui::SeparatorText("Music");
         int track = m_track;
@@ -228,6 +237,7 @@ public:
         audio::AudioSystem& a = c.app.audio();
         const audio::AudioStats stats = a.stats();
         ImGui::Text("Voices %u of %u, sounds %u", stats.voices, stats.maxVoices, stats.sounds);
+        if (a.hrtf()) ImGui::Text("HRTF voices %u of %u", stats.hrtfVoices, a.settings().hrtfVoices);
         ImGui::Text("Stolen %llu, rejected %llu", (unsigned long long)stats.stolen, (unsigned long long)stats.rejected);
         ImGui::Text("Underruns %llu, clipped %llu", (unsigned long long)stats.underruns,
                     (unsigned long long)stats.clipped);
@@ -277,6 +287,7 @@ public:
         if (name == "pings") return double(m_pings);
         if (name == "reverb") return m_reverbOn ? 1.0 : 0.0;
         if (name == "room_size") return double(m_roomSize);
+        if (name == "hrtf") return m_hrtfOn ? 1.0 : 0.0;
         return std::nullopt;
     }
 
@@ -340,6 +351,10 @@ public:
             m_roomSize = std::clamp(*number, 0.0f, 1.0f);
             a.setReverb(m_reverbBus, {.roomSize = m_roomSize});
             return true;
+        } else if (name == "hrtf" && flag && a.settings().hrtfVoices > 0) {
+            m_hrtfOn = *flag;
+            a.setHrtf(m_hrtfOn);
+            return true;
         } else {
             return false;
         }
@@ -357,6 +372,7 @@ public:
         }
         if (m_pauseEffects) a.setBusPaused(a.bus("effects"), false);
         if (m_reverbBus.index != 0) a.setReverb(m_reverbBus, {.roomSize = kRoomSize});
+        a.setHrtf(m_savedHrtf);
         m_motor = {};
         m_siren = {};
         m_ping = {};
@@ -499,6 +515,7 @@ private:
     audio::BusId m_reverbBus; // master (index 0): the app has no reverb bus
     bool m_reverbOn = false;
     float m_roomSize = kRoomSize;
+    bool m_hrtfOn = false, m_savedHrtf = false;
     float m_orbitAngle = 0.0f, m_orbitSpeed = 8.0f;
     float m_flybyX = -kFlybyHalfLength, m_flybyDirection = 1.0f, m_flybySpeed = 30.0f;
     float m_toneHz = 660.0f;

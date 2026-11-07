@@ -92,6 +92,7 @@ add_library(quench_audio STATIC
     src/audio/Analysis.cpp
     src/audio/AudioSystem.cpp
     src/audio/Decoder.cpp
+    src/audio/Hrtf.cpp
     src/audio/Mixer.cpp
     src/audio/Sound.cpp
     src/audio/Spatial.cpp

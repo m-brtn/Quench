@@ -307,6 +307,10 @@ AudioSystem::AudioSystem(JobSystem& jobs, assets::AssetManager* assets, const Au
     config.maxVoices = m_settings.maxVoices;
     config.maxSounds = m_settings.maxSounds;
     config.monitorFrames = m_settings.sampleRate / 2;
+    m_settings.hrtfVoices = std::min(m_settings.hrtfVoices, m_settings.maxVoices);
+    m_settings.hrtf = m_settings.hrtf && m_settings.hrtfVoices > 0;
+    config.hrtfVoices = m_settings.hrtfVoices;
+    config.hrtf = m_settings.hrtf;
     for (const BusInfo& bus : buses) {
         config.busParents.push_back(bus.parent.index);
         config.busVolumes.push_back(bus.volume);
@@ -614,6 +618,18 @@ void AudioSystem::setListener(const Listener& listener) {
     m_impl->listenerDirty = true;
 }
 
+void AudioSystem::setHrtf(bool enabled) {
+    if (enabled && m_settings.hrtfVoices == 0) {
+        log::warning("audio", "setHrtf: no HRTF voices (AudioSettings::hrtfVoices is 0)");
+        return;
+    }
+    if (enabled == m_settings.hrtf) return;
+    m_settings.hrtf = enabled;
+    m_impl->send(detail::HrtfCommand{enabled});
+}
+
+bool AudioSystem::hrtf() const { return m_settings.hrtf; }
+
 // ---- frame
 
 void AudioSystem::startPending() {
@@ -821,6 +837,7 @@ AudioStats AudioSystem::stats() const {
     AudioStats stats;
     stats.voices = mixed.voices.load(std::memory_order_relaxed);
     stats.maxVoices = m_settings.maxVoices;
+    stats.hrtfVoices = mixed.hrtfVoices.load(std::memory_order_relaxed);
     stats.sounds = std::uint32_t(s.slots.size() - s.freeSlots.size());
     stats.pending = std::uint32_t(s.pending.size());
     stats.streams = std::uint32_t(s.streams.size());

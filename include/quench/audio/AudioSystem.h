@@ -72,6 +72,11 @@ struct AudioSettings {
     float speedOfSound = 343.0f;      // m/s
     float dopplerScale = 1.0f;        // 0: no Doppler for any sound
     assets::AssetMemory soundBudget = assets::AssetManager::kUnlimited; // unreferenced decoded sounds kept cached
+    // Binaural 3D sound for headphones (docs/audio.md, "HRTF"): spatial sounds filtered by head-related impulse
+    // responses instead of panned, at most hrtfVoices at once (the others stay panned). hrtfVoices 0 leaves the HRTF
+    // out entirely; with more, setHrtf() switches it on and off while sounds play.
+    bool hrtf = false;
+    std::uint32_t hrtfVoices = 8;
 };
 
 // A playing (or pending) sound. Plain handle: stale handles (the sound ended) are ignored by every call.
@@ -181,10 +186,11 @@ struct BusInfo {
 struct AudioStats {
     std::uint32_t voices = 0; // mixed by the last render() (fading out included)
     std::uint32_t maxVoices = 0;
-    std::uint32_t sounds = 0;  // handles alive
-    std::uint32_t pending = 0; // waiting for a sound to load or a stream to start
-    std::uint32_t streams = 0; // streams open
-    std::uint64_t played = 0;  // sounds sent to the mixer
+    std::uint32_t hrtfVoices = 0; // of those, filtered by the HRTF (also while it fades in or out)
+    std::uint32_t sounds = 0;     // handles alive
+    std::uint32_t pending = 0;    // waiting for a sound to load or a stream to start
+    std::uint32_t streams = 0;    // streams open
+    std::uint64_t played = 0;     // sounds sent to the mixer
     std::uint64_t stolen = 0;
     std::uint64_t rejected = 0;
     std::uint64_t dropped = 0;
@@ -261,6 +267,10 @@ public:
     // ---- listener
     void setListener(const Listener& listener);
     const Listener& listener() const { return m_listener; }
+    // Binaural rendering of spatial sounds (AudioSettings::hrtf); a switch crossfades over 10 ms. Without HRTF
+    // voices (AudioSettings::hrtfVoices 0) it stays off, with a warning.
+    void setHrtf(bool enabled);
+    bool hrtf() const;
 
     // ---- frame
     // Once per frame on the game thread: collects ended sounds, starts the pending ones whose data is ready, sends the

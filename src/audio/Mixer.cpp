@@ -73,6 +73,15 @@ Mixer::Mixer(const MixerConfig& config)
     const auto maxSourceFrames = std::size_t(std::ceil(kBlockFrames * kMaxStep)) + 2;
     m_scratch.resize(maxSourceFrames * 2);
     if (config.monitorFrames > 0) m_monitor = std::make_unique<SampleRing>(kMixChannels, config.monitorFrames);
+    if (config.hrtfVoices > 0) {
+        m_hrtf = std::make_unique<Hrtf>(config.sampleRate);
+        m_hrtfFilters.reserve(config.hrtfVoices);
+        for (std::uint32_t i = 0; i < config.hrtfVoices; ++i) m_hrtfFilters.emplace_back(*m_hrtf, kBlockFrames);
+        m_hrtfFree.reserve(config.hrtfVoices);
+        for (std::uint32_t i = config.hrtfVoices; i-- > 0;) m_hrtfFree.push_back(i);
+        m_hrtfPanned.resize(std::size_t(kBlockFrames) * kMixChannels);
+    }
+    m_hrtfOn = config.hrtf;
 }
 
 Mixer::~Mixer() = default;
@@ -92,6 +101,7 @@ void Mixer::render(float* out, std::uint32_t frames) {
     for (std::size_t b = 0; b < m_buses.size(); ++b)
         for (int c = 0; c < 2; ++c) m_stats.meters[b][c].store(m_buses[b].meter[c], std::memory_order_relaxed);
     m_stats.voices.store(std::uint32_t(m_active.size()), std::memory_order_relaxed);
+    m_stats.hrtfVoices.store(std::uint32_t(m_hrtfFilters.size() - m_hrtfFree.size()), std::memory_order_relaxed);
     m_stats.frames.fetch_add(frames, std::memory_order_relaxed);
     m_stats.calls.fetch_add(1, std::memory_order_relaxed);
     const auto elapsed = std::chrono::steady_clock::now() - start;
@@ -197,6 +207,8 @@ void Mixer::apply(const ReverbCommand& c) {
     configure(reverb.state, reverb.desc);
 }
 
+void Mixer::apply(const HrtfCommand& c) { m_hrtfOn = c.enabled; }
+
 void Mixer::processReverb(Reverb& reverb, float* samples, std::uint32_t frames) {
     const std::size_t count = std::size_t(frames) * kMixChannels;
     const bool quietInput = quiet(samples, count);
@@ -227,6 +239,7 @@ void Mixer::release(std::uint32_t voiceIndex, EndReason reason) {
     Voice& v = m_voices[voiceIndex];
     m_events.push({v.slot, v.generation, reason});
     m_slotVoice[v.slot] = -1;
+    if (v.hrtf >= 0) m_hrtfFree.push_back(std::uint32_t(v.hrtf));
     const auto it = std::find(m_active.begin(), m_active.end(), voiceIndex);
     if (it != m_active.end()) {
         *it = m_active.back();
@@ -323,6 +336,33 @@ bool Mixer::mixVoice(Voice& v, std::uint32_t frames, const std::uint8_t* busPaus
         pan = v.channels == 1 ? panGains(v.params.pan) : balanceGains(v.params.pan);
     }
     const float smoothing = std::exp(-float(frames) / (kSmoothingSeconds * rate));
+
+    // The HRTF's share of a spatial voice, smoothed so that switching it on or off does not click. A voice takes a
+    // free filter when it needs one (a new voice starts with its full share) and gives it back once its share is 0;
+    // without one it stays panned.
+    HrtfFilter* hrtf = nullptr;
+    HrtfDirection heard;
+    float m0 = 0.0f, m1 = 0.0f, hrtfGain1 = 0.0f;
+    if (m_hrtf && (v.hrtf >= 0 || (m_hrtfOn && v.params.spatial))) {
+        if (v.params.spatial) heard = hrtfDirection(m_listener, v.params.emitter);
+        const float share = m_hrtfOn ? heard.weight : 0.0f;
+        if (share > 0.0f && v.hrtf < 0 && !m_hrtfFree.empty()) {
+            v.hrtf = std::int32_t(m_hrtfFree.back());
+            m_hrtfFree.pop_back();
+            m_hrtfFilters[std::size_t(v.hrtf)].reset();
+            v.hrtfMix = v.gainSet ? 0.0f : share;
+            v.hrtfGain = volume;
+        }
+        if (v.hrtf >= 0) {
+            hrtf = &m_hrtfFilters[std::size_t(v.hrtf)];
+            m0 = v.hrtfMix;
+            m1 = share + (m0 - share) * smoothing;
+            if (std::abs(m1 - share) < 1e-4f) m1 = share;
+            hrtfGain1 = volume + (v.hrtfGain - volume) * smoothing;
+            if (std::abs(hrtfGain1 - volume) < 1e-6f) hrtfGain1 = volume;
+        }
+    }
+
     const float target[2] = {volume * pan.x, volume * pan.y};
     if (!v.gainSet) {
         v.gain[0] = target[0];
@@ -372,6 +412,13 @@ bool Mixer::mixVoice(Voice& v, std::uint32_t frames, const std::uint8_t* busPaus
     const float inv = 1.0f / float(frames);
     std::uint32_t frac = v.frac;
     float x0[2] = {v.x0[0], v.x0[1]}, x1[2] = {v.x1[0], v.x1[1]};
+    // A voice through the HRTF is panned into a block of its own first, which the filter then splits. The send stays
+    // panned: the reverb does not need the head's filters.
+    float* panned = bus;
+    if (hrtf) {
+        panned = m_hrtfPanned.data();
+        std::fill(panned, panned + std::size_t(frames) * kMixChannels, 0.0f);
+    }
     for (std::uint32_t f = 0; f < frames; ++f) {
         const float t = float(frac) * kFracScale;
         float l = x0[0] + (x1[0] - x0[0]) * t;
@@ -383,8 +430,8 @@ bool Mixer::mixVoice(Voice& v, std::uint32_t frames, const std::uint8_t* busPaus
         const float w = float(f + 1) * inv;
         const float outL = l * (start[0] + (end[0] - start[0]) * w);
         const float outR = r * (start[1] + (end[1] - start[1]) * w);
-        bus[2 * f] += outL;
-        bus[2 * f + 1] += outR;
+        panned[2 * f] += outL;
+        panned[2 * f + 1] += outR;
         if (send) {
             const float level = s0 + (s1 - s0) * w;
             send[2 * f] += outL * level;
@@ -405,6 +452,19 @@ bool Mixer::mixVoice(Voice& v, std::uint32_t frames, const std::uint8_t* busPaus
         v.x0[c] = x0[c];
         v.x1[c] = x1[c];
         v.gain[c] = gain1[c];
+    }
+    if (hrtf) {
+        const HrtfShare share{.left = {start[0], end[0]},
+                              .right = {start[1], end[1]},
+                              .mix = {m0, m1},
+                              .gain = {v.hrtfGain * fade0, hrtfGain1 * fade1}};
+        hrtf->mix(panned, frames, share, heard.direction, bus);
+        v.hrtfMix = m1;
+        v.hrtfGain = hrtfGain1;
+        if (m1 <= 0.0f) {
+            m_hrtfFree.push_back(std::uint32_t(v.hrtf));
+            v.hrtf = -1;
+        }
     }
     v.fade = f1;
     v.pauseGain = p1;

@@ -21,7 +21,7 @@ Both games are to build on the engine, and future games start from it. Long-term
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
 **Current state (2026-11-07, version 0.9.0): stages 1 to 3, 5 to 7, 9 and 10 of `docs/roadmap.md` are in place
-(stage 6's shader hot reload, ASTC and asset hot reload on a device, stage 7's Vorbis after 0.9.0, not released), stage
+(stage 6's shader hot reload, ASTC and asset hot reload on a device, stage 7's Vorbis, reverb and HRTF after 0.9.0, not released), stage
 4 for TrailForge only, stage 8 except retargeting, stage 11 (full ray tracing)
 except its runs on the iPhone 18 Pro Max, stage 12 (area lights and anisotropic GGX, after 0.9.0, not released) except
 its checks by eye; the plan the user left (stages 6 to 10) and stages 11 and 12 have been worked through, apart from
@@ -67,7 +67,8 @@ shaders (with a G-buffer entry for the rays); GPU skinning by compute; `SceneAss
 into the scene),
 `quench_audio` (headless: a float stereo 48 kHz mixer, buses with volume, mute, pause and meters, reverb buses with
 per-sound sends (after 0.9.0, not released), sounds as an asset
-type (WAV, FLAC, MP3, Ogg Vorbis), streamed music with crossfades, game-generated sources, 3D sound with Doppler and voice stealing, WAV writing
+type (WAV, FLAC, MP3, Ogg Vorbis), streamed music with crossfades, game-generated sources, 3D sound with Doppler and voice stealing,
+panned or through an HRTF for headphones (off by default, after 0.9.0, not released), WAV writing
 and signal analysis), `quench_audio_device` (output through miniaudio, the iOS audio session; `App::audio()`,
 `--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`), `quench_animation`
 (headless, on ozz-animation: skeletons, clips and graphs as assets, blend trees, JSON state machines with
@@ -109,7 +110,7 @@ and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scen
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
 the asset system, the engine's audio or animation yet. No Basis Universal textures
-(stage 6 remaining work), browser audio or HRTF (stage 7 remaining
+(stage 6 remaining work), browser audio (stage 7 remaining
 work), retargeting, 2D blend spaces, animation LOD, dual quaternion skinning or blend shapes (stage 8 remaining
 work), the native backend as the default, normal maps or custom
 surface shading in ray hits, shadow maps for local lights or screen-space fallbacks (SSR, GTAO) for devices without
@@ -123,7 +124,8 @@ design and plan beyond stage 12. Update this paragraph whenever that changes.
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,
 Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer, bc7enc_rdo's BC7 decoder and
-mikktspace (assets), miniaudio (sound decoding, Vorbis through its stb_vorbis, the reverb through its verblib, and device output), ozz-animation (the animation runtime and the offline library
+mikktspace (assets), miniaudio (sound decoding, Vorbis through its stb_vorbis, the reverb through its verblib, and device output),
+the SADIE HRTF set (from Resonance Audio's repository, reduced to a table in `quench_audio`), ozz-animation (the animation runtime and the offline library
 that builds skeletons and clips); the cooker adds fastgltf and stb_image at build time. Pins, planned additions and
 their licences: `docs/dependencies.md`.
 
@@ -529,7 +531,8 @@ include/quench/        public headers per module: core/, physics/, assets/, audi
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
                        src/core/Jobs.cpp: the job system; src/physics/JoltJobSystem: Jolt's jobs on it;
                        src/assets/: the asset manager, KTX2, cooked models, tangents, streaming; src/audio/: the mixer,
-                       decoders, streams, the device and the iOS audio session (AudioSessionApple.m);
+                       decoders, streams, the HRTF (Hrtf; HrtfTable.inc: the reduced SADIE set), the device and the
+                       iOS audio session (AudioSessionApple.m);
                        src/animation/: skeletons, clips, graphs, the character update, IK, the animation system
                        (ozz-animation inside); src/gpu/Backend.h: the backend interface; src/gpu/sdlgpu/: the
                        SDL GPU backend; src/gpu/metal/: the native Metal backend (Objective-C++, ARC; Apple
@@ -561,6 +564,7 @@ tools/assets/          make_demo_assets.py: writes the demo's procedural source 
 tools/imagecompare/    quench_image_compare: capture against golden image
 tools/icon/            make_icon.py: draws the icons of the sample and the demo
 tools/make_ltc_table.py writes src/render/LtcTable.inc from selfshadow/ltc_code's fit (checks its SHA256)
+tools/make_hrtf_table.py writes src/audio/HrtfTable.inc from Resonance Audio's SADIE set (checks its SHA256)
 tools/new_game.py      creates a game from templates/game
 tools/check.sh         the gates: quick (a small change), full, release, single steps
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture

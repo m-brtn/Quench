@@ -118,6 +118,22 @@ samples after 10 s at room sizes 0.2, 0.5 and 0.8. The likely cause is its `unde
 1 and so rounds the filters to steps of about 2^-23, enough to keep a small cycle going with feedback above 0.5 (not
 traced further). The mixer therefore treats a reverb under -100 dB as silent ([Audio](audio.md#reverb)).
 
+HRTF ([Audio](audio.md#hrtf), since 2026-11-07). No library and no FFT: measured head-related impulse responses,
+reduced by `tools/make_hrtf_table.py` into `src/audio/HrtfTable.inc` (checked into the repository) and listed with
+their licence in `THIRD_PARTY_LICENSES` (shipped).
+
+| Source | Commit | Licence | In | Purpose |
+|---|---|---|---|---|
+| SADIE HRTF database, Subject 002 (a Neumann KU100 dummy head, measured by the University of York's SADIE project), as Resonance Audio distributes it in `third_party/SADIE_hrtf_database` (`WAV/Subject_002/DFC/48K_24bit`: 1555 directions, diffuse-field compensated, 256 taps, 24-bit stereo WAV at 48 kHz) | `4556a46afd4ffae092aa281bfd072eb0279d3a29`; archive SHA256 `f7f3fbb53dbcd4f14812a7e4c2825c37423f45487a4710a34ff3f922a5efec77` (32,866,260 bytes) | Apache-2.0 (the folder's `LICENSE`, without a copyright line; the repository has no NOTICE file); York's own page was not checked | `quench_audio`: `src/audio/HrtfTable.inc` (386 directions x 2 ears x 128 taps of 16 bits, 198 KB in the binary; 479 KB of source) | binaural rendering of spatial sounds |
+
+A table in the repository rather than a pinned archive, as with the LTC tables (stage 12): the archive is the whole of
+Resonance Audio, 33 MB, and every configure (headless and web builds included) would download it for 0.2 MB of data.
+The script reads the archive with Python's standard library, checks its SHA256 and writes the same file on every run;
+the file's header states what was changed (the Apache-2.0 condition for modified files). The filters are convolved
+directly (128 multiply-adds per ear and sample at 48 kHz, about 1.2 us per millisecond of audio and voice on the M4
+Pro, [Audio](audio.md#hrtf)); an FFT library would be a new dependency for a speed the default of 8 HRTF voices does
+not need. Neither game uses it, so no game pin is affected.
+
 **Games.** TrailForge builds its own `miniaudio_lib` from the same commit with another configuration (encoder on,
 FLAC off, every backend). When it moves to an engine with `quench_audio` (0.5.0), both libraries end up in its link
 (`quench_app` links `quench_audio` and `quench_audio_device`). Checked with a link experiment on the Mac (two static

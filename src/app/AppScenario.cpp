@@ -454,6 +454,7 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
         if (const auto it = s.audioValues.find(name); it != s.audioValues.end()) return it->second;
         const audio::AudioStats stats = s.audio->stats();
         if (name == "audio_voices") return double(stats.voices);
+        if (name == "audio_hrtf_voices") return double(stats.hrtfVoices);
         if (name == "audio_sounds") return double(stats.sounds);
         if (name == "audio_pending") return double(stats.pending);
         if (name == "audio_streams") return double(stats.streams);

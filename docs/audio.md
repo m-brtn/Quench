@@ -1,7 +1,8 @@
 # Audio
 
 Stage 7 of the [Roadmap](roadmap.md): `quench_audio`, a headless mixer (buses, reverb buses with sends, sounds in
-memory, streamed music with crossfades, sources the game computes, 3D sound with a voice limit), and `quench_audio_device`, the playback device
+memory, streamed music with crossfades, sources the game computes, 3D sound with a voice limit, panned or through an
+HRTF for headphones), and `quench_audio_device`, the playback device
 on miniaudio with the iOS audio session. The app shell owns one of each ([App shell](app.md)); the engine demo's
 "Audio" section shows them ([Engine demo](demo.md)). What was run where is under [Platforms](#platforms); nothing in
 this stage was listened to by the user yet. All documentation: [index](README.md).
@@ -134,14 +135,69 @@ One listener (`setListener`: position, forward, up, velocity) and an `Emitter` p
   distance is clamped to [`minDistance`, `maxDistance`].
 - **Panning**: the direction's component along the listener's right axis, narrowed toward the center inside
   `minDistance`; constant power for mono sources (both channels at 0.707 in the center). Stereo sources are mixed
-  down to mono when spatial; without `spatial`, `pan` is a balance for stereo and constant power for mono. Front and
-  back sound alike (no HRTF, no filtering).
+  down to mono when spatial; without `spatial`, `pan` is a balance for stereo and constant power for mono. Panned,
+  front and back sound alike; the [HRTF](#hrtf) tells them apart in headphones.
 - **Doppler**: (c + v_listener) / (c + v_emitter) with the velocities along the line between them (approaching
   raises the pitch), scaled by `AudioSettings::dopplerScale` and `Emitter::doppler`, each velocity limited to 0.9 c
   and the factor clamped to [0.25, 4]; c is `AudioSettings::speedOfSound` (343 m/s).
 
 `spatialize`, `distanceGain` and `panGains` are public, so a game can compute the same numbers (`audio.spatial_*`
 check them against the formulas).
+
+## HRTF
+
+Binaural 3D sound for headphones: spatial sounds filtered by measured head-related impulse responses instead of
+panned, so that the two ears get the head's delay and its filtering for the sound's direction (front, back, above
+and below differ). Off by default (`AudioSettings::hrtf`); `setHrtf` switches it while sounds play, with a 10 ms
+crossfade between panning and the filters. It is meant for headphones: on speakers the filters colour the sound.
+
+```cpp
+desc.audio.hrtf = true;     // AppDesc; or a headphones option in the game's settings:
+audio.setHrtf(true);        // crossfades; audio.hrtf() reads it back
+audio.stats().hrtfVoices;   // sounds the last render() filtered
+```
+
+- **Data**: SADIE's Subject 002 (a Neumann KU100 dummy head), diffuse-field compensated, at 48 kHz
+  ([Dependencies](dependencies.md#added-in-stage-7)). `tools/make_hrtf_table.py` reduces it to 386 of its 1555
+  directions: an azimuth every 15 degrees on rings every 10 degrees from -70 to +80 degrees of elevation, and the
+  two poles. Per direction and ear the onset (the first sample at a tenth of the ear's peak, less 3 samples) is cut
+  off and kept as a delay in samples (0 to 39; the ears differ by 30 to 34 at the sides), and 128 taps (2.7 ms) are
+  kept with a 16-tap half-Hann fade: 97.5% of the energy in the worst case (the far ear at -70 degrees), 99.9% at the
+  median. The set is scaled so that its mean power over the sphere (both ears, the directions weighted by their
+  solid angle) is 1, the power of the constant-power pan, and stored as 16-bit integers (`src/audio/HrtfTable.inc`,
+  198 KB in the binary). The azimuth step was chosen by the log-spectral error (200 Hz to 16 kHz) of responses
+  interpolated between grid points against the measured ones, every 5 degrees between them on six rings from -40 to
+  +60 degrees: 2.69 dB on average with a 10 degree step and 2.34 dB with 15 (95th percentiles 9.1 and 7.2 dB, the
+  notches), so the smaller table.
+- **Filtering**, per voice and block of 64 frames: the direction in the listener's frame (right is forward x up, as
+  for panning); the responses and delays of the four table directions around it interpolated (bilinear in azimuth
+  and elevation; between the outer ring and a pole above +80 and below -70 degrees); a new filter only when the
+  direction has turned by more than half a degree, crossfaded from the old one over the block; each ear's delay read
+  between samples (linear interpolation) and ramped across the block; the filters convolved directly (128
+  multiply-adds per ear and sample at 48 kHz; no FFT). At another sample rate the table is resampled linearly when
+  the `AudioSystem` is created (118 taps at 44.1 kHz, the delays scaled).
+- **Voices**: `AudioSettings::hrtfVoices` (8, at most `maxVoices`) filters, allocated with the `AudioSystem` (the
+  table, 395 KB of floats at 48 kHz, and about 5 KB per filter; with `hrtfVoices` 0 neither exists and
+  `setHrtf(true)` warns). A spatial sound takes a free filter when it starts or, later, when one is free; the others
+  stay panned (first come; priorities do not decide). A sound gives its filter back when the HRTF is switched off
+  (after the crossfade) and when it ends.
+- **Near the head**: inside `minDistance` the HRTF's share falls with the distance while panning narrows, so at the
+  listener the sound is panned to the center and a sound passing through the head does not jump from ear to ear.
+- **Levels**: on average over all directions as loud as panning (the scale above); from the side louder, from the
+  front about the same (the demo's 1 kHz tone 2 m to the left: 0.1146 RMS left and 0.0529 right through the HRTF,
+  0.0884 and 0 panned).
+- **Sends** stay panned: what a sound sends to a reverb bus is its panned sound, with or without the HRTF.
+- **Measured** (`audio.hrtf_*`): white noise 2 m to the left is 15.4 dB louder on the left and reaches the right ear
+  39 frames (0.81 ms) later, the lag of the largest cross-correlation, the same as for SADIE's own 256-tap responses
+  (39 and -38 frames to the left and right); to the right -15.3 dB and -38 frames; in front -0.2 dB and 0 frames; at
+  44.1 kHz +13.7 and -13.5 dB, 35 and -35 frames. With the HRTF off or without HRTF voices the mix is bit for bit the
+  panned one, and with it on sounds that are not spatial are not filtered. A 1 kHz tone circling the head once a
+  second while the HRTF is switched on and off every 0.5 s: the largest step between frames is 1.004 times that of a
+  sine of the same peak (no click). At most `hrtfVoices` sounds are filtered; 0 after switching off.
+- **Cost**, offline on the M4 Pro (`audio.mix_cost`, five runs, 512-frame renders): 32 looping 3D voices take 12.6
+  to 13.0 µs per millisecond of audio with 8 of them through the HRTF and 41.3 to 43.7 µs with all 32 (4.2% of a
+  core at the median), so 1.2 to 1.3 µs per HRTF voice. Panned voices got about 8% slower for the per-block HRTF checks: 2.50 to
+  2.66 µs per millisecond for 32 voices against 2.21 to 2.63 before (an A/B of both builds in one session).
 
 ## Voice limit and priorities
 
@@ -164,9 +220,10 @@ the same way; statistics are atomics. Data a playing sound uses (decoded sounds,
 alive on the game side until the audio thread reports its end. Decoding (sound loads, stream refills) runs on the
 job system, which also works without worker threads (the single-threaded web build: the jobs run in `update()`).
 `audio.mixer_thread_stress` plays, changes and stops sounds from the game thread while another thread renders (with
-sends and reverb changes), also under ThreadSanitizer. `audio.mixer_render_allocates_nothing` counts the calls of
-the test program's replaced global `operator new` and `operator delete` on the rendering thread during 600 renders
-with sounds, a Vorbis stream, generators, 3D sound, sends, reverb changes and bus pauses in flight: 0 (a direct
+sends, reverb changes and the HRTF switched on and off), also under ThreadSanitizer.
+`audio.mixer_render_allocates_nothing` counts the calls of the test program's replaced global `operator new` and
+`operator delete` on the rendering thread during 600 renders with sounds, a Vorbis stream, generators, 3D sound
+(panned and through the HRTF, switched on and off), sends, reverb changes and bus pauses in flight: 0 (a direct
 `malloc` would not be counted; the mixer and verblib have none).
 
 ## Output
@@ -209,7 +266,8 @@ WAV files.
 
 ## Statistics
 
-`AudioSystem::stats()`: voices mixed in the last render and the limit, handles alive, pending sounds, open streams,
+`AudioSystem::stats()`: voices mixed in the last render and the limit, those through the HRTF, handles alive,
+pending sounds, open streams,
 counters (played, stolen, rejected, dropped, failed, refused, underruns, clipped samples, frames mixed), and the
 average time of one `render` call with its share of real time (`mixMs`, `load`, over the last half second of
 audio). The demo's panel shows them (the mix time is hidden in deterministic runs, which compare captures).
@@ -220,24 +278,28 @@ The demo's "Audio" section ([Engine demo](demo.md#sections)): a head with ears a
 camera looks), an emitter circling it at ear height (a motor loop), a fly-by at 30 m/s (a siren, with Doppler), a
 tone the demo computes (a `Generator`), music A and B with a 2 s crossfade, bus sliders with mute and meters, pause
 of the effects bus, a ping on the ground where it is clicked, a burst of 40 pings for the voice limit, and a reverb
-(off by default; a `reverb` bus under `effects` that the 3D sounds send to at 0.4, and a room size slider). Its sounds
+(off by default; a `reverb` bus under `effects` that the 3D sounds send to at 0.4, and a room size slider), and an
+HRTF switch under "Headphones" (off by default; the panel then shows the HRTF voices). Its sounds
 are procedural: `tools/assets/make_demo_sounds.py` (Python standard library, CC0) writes `motor`, `siren`, `ping`,
 `music_a` and `music_b` as WAV files into the build tree at build time, and `quench_cook_assets(... SOUNDS ...)`
 checks and copies them. Its mix checks (`examples/demo/scenarios/audio_tone.txt`, `audio_flyby.txt`,
-`audio_music.txt` and `audio_reverb.txt`, parts of the batches) measure levels and
+`audio_music.txt`, `audio_reverb.txt` and `audio_hrtf.txt`, parts of the batches) measure levels and
 frequencies of the mix: the tone at 2 m (RMS 0.0625 and 1000 Hz), panned to the right, the three attenuation models
 at 8 m, a pitch glide, the fly-by approaching (481 Hz from a 440 Hz siren fundamental) and receding (405 Hz), both
 music tracks and the crossfade, a muted bus, no underruns or clipping, stealing, and the reverb (silence 0.1 to
 0.2 s after the tone's fade without it; with it at room size 0.8 the tone at 0.0733 RMS, its tail 0.0111 RMS after
-the fade and 0.0006 a second later, -25 dB; at room size 0.2 under 0.0001 a second after the fade). The section's capture check
+the fade and 0.0006 a second later, -25 dB; at room size 0.2 under 0.0001 a second after the fade), and the HRTF (a
+1 kHz tone 2 m to the left: panned 0.0884 RMS left and silence right; through the HRTF 0.1146 and 0.0529; to the right
+0.0549 and 0.1095; one HRTF voice, none after switching off). The section's capture check
 (`audio.txt`) runs in the batch of every backend (Metal, the native Metal backend, Vulkan through MoltenVK); the
 batches write no WAV file, so the backends' mixes are no longer compared byte for byte (`demo_audio_wav_match` is
 gone).
 
-Tests (`tests/audio/`): `audio.*` (31 cases, headless, also under Node.js: spatial formulas, bus gains, click-free
+Tests (`tests/audio/`): `audio.*` (35 cases, headless, also under Node.js: spatial formulas, bus gains, click-free
 ramps, resampling and pitch, Doppler, panning and attenuation in the mix, voice stealing, one-shots and loops,
 pause, handles, offline carry and the monitor, `PcmStream`, the thread stress case, no allocation in render, the
-reverb (bit-exact when unused, decay by room size), the opt-in mix cost, streams across chunk
+reverb (bit-exact when unused, decay by room size), the HRTF (left and right at two rates, bit-exact when off, the
+voice cap, a moving source switched on and off), the opt-in mix cost, streams across chunk
 boundaries, on jobs, gapless loops, crossfades, Vorbis streams, loops and music, missing files, decoders and their
 errors, the sound asset type, the analysis functions) and `audio_device.*` (`null_device`: the null backend renders and suspends;
 `default_output`: plays 0.5 s of a quiet 440 Hz tone through the default output, only with
@@ -266,8 +328,14 @@ the sines it was encoded from.
 
 - **Not listened to**: every check is numeric (levels, frequencies, counters, click steps); how it sounds on the
   Mac's speakers, headphones and the iPhone is for the user to judge.
-- **3D**: stereo panning only (no HRTF, no front and back difference, no occlusion or filters); one listener; no
-  virtual voices (a stolen or rejected sound is gone).
+- **3D**: panning or the HRTF; no occlusion, obstruction or distance filters; one listener; no virtual voices (a
+  stolen or rejected sound is gone).
+- **HRTF**: one generic head (the KU100 dummy head), not chosen per listener; no near-field responses (the same
+  filters at any distance); its voices go to the first sounds that need one, not by priority or loudness. The
+  table's onsets at -70 degrees are uneven (the far ear under the torso), so directions interpolated near that ring
+  are less exact than elsewhere. Other sample rates use the table resampled linearly. Checked by numbers only (level
+  and time differences, bit-exactness, steps, cost); nobody has listened to it, so whether front and back, above and
+  below are told apart, and how it sounds, is not known.
 - **Reverb**: one algorithm (Freeverb), set by hand per bus: no early reflections from geometry, no zones or
   automatic blending between rooms, no pre-delay, one send per sound. A reverb bus at a rate outside 22050 to
   176400 Hz is silent. Checked by numbers only (decay times, levels, bit-exactness); nobody has listened to it.

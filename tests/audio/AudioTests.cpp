@@ -97,6 +97,23 @@ private:
     float m_value;
 };
 
+// Mono white noise, uniform in [-amplitude, amplitude], the same sequence every run.
+class Noise final : public Generator {
+public:
+    explicit Noise(float amplitude, std::uint32_t rate = kRate) : Generator({1, rate}), m_amplitude(amplitude) {}
+    std::uint32_t generate(float* out, std::uint32_t frames) override {
+        for (std::uint32_t f = 0; f < frames; ++f) {
+            m_state = m_state * 1664525u + 1013904223u;
+            out[f] = m_amplitude * (float(m_state >> 8) / float(1u << 23) - 1.0f);
+        }
+        return frames;
+    }
+
+private:
+    float m_amplitude;
+    std::uint32_t m_state = 12345;
+};
+
 // An AudioSystem mixing offline on the test thread.
 struct Rig {
     explicit Rig(const AudioSettings& settings = {}, int workers = 0)
@@ -611,6 +628,8 @@ QUENCH_TEST(mixer_thread_stress) {
     settings.maxVoices = 8;
     settings.streamBufferSeconds = 0.1;
     settings.buses.push_back({.name = "reverb", .reverb = ReverbDesc{}});
+    settings.hrtf = true;
+    settings.hrtfVoices = 3;
     AudioSystem audio(jobs, nullptr, settings);
     const BusId reverb = audio.bus("reverb");
     auto data = std::make_shared<const SoundData>(SoundData{{1, 22050}, sineSamples(880.0f, 0.1f, 0.05, 1)});
@@ -635,6 +654,7 @@ QUENCH_TEST(mixer_thread_stress) {
         }
         audio.setBusVolume(audio.bus("effects"), float(i % 10) / 10.0f);
         if (i % 7 == 0) audio.setReverb(reverb, {.roomSize = float(i % 10) / 10.0f, .damping = 0.5f});
+        if (i % 23 == 0) audio.setHrtf(!audio.hrtf());
         audio.update();
         ++i;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -651,8 +671,9 @@ QUENCH_TEST(mixer_thread_stress) {
 #endif
 }
 
-// render() as the device calls it, between the game thread's updates, with sounds, a stream, generators, 3D sound,
-// sends into a reverb and changes of every kind in flight: no allocation and no free on its thread.
+// render() as the device calls it, between the game thread's updates, with sounds, a stream, generators, 3D sound
+// (panned and through the HRTF, switched on and off), sends into a reverb and changes of every kind in flight: no
+// allocation and no free on its thread.
 QUENCH_TEST(mixer_render_allocates_nothing) {
     {
         AllocationCounter counter;
@@ -666,9 +687,12 @@ QUENCH_TEST(mixer_render_allocates_nothing) {
     AudioSettings settings;
     settings.streamBufferSeconds = 0.05;
     settings.buses.push_back({.name = "reverb", .reverb = ReverbDesc{}});
+    settings.hrtf = true;
+    settings.hrtfVoices = 3;
     AudioSystem audio(jobs, nullptr, settings);
     const BusId reverb = audio.bus("reverb");
     auto data = std::make_shared<const SoundData>(SoundData{{1, 22050}, sineSamples(880.0f, 0.3f, 0.05, 1)});
+    std::uint32_t hrtfMixed = 0;
     std::vector<SoundHandle> handles;
     handles.push_back(audio.playStream("loop.ogg", {.loop = true, .sendBus = reverb, .sendLevel = 0.3f}));
     std::vector<float> buffer(256 * 2);
@@ -686,6 +710,7 @@ QUENCH_TEST(mixer_render_allocates_nothing) {
         }
         if (i % 25 == 0) audio.setReverb(reverb, {.roomSize = float(i % 100) / 100.0f});
         if (i % 30 == 0) audio.setBusPaused(audio.bus("effects"), i % 60 == 0);
+        if (i % 40 == 0) audio.setHrtf(i % 80 == 0);
         audio.setBusVolume(BusId{}, 0.5f + float(i % 5) / 10.0f);
         audio.update();
         jobs.waitAll();
@@ -693,9 +718,11 @@ QUENCH_TEST(mixer_render_allocates_nothing) {
         audio.render(buffer.data(), 256);
         allocations += counter.count();
         mixed += audio.stats().voices;
+        hrtfMixed += audio.stats().hrtfVoices;
     }
     CHECK(allocations == 0, "render() allocated or freed %llu times", (unsigned long long)allocations);
     CHECK(mixed > 600 * 3, "voices mixed per render: %.1f", double(mixed) / 600.0);
+    CHECK(hrtfMixed > 300, "HRTF voices per render: %.1f", double(hrtfMixed) / 600.0);
 }
 
 // Opt-in (QUENCH_TEST_AUDIO_COST=1): the time render() takes on this machine for 32 looping 3D voices, without and
@@ -706,9 +733,13 @@ QUENCH_TEST(mix_cost) {
         const char* name;
         bool reverbBus = false;
         float send = 0.0f;
+        std::uint32_t hrtfVoices = 0; // with the HRTF on
     };
-    const Case cases[] = {
-        {"32 voices"}, {"32 voices, a reverb bus, no sends", true}, {"32 voices, sends 0.3 into a reverb", true, 0.3f}};
+    const Case cases[] = {{"32 voices"},
+                          {"32 voices, a reverb bus, no sends", true},
+                          {"32 voices, sends 0.3 into a reverb", true, 0.3f},
+                          {"32 voices, 8 of them through the HRTF", false, 0.0f, 8},
+                          {"32 voices, all through the HRTF", false, 0.0f, 32}};
     auto data = std::make_shared<const SoundData>(SoundData{{1, kRate}, sineSamples(440.0f, 0.02f, 1.0, 1)});
     constexpr std::uint32_t kFrames = 512;
     constexpr int kCalls = int(20 * kRate / kFrames);
@@ -716,6 +747,8 @@ QUENCH_TEST(mix_cost) {
         JobSystem jobs(JobSystemDesc{.workerThreads = 0});
         AudioSettings settings;
         if (c.reverbBus) settings.buses.push_back({.name = "reverb", .reverb = ReverbDesc{}});
+        settings.hrtf = c.hrtfVoices > 0;
+        settings.hrtfVoices = c.hrtfVoices;
         AudioSystem audio(jobs, nullptr, settings);
         const BusId reverb = c.reverbBus ? audio.bus("reverb") : BusId{};
         for (int i = 0; i < 32; ++i) {
@@ -738,7 +771,8 @@ QUENCH_TEST(mix_cost) {
         const double audioSeconds = double(kCalls) * kFrames / kRate;
         std::printf("mix cost, %s: %.2f us per ms of audio (%.3f%% of one core)\n", c.name,
                     seconds * 1e3 / audioSeconds, 100.0 * seconds / audioSeconds);
-        CHECK(audio.stats().voices == 32, "%s: %u voices mixed", c.name, audio.stats().voices);
+        CHECK(audio.stats().voices == 32 && audio.stats().hrtfVoices == c.hrtfVoices, "%s: %u voices mixed, %u HRTF",
+              c.name, audio.stats().voices, audio.stats().hrtfVoices);
     }
 }
 
@@ -807,6 +841,162 @@ QUENCH_TEST(reverb_decay_grows_with_room_size) {
         previous = rt60;
     }
     CHECK(previous > 1.0, "a large room rings for more than a second: %.3f s", previous);
+}
+
+// ---------------------------------------------------------------------------------------------------- HRTF
+
+namespace {
+
+// The lag (in frames) at which the right channel best matches the left one, within +-maxLag: positive when the right
+// ear hears the sound later.
+int interauralLag(std::span<const float> stereo, int maxLag) {
+    const auto frames = int(stereo.size() / 2);
+    int best = 0;
+    double bestValue = -1e300;
+    for (int lag = -maxLag; lag <= maxLag; ++lag) {
+        double sum = 0.0;
+        for (int f = std::max(0, -lag); f < frames - std::max(0, lag); ++f)
+            sum += double(stereo[2 * f]) * stereo[2 * (f + lag) + 1];
+        if (sum > bestValue) {
+            bestValue = sum;
+            best = lag;
+        }
+    }
+    return best;
+}
+
+} // namespace
+
+// A mono source to the left, to the right and in front of the listener (2 m away, at ear height): the near ear
+// louder and earlier by the head's delay, the two sides mirrored, the front even; at 48 kHz (the table's rate) and at
+// 44.1 kHz (the table resampled).
+QUENCH_TEST(hrtf_left_right) {
+    for (std::uint32_t rate : {48000u, 44100u}) {
+        struct Heard {
+            float levelDb; // left over right
+            int lag;       // right after left, in frames
+        };
+        const auto hear = [rate](glm::vec3 position) {
+            AudioSettings settings;
+            settings.sampleRate = rate;
+            settings.hrtf = true;
+            Rig rig(settings);
+            rig.audio.playGenerator(std::make_shared<Noise>(0.3f, rate),
+                                    {.spatial = true, .emitter = {.position = position}});
+            const std::vector<float> out = rig.run(0.5);
+            const auto steady = std::span(out).subspan(out.size() / 2);
+            const Levels levels = measureLevels(steady, 2);
+            CHECK(rig.audio.stats().hrtfVoices == 1, "%u Hz: %u HRTF voices", rate, rig.audio.stats().hrtfVoices);
+            return Heard{20.0f * std::log10(levels.rms[0] / levels.rms[1]), interauralLag(steady, 60)};
+        };
+        const Heard left = hear({-2.0f, 0.0f, 0.0f});
+        const Heard right = hear({2.0f, 0.0f, 0.0f});
+        const Heard front = hear({0.0f, 0.0f, -2.0f});
+        // The same lags of SADIE's own responses (256 taps at 48 kHz) at azimuth 90 and 270: 39 and -38 frames.
+        const float scale = float(rate) / 48000.0f;
+        const float expected[2] = {39.0f * scale, -38.0f * scale};
+        std::printf("HRTF at %u Hz: left %+.1f dB, right ear %d frames later; right %+.1f dB, %d; front %+.1f dB, %d\n",
+                    rate, left.levelDb, left.lag, right.levelDb, right.lag, front.levelDb, front.lag);
+        CHECK(left.levelDb > 10.0f && right.levelDb < -10.0f, "%u Hz: levels %+.1f and %+.1f dB", rate, left.levelDb,
+              right.levelDb);
+        CHECK(std::abs(float(left.lag) - expected[0]) <= 2.0f && std::abs(float(right.lag) - expected[1]) <= 2.0f,
+              "%u Hz: lags %d and %d frames, %.1f and %.1f expected", rate, left.lag, right.lag, expected[0],
+              expected[1]);
+        CHECK(std::abs(front.levelDb) < 1.5f && std::abs(front.lag) <= 2, "%u Hz: front %+.1f dB, lag %d", rate,
+              front.levelDb, front.lag);
+    }
+}
+
+// HRTF off (or without HRTF voices) mixes bit for bit like the mixer without an HRTF; with it on, sounds that are not
+// spatial are not filtered either.
+QUENCH_TEST(hrtf_off_is_panned) {
+    const auto mix = [](bool hrtf, std::uint32_t hrtfVoices, bool spatialSounds) {
+        AudioSettings settings;
+        settings.hrtf = hrtf;
+        settings.hrtfVoices = hrtfVoices;
+        Rig rig(settings);
+        AudioSystem& a = rig.audio;
+        a.playGenerator(std::make_shared<Sine>(440.0f, 0.3f), {.bus = a.bus("effects"), .pan = -0.4f});
+        auto data = std::make_shared<const SoundData>(SoundData{{2, 44100}, sineSamples(220.0f, 0.2f, 0.1)});
+        a.play(data, {.pitch = 0.9f, .loop = true});
+        if (spatialSounds) {
+            a.playGenerator(std::make_shared<Sine>(660.0f, 0.2f),
+                            {.spatial = true, .emitter = {.position = {2.0f, 0.0f, -1.0f}}});
+            a.play(data, {.loop = true, .spatial = true, .emitter = {.position = {-1.0f, 1.0f, 3.0f}}});
+        }
+        return rig.run(0.5);
+    };
+    const auto same = [](const std::vector<float>& a, const std::vector<float>& b) {
+        return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
+    };
+    const std::vector<float> panned = mix(false, 0, true);
+    CHECK(same(mix(false, 8, true), panned), "HRTF voices with the HRTF off changed the mix");
+    CHECK(same(mix(true, 0, true), panned), "the HRTF on without HRTF voices changed the mix");
+    CHECK(!same(mix(true, 8, true), panned), "the HRTF on did not change a mix of spatial sounds");
+    CHECK(same(mix(true, 8, false), mix(false, 0, false)), "the HRTF on changed a mix without spatial sounds");
+}
+
+// At most hrtfVoices spatial sounds are filtered at once (the others are panned); switching off gives every filter
+// back, switching on takes them again.
+QUENCH_TEST(hrtf_voice_cap) {
+    AudioSettings settings;
+    settings.hrtf = true;
+    settings.hrtfVoices = 2;
+    Rig rig(settings);
+    AudioSystem& a = rig.audio;
+    for (int i = 0; i < 5; ++i)
+        a.playGenerator(std::make_shared<Sine>(300.0f + 100.0f * float(i), 0.1f),
+                        {.spatial = true, .emitter = {.position = {float(i) - 2.0f, 0.0f, -2.0f}}});
+    std::vector<float> out = rig.run(0.1);
+    CHECK(a.stats().voices == 5 && a.stats().hrtfVoices == 2, "%u voices, %u with the HRTF", a.stats().voices,
+          a.stats().hrtfVoices);
+    a.setHrtf(false);
+    out = rig.run(0.1);
+    CHECK(!a.hrtf() && a.stats().hrtfVoices == 0, "switched off: %u HRTF voices", a.stats().hrtfVoices);
+    a.setHrtf(true);
+    out = rig.run(0.1);
+    CHECK(a.hrtf() && a.stats().hrtfVoices == 2, "switched on again: %u HRTF voices", a.stats().hrtfVoices);
+    CHECK(measureLevels(out, 2).rmsMono() > 0.02f, "the sounds play: %f RMS", measureLevels(out, 2).rmsMono());
+
+    AudioSettings none;
+    none.hrtfVoices = 0;
+    Rig without(none);
+    without.audio.setHrtf(true);
+    CHECK(!without.audio.hrtf(), "setHrtf(true) without HRTF voices stays off");
+}
+
+// A 1 kHz tone circling the head once a second through the HRTF's directions, and the HRTF switched on and off under
+// it: no step between frames larger than the tone's own (a click would be one).
+QUENCH_TEST(hrtf_moving_and_switching_is_smooth) {
+    constexpr float kHz = 1000.0f;
+    AudioSettings settings;
+    settings.hrtf = true;
+    Rig rig(settings);
+    AudioSystem& a = rig.audio;
+    const SoundHandle h = a.playGenerator(std::make_shared<Sine>(kHz, 0.3f),
+                                          {.spatial = true, .emitter = {.position = {0.0f, 0.0f, -2.0f}}});
+    std::vector<float> out;
+    constexpr double kStep = 0.005;
+    for (int i = 0; i < 600; ++i) {
+        const double t = double(i) * kStep;
+        const auto angle = float(2.0 * std::numbers::pi * t);
+        a.setPosition(h, {2.0f * std::sin(angle), 0.8f * std::sin(0.5f * angle), -2.0f * std::cos(angle)});
+        if (i % 100 == 50) a.setHrtf(!a.hrtf());
+        a.update();
+        a.mixOffline(kStep, &out);
+    }
+    const auto steady = std::span<const float>(out).subspan(std::size_t(0.05 * kRate) * 2);
+    const Levels levels = measureLevels(steady, 2);
+    const float tone = 2.0f * std::numbers::pi_v<float> * kHz / float(kRate); // largest step of a unit sine
+    for (std::uint32_t c = 0; c < 2; ++c) {
+        const std::vector<float> channel = channelOf(steady, c);
+        float step = 0.0f;
+        for (std::size_t i = 1; i < channel.size(); ++i) step = std::max(step, std::abs(channel[i] - channel[i - 1]));
+        std::printf("HRTF moving and switched: channel %u peak %.4f, largest step %.4f (a sine of that peak: %.4f)\n",
+                    c, levels.peak[c], step, levels.peak[c] * tone);
+        CHECK(step <= 1.1f * levels.peak[c] * tone, "channel %u: a step of %f at a peak of %f", c, step,
+              levels.peak[c]);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------- streams

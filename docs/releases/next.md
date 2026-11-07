@@ -66,6 +66,16 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   room sizes 0.2, 0.5 and 0.8; about 1 µs per millisecond of audio for one reverb on the M4 Pro. The demo's audio
   section has a reverb switch and a room size slider, a mix check (`audio_reverb.txt`) and a check mode item for
   listening.
+- HRTF for headphones (stage 7 remaining work): with `AudioSettings::hrtf` or `AudioSystem::setHrtf(true)` spatial
+  sounds are filtered by head-related impulse responses instead of panned, at most `AudioSettings::hrtfVoices` (8)
+  at once, the others panned; switching crossfades over 10 ms ([Audio](../audio.md#hrtf)). The responses are
+  SADIE's KU100 set as Resonance Audio distributes it (Apache-2.0; `THIRD_PARTY_LICENSES`), reduced by
+  `tools/make_hrtf_table.py` to 386 directions of 128 taps with per-ear delays (`src/audio/HrtfTable.inc`, 198 KB in
+  the binary), interpolated between directions and convolved directly on the audio thread without allocating. Noise
+  2 m to the side: 15.4 dB between the ears and 39 frames of delay, as in the source data; bit for bit the panned
+  mix when off; about 1.2 µs per HRTF voice and millisecond of audio on the M4 Pro (32 voices through it: 4% of a
+  core). The demo's audio section has an HRTF switch, a mix check (`audio_hrtf.txt`) and a check mode item for
+  listening in headphones. Nobody has listened to it.
 
 ## Fixes
 
@@ -145,7 +155,8 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   the line that expects `; gpu ms` right after `p99 <ms>` needs to allow both. New values `perf_wait_p50`,
   `perf_wait_p95`, `perf_present_mode`, `perf_display_hz`; **`gpu::Device::presentMode(window)`** is new.
 - No new dependency library in the programs: the LTC data is code and a table in `quench_render` (BSD-2-Clause,
-  with the paper reference its licence asks for). The cook adds astc-encoder (fetched at every host configure with
+  with the paper reference its licence asks for), the HRTF data a table in `quench_audio` (Apache-2.0: a game that
+  ships `quench_audio` ships the licence text from `THIRD_PARTY_LICENSES`). The cook adds astc-encoder (fetched at every host configure with
   the cook's other libraries, a 35 MB archive).
 - **iOS builds cook ASTC 4x4 instead of BC7:** `quench_cook_assets()` without `TEXTURE_FORMAT` (or with `auto`)
   now cooks ASTC 4x4 for iOS (`CMAKE_SYSTEM_NAME` iOS) and BC7 elsewhere, as before; `TEXTURE_FORMAT bc7` keeps
@@ -169,6 +180,14 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   **`audio::BusInfo`** have `reverb` (`std::optional<ReverbDesc>`) at theirs: designated initializers and positional
   ones that stop before them compile unchanged. **`audio::ReverbDesc`**, **`AudioSystem::setSend`** and
   **`AudioSystem::setReverb`** are new. Without a reverb bus and sends the mix is bit for bit what it was.
+- **`audio::AudioSettings`** has `hrtf` (off) and `hrtfVoices` (8) at its end; **`AudioSystem::setHrtf`** and
+  **`hrtf()`** are new. With the HRTF off the mix is bit for bit what it was, but an `AudioSystem` with
+  `hrtfVoices` above 0 (the default) keeps the table as floats and the filters, about 440 KB at 48 kHz: set
+  `hrtfVoices = 0` to leave them out (then `setHrtf(true)` warns and stays off). Panned 3D voices cost about 8% more
+  on the audio thread (about 0.2 µs per millisecond of audio for 32 voices on the M4 Pro).
+- **`audio::AudioStats::hrtfVoices`** is new, after `maxVoices`: designated initializers compile unchanged, a
+  positional aggregate initialization would fill the members after it one off. New scenario value
+  `audio_hrtf_voices`.
 - **Xcode projects** (`quench_add_game` with the Xcode generator): the merged assets are no longer a folder
   reference in the target's resources but are copied by a `CMake PostBuild Rules` script phase; a game's own script
   that expects the folder in `Copy Bundle Resources` needs to change. The `<target>_assets` target stays.

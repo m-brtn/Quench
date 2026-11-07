@@ -70,6 +70,11 @@ constexpr std::array kItems{
               "Listen with Reverb on: the emitters and the pings sound in a room, a larger Room size rings longer, "
               "without a metallic ring or crackles; Reverb off lets the tail ring out without a click.",
               "set reverb 1"},
+    CheckItem{"audio.hrtf", "audio", "HRTF in headphones",
+              "Listen in headphones with HRTF on: the orange emitter circles outside the head, in front, to the sides "
+              "and behind (say whether front and back are told apart); the green tone moved with its Position stays "
+              "where its box is; HRTF off and on switches without a click.",
+              "set hrtf 1"},
     CheckItem{"animation.feet", "animation", "No foot sliding",
               "The hero's feet stay planted while each touches the ground, at walking and at running speed.", ""},
     CheckItem{"animation.footsteps", "animation", "Footstep sync",

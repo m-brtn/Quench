@@ -1,0 +1,64 @@
+# Audio mix check (ctest: demo_audio_hrtf_<backend>, a part of batch.txt): the HRTF. A 1 kHz tone 2 m to the left of
+# the head: panned, only the left channel carries it; through the HRTF the right ear hears it too, quieter (the head's
+# shadow), and 2 m to the right the sides swap; off again, it is panned hard right. Offscreen runs mix offline on the
+# frame clock, so audio_measure analyses the mix of exactly these frames.
+section audio
+reset_section
+
+set orbit 0
+set flyby 0
+set music 0
+set dither 0
+until sounds_ready == 1 3
+# The loads finish in a frame that varies between runs; from here on every step is on the fixed frame clock.
+expect time < 0.25
+until time >= 0.3 1
+
+set tone_hz 1000
+set tone_x -2
+set tone_z 0
+expect hrtf == 0
+
+# Panned: hard left (0.0884 RMS: the tone's 0.177 at half volume, 2 m away with the inverse model).
+set tone 1
+wait 0.3
+audio_measure 0.25 500 2000
+expect audio_hrtf_voices == 0
+expect audio_rms_l > 0.084
+expect audio_rms_l < 0.093
+expect audio_rms_r < 0.0001
+
+# Through the HRTF: both ears, the left one 6.7 dB louder at 1 kHz (L 0.1146, R 0.0529).
+set hrtf 1
+wait 0.3
+expect hrtf == 1
+expect audio_hrtf_voices == 1
+audio_measure 0.25 500 2000
+expect audio_freq > 998
+expect audio_freq < 1002
+expect audio_rms_l > 0.105
+expect audio_rms_l < 0.125
+expect audio_rms_r > 0.047
+expect audio_rms_r < 0.059
+
+# To the right: the sides swap (L 0.0549, R 0.1095).
+set tone_x 2
+wait 0.3
+audio_measure 0.25 500 2000
+expect audio_rms_l > 0.049
+expect audio_rms_l < 0.061
+expect audio_rms_r > 0.100
+expect audio_rms_r < 0.120
+
+# Off again: panned hard right.
+set hrtf 0
+wait 0.3
+audio_measure 0.25 500 2000
+expect audio_hrtf_voices == 0
+expect audio_rms_l < 0.0001
+expect audio_rms_r > 0.084
+expect audio_rms_r < 0.093
+
+expect audio_underruns == 0
+expect audio_clipped == 0
+quit

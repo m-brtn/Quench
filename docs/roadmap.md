@@ -183,9 +183,16 @@ the user was away: the decisions are in the devlog of 2026-11-06 ("decided witho
   verblib, no new archive), on the audio thread without allocation; the demo's reverb switch and room size, a mix
   check and a check mode item (checked by measurement: decay times by room size, bit-exact when unused, also under
   Node.js and ThreadSanitizer; not listened to).
+- Done after 0.9.0 (2026-11-07, not released): HRTF for headphones from the SADIE KU100 set (Apache-2.0, as
+  Resonance Audio distributes it, reduced to a 198 KB table in the repository), interpolated between directions with
+  per-ear delays, direct convolution per voice for at most `hrtfVoices` sounds (the others panned), off by default
+  and switched with a crossfade; the demo's HRTF switch, a mix check and a check mode item (checked by measurement:
+  level and time differences between the ears at 48 and 44.1 kHz, bit-exact when off, no click when moving or
+  switching, no allocation, also under Node.js and ThreadSanitizer; about 1.2 µs per voice and millisecond of audio
+  on the M4 Pro; not listened to).
 - Not done, remaining: listening (the Mac's output, headphones, the iPhone), the iPhone run of the stage 7 code
-  (silent switch, interruptions, route changes, background and foreground), browser output (Web Audio), HRTF,
-  occlusion and filters, reverb zones and early reflections, virtual voices, Opus, gapless MP3 (encoder delay and padding are not trimmed). The release went ahead before the checks by ear and on the iPhone (decided without the user,
+  (silent switch, interruptions, route changes, background and foreground), browser output (Web Audio),
+  occlusion and filters, near-field or personal HRTFs, reverb zones and early reflections, virtual voices, Opus, gapless MP3 (encoder delay and padding are not trimmed). The release went ahead before the checks by ear and on the iPhone (decided without the user,
   2026-11-06, as recommended); they are listed as not verified in the release notes.
 - Done: version 0.5.0, release notes in [docs/releases/v0.5.0.md](releases/v0.5.0.md).
 
@@ -463,7 +470,7 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio and HRTF (stage 7); retargeting, 2D blend spaces, animation LOD,
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); retargeting, 2D blend spaces, animation LOD,
    dual quaternion skinning and blend shapes (stage 8); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray
