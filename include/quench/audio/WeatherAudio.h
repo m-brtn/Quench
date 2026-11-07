@@ -36,9 +36,13 @@ const char* defaultWeatherSound(WeatherLayer layer);
 
 // What the listener hears of the weather.
 struct WeatherSoundState {
-    float precipitation = 0.0f;  // at the listener in the open, 0..1 (weather::Weather::precipitation)
-    float distanceToRain = 1e9f; // m to the nearest rain, 0 inside it (weather::Weather::distanceToPrecipitation)
-    float cover = 0.0f;          // 0 open sky .. 1 under a roof (render::RenderStats::rainCover, or the game's own)
+    float precipitation = 0.0f; // at the listener in the open, 0..1, rain and snow (weather::Weather::precipitation)
+    // m to the nearest rain, 0 inside it (weather::Weather::distanceToPrecipitation with Precipitation::Rain)
+    float distanceToRain = 1e9f;
+    float cover = 0.0f; // 0 open sky .. 1 under a roof (render::RenderStats::rainCover, or the game's own)
+    // The share of the precipitation that falls as snow (weather::Weather::snowShare): snow falls without a sound,
+    // so only the rest plays as rain, and falling snow muffles the distant rain.
+    float snow = 0.0f;
 };
 
 struct WeatherSoundDesc {
@@ -79,10 +83,11 @@ public:
     float gain(WeatherLayer layer) const { return m_layers[std::size_t(layer)].gain; }
     SoundHandle sound(WeatherLayer layer) const { return m_layers[std::size_t(layer)].handle; }
 
-    // The engine's mix rules: the gain of each layer for a state, without smoothing. The open-air layers (light,
-    // heavy) scale by 1 - cover and the roof layer by cover, all by a loudness that rises with the square root of the
-    // precipitation; light and heavy crossfade at equal power between precipitation 0.25 and 0.75; the distant layer
-    // rises to 1 as the nearest rain comes from farDistance to 0 m and fades out as rain starts at the listener.
+    // The engine's mix rules: the gain of each layer for a state, without smoothing. The rain at the listener is the
+    // precipitation times 1 - snow. The open-air layers (light, heavy) scale by 1 - cover and the roof layer by cover,
+    // all by a loudness that rises with the square root of the rain; light and heavy crossfade at equal power between
+    // rain 0.25 and 0.75; the distant layer rises to 1 as the nearest rain comes from farDistance to 0 m, fades out as
+    // rain starts at the listener and is muffled by up to 60 % in falling snow.
     static std::array<float, kWeatherLayers> targetGains(const WeatherSoundState& state, float farDistance);
 
 private:

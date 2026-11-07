@@ -42,16 +42,20 @@ const char* defaultWeatherSound(WeatherLayer layer) {
 }
 
 std::array<float, kWeatherLayers> WeatherAudio::targetGains(const WeatherSoundState& state, float farDistance) {
-    const float p = std::clamp(state.precipitation, 0.0f, 1.0f);
+    const float total = std::clamp(state.precipitation, 0.0f, 1.0f);
+    const float share = std::clamp(state.snow, 0.0f, 1.0f);
+    const float p = total * (1.0f - share);
     const float cover = std::clamp(state.cover, 0.0f, 1.0f);
     const float level = p > kRainThreshold ? std::sqrt((p - kRainThreshold) / (1.0f - kRainThreshold)) : 0.0f;
     const float heavy = smoothstep(0.25f, 0.75f, p);
     const float near = std::clamp(1.0f - state.distanceToRain / std::max(farDistance, 1.0f), 0.0f, 1.0f);
+    // Falling snow muffles what is heard from afar.
+    const float muffled = 1.0f - 0.6f * total * share;
     std::array<float, kWeatherLayers> g{};
     g[std::size_t(WeatherLayer::RainLight)] = (1.0f - cover) * level * std::sqrt(1.0f - heavy);
     g[std::size_t(WeatherLayer::RainHeavy)] = (1.0f - cover) * level * std::sqrt(heavy);
     g[std::size_t(WeatherLayer::RainFar)] =
-        near * near * (1.0f - std::clamp(p / 0.1f, 0.0f, 1.0f)) * (1.0f - 0.5f * cover);
+        near * near * (1.0f - std::clamp(p / 0.1f, 0.0f, 1.0f)) * (1.0f - 0.5f * cover) * muffled;
     g[std::size_t(WeatherLayer::RainCover)] = cover * level;
     return g;
 }

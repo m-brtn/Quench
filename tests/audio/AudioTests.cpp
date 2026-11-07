@@ -1390,6 +1390,24 @@ QUENCH_TEST(weather_audio_gains) {
           "distant rain grows as it comes nearer: %f %f %f", at(near_, WeatherLayer::RainFar),
           at(far, WeatherLayer::RainFar), at(beyond, WeatherLayer::RainFar));
     CHECK(at(gains(0.5f, 0.0f, 0.0f), WeatherLayer::RainFar) == 0.0f, "no distant layer inside the rain");
+    // Snow is quiet: no rain layer plays in a snowfall, sleet plays its rain's share, and falling snow muffles the
+    // distant rain.
+    for (float g : WeatherAudio::targetGains({.precipitation = 0.9f, .distanceToRain = 1e9f, .snow = 1.0f}, 4000.0f))
+        CHECK(g == 0.0f, "a snowfall is heard: %f", g);
+    const auto roofSnow = WeatherAudio::targetGains({.precipitation = 0.9f, .cover = 1.0f, .snow = 1.0f}, 4000.0f);
+    CHECK(at(roofSnow, WeatherLayer::RainCover) == 0.0f, "snow drums on the roof");
+    const auto sleet =
+        WeatherAudio::targetGains({.precipitation = 0.6f, .distanceToRain = 0.0f, .snow = 0.5f}, 4000.0f);
+    const auto rain = gains(0.3f, 0.0f, 0.0f);
+    CHECK(near(at(sleet, WeatherLayer::RainLight), at(rain, WeatherLayer::RainLight), 1e-5f) &&
+              near(at(sleet, WeatherLayer::RainHeavy), at(rain, WeatherLayer::RainHeavy), 1e-5f),
+          "sleet 0.6 at half snow against rain 0.3: light %f / %f", at(sleet, WeatherLayer::RainLight),
+          at(rain, WeatherLayer::RainLight));
+    const auto snowing =
+        WeatherAudio::targetGains({.precipitation = 1.0f, .distanceToRain = 500.0f, .snow = 1.0f}, 4000.0f);
+    CHECK(near(at(snowing, WeatherLayer::RainFar), at(near_, WeatherLayer::RainFar) * 0.4f, 1e-5f),
+          "the distant rain through a snowfall: %f against %f", at(snowing, WeatherLayer::RainFar),
+          at(near_, WeatherLayer::RainFar));
 }
 
 // The engine's default weather sounds (tools/assets/make_weather_sounds.py, written at build time where the build has
