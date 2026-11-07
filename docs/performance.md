@@ -250,6 +250,32 @@ to 1.151 before and 1.062 to 1.115 after, p99 1.47 to 1.73 and 1.39 to 1.64, `An
 0.168 and 0.157 to 0.162 ms, skinning GPU 2.35 to 2.47 and 2.34 to 2.41 ms: no difference beyond the regions'
 spread.
 
+### Normal maps in ray hits
+
+2026-11-07 06:08-06:26, Release, Mac (Apple M4 Pro), the native Metal backend, **offscreen** (`--frame-size
+1920x1080 --gpu-backend metal --audio-device null --script`, unpaced), full size with bilinear scaling, perf regions
+of 3 s after a second each; the commit before (`c5bd5fd`) and this change run alternating. GPU busy time p50 of the
+range, in milliseconds (two pairs; in a third pair one binary ran about 10% slower in every range for part of its
+run, at the nominal thermal state, so it is left out):
+
+| Region | Range | Before | After |
+|---|---|---|---|
+| ray tracing section (no normal maps), reflections | `reflections` | 0.901, 0.952 | 0.903, 0.903 |
+| the same, probe grid | `probes` | 1.150, 1.243 | 1.150, 1.151 |
+| the same, shadows, lamps, reflections and probes | `reflections`, `probes` | 0.933 / 1.152, 0.973 / 1.186 | 0.935 / 1.154, 0.937 / 1.163 |
+| the same, path tracer | `path` | 12.70, 12.74 | 12.72, 12.71 |
+| tunnel (four normal maps: panels, asphalt, plastic, rubber), reflections | `reflections` | 6.06, 6.29 | 6.39, 6.39 |
+| the same, with the probe grid | `reflections`, `probes` | 7.89 / 1.18, 8.05 / 1.23 | 8.24 / 1.19, 8.26 / 1.20 |
+| the same, path tracer | `path` | 29.29, 29.22 | 30.50, 30.45 |
+
+A frame without normal maps costs what it did: it runs the tracing entries without them. One entry for both cost
+the path tracer 0.35 to 0.5 ms (3 to 4 %) and the tunnel's reflections 0.2 ms more in frames whose hits read no
+map (the tangent frame's registers, though the branch was not taken), and a separate `[branch]` for the map still
+0.2 ms of the path tracer, so the tracing entries have `_maps` variants used only while an instance in the top
+level has a normal map. In the tunnel the maps cost reflections 0.1 to 0.33 ms (2 to 5 %) and the path tracer
+1.2 ms (4 %); its hit arrays hold 10 textures instead of 6 (ray memory 4.10 MB instead of 3.10). Not measured on
+the screen or on the iPhone.
+
 ### On the screen after the bug packages
 
 2026-11-07 00:00-00:06, Release, Mac (Mac mini, Apple M4 Pro), its one display (the LG UltraFine 5K at 60 Hz; no

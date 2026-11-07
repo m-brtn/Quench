@@ -50,6 +50,8 @@ struct QUENCH_ALIGN16 RayInstanceData {
     float4 normal0;
     float4 normal1;
     float4 normal2;
+    // x: layer of the normal map in the linear hit texture array (-1: none), yzw: unused
+    float4 maps;
 };
 
 // The passes that shade what rays hit (reflections, indirect light, probes, the path tracer).

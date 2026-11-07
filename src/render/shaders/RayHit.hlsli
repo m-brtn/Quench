@@ -2,15 +2,15 @@
 #define QUENCH_RAY_HIT_HLSLI
 
 // What the rays of the hit passes see (raylight.hlsl, pathtrace.hlsl; ray queries, compiled by DXC): the scene's top
-// level, every instance's triangles and material (RayInstanceData), the base color, metallic-roughness and emissive
-// textures as layers of two texture arrays (256 x 256, no mip levels, no normal maps), the lights and the probe grid.
-// Hits are shaded with the standard surface's BRDF from the material's values (anisotropy included): a surface
-// shader's own shading is not run for rays. The shapes of area lights are in the top level for path rays only
+// level, every instance's triangles and material (RayInstanceData), the base color, metallic-roughness, normal and
+// emissive textures as layers of two texture arrays (256 x 256, no mip levels), the lights and the probe grid. Hits
+// are shaded with the standard surface's BRDF from the material's values (anisotropy and normal maps included): a
+// surface shader's own shading is not run for rays. The shapes of area lights are in the top level for path rays only
 // (QUENCH_RT_MASK_EMITTER): the other rays get the area lights' light from their shading, as the raster passes do.
 //
 // Bindings (fragment): uniform 0 FrameUniforms, uniform 1 RayHitUniforms, uniform 2 LightUniforms; samplers 0 the
 // prepass depth, 1 the G-buffer normal and roughness, 2 the color array (sRGB: base color, emissive), 3 the linear
-// array (metallic-roughness), 4 and 5 the probe grid's irradiance and distance atlases, 6 the area lights' table
+// array (metallic-roughness, normal maps), 4 and 5 the probe grid's irradiance and distance atlases, 6 the area lights' table
 // (quench/AreaLights.hlsli), then the entry's own (QUENCH_RT_SAMPLERS in all); storage buffers after them:
 // RayInstanceData[], the vertex table and the frame's skinned vertices (four float4 per vertex), the index table;
 // then the acceleration structure.
@@ -184,8 +184,9 @@ RtSurface rtSurfaceAt(RtHit h, float3 origin, float3 direction) {
                                      float3(a2.w, b2.x, b2.y) * w.z);
     n = dot(n, n) > 1e-12 ? normalize(n) : normalize(geometric);
     const bool facing = dot(geometric, direction) < 0.0; // counter-clockwise front faces
-    // The anisotropy direction: the vertex tangent turned by the material's rotation (the normal matrix keeps its
-    // direction under rotations and uniform scales).
+    const float2 uv = b0.zw * w.x + b1.zw * w.y + b2.zw * w.z;
+    // The anisotropy direction: the vertex tangent turned by the material's rotation (the normal matrix keeps the
+    // tangent's direction under rotations and uniform scales).
     const float anisotropy = d.normal0.w;
     float3 anisotropyDirection = float3(1.0, 0.0, 0.0);
     if (anisotropy > 0.0) {
@@ -194,8 +195,27 @@ RtSurface rtSurfaceAt(RtHit h, float3 origin, float3 direction) {
         const float3 B = cross(n, T) * (t0.w < 0.0 ? -1.0 : 1.0);
         anisotropyDirection = T * d.normal1.w + B * d.normal2.w;
     }
-    if (dot(n, direction) > 0.0) n = -n;
-    const float2 uv = b0.zw * w.x + b1.zw * w.y + b2.zw * w.z;
+    float3 shading = dot(n, direction) > 0.0 ? -n : n;
+#if defined(QUENCH_RT_NORMAL_MAPS)
+    // The normal map in the frame of the raster's quenchNormalFromMap: the interpolated normal turned to the side the
+    // ray hit, the tangent made perpendicular to it, the bitangent's sign turned by a mirroring transform. A mapped
+    // normal that faces away from the ray's origin is not used.
+    [branch] if (d.maps.x >= 0.0) {
+        const float4 t0 = rtVertex(d, v0, 3u), t1 = rtVertex(d, v1, 3u), t2 = rtVertex(d, v2, 3u);
+        const float3 T = mul(normalMatrix, t0.xyz * w.x + t1.xyz * w.y + t2.xyz * w.z);
+        const float3 side = facing ? n : -n;
+        const float3 t = T - side * dot(side, T);
+        if (dot(t, t) > 1e-12) {
+            const float handedness = t0.w < 0.0 ? -1.0 : 1.0;
+            const float mirrored = dot(cross(d.normal0.xyz, d.normal1.xyz), d.normal2.xyz) < 0.0 ? -1.0 : 1.0;
+            const float3 c = rtHitLinear.SampleLevel(rtHitLinearSampler, float3(uv, d.maps.x), 0.0).rgb * 2.0 - 1.0;
+            const float3 Tn = normalize(t);
+            const float3 mapped = Tn * c.x + cross(side, Tn) * (handedness * mirrored) * c.y + side * c.z;
+            if (dot(mapped, mapped) > 1e-8 && dot(mapped, direction) < 0.0) shading = normalize(mapped);
+        }
+    }
+#endif
+    n = shading;
     const float4 vc = rtVertex(d, v0, 2u) * w.x + rtVertex(d, v1, 2u) * w.y + rtVertex(d, v2, 2u) * w.z;
     float4 base = d.color * vc;
     if (d.layers.x >= 0.0) base *= rtHitColor.SampleLevel(rtHitColorSampler, float3(uv, d.layers.x), 0.0);

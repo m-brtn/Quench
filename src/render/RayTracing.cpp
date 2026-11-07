@@ -123,6 +123,12 @@ bool RayTracing::init(gpu::Device& device, std::uint32_t& pipelines, const RaySa
              "render probe irradiance") &&
         make(m_probeDistancePipeline, shaders::render_raylight.find("rt_probe_distance_fs"), {&distance, 1},
              "render probe distance") &&
+        make(m_reflectMapsPipeline, shaders::render_raylight.find("rt_reflect_maps_fs"), {&light, 1},
+             "render ray reflect (normal maps)") &&
+        make(m_indirectMapsPipeline, shaders::render_raylight.find("rt_indirect_maps_fs"), {&light, 1},
+             "render ray indirect (normal maps)") &&
+        make(m_probeTraceMapsPipeline, shaders::render_raylight.find("rt_probe_trace_maps_fs"), {&light, 1},
+             "render probe rays (normal maps)") &&
         m_reflectionFilter.init(device, kLightFormat, "ray reflections", pipelines) &&
         m_indirectFilter.init(device, kLightFormat, "ray indirect", pipelines);
     if (!m_lighting)
@@ -376,12 +382,13 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
     m_instances.clear();
     m_data.clear();
     m_alphaTextures.clear();
+    m_normalMaps = false;
     m_skinned = skinned;
     if (!m_available || casters.empty()) return false;
     if (!updateTables(commands, scene.serial, casters, hitData)) return false;
     m_tableAll = hitData;
 
-    // The hit texture arrays: base color and emissive (sRGB), metallic-roughness (linear).
+    // The hit texture arrays: base color and emissive (sRGB), metallic-roughness and normal maps (linear).
     std::vector<int> colorLayers, linearLayers;
     std::vector<std::pair<TextureId, const gpu::Texture*>> colorWanted, linearWanted;
     const auto want = [&scene](std::vector<std::pair<TextureId, const gpu::Texture*>>& list, TextureId id) {
@@ -403,6 +410,7 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
             want(colorWanted, m.textures[0]);
             want(colorWanted, m.textures[3]);
             want(linearWanted, m.textures[1]);
+            want(linearWanted, m.textures[2]);
         }
         updateHitArray(commands, m_hitColor, scene.serial, colorWanted, colorLayers);
         updateHitArray(commands, m_hitLinear, scene.serial, linearWanted, linearLayers);
@@ -573,6 +581,8 @@ bool RayTracing::build(gpu::CommandBuffer& commands, const SceneImpl& scene, std
             d.normal0 = glm::vec4(normal[0][0], normal[1][0], normal[2][0], std::clamp(m.anisotropy, 0.0f, 1.0f));
             d.normal1 = glm::vec4(normal[0][1], normal[1][1], normal[2][1], std::cos(m.anisotropyRotation));
             d.normal2 = glm::vec4(normal[0][2], normal[1][2], normal[2][2], std::sin(m.anisotropyRotation));
+            d.maps = glm::vec4(layerOf(linearWanted, linearLayers, m.textures[2]), 0.0f, 0.0f, 0.0f);
+            m_normalMaps = m_normalMaps || d.maps.x >= 0.0f;
             instance.id = std::uint32_t(m_data.size());
             m_data.push_back(d);
         }
@@ -757,7 +767,7 @@ void RayTracing::updateProbes(gpu::CommandBuffer& commands, shader::RayHitUnifor
     {
         const gpu::ColorTarget color{.texture = m_probeRays, .load = gpu::LoadOp::DontCare, .cycle = true};
         if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-            pass.bindPipeline(m_probeTracePipeline);
+            pass.bindPipeline(m_normalMaps ? m_probeTraceMapsPipeline : m_probeTracePipeline);
             bindHits(pass, !restart);
             pass.pushUniforms(kFragment, 1, uniforms);
             pass.pushUniforms(kFragment, 2, lights);
@@ -796,7 +806,7 @@ void RayTracing::traceReflections(gpu::CommandBuffer& commands, const shader::Ra
                                  .load = gpu::LoadOp::DontCare,
                                  .cycle = true};
     if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-        pass.bindPipeline(m_reflectPipeline);
+        pass.bindPipeline(m_normalMaps ? m_reflectMapsPipeline : m_reflectPipeline);
         bindHits(pass, uniforms.params.w > 0.5f);
         pass.pushUniforms(kFragment, 1, uniforms);
         pass.pushUniforms(kFragment, 2, lights);
@@ -820,7 +830,7 @@ void RayTracing::traceIndirect(gpu::CommandBuffer& commands, const shader::RayHi
                                  .load = gpu::LoadOp::DontCare,
                                  .cycle = true};
     if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-        pass.bindPipeline(m_indirectPipeline);
+        pass.bindPipeline(m_normalMaps ? m_indirectMapsPipeline : m_indirectPipeline);
         bindHits(pass, uniforms.params.w > 0.5f);
         pass.pushUniforms(kFragment, 1, uniforms);
         pass.pushUniforms(kFragment, 2, lights);

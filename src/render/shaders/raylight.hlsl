@@ -1,7 +1,9 @@
 // Ray-traced reflections, indirect light, the probe grid and the path tracer of quench::render::Renderer
 // (docs/render.md, "Ray-traced lighting"). The tracing entries (rt_reflect_fs, rt_indirect_fs, rt_probe_trace_fs,
 // pt_fs in PathTrace.hlsli) use ray queries and are compiled by DXC (RayHit.hlsli has their bindings); the probe
-// updates (rt_probe_irradiance_fs, rt_probe_distance_fs) by glslang.
+// updates (rt_probe_irradiance_fs, rt_probe_distance_fs) by glslang. Each tracing entry has a _maps variant whose
+// hits read normal maps (QUENCH_RT_NORMAL_MAPS), used while an instance in the top level has one: the tangent frame
+// costs the path tracer a few percent even where no hit reads a map.
 
 #include "quench/Bindings.hlsli"
 #include "quench/Common.hlsli"
@@ -35,6 +37,27 @@ int3 rtProbeCell(int3 slot, int3 first) {
     const int3 c = quenchProbeCounts();
     return first + (((slot - first) % c) + c) % c;
 }
+
+#if defined(QUENCH_ENTRY_rt_reflect_maps_fs)
+#define QUENCH_ENTRY_rt_reflect_fs
+#define rt_reflect_fs rt_reflect_maps_fs
+#endif
+#if defined(QUENCH_ENTRY_rt_indirect_maps_fs)
+#define QUENCH_ENTRY_rt_indirect_fs
+#define rt_indirect_fs rt_indirect_maps_fs
+#endif
+#if defined(QUENCH_ENTRY_rt_probe_trace_maps_fs)
+#define QUENCH_ENTRY_rt_probe_trace_fs
+#define rt_probe_trace_fs rt_probe_trace_maps_fs
+#endif
+#if defined(QUENCH_ENTRY_pt_maps_fs)
+#define QUENCH_ENTRY_pt_fs
+#define pt_fs pt_maps_fs
+#endif
+#if defined(QUENCH_ENTRY_rt_reflect_maps_fs) || defined(QUENCH_ENTRY_rt_indirect_maps_fs) ||                         \
+    defined(QUENCH_ENTRY_rt_probe_trace_maps_fs) || defined(QUENCH_ENTRY_pt_maps_fs)
+#define QUENCH_RT_NORMAL_MAPS
+#endif
 
 #if defined(QUENCH_ENTRY_rt_reflect_fs) || defined(QUENCH_ENTRY_rt_indirect_fs) ||                                   \
     defined(QUENCH_ENTRY_rt_probe_trace_fs)

@@ -277,8 +277,10 @@ are noted below.
   30 refits (stage 11; stage 9 rebuilt it every frame). The renderer owns it; games see only the effect settings.
 - **Hit shading** (stage 11): inline ray queries, not hit groups: a fragment pass per effect traces, and on a hit
   reads the triangle's vertices from a copy of the meshes' vertex and index data, the material's values and its
-  textures from two 2D texture arrays (base color, metallic-roughness and emissive copied once at 256 x 256), and
-  shades it with the standard surface's BRDF (`src/render/shaders/RayHit.hlsli`). One shading for every surface keeps
+  textures from two 2D texture arrays (base color, metallic-roughness, normal and emissive copied once at
+  256 x 256), and shades it with the standard surface's BRDF (`src/render/shaders/RayHit.hlsli`); the normal maps
+  only in variants of the tracing passes, used while an instance in the top level has one (2026-11-07: the tangent
+  frame slowed the path tracer by 2 to 4 % where no hit read a map). One shading for every surface keeps
   the passes few and the shaders known when the pipelines are made; a surface shader's own shading is not run for
   rays (the cost of hit groups or callable shaders, which inline queries do not have, against the demo's one custom
   surface: decided without the user, 2026-11-06).

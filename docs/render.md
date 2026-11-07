@@ -274,11 +274,19 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   shading normal and roughness (`Rgba16Float`) and the albedo and metallic (`Rgba8Unorm`) of the opaque surfaces, from
   the surface's `surface_gbuffer_fs` (`SurfaceDesc::gbufferShader`; without it the standard surface's material values
   and maps). A ray that hits reads the instance's triangle and material from the tables (`RayHit.hlsli`): the
-  interpolated normal and uv, the base color, metallic-roughness and emissive textures as layers of two
-  256 x 256 texture arrays (every material texture once, scaled down, no mip levels, at most 64 layers; normal maps
-  are not read), and shades it with the standard surface's BRDF: the emissive light, the sun with a shadow ray, the
-  local lights without shadow rays, and the probe grid or the sky's ambient light. A surface shader's own shading is
-  not run for rays.
+  interpolated normal and uv, the base color, metallic-roughness, normal and emissive textures as layers of two
+  256 x 256 texture arrays (every material texture once, scaled down, no mip levels, at most 64 layers), and shades
+  it with the standard surface's BRDF: the emissive light, the sun with a shadow ray, the local lights without shadow
+  rays, and the probe grid or the sky's ambient light. A surface shader's own shading is not run for rays. The
+  normal map (texture 2) is read in the raster's frame (`quenchNormalFromMap`: the vertex tangent made perpendicular
+  to the interpolated normal of the side the ray hit, the bitangent's sign turned by a mirroring transform); a mapped
+  normal that faces away from the ray's origin is dropped for the interpolated one. Since 2026-11-07 (after 0.9.0)
+  the tracing passes (reflections, indirect light, probe rays, the path tracer) have a variant whose hits read
+  normal maps (`raylight.hlsl`'s `_maps` entries, `QUENCH_RT_NORMAL_MAPS`), used in frames where an instance in the
+  top level has one: the tangent frame cost the path tracer 0.2 to 0.5 ms (2 to 4 %) on the M4 Pro even in a scene
+  without normal maps. Test `renderer_ray_hits_read_normal_maps`: a wall whose map turns its normal toward the sun
+  is 4.07 times as bright as a plain one in the raster, 3.99 times in its mirror image (traced reflections) and
+  3.80 times in the path tracer (1.00 and 0.97 without maps in the hits; 0.71 with the bitangent's sign flipped).
 - **Local light shadows** (`localLightShadows`, 0..4, default 0): the nearest point and spot lights with
   `castsShadows` get one shadow ray per pixel each toward a random point of their sphere (`LightDesc::sourceRadius`,
   0: hard), cut-out and translucent casters as for the sun; the result is one channel per light of a second mask,
@@ -604,8 +612,8 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
 
 - Ray tracing: the shadow and occlusion rays start from a normal made from the depth, not the shading normal, offset
   by 0.2 % of the view distance. Rays read the standard surface's opacity (base color, texture 0 and vertex alpha)
-  and hits the standard surface's shading from the material's values and textures (256 x 256 copies, no normal
-  maps, at most 64), not a custom surface's own shading or `surface_shadow_fs`; `QUENCH_SURFACE_VERTEX`
+  and hits the standard surface's shading from the material's values and textures (256 x 256 copies, at most 64;
+  normal maps without a strength, as in the raster), not a custom surface's own shading or `surface_shadow_fs`; `QUENCH_SURFACE_VERTEX`
   deformations are not in the acceleration structures. Skinned casters further than `shadowDistance` are not in
   them. Hits are lit by local lights without shadow rays. Reflections are one bounce (a mirror in a mirror shows the
   second one lit, not reflecting); rough surfaces above `reflectionRoughness` keep the sky's reflection, with no
@@ -613,7 +621,7 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   behind changes of light, and its probes are not moved out of walls (a probe inside a wall is dark and its
   neighbours' visibility hides it). The temporal denoiser has no variance estimate and no disocclusion boost: newly
   visible areas are noisy for a few frames. Local lights have no shadow maps, so without ray tracing they are
-  unshadowed. The path tracer has no textures' normal maps, no refraction, and its translucency is a coin flip.
+  unshadowed. The path tracer has no refraction, and its translucency is a coin flip.
 - Area lights: a tube's LTC has no end caps (-4.7 % against the integral for a 1.2 m tube of 5 cm); the traced
   shadow is the light's mean visibility, not weighted over the shape; anisotropic surfaces take the LTC with a bent
   normal and the mean roughness; rays do not see the shapes' emission in the real-time frame; at most 8 area lights

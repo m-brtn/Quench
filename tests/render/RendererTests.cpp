@@ -1854,6 +1854,76 @@ QUENCH_TEST(renderer_ray_traced_reflections) {
           sum(o), sum(at(sky, open)));
 }
 
+// Normal maps in ray hits and in the path tracer: two walls under a sun from the upper right, the right one with a
+// normal map that turns its normal toward +u and +v (the light), over a mirror floor. The mapped wall's gain over the
+// plain one is the raster's on the walls, in their mirror images (traced reflections) and in the path tracer. A wrong
+// tangent or bitangent sign in the hits turns the normal away from the light instead.
+QUENCH_TEST(renderer_ray_hits_read_normal_maps) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.reflections = Reflections::RayTraced;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (!lightingActive(device, *renderer, "ray-traced reflections: ")) QUENCH_SKIP("no ray tracing: sky reflections");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    addSun(scene, -glm::normalize(glm::vec3(1.0f, 1.0f, 0.3f)));
+    const InstanceId floor = scene.addInstance(
+        {.mesh = addMesh(scene, planeMesh(glm::vec2(10.0f))),
+         .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = 0.05f, .metallic = 1.0f})});
+    // (0.5, 0.5, 0.707) in the tangent frame; the plane's +u is +x, its -v (the map's +y) +y once stood up.
+    std::vector<std::byte> tilted(4 * 4 * 4);
+    for (std::size_t i = 0; i < tilted.size(); i += 4) {
+        tilted[i] = tilted[i + 1] = std::byte{191};
+        tilted[i + 2] = std::byte{218};
+        tilted[i + 3] = std::byte{255};
+    }
+    Result<TextureId> normalMap =
+        scene.addTexture({.width = 4, .height = 4, .pixels = tilted, .srgb = false, .mipmaps = false});
+    REQUIRE(normalMap, "%s", normalMap.error().c_str());
+    MaterialDesc wall{.baseColor = glm::vec4(0.8f, 0.8f, 0.8f, 1.0f), .roughness = 1.0f};
+    const MeshId panel = addMesh(scene, planeMesh(glm::vec2(0.5f)));
+    const glm::mat4 standUp = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1, 0, 0));
+    scene.addInstance({.mesh = panel,
+                       .material = scene.addMaterial(wall),
+                       .transform = glm::translate(glm::mat4(1.0f), {-0.7f, 1.2f, -2.0f}) * standUp});
+    wall.textures[2] = *normalMap;
+    scene.addInstance({.mesh = panel,
+                       .material = scene.addMaterial(wall),
+                       .transform = glm::translate(glm::mat4(1.0f), {0.7f, 1.2f, -2.0f}) * standUp});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 1.0f, 3.0f), glm::vec3(0, 0.3f, -2.0f));
+    const auto mean = [&](const std::vector<Rgba8>& pixels, glm::vec3 p) {
+        const glm::ivec2 c = pixelOf(view, p);
+        float v = 0.0f;
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x) v += sceneValue(at(pixels, c + glm::ivec2(x, y))).g / 9.0f;
+        return v;
+    };
+    const auto gain = [&](const std::vector<Rgba8>& pixels, float y) {
+        return mean(pixels, {0.7f, y, -2.0f}) / std::max(mean(pixels, {-0.7f, y, -2.0f}), 1e-3f);
+    };
+    const std::vector<Rgba8> traced = settle(device, *renderer, scene, view, *target, 8);
+    REQUIRE(traced.size() == kSize * kSize, "%zu pixels", traced.size());
+    CHECK(renderer->stats().hitTextures == 1, "%u textures in the hit arrays", renderer->stats().hitTextures);
+    const float walls = gain(traced, 1.2f), mirrored = gain(traced, -1.2f);
+
+    scene.removeInstance(floor);
+    settings.pathTracer = true;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> path = settle(device, *renderer, scene, view, *target, 16);
+    const float pathWalls = gain(path, 1.2f);
+    std::printf("  mapped over plain: raster walls %.2f, their mirror images %.2f, path tracer %.2f\n", double(walls),
+                double(mirrored), double(pathWalls));
+    // n.l 0.84 against 0.21 for the plain wall's.
+    CHECK(walls > 3.0f && walls < 5.0f, "the raster's normal map: %.2f", double(walls));
+    CHECK(std::abs(mirrored / walls - 1.0f) < 0.15f, "the mirror images: %.2f against %.2f", double(mirrored),
+          double(walls));
+    CHECK(std::abs(pathWalls / walls - 1.0f) < 0.15f, "the path tracer: %.2f against %.2f", double(pathWalls),
+          double(walls));
+}
+
 // A point light beside a box: with ray-traced local light shadows the box shadows the ground behind it.
 QUENCH_TEST(renderer_ray_traced_local_light_shadows) {
     QUENCH_GPU_DEVICE(device);

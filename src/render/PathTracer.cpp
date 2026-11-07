@@ -17,12 +17,15 @@ constexpr gpu::TextureFormat kAccumulationFormat = gpu::TextureFormat::Rgba32Flo
 bool PathTracer::init(gpu::Device& device, RayTracing& rays, std::uint32_t& pipelines) {
     m_device = &device;
     Result<gpu::GraphicsPipeline> p = rays.hitPipeline("pt_fs", kAccumulationFormat, "render path tracer");
-    if (!p) {
-        log::error("render", "path tracer pipeline: {}", p.error());
+    Result<gpu::GraphicsPipeline> maps =
+        rays.hitPipeline("pt_maps_fs", kAccumulationFormat, "render path tracer (normal maps)");
+    if (!p || !maps) {
+        log::error("render", "path tracer pipeline: {}", !p ? p.error() : maps.error());
         return false;
     }
     m_pipeline = std::move(*p);
-    ++pipelines;
+    m_mapsPipeline = std::move(*maps);
+    pipelines += 2;
     return true;
 }
 
@@ -68,7 +71,7 @@ const gpu::Texture& PathTracer::render(gpu::CommandBuffer& commands, RayTracing&
     const gpu::ColorTarget color{
         .texture = m_accumulation[std::size_t(write)], .load = gpu::LoadOp::DontCare, .cycle = true};
     if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-        pass.bindPipeline(m_pipeline);
+        pass.bindPipeline(rays.normalMaps() ? m_mapsPipeline : m_pipeline);
         rays.bindHits(pass, false);
         pass.bindSampler(ShaderStage::Fragment, 7, {m_accumulation[std::size_t(m_index)], point});
         pass.pushUniforms(ShaderStage::Fragment, 1, uniforms);

@@ -372,7 +372,11 @@ scaler.
   `surface_gbuffer_fs` or the standard surface); motion vectors in the prepass for the temporal denoiser and MetalFX
   (2026-11-06, [Render module](render.md#ray-traced-lighting)).
 - [x] Hit material access for every instance (`RayHit.hlsli`): the triangle, the material's values and its base
-  color, metallic-roughness and emissive textures in 256 x 256 texture arrays (no normal maps in hits).
+  color, metallic-roughness and emissive textures in 256 x 256 texture arrays.
+- [x] Normal maps in ray hits and the path tracer (after stage 12, 2026-11-07): the material's texture 2 in the
+  linear hit array, read in the raster's tangent frame, by variants of the tracing passes used only in frames where
+  an instance has a normal map ([Render module](render.md#ray-traced-lighting)); test
+  `renderer_ray_hits_read_normal_maps`.
 - [x] Counter-clockwise front faces through mirroring transforms in the Metal backend, with a test
   (`ray_query_front_faces`).
 - [x] Top-level refit when only transforms change, bottom-level compaction, `rayMemoryBytes`, `rayCompactions`,
@@ -487,10 +491,9 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); normal maps
-   and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
-   devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray
-   tracing, normal maps in ray hits (stage 12).
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); custom surfaces
+   in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for devices without ray
+   tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray tracing (stage 12).
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** per-frame call counts and profiles need a profiler the user has allowed on the Mac. The

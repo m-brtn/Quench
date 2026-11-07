@@ -15,7 +15,7 @@ namespace quench::render::detail {
 
 class PathTracer {
 public:
-    // false when the pipeline cannot be made (logged); `pipelines` counts it.
+    // false when the pipelines cannot be made (logged); `pipelines` counts them.
     bool init(gpu::Device& device, RayTracing& rays, std::uint32_t& pipelines);
     bool ready() const { return static_cast<bool>(m_pipeline); }
     bool ensureTargets(std::uint32_t width, std::uint32_t height);
@@ -30,7 +30,7 @@ public:
 
 private:
     gpu::Device* m_device = nullptr;
-    gpu::GraphicsPipeline m_pipeline;
+    gpu::GraphicsPipeline m_pipeline, m_mapsPipeline; // the second's hits read normal maps (RayTracing::normalMaps)
     std::array<gpu::Texture, 2> m_accumulation;
     std::uint32_t m_width = 0, m_height = 0;
     int m_index = 0;

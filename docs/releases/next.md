@@ -133,6 +133,15 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   clip's squash and stretch (a "Weights from the clip" option, on by default; the sliders add to them), with 10 more
   checks in its scripted check; its golden capture (the sliders' shapes, the clip's weights off) did not change.
   Nobody has looked at it in motion.
+- Normal maps in ray hits and the path tracer (stage 11 and 12 remaining work): traced reflections, indirect light,
+  the probe grid and the path tracer read a material's normal map (texture 2) in the raster's tangent frame
+  ([Render module](../render.md#ray-traced-lighting)). In `renderer_ray_hits_read_normal_maps` a wall whose map
+  turns it toward the sun is 4.07 times as bright as a plain one in the raster, 3.99 times in its traced mirror
+  image and 3.80 times in the path tracer (1.00 and 0.97 before). The tracing passes have variants with the normal
+  maps, used only in frames where an instance has one: frames without normal maps cost what they did (the demo's
+  ray tracing section, offscreen at 1080p on the M4 Pro: reflections 0.901 / 0.903 ms, the path tracer 12.70 /
+  12.72 ms); in the tunnel, which has them, reflections cost 0.33 ms (5 %) and the path tracer 1.2 ms (4 %) more.
+  The tunnel's two native golden images changed (the crates' studs in the puddle).
 
 ## Fixes
 
@@ -182,6 +191,11 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
 ## Changes for games
 
 What a game on 0.9.0 changes or checks when it moves to this release. Neither game uses `quench_render` yet.
+
+- **Ray hits read normal maps:** with traced reflections, indirect light, the probe grid or the path tracer, a
+  material with a normal map (texture 2) looks different in reflections and bounced light than before (its normal
+  map was ignored there); captures of such scenes change. The renderer makes three more pipelines when ray-traced
+  lighting starts and the path tracer one more (`RenderStats::pipelines`).
 
 - **`render::LightType`** has `Rect`, `Disk` and `Tube` after `Spot`: a `switch` over it without a `default` warns
   (`-Wswitch`) until it handles them.

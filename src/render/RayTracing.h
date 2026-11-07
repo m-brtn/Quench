@@ -95,6 +95,9 @@ public:
     bool available() const { return m_available; }
     // The reflection, indirect light, probe and path tracer passes (they need the rayquery shaders of raylight.hlsl).
     bool lighting() const { return m_lighting; }
+    // An instance in this frame's top level has a normal map (valid after build()): the hit passes use the variants
+    // that read them.
+    bool normalMaps() const { return m_normalMaps; }
 
     // The prepass and the traced targets at the render size; false on failure (logged).
     bool ensureTargets(std::uint32_t width, std::uint32_t height, gpu::TextureFormat depthFormat,
@@ -203,6 +206,9 @@ private:
     gpu::GraphicsPipeline m_tracePipeline, m_traceLocalPipeline, m_denoisePipeline, m_denoiseInputsPipeline;
     gpu::GraphicsPipeline m_reflectPipeline, m_indirectPipeline, m_probeTracePipeline, m_probeIrradiancePipeline,
         m_probeDistancePipeline;
+    // The tracing passes whose hits read normal maps (raylight.hlsl's _maps entries).
+    gpu::GraphicsPipeline m_reflectMapsPipeline, m_indirectMapsPipeline, m_probeTraceMapsPipeline;
+    bool m_normalMaps = false; // an instance in this frame's tables has a normal map
     TemporalFilter m_maskFilter, m_localFilter, m_reflectionFilter, m_indirectFilter;
     std::uint32_t m_width = 0, m_height = 0;
     RayTargets m_targets;
