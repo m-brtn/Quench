@@ -8,6 +8,7 @@
 
 #include <quench/core/Assert.h>
 #include <quench/core/Log.h>
+#include <quench/core/Profile.h>
 
 #include <gpu_blit_shaders.h>
 
@@ -960,6 +961,8 @@ void MetalDevice::resolve(MetalTiming& timing) const {
             m_timestampPeriodNs = cpuNs / double(gpu - m_calibrationGpu);
             m_timestampCalibrated = true;
             log::info("gpu", "GPU timestamp period {:.4f} ns", m_timestampPeriodNs);
+            m_profileContext = profile::gpuContext(std::format("{} (native Metal)", caps.deviceName), std::int64_t(gpu),
+                                                   float(m_timestampPeriodNs));
         }
     }
 
@@ -983,9 +986,12 @@ void MetalDevice::resolve(MetalTiming& timing) const {
     }
     firstInterval[timing.encoders.size()] = intervals.size();
 
-    // In the order the ranges began; a range without a sampled pass is left out.
+    // In the order the ranges began; a range without a sampled pass is left out. While Tracy records, the intervals
+    // in which each range kept the GPU busy are also its GPU zones (their sum is the range's busy time).
     const double msPerTick = m_timestampPeriodNs * 1e-6;
     std::vector<Interval> merged;
+    std::vector<profile::GpuZone> zones;
+    const bool profiling = profile::kEnabled && m_profileContext >= 0 && profile::connected();
     for (const MetalTiming::Range& range : timing.ranges) {
         if (!range.closed || !range.complete) continue;
         merged.assign(intervals.begin() + std::ptrdiff_t(firstInterval[range.firstEncoder]),
@@ -993,8 +999,14 @@ void MetalDevice::resolve(MetalTiming& timing) const {
         if (merged.empty()) continue;
         std::sort(merged.begin(), merged.end());
         MTLTimestamp busy = 0, end = merged.front().first;
+        const std::size_t firstZone = zones.size();
         for (const auto& [s, e] : merged) {
             if (e > end) busy += e - std::max(s, end);
+            if (profiling && zones.size() > firstZone && std::int64_t(s) <= zones.back().end)
+                zones.back().end = std::max(zones.back().end, std::int64_t(e));
+            else if (profiling)
+                zones.push_back(
+                    {.name = range.name, .start = std::int64_t(s), .end = std::int64_t(e), .depth = range.depth});
             end = std::max(end, e);
         }
         timing.results->push_back({.name = range.name,
@@ -1003,6 +1015,7 @@ void MetalDevice::resolve(MetalTiming& timing) const {
                                    .endMilliseconds = double(end - base) * msPerTick,
                                    .depth = range.depth});
     }
+    if (profiling) profile::gpuZones(m_profileContext, zones);
 }
 
 void MetalDevice::returnSampleBuffer(id<MTLCounterSampleBuffer> samples) {

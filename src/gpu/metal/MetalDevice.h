@@ -464,6 +464,7 @@ private:
     mutable bool m_timestampCalibrated = false;
     MTLTimestamp m_calibrationGpu = 0;
     std::chrono::steady_clock::time_point m_calibrationCpu;
+    mutable int m_profileContext = -1; // the ranges' Tracy GPU timeline (QUENCH_TRACY), made at the calibration
 };
 
 } // namespace quench::gpu::detail
