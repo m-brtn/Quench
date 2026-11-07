@@ -10,7 +10,8 @@ hits and the probe grid's cascades, relocation and classification (stage 11's re
 textures, one cooked set for every device (stage 6's remaining work); the per-pixel ray-traced
 indirect light settles in a still scene instead of staying grainy (a user report); navigation on Recast & Detour,
 a new module with the demo's Navigation section (the user's queue, item 4); profiling with Tracy, opt-in, with
-captures recorded and summed up without its GUI. This file becomes
+captures recorded and summed up without its GUI; the weather's first part, volumetric clouds that drift, change shape
+and shade the light, in a new headless module with the demo's Weather section (stage 13, part 1). This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlog of
 [2026-11-07](../../devlog/2026-11-07.md).
 
@@ -195,6 +196,41 @@ captures recorded and summed up without its GUI. This file becomes
   3.4 ms on the job system; a path 7 to 15 µs; a crowd update 0.02 to 0.05 ms for 25 agents and 0.13 to 0.20 ms for
   100 ([Navigation](../navigation.md#cost)).
 
+### Weather: clouds and their light (stage 13, part 1)
+
+- **`quench_weather`** (headless; [Weather](../weather.md)): `weather::Weather`, a map of clouds over the ground
+  from `Settings` (seed, coverage, cloud type from stratus to cumulonimbus and its variation, precipitation, cirrus,
+  wind, evolution, feature size, cloud base and top) and up to 16 `Cell`s a game places (one raining cumulonimbus in
+  a blue sky, an overcast patch that stays over a mountain), moved by the wind and changing shape over time.
+  Deterministic: a pure function of its settings, cells and clock (`update`, `setTime`), the same in every run and on
+  every platform. Queries: `sample` (coverage, type, precipitation, cirrus), `precipitation`,
+  `distanceToPrecipitation` (for the sound of distant rain), `cover` (how overcast within a radius), `windAt`,
+  `fill`. The field is one header shared by C++ and HLSL (`quench/WeatherField.h`), so a query and the clouds on the
+  screen agree. Public header `quench/weather/Weather.h`; written for the engine, not moved from a game.
+- **The clouds** (`RenderSettings::clouds`, off by default; [Render module](../render.md#clouds)): `Scene::setWeather`
+  gives the renderer a copy of the weather. `Clouds::Volumetric` raymarches them after Nubis (Horizon Zero Dawn):
+  procedural 3D noise made once on the GPU, cloud types by height profiles, Beer-Lambert with a powder term, multiple
+  scattering in four octaves and two Henyey-Greenstein lobes, so the bases are dark, the edges against the sun bright
+  and sunsets tint them; at `cloudResolution` of the render size (half by default), `cloudSteps` steps, accumulated
+  over frames with reprojection (`cloudTemporal`). `Clouds::Layer` is a 2D layer from the same map, the fallback
+  where the device lacks the formats (`gpu::Caps`) and the cheap setting.
+- **Light under the clouds:** the clouds' shadow on the ground (`cloudShadows`: a map 24 km across, read by the
+  surfaces, the shadow maps' sun and the ray-traced sun shadows alike), the sun dimmed and the sky's ambient light,
+  the fog and the traced effects' sky (misses, the probe grid, the path tracer) moved toward an overcast's grey by
+  the cover around the camera, and a cube of the sky with its clouds (`skyCubeSize`, `skyCubeFacesPerFrame`) that
+  surfaces reflect instead of the bare sky. `ActiveEffects::clouds` and `skyCube`, `RenderStats::clouds`,
+  `cloudWidth`, `cloudHeight`, `cloudCover`, `skyCubeFaces`; timed ranges `cloud_noise`, `weather`, `clouds` and
+  `sky_cube`.
+- **3D textures drawn as 2D array layers:** the clouds' noise is drawn into the layers of a 2D array and copied into
+  a sampled 3D texture on every backend, because MoltenVK's portability subset has no 2D views of 3D images; SDL GPU
+  is patched to create 3D textures 2D-array compatible only where they are color targets
+  (`cmake/patches/SdlVulkan3d.cmake`; [Dependencies](../dependencies.md)). New GPU cases `texture_3d_from_layers`
+  and `cube_faces`.
+- **Cost** on the M4 Pro (offscreen, native backend, GPU busy time; [Performance](../performance.md#clouds)): at
+  1920 x 1080 the 2D layer 0.38 ms, volumetric clouds at half size 1.97 ms (fair weather) and 1.48 ms (a storm), at
+  full size 4.29 and 3.23 ms; at the iPhone 17's 1206 x 2622 within 0.05 ms of those at half size and 5.14 and
+  3.55 ms at full size.
+
 ### Profiling with Tracy
 
 - **`QUENCH_TRACY`** (CMake option, off by default; the `profile` configure, build and test preset: Release with
@@ -286,6 +322,16 @@ captures recorded and summed up without its GUI. This file becomes
   captures (the same image on SDL GPU's Metal driver and the native backend; Vulkan through MoltenVK), a benchmark
   region, a check mode item `navigation.crowd` (45 items now) and `Section::prepare` (uploads before the frame) for
   sections with their own passes. The menu has 13 entries (`demo_ui.png` changed in both golden sets).
+- **Weather** (section 14; [Engine demo](../demo.md#sections)): a plain kilometres wide with hills, a few towers and
+  a lake that reflects the clouds, seen from a few hundred metres up; presets (Fair weather, Sun shower, Towering,
+  Storm, Overcast, Cirrus), the weather's settings, a raining cumulonimbus to switch on, the wind, the change of
+  shape and the weather's speed, the sun (a Sunset button, Run the day), the clouds' quality (Off, 2D layer,
+  Volumetric at half or full size; steps, shadows, the sky cube and its faces per frame) and what was drawn. Phone
+  defaults (half size, 48 steps, one cube face, 60 Hz) estimated, not measured on a phone. A batch part `weather`
+  with three golden captures (`demo_weather.png`, `demo_weather_sunset.png`, `demo_weather_layer.png`; SDL GPU's
+  Metal driver and the native backend share them, Vulkan through MoltenVK has its own), a benchmark region,
+  `scenarios/weather_cost.txt` (the cost per quality level, offscreen) and a check mode item `weather.clouds` (46
+  items now). The menu has 14 entries (`demo_ui.png` changed in both golden sets).
 
 ### Gates
 
@@ -426,6 +472,18 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `asan` 551; `tsan` 551; `wasm-node` 162 (under Node.js); `ios-sim-tests` 413 in the iOS Simulator; `ios-xcode`
   generated; a new game built and started. All passed.
 
+- **The weather and the clouds** (M4 Pro; [Weather](../weather.md)): `weather.*` 12 cases in every preset, under
+  Node.js and in the iOS Simulator (coverage means within 0.005 of the setting from 0.2 to 0.8; a raining cell found
+  3692 m away in 0.032 ms; `sample` with 16 cells 206 ns); `renderer_clouds_shadow_the_ground` (the ground 0.073
+  under a cell, 0.775 in the sun) and the GPU cases `texture_3d_from_layers` and `cube_faces` on SDL GPU's Metal
+  driver, the native backend and Vulkan through MoltenVK (validation layer on), and in the iOS Simulator on both of
+  its backends. The demo's three weather captures looked at (offscreen); the native backend's are the same bytes as
+  SDL GPU's, two batches gave the same bytes. The other sections' captures unchanged; `demo_ui.png` replaced (the
+  menu's 14th entry: mean 2.93 and 2.95, 4.9 % of the pixels over 16, all inside the menu).
+- **Gates with the weather:** `tools/check.sh full` (2026-11-07, 481.9 s): format; `debug` 575 tests; `release` 700;
+  `asan` 575; `tsan` 575; `wasm-node` 177 (under Node.js); `ios-sim-tests` 434 in the iOS Simulator; `ios-xcode`
+  generated; a new game built and started. All passed.
+
 ## What was not verified
 
 - **The per-pixel indirect light's denoiser on a phone:** measured offscreen on the Mac only, no numbers from a
@@ -476,6 +534,12 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   iPhone, not benchmarked on the screen. Link crossings are Detour's straight line at half speed; tiles have no
   detail meshes; the demo builds its level at run time (the cooked path is tested, not shown). Detour carries an
   alignment patch until upstream fixes it.
+
+- **The clouds on a phone and on a screen:** not run on an iPhone; the Weather section's phone defaults are an
+  estimate (about 4.3 ms on the iPhone 17 by its ratio to the M4 Pro, over the roadmap's 2 ms); nobody has looked at
+  the clouds in motion (drift, change of shape, the accumulation when the camera turns) or on a phone's screen. The
+  storm's bases look smooth in the captures; a camera above the clouds is not tuned. Nothing falls yet: rain, snow and
+  wind are parts 2 to 4 ([Weather](../weather.md#later-parts)).
 
 ## Changes for games
 
@@ -556,6 +620,15 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   files. The first configure of a game downloads recastnavigation's archive (1.3 MB, pinned with its SHA256) with the
   other runtime pins, because the engine defines the library whether a game links it or not. A game that does not
   use it changes nothing.
+- **Clouds (optional):** `quench_render` links `quench_weather` and `quench/render/Scene.h` includes
+  `quench/weather/Weather.h`; new `Scene::setWeather`, `clearWeather`, `weather()`, `render::Clouds` and the
+  `RenderSettings`, `ActiveEffects` and `RenderStats` members above. A game that sets no weather and leaves
+  `RenderSettings::clouds` off draws what it drew before. `FrameUniforms` (`quench/SceneUniforms.h`) grew by 48 bytes
+  (`cloudShadow`, `skyCube` and `overcast` at its end), and surface shaders built on `Surface.hlsli` read samplers 14
+  (the clouds' shadow) and 15 (the sky cube) where those members say so; the renderer binds placeholders there when
+  there are no clouds. A surface's fragment samplers 0 to 15 are now all the engine's (SDL GPU allows 16 per stage):
+  a game surface shader that declared its own textures in 14 or 15 loses them. A game's own SDL declaration
+  (TrailForge's) does not get the engine's new SDL patch.
 - **The skill:** a game made before this release has no copy; copy `.agents/skills/quench-game/` from the engine
   at the pinned commit if its agents should use it (and again when the pin moves).
 - The rest is in the demo and the engine's own test and gate scripts; `quench_add_batch()` in

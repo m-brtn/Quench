@@ -49,6 +49,7 @@ first visit. Leaving a section removes its render passes; its scene stays.
 (and SSR where they are not traced), indirect light (sky, probes, rays), the denoiser, upscaling (bilinear, MetalFX spatial, temporal, denoising) and render scale, the path tracer, each with the fallback it got; turn the sun, walk, sun elevation, 60 Hz (on by default on phones and tablets; while the section is current); the top level's instances, builds, refits and compactions (or the shadow draws), the hit textures, probes and path samples, and outside deterministic runs the GPU time of the rays, denoising, probes, reflections, indirect light, the path tracer, the shadow maps, GTAO, MetalFX and the frame |
 | 12 | `tunnel` | Area lights and anisotropic GGX ([Area lights](render.md#area-lights), stage 12): a 27 m tunnel at night lit only by its lamps, eight area lights (two cyan strips in the floor, two warm squares in the ceiling, a magenta panel on a wall, an orange and a violet neon tube, a round blue portal at the end) and two spots; metal wall panels with color, normal and metallic-roughness maps, wet asphalt with a near-mirror puddle, a rubber mat and wheel stops, embossed plastic crates, brushed aluminium (anisotropic: kick plates, ribs, the sphere). The textures are procedural, written at build time. The lamps move on a clock of their own: the violet tube rides two ceiling rails along the tunnel, the orange tube slides in its bay, the amber spot turns its cone, the white one circles a sphere and the portal breathes, their hangers, brackets and spot housings with them (instance transforms, refitted in the top level). The camera drives a loop through the tunnel by default, eased, looking down the tunnel; a drag, Reset camera or a script's camera hands it to the free camera, and everything stands still while the path tracer runs. Where `gpu::Caps` allow it (the native Metal backend) four lamps cast soft traced shadows, reflections are traced and the probe grid lights the rest, at render scale 0.67 with MetalFX temporal; on phones and tablets that trace half size with MetalFX spatial, two lamp shadows, no traced reflections and the sky's light; phones that do not trace at three quarters of the size; every phone at 60 frames per second ([Performance](performance.md#the-tunnel-on-the-iphone)); the path tracer as a reference. On SDL GPU the lamps light and shine (LTC) without shadows (the two spots with shadow maps if the Graphics panel's option is on) and reflect only the night sky | ray traced or path traced, lamp shadows, traced reflections, each lamp group on or off, the aluminium's anisotropy (0 to 1), the puddle, 60 Hz; Pause all, Lamps move, the camera's Drive or Free, Stop and Drive speed; the lamps and area lights in the frame and outside deterministic runs the GPU time of the shading, the rays, the denoiser, the reflections, the path tracer and the frame |
 | 13 | `navigation` | Navigation ([Navigation](navigation.md), 2026-11-07): a navmesh built at run time on the job system over a level of two floors (decks at 2.4 m) joined by a ramp, stairs and a narrow bridge, with a mud field that costs more to cross and one-way jumps down the decks' ledges (off-mesh links); two crates and a barrel move, cut holes in the navmesh and have their tiles rebuilt on jobs. Two groups of mannequins (orange and green) patrol their rounds with crowd avoidance, single file over the bridge, around the mud, down the stairs and the ramp, jumping down a ledge on an arc with the jump clip, their walk and run following their speed; a click or a tap on a floor sends the chosen group there in a formation. Overlays: the navmesh by area (its walls and edges, the links' arcs), the obstacles, each agent's path ahead, its circle and a marker over its head in the group's color | the group (orange, green, both), agents per group (1 to 12), patrol, moving obstacles, the mud's cost (1 to 10), the navmesh and paths overlays, scatter, restart; the navmesh's tiles, layers, polygons and memory, the obstacles and pending tiles, the agents walking, on links and lost, the jumps, a probe path across the field (its length and meters in the mud), and outside deterministic runs the last build's time on the job threads, the crowd step and the last click's path search |
+| 14 | `weather` | Weather ([Weather](weather.md), stage 13 part 1, 2026-11-07): a plain 20 km wide with 48 hills, six towers and a lake, seen from a few hundred metres up, under the clouds of a `quench_weather` field drifting with the wind and changing shape: fair-weather cumulus with flat grey bases and bright tops, towering cumulus, cumulonimbus, an overcast stratus deck, high cirrus, and one raining cumulonimbus placed as a cell in a blue sky (its rain at the camera and the distance to it in the panel); the clouds' shadows crossing the plain, the sun dimming and the light greying as the cover closes, the lake reflecting the clouds through the sky cube, sunsets from the sky's own light. Volumetric clouds at the render size or at half of it with accumulation, or the 2D cloud layer (the fallback). On phones and tablets (`App::mobile()`) half size, 48 steps, one sky cube face per frame and 60 frames per second (estimated from the Mac's costs, [Weather](weather.md#phones-and-fallbacks)) | presets (fair weather, sun shower, towering, storm, overcast, cirrus), coverage, cloud type, type variation, precipitation, cirrus, a raining cumulonimbus, wind speed and direction, change of shape, the weather's speed (0 to 60 times), sun elevation and azimuth, Run day, Sunset; quality (full size, half size, 2D layer, off), march steps, cloud shadows, sky cube, its faces per frame, 60 Hz; the clouds drawn and the march's size, how overcast it is, the cell's rain here and the distance to it, the weather's time |
 
 Every section's panel has the same parts in this order: the controls, the section's numbers ("Stats"), the
 "Frame and fallbacks" header (the scene's counts, the 3D resolution, draws, culled instances, lights, shadow draws,
@@ -82,6 +83,7 @@ What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks
 | Animation | animation | blending, state machine, layers, IK, foot placement, attachments, events, root motion, a crowd on the job system, GPU skinning |
 | Ray tracing, MetalFX | raytracing | ray-traced sun and lamp shadows, occlusion, reflections, the probe grid and per-pixel indirect light, the spatial and temporal denoisers, MetalFX spatial, temporal and denoising, the path tracer, each with its fallback and the reason |
 | Navigation: navmesh building on jobs, area costs, off-mesh links, obstacles, paths, crowds, debug geometry | navigation | the level's navmesh built at run time and drawn by area, the mud's cost changing the paths, jumps down the ledges, moving obstacles rebuilding their tiles, two groups with avoidance sent by a click or tap (since 2026-11-07) |
+| Weather: the weather map, volumetric clouds and the 2D layer, cloud shadows, overcast light, the sky cube | weather | presets from fair weather to overcast, a raining cell in a blue sky, wind and change of shape, sunset, each quality setting and its fallback (since 2026-11-07) |
 | Area lights, anisotropic GGX, normal and metallic-roughness maps | tunnel | rect, disk and tube lights with their drawn shapes (LTC on every backend), their soft traced shadows, the path tracer's area light sampling, brushed aluminium, cooked texture maps made at build time |
 | The job system | the Performance panel | threads and pending jobs, a job test (256 items on the pool, its time and the items per thread) (added); physics, animation and loads run on it |
 | Frame, CPU and GPU times | the Performance panel | fps, frame, CPU and GPU time, a frame-time graph (added), the GPU time per pass on the native Metal backend; hidden in deterministic runs (captures) |
@@ -100,14 +102,15 @@ engine's or the demo's shaders shows in the running demo ([Shader hot reload](ap
 
 Sizes follow the display's scale (the engine's ImGui style), times the UI scale of the settings.
 
-- **Wide** (a desktop window, a tablet): the menu at the top left (the sections numbered 1 to 13, the mode buttons
+- **Wide** (a desktop window, a tablet): the menu at the top left (the sections numbered 1 to 14, the mode buttons
   Tour, Checks and Benchmark, About, Settings, Graphics, Hide, the Performance and Log panels, and a hint of the keys
   under them: "Sections: keys 1-9, 0 = 10", "Previous, next: PgUp PgDn LB RB", "Menu: Tab, D-pad; back: Esc, B",
   "Hide: H, Start; Graphics: G"); the section's window at the top right, or under the menu where the window is too
   narrow for both; the description as a caption at the bottom; the windows of the modes at the bottom in its place.
   Both windows collapse with their title's arrow; the menu grows down to the caption and scrolls below it (at the
-  tests' 960 x 540, by two lines since the navigation section). The Graphics window opens between the menu and the
-  section's window (over the middle where there is no room), closed by default, with a close button in its title.
+  tests' 960 x 540, by two lines since the navigation section and one more since the weather section). The Graphics
+  window opens between the menu and the section's window (over the middle where there is no room), closed by
+  default, with a close button in its title.
 - **Compact** (a safe area under 40 x 26 em: phones in either orientation, small windows): a bar at the top (Menu,
   previous, the section's title, next, Controls) and one sheet at a time: the menu on the left; the section's panel
   docked at the bottom in portrait and on the right in landscape, so the scene stays visible; About and Settings over
@@ -130,7 +133,7 @@ Sizes follow the display's scale (the engine's ImGui style), times the UI scale 
 | Zoom | the wheel; + and - | the triggers | pinch |
 | Act on the scene (blast, ping, fire, send a group) | a click | the section's button | a tap |
 | Next, previous section | `]` `[`, Page Down, Page Up | the shoulder buttons | the arrows of the bar (compact) |
-| A section | keys 1 to 9 for sections 1 to 9, 0 for section 10 (11 to 13 by next or previous); a click on the menu | | a tap on the menu |
+| A section | keys 1 to 9 for sections 1 to 9, 0 for section 10 (11 to 14 by next or previous); a click on the menu | | a tap on the menu |
 | Menu by keys and buttons | Tab, then the arrows and Enter; Escape goes back | the D-pad, then A; B goes back | |
 | Hide the windows | H | Start | Hide in the menu |
 | The Graphics panel | G (again: close); Graphics in the menu | | Graphics in the menu sheet (compact) |
@@ -186,7 +189,7 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
 
 - **Tour** (`--tour [SECONDS]`, default 8; the Tour button takes the Tour time of the settings): every section in turn for
   SECONDS each, round and round, from the current one. Any key, click, touch, button or stick stops it.
-- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 45
+- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 46
   items, one at a time: it switches to the item's section, sets it up (a camera, a setting) and says what to look at
   or listen to. OK, Problem or Skip, with a note, marks the item and goes to the next; the arrows go back and
   forward, End stops. Every mark is written to `checks.json` in the user directory at once, with the backend and the
@@ -204,7 +207,9 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
   thermal state and what is reduced; frames should stay smooth, with a lower render scale from serious on), the
   crowd and the navmesh in motion (`navigation.crowd`: the groups' rounds over the bridge, around the mud, down the
   stairs and the jumps, avoidance without touching or jitter, feet that do not slide, a tap sending a group), the
-  frame rate and the layout on the device.
+  clouds in motion (`weather.clouds`: the cumulus drifting and changing shape without popping, grain or smearing,
+  their shadows moving over the plain, the lake reflecting them, the raining cumulonimbus in a blue sky, Sunset and
+  Overcast), the frame rate and the layout on the device.
 - **Benchmark** (`--benchmark-all [SECONDS]`, default 5; the Benchmark button: 5 s): every section measured in turn
   as `scenarios/benchmark.txt` measures it: a warm-up of a second (or SECONDS, if shorter) and until the section's
   assets are in (at most 6 s), then a perf region of SECONDS in real time (`App::beginPerf` .. `endPerf`). One report
@@ -216,7 +221,7 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
 
 | Flag | |
 |---|---|
-| `--section ID` | start in a section: `materials`, `shadows`, `sky`, `post`, `hdr`, `physics`, `input`, `assets`, `audio`, `animation`, `raytracing`, `tunnel`, `navigation` (default: the last one, from the settings); an unknown id fails |
+| `--section ID` | start in a section: `materials`, `shadows`, `sky`, `post`, `hdr`, `physics`, `input`, `assets`, `audio`, `animation`, `raytracing`, `tunnel`, `navigation`, `weather` (default: the last one, from the settings); an unknown id fails |
 | `--tour [SECONDS]` | the tour, SECONDS per section (0.1 to 600) |
 | `--checks` | the check mode |
 | `--benchmark-all [SECONDS]` | the benchmark of every section (0.1 to 120 s each), then quit |
@@ -360,6 +365,11 @@ section's mannequin, loaded by its own asset manager and `AnimationSystem`. It r
 obstacles at their clock's start, the groups at their first waypoints), with a camera cut when the agents appear, so
 its capture does not depend on how long the build took.
 
+The weather section's scene is made in code (`sections/WeatherSection.cpp`: a checkered plain, spheres for hills,
+boxes for towers, a smooth plane for the lake) and its clouds come from a `quench_weather` field with a fixed seed
+and a cell; its scripts set the weather's clock (`set weather_time`) and stop it (`set time_scale 0`), so its
+captures do not depend on when the part ran. The noise of the clouds is procedural, drawn by the GPU.
+
 The licences About shows are the engine's `LICENSE` and `THIRD_PARTY_LICENSES`, copied into `assets/` by
 `quench_cook_assets(quench_demo_licences ... FILES ...)`; the commit it shows comes from `BuildInfo.cmake`, which
 writes `demo_build_info.h` at build time only when the commit changes ("unknown" without git; uncommitted changes
@@ -383,11 +393,11 @@ included), from the log's `gpu: backend ...` line.
 animation, raytracing_fallback, tunnel_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone,
 audio_flyby, audio_music, audio_reverb, audio_hrtf, tunnel_motion_fallback, animation_blend2d, animation_lod, animation_skinning,
 animation_retarget, animation_blendshapes, raytracing_maps, raytracing_screen, tunnel_maps, heat, assets_basis,
-navigation, cycle.
+navigation, weather, cycle.
 The parts that move (the tunnel's motion) and the parts added later come last, before the cycle, which has no
 capture: TAA's jitter follows the frame count, so a part inserted earlier would move every capture after it.
 `batch_native.txt` ends with animation_blend2d, animation_lod, animation_skinning, animation_retarget,
-animation_blendshapes, heat, raytracing_mirror, raytracing_probes, assets_basis and navigation after tunnel_motion (no
+animation_blendshapes, heat, raytracing_mirror, raytracing_probes, assets_basis, navigation and weather after tunnel_motion (no
 raytracing_maps, raytracing_screen or tunnel_maps: the native backend traces those shadows and the occlusion on the
 Mac; the render tests run GTAO there).
 Every part selects its section first (and resets it where it needs the defaults), so it does not depend on the parts
@@ -436,6 +446,7 @@ elements stay where they are what is checked. The menu and the layouts have capt
 | `heat` (every batch, before assets_basis and the cycle; on the native backend before raytracing_mirror) | Adapt to heat in the tunnel through `thermal_state` (bilinear at scale 1, so the scale is the reaction's): off, serious changes nothing; on, serious gives 60 Hz and 0.8 of the render scale, critical 30 Hz, 0.6 and the effects reduced (on the native backend 1 lamp shadow of 4, the sky's reflections and light); a frame rate set at 24 stays 24; with a hold of 1 s (`set heat_recover 1`) fair and then nominal lift the limits in two steps, 4 changes in all; unknown counts as nominal; off lifts them at once; the system's state again at the end (48 checks) | none |
 | `assets_basis` (every batch, after heat; on the native backend after raytracing_probes) | the tiles switched to the Basis Universal ETC1S set, then the UASTC set: at least 4 tile textures ready from Basis files each time, none decoded to RGBA8 (BC7 or ASTC on SDL GPU, Metal and Vulkan through MoltenVK; ETC2 for ETC1S on the native backend), still only the corrupt and the missing model failed; the platform's set again (18 checks) | none |
 | `navigation` (every batch, before the cycle on SDL GPU, the last part on the native backend; since 2026-11-07) | the navmesh built (at least 12 tiles, 40 polygons, 3 obstacles), 12 agents, none lost; the probe path around the mud at cost 5 (no meter in it, longer than 10.5 m) and through it at cost 1 (more than 6 m in it); no agent step in the mud at cost 5; the debug overlays drawn; a click under the bridge sends the orange group down a jump link (a link used, a landing) and all 6 arrive; the moving obstacles rebuild their tiles (3 revisions or more) with no agent lost; agents on a floor at least 0.5 m apart (26 checks) | `demo_navigation.png` 4 s after the restart, the obstacles still: the orange group in single file on the bridge, the green one south of the mud with their paths around it, the navmesh, the holes around the crates and the barrel and the jump arcs (the same image on SDL GPU's Metal driver and the native backend; Vulkan through MoltenVK within 2 pixels) |
+| `weather` (every batch, before the cycle on SDL GPU, the last part on the native backend; since 2026-11-07) | the section's defaults with the weather's clock at 1200 s and stopped: volumetric clouds at half size (480 x 270), one cell raining (above 0.5 under it), none at the camera, the rain more than 3 km away, the cover below 0.6; the 2D layer when asked; the overcast preset closes the cover (above 0.8) with volumetric clouds (11 checks) | three captures: `demo_weather.png` (fair weather: cumulus with grey bases and bright tops, the raining cumulonimbus on the right, their shadows on the plain, the lake reflecting the clouds), `demo_weather_sunset.png` (towering cumulus at a sun 3 degrees up: orange edges, dark bases) and `demo_weather_layer.png` (the 2D layer: flat patches and their shadows); the same images on SDL GPU's Metal driver and the native backend, Vulkan through MoltenVK within a mean of 0.001 |
 | `cycle` (every batch, the last part on SDL GPU) | every section three times (created or reset, switched, reset), with the live GPU resources, the scene's instances and the error count marked after the first round and the memory after the second: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 64 MB in the third round; no instance more; no new error). The memory is marked a round later since stage 11: after the first round alone it swung between -24 and +47 MB on the native backend, where the ray tracing section's filter histories come and go. The bound is 64 MB since the tunnel moves (2026-11-06): over 20 rounds the footprint moved within about 60 MB from round to round, with the tunnel's motion and without it, with no trend and the same GPU resources | none |
 
 The cycle runs on Vulkan through MoltenVK since 2026-11-06, when the growth there was found in SDL GPU's Vulkan
@@ -456,7 +467,7 @@ Outside the batches, with runs of their own because they need flags or files of 
 | CTest test | What it runs |
 |---|---|
 | `demo_tour` | `--tour 0.1` with `scenarios/tour.txt`: a full round back to the first section, every section initialized, a key stops it, `mode tour` starts it again from the current section |
-| `demo_checks`, `demo_settings`, `demo_benchmark` | `tests/DemoUserFiles.cmake` runs the demo on a fresh `--user-dir` and reads the file it wrote: the check mode's marks by command and by the buttons, read back by a second run, a corrupt `checks.json` starts empty (`checks*.txt`); settings saved, read back, a corrupt file gives the defaults and is written again, `--no-settings` leaves it (`settings_*.txt`); `mode benchmark 0.1` writes a report with 13 sections (`benchmark_all.txt`) |
+| `demo_checks`, `demo_settings`, `demo_benchmark` | `tests/DemoUserFiles.cmake` runs the demo on a fresh `--user-dir` and reads the file it wrote: the check mode's marks by command and by the buttons, read back by a second run, a corrupt `checks.json` starts empty (`checks*.txt`); settings saved, read back, a corrupt file gives the defaults and is written again, `--no-settings` leaves it (`settings_*.txt`); `mode benchmark 0.1` writes a report with 14 sections (`benchmark_all.txt`) |
 | `demo_version`, `demo_bad_section`, `demo_bad_flag` | `--version` prints "Quench Demo <version>"; an unknown `--section` fails; `--tour` with `--checks` fails |
 
 The batches write no WAV file: `demo_audio_wav_match`, which compared the WAV files of the Metal and the Vulkan audio
@@ -536,7 +547,7 @@ or 1), `view`, the steered character's `steer_vx`, `steer_vz` (asked), `strafer_
 updated in the last update), `anim_lod_rate1`, `anim_lod_rate2`, `anim_lod_rate4` (characters at each rate) and
 `skinned_reused` (the renderer's reused skins, of the frame before), `dual_quaternion` (the checkbox's skinning
 of the showcase's right pair and the other characters: 1 dual quaternion, 0 linear), `twist` (the showcase's, in degrees), the retargeting pair's `pair_gap` (degrees on their circles) and
-`pair_height_ratio`, the blob's `blob_shapes` (its model's blend shapes), `blob_weight_<shape>` (the weight it is drawn with), `blob_clip_<shape>` (its clip's value) and `blob_clip`; the ray tracing section's `rt_ready`, `sun_azimuth`). Game commands: `section ID`, `reset_section`, `reset_camera`,
+`pair_height_ratio`, the blob's `blob_shapes` (its model's blend shapes), `blob_weight_<shape>` (the weight it is drawn with), `blob_clip_<shape>` (its clip's value) and `blob_clip`; the ray tracing section's `rt_ready`, `sun_azimuth`; the weather section's `clouds` (0 off, 1 the 2D layer, 2 volumetric, after fallbacks), `cloud_width`, `cloud_height`, `cloud_cover`, `sky_cube_faces`, `coverage`, `cloud_type`, `cells`, `weather_time`, `sun_elevation`, `limit_60hz`, `rain_here`, `rain_distance`, `shower_rain`). Game commands: `section ID`, `reset_section`, `reset_camera`,
 `sheet none|sections|controls|about|settings|graphics`, `mode off|tour|checks|benchmark [SECONDS]`,
 `check ok|problem|skip [NOTE]`, `check next|prev`, `job_test`, `settings_save` (now, not half a second later),
 `settings_corrupt` (overwrites the settings file with text that is not JSON),
@@ -552,12 +563,15 @@ of the showcase's right pair and the other characters: 1 dual quaternion, 0 line
 `max_distance`, `doppler`, `music 0|1|2`, `bus_<name>` (volume), `mute_<name>`, `pause_effects`, `ping`,
 `burst N`, `reverb`, `room_size`, `hrtf`; for the animation section `restart`, `speed`, `lean`, `jump`, `wave`, `foot_ik`, `look_at`,
 `footstep_sound`, `slope DEGREES`, `crowd N`, `lod`, `lod_interpolate`, `dual_quaternion`, `twist DEGREES`, `view hero|blend2d|skinning|retarget|blendshapes`, `steer_auto`, `steer_vx`, `steer_vz`, `blob_squash|stretch|puff|spikes WEIGHT`, `blob_clip`; for the ray tracing section `turn_sun`, `walk`, `spin` (the torus turns; since 2026-11-07),
-`sun_azimuth`, `sun_elevation`).
+`sun_azimuth`, `sun_elevation`; for the weather section `preset fair|shower|towering|storm|overcast|cirrus`,
+`quality full|reduced|layer|off`, `coverage`, `cloud_type`, `type_variation`, `precipitation`, `cirrus`, `wind_speed`,
+`wind_from` (degrees), `evolution`, `seed`, `shower`, `time_scale`, `weather_time`, `sun_elevation`, `sun_azimuth`,
+`run_day`, `steps`, `cloud_shadows`, `sky_cube`, `cube_faces`, `limit_60hz`).
 
 ## Benchmark
 
 `scenarios/benchmark.txt` measures the materials, shadows, sky, post-processing, HDR (in SDR, then with HDR output on),
-physics, assets, audio, animation, ray tracing, tunnel and navigation sections for 5 s each in real time (budgets
+physics, assets, audio, animation, ray tracing, tunnel, navigation and weather sections for 5 s each in real time (budgets
 and numbers: [Performance](performance.md)); the assets region streams with the moving focus and the default
 budgets, after the first loads have finished; the audio region plays the three emitters, the tone and the music; the
 animation region has a crowd of 256 (264 characters), and its perf line ends with the section's own times over its
@@ -565,7 +579,9 @@ last 240 frames: `anim_update_ms` (mean) and `anim_update_max_ms` of `AnimationS
 `anim_lod` (off, interpolate or hold), `anim_evaluated` (the mean of the characters updated per frame), and
 `skinning_gpu_ms`, the mean of the skinning pass's GPU time (-1 without GPU timing); the navigation region (since
 2026-11-07, not run on the screen yet) has two groups of 12 with the obstacles moving, and its perf line ends with
-`nav_agents`, `nav_crowd_ms` (the crowd step's moving average) and `nav_polygons`. It runs in a window on the
+`nav_agents`, `nav_crowd_ms` (the crowd step's moving average) and `nav_polygons`; the weather region (since
+2026-11-07, not run on the screen yet) has fair weather at 10 times its speed with the section's quality, and its
+perf line ends with `clouds`, `steps`, `cube_faces` and `limit_60hz`. It runs in a window on the
 screen (`--onscreen`: scripted runs are offscreen otherwise, where frames are not presented) with `--audio-device
 null` (the mix runs on miniaudio's null device thread, without sound):
 
@@ -594,6 +610,10 @@ GPU time per timed range
 ([Performance](performance.md#measurements)). For the
 cost of each effect add `--present-mode immediate`: with vsync the GPU's clock follows the load, and light regions
 read slower per range than they are (the stage 11 costs in [Performance](performance.md) come from such a run).
+
+`scenarios/weather_cost.txt` (since 2026-11-07) measures the weather section's quality settings offscreen (clouds
+off, the 2D layer, half and full size in fair weather and in a storm, the phone defaults; 3 s each after a second),
+at any size: the GPU time per range on the native backend ([Weather](weather.md#cost)).
 
 On a phone the same costs come from `scenarios/raytracing_phone.txt` (each effect at the device's size, then the
 render scales and upscalers with everything and with less, 4 s each; every group of regions waits for the nominal

@@ -8,6 +8,7 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 - CMake
 - A lit scene with the renderer (and own surface shading)
 - Cooked assets in the scene
+- Weather and clouds
 - Physics
 - Audio
 - Input and ImGui
@@ -217,6 +218,45 @@ quench_cook_assets(my_game_portable SOURCE_DIR assets_src
 ```
 
 Loaded the same way; `m_groundColor->basisCodec()` names the file's codec and `format()` what it became.
+
+## Weather and clouds
+
+The weather is headless (`quench_weather`, which `quench_render` links); the renderer draws its clouds and their
+shadows. It is a pure function of its settings, cells and clock, so scripted runs give the same sky every time.
+
+```cpp
+#include <quench/render/Renderer.h>
+#include <quench/render/Scene.h>
+#include <quench/weather/Weather.h>
+
+weather::Weather m_weather; // member
+
+// init
+weather::Settings s;
+s.coverage = 0.35f;                         // 0 clear .. 1 overcast
+s.type = weather::CloudType::Cumulus;       // Stratus, Cumulus, Towering, Cumulonimbus
+s.wind = {.direction = {1, 0}, .speed = 10}; // m/s at the clouds, the way the air moves
+m_weather.setSettings(s);
+m_weather.setTime(1200.0);                  // a start that is not the field's first shape
+m_shower = m_weather.addCell({.position = {2000, -8000}, .radius = 3000, .precipitation = 1}); // one raining cloud
+render::RenderSettings rs = m_renderer->settings();
+rs.clouds = render::Clouds::Volumetric;     // off by default; Layer is the cheap 2D layer and the fallback
+rs.cloudResolution = 0.5f;                  // half size, accumulated over frames
+m_renderer->setSettings(rs);
+
+// Game::update, every frame
+m_weather.update(frameDt);
+m_scene->setWeather(m_weather);             // a copy: set it again after each update
+const float rain = m_weather.precipitation(playerPosition);                 // 0..1 above a point
+const float far = m_weather.distanceToPrecipitation({playerPosition.x, playerPosition.z}); // m, for distant rain
+```
+
+`m_renderer->effects().clouds` says what is drawn (Volumetric falls back to Layer by `gpu::Caps`; clouds need
+`RenderSettings::sky`), `stats().cloudCover` how overcast it is around the camera. The sun's light on surfaces goes
+through the clouds' shadow (`cloudShadows`), the sky's ambient light and the fog grey with the cover, and surfaces
+reflect a cube of the sky with its clouds (`skyCubeSize`, `skyCubeFacesPerFrame`). Costs and phone settings:
+`docs/weather.md`, "Phones and fallbacks"; `examples/demo/sections/WeatherSection.cpp` (presets, a shower cell, the
+sun's day).
 
 ## Physics
 

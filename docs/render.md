@@ -83,7 +83,9 @@ on how many were rendered before it (in a scripted run, the frames spent waiting
    reflections and the indirect light, each followed by its filter. With ray-traced sun shadows the cascades of step
    1 are not drawn. The path tracer replaces steps 0 to 3 (below). Then screen-space ambient occlusion (GTAO,
    below) and screen-space reflections (SSR, below) where they run, after a prepass of their own when nothing is
-   traced (with SSR also the G-buffer); after the HDR pass SSR copies the image for the next frame.
+   traced (with SSR also the G-buffer); after the HDR pass SSR copies the image for the next frame. Then, with a
+   weather on the scene and `clouds` on, the clouds' passes (below): the weather map, the cloud shadow map, the
+   volumetric march and its accumulation, the sky cube's faces.
 1. **Shadow cascades** of the sun (standard depth, `Depth32Float` texture array): the view is split between linear and
    logarithmic distances up to `shadowDistance`, each cascade snapped to its texels; casters are culled per cascade.
    Solid casters write depth with their position only; cut-out ones run their surface and discard where it is cut
@@ -91,7 +93,7 @@ on how many were rendered before it (in a scripted run, the frames spent waiting
    gets a second pass into its transmittance map (below).
 2. **HDR pass** (`Rgba16Float`, reversed depth: near 1, far 0, infinite far plane): opaque surfaces sorted by
    pipeline and material, then game `Opaque` passes, then the sky (atmosphere or gradient, sun disc, fog toward the
-   horizon), then alpha-blended and additive surfaces back to front, then game `Transparent` passes.
+   horizon; with clouds, the sky with the clouds over it), then alpha-blended and additive surfaces back to front, then game `Transparent` passes.
 3. **Motion vectors and TAA**: camera motion from the depth, moved instances drawn again into an `Rg16Float` target
    (cut-out ones only where the depth is their own, so their holes keep what is behind them);
    TAA with a Halton (2, 3) jitter over 8 frames, the history clipped to the variance box of the 3 x 3 neighbourhood
@@ -123,6 +125,23 @@ degrees it is (25 degrees: disc 255, sky next to it 251 to 253). In HDR output t
 (`render.renderer_sun_disc_outshines_its_glow`: sun at 9 degrees, headroom 8, disc 7.95 against at most 5.72 in the
 glow; in SDR the disc is never darker than the glow). There is no auto exposure yet (TrailForge has one), which would
 lower the exposure in front of a bright sky.
+
+### Clouds
+
+Since 2026-11-07 (stage 13, part 1; [Weather](weather.md)): `Scene::setWeather(const weather::Weather&)` gives the
+scene a weather (a copy, set again after each `Weather::update`; `clearWeather()` removes it), and
+`RenderSettings::clouds` draws its clouds: `Off` (the default), `Layer` (a 2D layer at the cloud base, the fallback
+and the cheap setting) or `Volumetric` (raymarched cumulus, towering cumulus, cumulonimbus, stratus and cirrus after
+Nubis, at `cloudResolution` of the render size, accumulated over frames with `cloudTemporal`, `cloudSteps` along a
+ray). `cloudShadows` shades the sun's light on surfaces through a 24 km cloud shadow map around the camera, with
+shadow maps and with ray-traced sun shadows; `skyCubeSize` and `skyCubeFacesPerFrame` keep a cube of the sky with its
+clouds that surfaces reflect (and SSR's misses). As the cover around the camera closes, the sky's ambient light
+moves toward a deck's grey, the ground's ambient light and the fog follow. The traced effects' misses see the sky
+blended toward that grey by the cover, not single clouds. Timed ranges `cloud_noise` (once), `weather` (the weather
+and shadow maps, drawn in turns), `clouds` (the march and its accumulation) and `sky_cube`. `FrameUniforms`
+`cloudShadow`, `skyCube` and `overcast`, surface samplers 14 (the shadow map) and 15 (the cube); both are bound in
+the HDR pass (placeholders without clouds), and `quench/Clouds.hlsli` reads them. Test
+`renderer_clouds_shadow_the_ground` on every backend variant; the costs in [Weather](weather.md#cost).
 
 ### Tone mapping and HDR output
 
@@ -659,6 +678,8 @@ maps"), so a game can show them (the demo's "Frame and fallbacks" panel); it is 
 | Spatial upscaling (MetalFX) | `gpu::Caps::spatialUpscaling`, render scale below 1 | bilinear in tone mapping |
 | Temporal upscaling (MetalFX) | `gpu::Caps::temporalUpscaling` and TAA's inputs | bilinear, with TAA or FXAA |
 | Denoising upscaling (MetalFX) | `gpu::Caps::denoisedUpscaling`, a traced effect, TAA's inputs | temporal upscaling with the engine's denoiser, then bilinear |
+| Volumetric clouds | a sampled `Rgba8Unorm` 3D texture, a renderable `Rgba8Unorm` 2D array (its layers copied into the 3D noise), `Rgba16Float` targets | the 2D cloud layer |
+| Sky cube | a renderable, sampleable `Rgba16Float` cube | the sky's reflection without clouds |
 
 Shadow lookups use `Gather` on the depth texture and compare in the shader (1, 4 or 12 Poisson taps, each a bilinear
 2 x 2 comparison) instead of a comparison sampler: MoltenVK reports no `mutableComparisonSamplers`, and SDL GPU's
@@ -797,6 +818,8 @@ const render::SurfaceId checker = *renderer.addSurface({
 
 `shaders/quench/` is included by engine and game shaders: `Common.hlsli` (constants, hashes, noise), `Brdf.hlsli`,
 `Shadows.hlsli`, `Sky.hlsli`, `Fog.hlsli`, `Tonemap.hlsli`, `Fullscreen.hlsli`, `Frame.hlsli` (the frame uniforms),
+`Clouds.hlsli` (the cloud shadow, the cloudy sky and the sky cube's reflection), `Cube.hlsli` (a cube face's texel
+directions), `WeatherField.h` (the weather field, also compiled as C++ by `quench_weather`),
 `Bindings.hlsli` (the `QUENCH_UNIFORM` / `QUENCH_TEXTURE` / `QUENCH_SAMPLER` / `QUENCH_STORAGE` register macros for
 SDL GPU's spaces), `Surface.hlsli` and `SurfaceEntries.hlsli`. `SceneUniforms.h` defines the uniform structs once for
 C++ (`quench::shader::FrameUniforms`, ...) and HLSL through `Shared.h`: only 16-byte members (`vec4`, `mat4`), so
@@ -815,7 +838,9 @@ their roughness limit, indirect light (sky, probe grid or ray traced), the probe
 (every probe per frame, 1/2, 1/4 or 1/8), the probe cascades (1..4), probe relocation and classification, the ray
 denoiser
 (spatial or temporal), the path tracer with its bounces and samples, anti-aliasing (none, FXAA, TAA) and sharpening,
-bloom (strength, threshold), sky on or off and the clear color, tone curve (ACES, AgX), vignette, dither.
+bloom (strength, threshold), sky on or off and the clear color, the clouds (off, 2D layer, volumetric) with their
+resolution, accumulation, steps and shadows and the sky cube's size and faces per frame, tone curve (ACES, AgX),
+vignette, dither.
 `setSettings` can be called every frame; the targets are recreated only when a size, the shadow map size or the set
 of active effects changes.
 
@@ -833,7 +858,9 @@ path tracer's samples (`pathSamples`), and (stage 12) the area lights among the 
 the lights that took another light's shadow channel (`localShadowChanges`), and (2026-11-07, 0.10.0) the
 lights with shadow maps, their maps, the instances and draws in them (`localShadowLights`, `localShadowMaps`,
 `localShadowInstances`, `localShadowDraws`), whether GTAO ran and the draws of its prepass (`screenOcclusion`,
-`screenPrepassDraws`), whether SSR ran (`screenReflections`).
+`screenPrepassDraws`), whether SSR ran (`screenReflections`), and (stage 13) the clouds drawn, the march's size, how
+overcast it is around the camera and the sky cube's faces drawn (`clouds`, `cloudWidth`, `cloudHeight`,
+`cloudCover`, `skyCubeFaces`).
 The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`,
 `area_lights`, `local_shadow_changes`, `local_map_lights`, `local_maps`, `local_map_draws`, `moved`,
 `render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`,
@@ -846,7 +873,8 @@ passes in timed ranges of the command buffer it records into, `upload` (the inst
 `prepass` (with the G-buffer, the motion vectors for the temporal denoiser and the denoising upscaler's inputs) and
 `raytrace` (ray tracing; `rays`, `denoise`, `probes`, `reflections` and `indirect` inside it), `path` (the path
 tracer), `gtao` (screen-space ambient occlusion, after its own `prepass` where nothing is traced), `ssr` (screen-space
-reflections: the march and the resolve), `shadows` (the
+reflections: the march and the resolve), `cloud_noise` (once), `weather`, `clouds` and `sky_cube` (the clouds),
+`shadows` (the
 cascades and their
 transmittance maps), `local_shadows` (the local lights' shadow maps), `local_filter` (their screen pass where an area
 light has maps, after its own `prepass`), `hdr` (opaque, sky, transparent and the game's passes in them), `taa` (motion vectors and the
@@ -978,7 +1006,10 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   per-target bounds); every drawn skinned
   instance whose palette changed is skinned every frame (an unchanged one is copied from the frame before; no
   skinning LOD); the output buffers grow with the skinned vertices drawn (two copies).
-- No MSAA, no image-based lighting from a cubemap (the sky model is the environment), shadows of local and area
+- Clouds ([Weather](weather.md#limitations)): the traced effects see an overcast amount, not single clouds; the
+  cloud shadow map covers 24 km on the plane y = 0; nobody has looked at them in motion.
+- No MSAA, no image-based lighting from a cubemap (the sky model is the environment; with clouds the sky cube is the
+  sky reflection's, not the ambient light's), shadows of local and area
   lights only by rays or shadow maps (at most 4), at most 16 local lights per frame (8 of them area lights) and no clustered or
   tiled light lists.
 - One render per scene and frame (several views of one scene need a scene per view).

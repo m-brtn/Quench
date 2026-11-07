@@ -4,10 +4,10 @@ description: >-
   Builds, extends and verifies a game on the Quench C++20 engine: tools/new_game.py and templates/game, the pinned
   engine (FetchContent and the local override), the quench::app::Game interface and fixed-step loop,
   quench_add_game, input actions, ImGui, the retained render::Scene, cooked assets (quench_cook_assets,
-  SceneAssets), physics, audio, animation, navigation, jobs, quench::fs, iOS builds, scripted offscreen checks with
-  captures and golden images, and Tracy profiles recorded without its GUI. Use when creating a game on Quench,
-  working in a repository whose CMakeLists.txt fetches Quench or calls quench_add_game, or when the user asks how to
-  make a game with the engine.
+  SceneAssets), weather and clouds, physics, audio, animation, navigation, jobs, quench::fs, iOS builds, scripted
+  offscreen checks with captures and golden images, and Tracy profiles recorded without its GUI. Use when creating a
+  game on Quench, working in a repository whose CMakeLists.txt fetches Quench or calls quench_add_game, or when the
+  user asks how to make a game with the engine.
 ---
 
 # Building a game on Quench
@@ -24,16 +24,17 @@ is in [reference.md](reference.md).
 - Paths below (`docs/`, `include/quench/`, `cmake/`, `tools/`, `templates/`, `examples/`) are in that engine source.
   The headers are the truth for names and signatures: read the header before using a call.
 - Depth: `docs/app.md` (game interface, flags, scenarios, captures, `quench_add_game()`, iOS runs), `docs/render.md`,
-  `docs/assets.md`, `docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/performance.md`,
-  `docs/platforms.md`. Working code: `templates/game/src/Game.cpp` and `examples/hello/Hello.cpp` (drawing with
-  `quench::gpu`), `examples/demo/sections/` (renderer, physics, audio, animation, assets, navigation).
+  `docs/assets.md`, `docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`,
+  `docs/performance.md`, `docs/platforms.md`. Working code: `templates/game/src/Game.cpp` and
+  `examples/hello/Hello.cpp` (drawing with `quench::gpu`), `examples/demo/sections/` (renderer, physics, audio,
+  animation, assets, navigation, weather).
 
 ## Workflow
 
 ```
 - [ ] 1. Create the game, build it, run its smoke check
 - [ ] 2. Shape the Game: simulation in fixedStep, drawing in render
-- [ ] 3. Add the modules it needs (render, assets, physics, audio, animation, navigation)
+- [ ] 3. Add the modules it needs (render, assets, weather, physics, audio, animation, navigation)
 - [ ] 4. A scenario with checks and a capture for every feature, run by ctest
 - [ ] 5. Gates: debug and release builds, ctest, captures looked at, devlog
 ```
@@ -124,6 +125,13 @@ Link what the game uses beside `quench_add_game()`:
   again. Textures are BC7 on the Mac and ASTC 4x4 in iOS builds by default (`TEXTURE_FORMAT auto`);
   `TEXTURE_FORMAT basis` cooks one Basis Universal set for every device, transcoded at load time (smaller with
   `BASIS_CODEC etc1s`, lower quality; slower to cook). `docs/assets.md`, "Basis Universal".
+- **Weather and clouds.** `weather::Weather` (`include/quench/weather/Weather.h`, headless, linked with
+  `quench_render`): `Settings` (coverage, cloud type, wind, evolution, precipitation, cirrus), `Cell`s a game places
+  (a single raining cloud), `update(dt)` in `Game::update`, then `scene.setWeather(weather)` every frame (a copy).
+  Clouds are off by default: `RenderSettings::clouds = render::Clouds::Volumetric` (or `Layer`, the cheap 2D layer
+  and the fallback), with `cloudResolution`, `cloudSteps`, `cloudShadows` and the sky cube for reflections. The game
+  asks the weather what is above a point: `precipitation`, `distanceToPrecipitation`, `cover`, `windAt`.
+  [reference.md](reference.md), "Weather and clouds"; `docs/weather.md`.
 - **Physics.** `quench::PhysicsWorld` on `&app.jobs()` (Jolt, its jobs on the engine's pool); bodies through
   `bodies()` with `PhysicsLayers::kStatic` or `kMoving`; `step(float(dt))` in `fixedStep`.
 - **Audio.** `app.audio()`: `load`, `play` with `PlayParams` (buses `"music"`, `"effects"`, `"ui"` by default;

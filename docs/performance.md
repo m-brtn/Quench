@@ -110,10 +110,12 @@ buffers), `accel` (acceleration structure builds, refits and compactions; inside
 `tlas`, the top level), `prepass` (the depth prepass for the
 rays, with the G-buffer, the motion vectors and the denoising upscaler's inputs where those are needed), `raytrace`
 (with `rays` (sun, occlusion and local light shadows), `denoise`, `probes`, `reflections` and `indirect` inside; the
-last two include their own filters), `path` (the path tracer), `shadows` (all cascades), `local_shadows` (the local
+last two include their own filters), `path` (the path tracer), `cloud_noise` (once), `weather` (the weather and
+cloud shadow maps), `clouds` (the volumetric march and its accumulation) and `sky_cube` (where clouds are drawn;
+[Clouds](#clouds)), `shadows` (all cascades), `local_shadows` (the local
 lights' shadow maps, where they are not traced), `hdr` (the main pass with
-the sky), `taa`, `upscale` (MetalFX), `bloom` and `tonemap`; the ray tracing and MetalFX ranges only where those
-run. A range's time is its busy
+the sky), `taa`, `upscale` (MetalFX), `bloom` and `tonemap`; the ray tracing, MetalFX and cloud ranges only where
+those run. A range's time is its busy
 time: how long any stage of its passes ran, from timestamps at the stage boundaries.
 
 The ranges are recorded only while something reads them: a scenario's perf region, a frame panel that calls
@@ -296,6 +298,33 @@ demo's Adapt to heat (Settings, off) uses them as they are, and its check mode h
 (`tunnel.heat`: the tunnel's phone defaults for 10 minutes with it on; [Engine demo](demo.md#modes)).
 
 ## Measurements
+
+### Clouds
+
+2026-11-07 20:55-20:58, the Mac (Apple M4 Pro), offscreen, the native backend, `--window 1920x1080` and
+`--window 1206x2622` (the iPhone 17's native size in portrait), `--audio-device null`,
+`examples/demo/scenarios/weather_cost.txt`: the weather section in fair weather and in a storm with the weather
+moving at 10 times its speed, 3 s per setting after a second, unpaced; the GPU busy time per range, p50, ms (the
+sum of `weather`, `clouds` and `sky_cube` and the `hdr` range's growth over clouds off, whose `hdr` was 0.464 and
+0.738 ms). The frame's `gpu ms` is not used: offscreen and unpaced, frames overlap on the GPU and it counts the
+waits.
+
+| Setting | 1920 x 1080: weather / clouds / sky_cube | added | 1206 x 2622: weather / clouds / sky_cube | added |
+|---|---|---|---|---|
+| 2D layer | 0.223 / - / 0.068 | 0.38 | 0.225 / - / 0.068 | 0.38 |
+| Volumetric, half size, 64 steps, 2 cube faces | 0.223 / 1.472 / 0.280 | 1.97 | 0.179 / 1.566 / 0.292 | 2.01 |
+| Volumetric, full size, 64 steps, 2 cube faces | 0.187 / 3.789 / 0.314 | 4.29 | 0.226 / 4.598 / 0.317 | 5.14 |
+| Storm, half size | 0.223 / 1.072 / 0.187 | 1.48 | 0.222 / 1.049 / 0.193 | 1.46 |
+| Storm, full size | 0.221 / 2.803 / 0.210 | 3.23 | 0.222 / 3.113 / 0.213 | 3.55 |
+| Phone defaults: half size, 48 steps, 1 cube face | 0.223 / 1.108 / 0.147 | 1.48 | 0.224 / 1.066 / 0.153 | 1.44 |
+
+Before two changes made in the same session (one run, 20:52), the weather range was 0.36 ms (the weather and shadow
+maps drawn every frame; drawn in turns since) and the sky cube 0.41 ms at two faces per frame (32 steps with the
+detail erosion; 24 steps without it since); the march the same. The Mac target of the roadmap, the volumetric
+clouds within about 2 ms at half size at 1080p, holds (1.97). On the iPhone 17 the stage 11 effects cost about 3
+times the M4 Pro's: by that ratio the phone defaults would take about 4.3 ms and the 2D layer about 1.1 ms there, over
+the roadmap's 2 and 0.5 ms; an estimate, not a measurement, so the section's phone defaults (half size, 48 steps,
+one cube face, 60 Hz) wait for a run on the phone. Not run on the screen.
 
 ### Tracy on and off
 

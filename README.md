@@ -43,6 +43,9 @@ look and listen.
   denoisers and MetalFX upscaling.
 - **Lights and materials:** rect, disk and tube area lights with soft shadows, brushed metal, glass with tinted
   shadows, cut-outs.
+- **Weather:** volumetric clouds that drift with the wind and change shape, from fair-weather cumulus to storm
+  clouds and overcast, a single shower in a blue sky, cloud shadows on the ground, light that dims and greys under
+  them, sunsets.
 - **Physics:** Jolt Physics, multithreaded on the engine's job system.
 - **Sound:** 3D sound with HRTF for headphones, reverb, buses and mixing, streamed music with crossfades; WAV, FLAC,
   MP3 and Ogg Vorbis.

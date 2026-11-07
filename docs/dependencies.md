@@ -30,7 +30,15 @@ Patches applied by TrailForge (`cmake/patches/`): `SdlIosSimulator.cmake` (in th
 GPU's Metal GPU family check and its `setDepthClipMode` calls) and `ImguiIos.cmake` (ImGui's SDL GPU backend uses MSL
 source on iOS instead of the macOS metallibs). The engine carries `SdlIosSimulator.cmake` since stage 2 (the same two
 changes, ported from TrailForge `0188a3a`); compiled for the Simulator it leaves SDL's `SDLToMetal_DepthClipMode`
-unused, which SDL's build reports as one warning. Ashfall has no iOS build and no
+unused, which SDL's build reports as one warning. Since 2026-11-07 (stage 13, the clouds' 3D noise) the engine also
+carries `SdlVulkan3d.cmake`: SDL GPU's Vulkan driver creates every 3D texture 2D-array compatible
+(`VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT`, which only rendering into its slices needs), and MoltenVK's portability
+subset has no 2D views of 3D images (`imageView2DOn3DImage`), so the Khronos validation layer reported an error for
+any 3D texture, also one that is only sampled; the patch sets the flag for 3D color targets only (the engine renders
+into 2D arrays and copies into sampled 3D textures). The games are not affected: TrailForge declares SDL itself
+(with `SdlIosSimulator.cmake` only) before it fetches the engine, so its SDL is unchanged (its sampled 3D colour LUT
+would be valid on Vulkan through MoltenVK with the patch); Ashfall creates no 3D textures and does not build on the
+engine. Ashfall has no iOS build and no
 patches. Ashfall plays audio through an SDL3 audio stream with sounds synthesized at startup, without miniaudio.
 
 Build-time shader toolchain (host tools, not shipped in the binary):

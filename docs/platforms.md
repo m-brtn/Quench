@@ -91,6 +91,11 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
   demo's assets section grew to 4.5 GB in 6 s this way (2026-11-06). The GPU layer waits on a signalled fence before
   it releases it (`SdlGpuDevice::release`), which runs that cleanup pass first: 676 MB, flat. SDL's Metal driver
   gives the caller a reference of its own and is not affected. Not reported upstream yet.
+- 3D textures on Vulkan through MoltenVK (2026-11-07, the clouds' noise): MoltenVK's portability subset has no 2D
+  views of 3D images, so a 3D texture cannot be a color target there, and SDL GPU created every 3D texture as if it
+  could (the engine's SDL patch `SdlVulkan3d.cmake`, [Dependencies](dependencies.md)). The engine draws 3D content
+  into the layers of a 2D array and copies them into a sampled 3D texture (`gpu_vulkan.texture_3d_from_layers`), on
+  every backend.
 - Shader hot reload (2026-11-07, [App shell](app.md#shader-hot-reload)) runs the build's compilers through
   `SDL_CreateProcess` (`posix_spawnp` with non-blocking pipes in SDL 3.4.18): checked on the Mac on SDL GPU's Metal
   driver, Vulkan through MoltenVK and the native Metal backend. Not on iOS (no processes, and the app has no build
@@ -252,6 +257,17 @@ the job system, and inside `NavMesh::update()` where there are no worker threads
 | iOS Simulator | `ios-sim-tests`: `navigation.*` |
 | iPhone | nothing. Needs the user: the section in motion, the touch controls of its compact layout |
 | Web | `navigation.*` under Node.js (`wasm-node`, single-threaded: the builds run inside `update()`); no rendering |
+| Windows, Linux, Android | nothing |
+
+`quench_weather` is headless and portable C++ (the field is a header shared with the shaders); the clouds are
+`quench_render`'s, with the 2D layer as their fallback by format support ([Weather](weather.md#platforms)).
+
+| Where | Run so far |
+|---|---|
+| Mac | `weather.*` in `headless`, `debug`, `release`, `asan` and `tsan`; `render.renderer_clouds_shadow_the_ground` and the GPU cases `texture_3d_from_layers` and `cube_faces` on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK; the demo's Weather section and its three captures on all three (offscreen); the costs on the native backend (offscreen) |
+| iOS Simulator | `ios-sim-tests`: `weather.*` and the GPU and render cases on both backends |
+| iPhone | nothing. Needs the user: the clouds in motion on the phone's screen, the phone defaults' cost |
+| Web | `weather.*` under Node.js (`wasm-node`); no rendering |
 | Windows, Linux, Android | nothing |
 
 ## Windows and Linux
