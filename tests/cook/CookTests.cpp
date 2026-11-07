@@ -14,6 +14,7 @@
 #include <quench/assets/Texture.h>
 #include <quench/core/FileSystem.h>
 #include <quench/core/Jobs.h>
+#include <quench/navigation/NavQuery.h>
 
 #include <glm/geometric.hpp>
 #include <glm/gtc/constants.hpp>
@@ -1532,4 +1533,120 @@ QUENCH_TEST(cook_model_morph_targets) {
     Result<CookedModel> crate = cookModel(kDemoSources / "models/crate.gltf", "models/crate", {}, jobs);
     CHECK(crate && crate->model.meshes.size() == 1 && crate->model.meshes[0].morphTargets.empty(),
           "a model without blend shapes");
+}
+
+namespace {
+
+// A 12 m floor, a mud patch on it (by material), a raised bush (left out by name) and the settings beside them.
+std::filesystem::path writeNavLevel(const std::filesystem::path& dir) {
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    GltfWriter w;
+    const auto square = [&](float half, float y) {
+        return w.add(std::vector<float>{-half, y, -half, -half, y, half, half, y, half, half, y, -half}, 4, "VEC3",
+                     kFloat, std::format(R"(, "min": [{0}, {1}, {0}], "max": [{2}, {1}, {2}])", -half, y, half));
+    };
+    const int floor = square(6.0f, 0.0f), patch = square(1.5f, 0.02f), bush = square(1.0f, 0.5f);
+    const int indices = w.add(std::vector<std::uint16_t>{0, 1, 2, 0, 2, 3}, 6, "SCALAR", kUnsignedShort);
+    const std::string json = std::format(
+        R"({{"asset": {{"version": "2.0"}}, "scene": 0, "scenes": [{{"nodes": [0, 1, 2]}}],
+"nodes": [{{"name": "ground", "mesh": 0}}, {{"name": "pit", "mesh": 1, "translation": [3.5, 0, 0]}},
+  {{"name": "bush", "mesh": 2, "translation": [-4, 0, -4]}}],
+"meshes": [{{"name": "floor", "primitives": [{{"attributes": {{"POSITION": {}}}, "indices": {}, "material": 0}}]}},
+  {{"name": "patch", "primitives": [{{"attributes": {{"POSITION": {}}}, "indices": {}, "material": 1}}]}},
+  {{"name": "bush", "primitives": [{{"attributes": {{"POSITION": {}}}, "indices": {}, "material": 2}}]}}],
+"materials": [{{"name": "stone"}}, {{"name": "mud_mat"}}, {{"name": "leaves"}}],
+"buffers": [{{"uri": "level.bin", "byteLength": {}}}], "bufferViews": [{}], "accessors": [{}]}})",
+        floor, indices, patch, indices, bush, indices, w.bin.size(), join(w.views), join(w.accessors));
+    std::ofstream(dir / "level.gltf", std::ios::binary) << json;
+    std::ofstream(dir / "level.bin", std::ios::binary)
+        .write(reinterpret_cast<const char*>(w.bin.data()), std::streamsize(w.bin.size()));
+    std::ofstream(dir / "level.nav.json", std::ios::binary) << R"({
+  "agent": {"radius": 0.3, "height": 1.8, "maxClimb": 0.35, "maxSlope": 40},
+  "cellSize": 0.2, "cellHeight": 0.1, "tileSize": 32,
+  "areas": [{"name": "ground", "cost": 1}, {"name": "mud", "cost": 4}],
+  "surfaces": {"mud_mat": "mud", "bush": "ignore", "leaves": "ignore", "nothing": "ground"},
+  "links": [{"start": [-5, 0, 5], "end": [5, 0, 5], "bidirectional": true, "id": 9}]
+})";
+    return dir / "level.gltf";
+}
+
+} // namespace
+
+QUENCH_TEST(cook_navmesh) {
+    JobSystem jobs;
+    const std::filesystem::path source = writeNavLevel(tmpPath("cook_navmesh"));
+    Result<CookedNavMesh> cooked = cookNavMesh(source, {}, jobs);
+    REQUIRE(cooked, "%s", cooked ? "" : cooked.error().c_str());
+    CHECK(cooked->triangles == 4 && cooked->tiles == 4 && cooked->inputs.size() == 3,
+          "%zu triangles, %d tiles, %zu inputs", cooked->triangles, cooked->tiles, cooked->inputs.size());
+    CHECK(std::ranges::find(cooked->notes, "surface 'nothing' names nothing") != cooked->notes.end(),
+          "no note on a surface that names nothing");
+    Result<CookedNavMesh> again = cookNavMesh(source, {}, jobs);
+    CHECK(again && again->file == cooked->file, "two cooks differ");
+
+    Result<std::shared_ptr<const navigation::NavMeshData>> data = navigation::readNavMeshData(cooked->file);
+    REQUIRE(data, "%s", data ? "" : data.error().c_str());
+    CHECK((*data)->settings.areas.size() == 2 && (*data)->settings.areas[1].cost == 4.0f &&
+              (*data)->links.size() == 1 && (*data)->links[0].id == 9 && (*data)->links[0].bidirectional,
+          "settings or links lost");
+    const auto check = [&](const char* what, const std::shared_ptr<const navigation::NavMeshData>& nav) {
+        Result<navigation::NavMesh> mesh = navigation::NavMesh::create(nav, jobs);
+        REQUIRE(mesh, "%s: %s", what, mesh ? "" : mesh.error().c_str());
+        mesh->finish();
+        navigation::NavQuery query(*mesh);
+        Result<navigation::NavPoint> mud = query.nearestPoint({3.5f, 0.0f, 0.0f});
+        Result<navigation::NavPoint> stone = query.nearestPoint({-3.0f, 0.0f, 3.0f});
+        Result<navigation::NavPoint> underBush = query.nearestPoint({-4.0f, 0.6f, -4.0f});
+        REQUIRE(mud && stone && underBush, "%s: points", what);
+        CHECK(mud->area == 1 && stone->area == 0, "%s: areas %d and %d", what, int(mud->area), int(stone->area));
+        CHECK(std::abs(underBush->position.y) < 0.15f, "%s: the ignored bush is at y %.2f", what,
+              underBush->position.y);
+    };
+    check("glTF", *data);
+
+    // The same level from a cooked model (meshes merged by material: the materials' names count).
+    Result<CookedModel> model = cookModel(source, "level", {.lods = 1}, jobs);
+    REQUIRE(model, "%s", model ? "" : model.error().c_str());
+    const std::vector<std::uint8_t> modelFile = modelBytes(model->model);
+    std::ofstream(source.parent_path() / "level.qmodel", std::ios::binary)
+        .write(reinterpret_cast<const char*>(modelFile.data()), std::streamsize(modelFile.size()));
+    Result<CookedNavMesh> fromModel = cookNavMesh(source.parent_path() / "level.qmodel", {}, jobs);
+    REQUIRE(fromModel, "%s", fromModel ? "" : fromModel.error().c_str());
+    Result<std::shared_ptr<const navigation::NavMeshData>> modelData = navigation::readNavMeshData(fromModel->file);
+    REQUIRE(modelData, "%s", modelData ? "" : modelData.error().c_str());
+    check(".qmodel", *modelData);
+
+    // Without settings: one default area, every surface walkable.
+    std::filesystem::remove(source.parent_path() / "level.nav.json");
+    Result<CookedNavMesh> plain = cookNavMesh(source, {}, jobs);
+    REQUIRE(plain, "%s", plain ? "" : plain.error().c_str());
+    CHECK(plain->triangles == 6, "%zu triangles without settings", plain->triangles);
+}
+
+QUENCH_TEST(cook_navmesh_errors) {
+    CHECK(!parseNavMeshSettings(R"({"cellsize": 0.2})"), "an unknown key was accepted");
+    CHECK(!parseNavMeshSettings(R"({"surfaces": {"a": "swamp"}})"), "an undefined area type was accepted");
+    CHECK(!parseNavMeshSettings(R"({"tileSize": 32.5})"), "a fractional tile size was accepted");
+    CHECK(!parseNavMeshSettings(R"({"links": [{"start": [0, 0], "end": [1, 0, 0]}]})"), "a 2D link was accepted");
+    CHECK(!parseNavMeshSettings(R"({"links": [{"start": [0, 0, 0], "end": [1, 0, 0], "area": "none"}]})"),
+          "a link of area none was accepted");
+    CHECK(!parseNavMeshSettings("{"), "broken JSON was accepted");
+    Result<NavMeshSettings> s = parseNavMeshSettings(
+        R"({"areas": [{"name": "road"}, {"name": "grass", "cost": 2}], "surfaces": {"wall": "none", "x": "grass"},
+            "boxes": [{"min": [0, 0, 0], "max": [1, 1, 1], "area": "grass"}]})");
+    REQUIRE(s, "%s", s ? "" : s.error().c_str());
+    CHECK(s->build.areas.size() == 2 && s->build.areas[1].cost == 2.0f && s->surfaces.size() == 2 &&
+              s->boxes.size() == 1 && s->boxes[0].area == 1,
+          "settings read wrong");
+    const auto wall = std::ranges::find(s->surfaces, std::string("wall"), &std::pair<std::string, int>::first);
+    CHECK(wall != s->surfaces.end() && wall->second == navigation::kNotWalkable, "'none' is not kNotWalkable");
+
+    JobSystem jobs(JobSystemDesc{.workerThreads = 0});
+    CHECK(!cookNavMesh(tmpPath("cook_navmesh_errors") / "missing.gltf", {}, jobs), "a missing file");
+    const std::filesystem::path source = writeNavLevel(tmpPath("cook_navmesh_errors"));
+    std::ofstream(source.parent_path() / "level.nav.json", std::ios::binary) << R"({"tileSize": 999})";
+    Result<CookedNavMesh> bad = cookNavMesh(source, {}, jobs);
+    CHECK(!bad && bad.error().find("tile") != std::string::npos, "%s",
+          bad ? "a 999-cell tile cooked" : bad.error().c_str());
 }

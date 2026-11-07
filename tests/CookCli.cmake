@@ -1,5 +1,6 @@
-# The cook's command line (ctest: cook_cli): a texture and a model from the demo's sources, cooked twice into separate
-# directories; the outputs must be byte-identical, the depfile must name every input, and bad input must fail.
+# The cook's command line (ctest: cook_cli): a texture, a model and a navmesh from the demo's sources, cooked twice
+# into separate directories; the outputs must be byte-identical, the depfile must name every input, and bad input
+# must fail.
 # cmake -DCOOK=<quench_cook> -DSOURCES=<examples/demo/assets_src> -DOUT=<scratch directory> -P CookCli.cmake
 # With -DPYTHON and -DCHARACTER=<tools/assets/make_demo_character.py>: the demo's character too (skeleton, clips and
 # the skinned model).
@@ -19,13 +20,27 @@ foreach(run a b)
     if(NOT result EQUAL 0)
         message(FATAL_ERROR "model cook failed (${result})")
     endif()
+    execute_process(COMMAND "${COOK}" navmesh "${SOURCES}/models/crate.gltf" "${dir}/crate.qnav"
+                            --depfile "${dir}/crate_nav.d"
+                    RESULT_VARIABLE result)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "navmesh cook failed (${result})")
+    endif()
 endforeach()
 
-foreach(file tile_3.ktx2 models/crate.qmodel models/crate_0.ktx2)
+foreach(file tile_3.ktx2 models/crate.qmodel models/crate_0.ktx2 crate.qnav)
     execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files "${OUT}/a/${file}" "${OUT}/b/${file}"
                     RESULT_VARIABLE different)
     if(different)
         message(FATAL_ERROR "${file} differs between two cooks")
+    endif()
+endforeach()
+
+file(READ "${OUT}/a/crate_nav.d" depfile)
+foreach(input crate.gltf crate.bin)
+    string(FIND "${depfile}" "${input}" found)
+    if(found EQUAL -1)
+        message(FATAL_ERROR "the navmesh's depfile does not name ${input}:\n${depfile}")
     endif()
 endforeach()
 

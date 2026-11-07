@@ -4,7 +4,8 @@
 # fastgltf reads glTF and GLB; it downloads its two single-file dependencies, simdjson 5.1.0 and simdutf 9.3.3, from
 # their GitHub releases with SHA256 checks (fastgltf's cmake/dependencies.cmake). stb_image decodes PNG and JPEG,
 # bc7enc.cpp (bc7enc_rdo, declared in cmake/Dependencies.cmake) encodes BC7, astc-encoder encodes (and, for the
-# tests, decodes) ASTC, meshoptimizer optimizes and simplifies meshes. None of them is linked into a game.
+# tests, decodes) ASTC, meshoptimizer optimizes and simplifies meshes. None of them is linked into a game. Navmeshes
+# are built by quench_navigation itself.
 include(FetchContent)
 
 # ---------------------------------------------------------------- fastgltf v1.0.0
@@ -81,6 +82,7 @@ add_library(quench_cook_lib STATIC EXCLUDE_FROM_ALL
     ${Quench_SOURCE_DIR}/tools/cook/CookAnimation.cpp
     ${Quench_SOURCE_DIR}/tools/cook/CookBasis.cpp
     ${Quench_SOURCE_DIR}/tools/cook/CookModel.cpp
+    ${Quench_SOURCE_DIR}/tools/cook/CookNavigation.cpp
     ${Quench_SOURCE_DIR}/tools/cook/Gltf.cpp
     ${Quench_SOURCE_DIR}/tools/cook/CookTexture.cpp
     ${Quench_SOURCE_DIR}/tools/cook/Retarget.cpp
@@ -94,7 +96,7 @@ set_source_files_properties(${_astcenc_sources} PROPERTIES COMPILE_OPTIONS "-w;-
 target_include_directories(quench_cook_lib PUBLIC ${Quench_SOURCE_DIR}/tools/cook)
 target_include_directories(quench_cook_lib SYSTEM PRIVATE ${stb_SOURCE_DIR} ${bc7enc_SOURCE_DIR}
                                                           ${astcenc_SOURCE_DIR}/Source)
-target_link_libraries(quench_cook_lib PUBLIC quench_assets quench_animation quench_core
+target_link_libraries(quench_cook_lib PUBLIC quench_assets quench_animation quench_navigation quench_core
                                       PRIVATE fastgltf::fastgltf fastgltf_simdjson quench_meshoptimizer quench_glm
                                               quench_basisu_encoder)
 

@@ -5,8 +5,8 @@
 // at load time to what the device samples); glTF and GLB models become .qmodel files
 // (include/quench/assets/Model.h) with meshoptimizer-optimized meshes, levels of detail, and their textures cooked
 // next to them; their skins and animations become .qskel skeletons and .qanim clip sets
-// (include/quench/animation/). The output depends only on the input files and the options (no time stamps, no
-// thread order).
+// (include/quench/animation/); level geometry becomes .qnav navmeshes (include/quench/navigation/). The output depends
+// only on the input files and the options (no time stamps, no thread order).
 
 #include <quench/animation/Clip.h>
 #include <quench/animation/Skeleton.h>
@@ -14,6 +14,7 @@
 #include <quench/assets/Texture.h>
 #include <quench/core/Jobs.h>
 #include <quench/core/Result.h>
+#include <quench/navigation/NavMesh.h>
 
 #include <cstdint>
 #include <filesystem>
@@ -167,5 +168,35 @@ Result<std::vector<animation::ClipDesc>> retargetClips(const animation::Skeleton
                                                        const animation::SkeletonDesc& target,
                                                        std::span<const animation::ClipDesc> clips,
                                                        const RetargetMap& map, std::vector<std::string>* notes);
+
+// The settings of a navmesh cook (docs/navigation.md, "Cooking"): JSON with the build settings, area types, which
+// surfaces of the source are which area type (by node, mesh or material name), area boxes and off-mesh links.
+struct NavMeshSettings {
+    static constexpr int kIgnore = -1; // a surface left out of the navmesh's geometry
+    navigation::BuildSettings build;
+    std::vector<std::pair<std::string, int>> surfaces; // name, area id (navigation::kNotWalkable: none) or kIgnore
+    std::vector<navigation::AreaBox> boxes;
+    std::vector<navigation::Link> links;
+};
+Result<NavMeshSettings> parseNavMeshSettings(std::string_view json);
+
+struct NavMeshOptions {
+    std::filesystem::path settings; // empty: <input stem>.nav.json when it exists, else the default settings
+};
+
+struct CookedNavMesh {
+    std::vector<std::uint8_t> file; // .qnav (navigation::writeNavMeshData)
+    std::size_t triangles = 0;
+    int tiles = 0;
+    int layers = 0;
+    std::vector<std::filesystem::path> inputs; // every file read, for the depfile
+    std::vector<std::string> notes;            // what was left out, settings that name nothing
+};
+
+// A navmesh of a glTF or GLB file (its default scene with node transforms; triangle lists, skinned meshes left out)
+// or of a .qmodel (every mesh's LOD 0), built tile by tile on the job system. A triangle's area type is the one the
+// settings give the first of its node's, mesh's and material's names (.qmodel: mesh and material) they name, else
+// the first area type.
+Result<CookedNavMesh> cookNavMesh(const std::filesystem::path& source, const NavMeshOptions& options, JobSystem& jobs);
 
 } // namespace quench::cook

@@ -1,10 +1,10 @@
 # Build-time asset cooking for the engine and for games: quench_cook_assets().
 #
 # The host tool `quench_cook` (tools/cook, cmake/CookToolchain.cmake) converts source assets into the formats the
-# runtime loads: KTX2 textures with mips (BC7, ASTC 4x4, RGBA8 or Basis Universal), .qmodel models (meshes with levels of detail, materials, skins,
-# their textures cooked next to them), .qskel skeletons and .qanim clip sets. Cross builds (iOS) cannot run a tool
-# built for the target: they take a macOS `quench_cook` through QUENCH_HOST_COOK (the `host-tools` preset builds it).
-# The web build cooks nothing.
+# runtime loads: KTX2 textures with mips (BC7, ASTC 4x4, RGBA8 or Basis Universal), .qmodel models (meshes with levels
+# of detail, materials, skins, their textures cooked next to them), .qskel skeletons, .qanim clip sets and .qnav
+# navmeshes. Cross builds (iOS) cannot run a tool built for the target: they take a macOS `quench_cook` through
+# QUENCH_HOST_COOK (the `host-tools` preset builds it). The web build cooks nothing.
 
 set(QUENCH_HOST_COOK "" CACHE FILEPATH "quench_cook built for the host (required for cross builds that cook assets)")
 if(NOT QUENCH_HOST_COOK AND NOT CMAKE_CROSSCOMPILING AND NOT EMSCRIPTEN)
@@ -14,6 +14,7 @@ endif()
 # quench_cook_assets(<name> SOURCE_DIR <dir> [OUTPUT_DIR <dir>]
 #                    [TEXTURES <file>...] [DATA_TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...]
 #                    [SKELETONS <file>...] [ANIMATIONS <file>...] [SKELETON <file>] [RETARGET <file>]
+#                    [NAVMESHES <file>...]
 #                    [FILES <file>...]
 #                    [TEXTURE_FORMAT auto|bc7|astc|rgba8|basis] [BASIS_CODEC auto|etc1s|uastc]
 #                    [TEXTURE_MAX_SIZE <n>] [MODEL_OPTIONS <quench_cook option>...])
@@ -30,7 +31,9 @@ endif()
 # (the joints of their skins), ANIMATIONS (glTF, GLB) <path>.qanim (their animations as clips, with the settings of
 # <path without extension>.anim.json when it exists), for their own skeleton or for SKELETON's (a file under
 # SOURCE_DIR). With RETARGET (a bone map under SOURCE_DIR, docs/animation.md "Retargeting") the clips are retargeted
-# onto SKELETON's skeleton and become <path>.<SKELETON's name without extension>.qanim. SOUNDS (WAV, FLAC, MP3, Ogg
+# onto SKELETON's skeleton and become <path>.<SKELETON's name without extension>.qanim. NAVMESHES (glTF, GLB, .qmodel)
+# become <path>.qnav (navmeshes of their triangles, with the settings of <path without extension>.nav.json when it
+# exists; docs/navigation.md, "Cooking"). SOUNDS (WAV, FLAC, MP3, Ogg
 # Vorbis) are decoded to check them and copied with their extension; FILES
 # (texts, settings, licences) are copied as they are (a call with FILES only needs no quench_cook). The run-time asset
 # path of a file is its path under OUTPUT_DIR. Creates the custom target <name>; quench_add_game(... COOKED_ASSETS
@@ -39,12 +42,13 @@ endif()
 function(quench_cook_assets name)
     cmake_parse_arguments(PARSE_ARGV 1 arg ""
                           "SOURCE_DIR;OUTPUT_DIR;TEXTURE_FORMAT;BASIS_CODEC;TEXTURE_MAX_SIZE;SKELETON;RETARGET"
-                          "TEXTURES;DATA_TEXTURES;MODELS;SOUNDS;SKELETONS;ANIMATIONS;FILES;MODEL_OPTIONS")
+                          "TEXTURES;DATA_TEXTURES;MODELS;SOUNDS;SKELETONS;ANIMATIONS;NAVMESHES;FILES;MODEL_OPTIONS")
     if(NOT arg_SOURCE_DIR)
         message(FATAL_ERROR "quench_cook_assets: SOURCE_DIR is required")
     endif()
     set(cook "")
-    if(NOT (arg_TEXTURES OR arg_DATA_TEXTURES OR arg_MODELS OR arg_SOUNDS OR arg_SKELETONS OR arg_ANIMATIONS))
+    if(NOT (arg_TEXTURES OR arg_DATA_TEXTURES OR arg_MODELS OR arg_SOUNDS OR arg_SKELETONS OR arg_ANIMATIONS OR
+            arg_NAVMESHES))
         # FILES only: nothing to cook.
     elseif(QUENCH_HOST_COOK)
         if(NOT EXISTS ${QUENCH_HOST_COOK})
@@ -114,7 +118,7 @@ function(quench_cook_assets name)
     endif()
 
     set(outputs "")
-    foreach(kind TEXTURES DATA_TEXTURES MODELS SOUNDS SKELETONS ANIMATIONS)
+    foreach(kind TEXTURES DATA_TEXTURES MODELS SOUNDS SKELETONS ANIMATIONS NAVMESHES)
         foreach(file IN LISTS arg_${kind})
             if(IS_ABSOLUTE ${file} OR file MATCHES "(^|/)\\.\\.(/|$)")
                 message(FATAL_ERROR "quench_cook_assets: '${file}' must be relative to SOURCE_DIR, without '..'")
@@ -132,6 +136,9 @@ function(quench_cook_assets name)
             elseif(kind STREQUAL "SKELETONS")
                 set(output ${output_dir}/${stem}.qskel)
                 set(args skeleton ${input} ${output})
+            elseif(kind STREQUAL "NAVMESHES")
+                set(output ${output_dir}/${stem}.qnav)
+                set(args navmesh ${input} ${output})
             elseif(kind STREQUAL "ANIMATIONS")
                 set(output ${output_dir}/${stem}${animation_suffix}.qanim)
                 set(args animation ${input} ${output} ${skeleton_args})

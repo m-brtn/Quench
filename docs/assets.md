@@ -181,6 +181,10 @@ synchronous loads.
   container with a magic, a version, the payload size and an XXH64 checksum, so a truncated or corrupt file fails to
   load (ozz itself checks only with asserts). A clip set holds every clip of one source with its events, flags and
   root motion, and the signature of its skeleton.
+- **Navmeshes**: `.qnav` ([Navigation](navigation.md#cooking), 2026-11-07): every tile's voxel layers (before
+  obstacles), the build settings with the area types and the off-mesh links, in a container with a magic, a version,
+  the payload size and an XXH64 checksum; the `"navmesh"` asset type (`navigation::registerNavMeshAsset`) reads and
+  checks it on the loading job, and `NavMesh::create` builds the tiles from it on jobs.
 
 ## quench_cook
 
@@ -196,6 +200,7 @@ quench_cook sound sounds/engine.mp3 assets/sounds/engine.wav [--channels 1|2]
 quench_cook skeleton characters/hero.gltf assets/characters/hero.qskel
 quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skeleton FILE] [--clips FILE]
             [--retarget FILE]
+quench_cook navmesh levels/yard.gltf assets/levels/yard.qnav [--settings FILE]   # also a .qmodel
 # all: [--depfile FILE] [--verbose]; --version, --help
 ```
 
@@ -248,6 +253,12 @@ quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skele
   and unknown clips are errors. With `--retarget` (a bone map, since 2026-11-07) the clips are retargeted onto
   `--skeleton`'s skeleton, which may have other joint names, proportions and rest pose
   ([Animation](animation.md#retargeting)).
+- **Navmeshes** (2026-11-07): the triangles of a glTF or GLB file's default scene (static meshes; skinned meshes and
+  other primitives are left out with a note) or of a `.qmodel`, with their node transforms, built into tiles on the
+  job system and written as `.qnav`. The settings (agent, cell and tile sizes, area types and costs, which node,
+  mesh or material names are which area, `"none"` or `"ignore"`, area boxes, off-mesh links) come from
+  `<input stem>.nav.json` or `--settings` ([Navigation](navigation.md#cooking)); unknown keys and undefined area
+  names are errors, surface names that match nothing are notes.
 - **Sounds**: WAV, FLAC, MP3 or Ogg Vorbis (miniaudio's decoders, Vorbis through stb_vorbis). The file is decoded
   completely to check it (a file that does not decode, or decodes to no frames, fails the cook). An output with the
   input's extension gets the input's bytes; a `.wav` output from another format, or with `--channels 1|2` (mix down
@@ -259,7 +270,7 @@ quench_cook animation characters/hero.gltf assets/characters/hero.qanim [--skele
   cooks with 0 and 3 worker threads and compares). Files are written to a temporary file and renamed, so a running
   game with hot reload never reads half a file; a model's textures are rewritten only when they change.
 - **Depfile**: `--depfile` lists every file read (the glTF, its buffers and images, the clip settings, the bone
-  map), so Ninja cooks again when any of them changes.
+  map, the navmesh settings), so Ninja cooks again when any of them changes.
 
 ### In CMake
 
@@ -273,6 +284,7 @@ quench_cook_assets(my_game_cooked SOURCE_DIR assets_src
     ANIMATIONS characters/hero.gltf characters/hero_extra.glb  # .qanim, settings from <stem>.anim.json
     [SKELETON characters/hero.gltf]        # the skeleton the ANIMATIONS are for (default: their own)
     [RETARGET characters/hero.map.json]    # retargeted onto SKELETON: <path>.<SKELETON's name>.qanim
+    [NAVMESHES levels/yard.gltf]           # .qnav, settings from <stem>.nav.json
     [FILES credits.txt levels/one.json]    # copied as they are
     [OUTPUT_DIR dir] [TEXTURE_FORMAT auto|bc7|astc|rgba8|basis] [BASIS_CODEC auto|etc1s|uastc]
     [TEXTURE_MAX_SIZE n] [MODEL_OPTIONS --lods 2 ...])
@@ -280,8 +292,8 @@ quench_add_game(my_game ... ASSETS assets COOKED_ASSETS my_game_cooked)
 ```
 
 `quench_cook_assets` (`cmake/QuenchCook.cmake`) adds a target that cooks each file into the same relative path (with
-`.ktx2`, `.qmodel`, `.qskel` or `.qanim`; sounds keep their name and format). `TEXTURE_FORMAT auto` (the default) cooks
-ASTC 4x4 in iOS builds and BC7 elsewhere, also the textures of models. `TEXTURE_FORMAT basis` cooks Basis
+`.ktx2`, `.qmodel`, `.qskel`, `.qanim` or `.qnav`; sounds keep their name and format). `TEXTURE_FORMAT auto` (the
+default) cooks ASTC 4x4 in iOS builds and BC7 elsewhere, also the textures of models. `TEXTURE_FORMAT basis` cooks Basis
 Universal files for every device (also the textures of models), with `BASIS_CODEC` (only with `basis`): `auto` (the
 default; UASTC for `DATA_TEXTURES` and a model's linear textures, ETC1S for color), `etc1s` or `uastc` for the whole
 call; a game that wants both codecs for color makes two calls. `FILES` are copied unchanged
