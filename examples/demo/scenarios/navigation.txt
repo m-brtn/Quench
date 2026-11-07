@@ -1,0 +1,63 @@
+# Navigation (ctest: demo_navigation_<backend>, a part of batch.txt and batch_native.txt): the navmesh built at run
+# time on jobs with its 3 obstacles cut in, two groups of 6 agents; the probe path across the field goes around the
+# mud at cost 5 and through it at cost 1, and no agent walks in the mud at cost 5; a click on the floor sends the
+# orange group under the bridge, down a jump link, and all 6 arrive; the moving obstacles rebuild their tiles and no
+# agent is lost; agents on the same floor keep apart. The capture is taken 4 s after the restart with the obstacles
+# still (a camera cut at the spawn: the frames from there on do not depend on how long the build took).
+section navigation
+
+set dither 0
+set obstacles 0
+until nav_ready == 1 10
+set mud_cost 5
+set restart 1
+until nav_ready == 1 5
+expect nav_tiles >= 12
+expect nav_polygons >= 40
+expect nav_obstacles == 3
+expect nav_agents == 12
+expect nav_lost == 0
+expect nav_probe_mud < 0.1
+expect nav_probe_length > 10.5
+wait 4.004
+expect nav_debug_triangles > 50
+expect nav_debug_lines > 100
+expect nav_mud_steps == 0
+windows off
+capture demo_navigation.png
+windows on
+
+# A click on the floor under the bridge: the orange group (on the bridge) jumps down a ledge to get there.
+set patrol 0
+set group 0
+mark nav_link_uses
+tap H
+until ui == 0 1
+click @under_bridge
+until nav_clicks == 1 1
+tap H
+until ui == 1 1
+until d_nav_link_uses >= 1 5
+until nav_landings >= 1 3
+until nav_arrived_0 == 6 25
+expect nav_lost == 0
+expect nav_mud_steps == 0
+
+# The mud's cost: at 1 the probe path goes straight through it.
+set mud_cost 1
+wait 0.05
+expect nav_probe_mud > 6
+set mud_cost 5
+wait 0.05
+expect nav_probe_mud < 0.1
+
+# The obstacles move: their tiles are rebuilt on jobs, the agents keep their paths.
+mark nav_revision
+set obstacles 1
+until d_nav_revision >= 3 5
+set patrol 1
+wait 2
+until nav_pending == 0 3
+expect nav_lost == 0
+expect nav_min_gap > 0.5
+quit

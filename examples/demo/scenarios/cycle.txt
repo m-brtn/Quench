@@ -52,9 +52,13 @@ section tunnel
 reset_section
 wait 0.03
 until tunnel_ready == 1 3
+section navigation
+reset_section
+wait 0.03
+until nav_ready == 1 3
 section materials
 wait 0.2
-expect sections_ready == 12
+expect sections_ready == 13
 mark gpu_resources
 mark memory_mb
 mark scene_instances
@@ -82,6 +86,8 @@ wait 0.03
 section raytracing
 wait 0.03
 section tunnel
+wait 0.03
+section navigation
 wait 0.03
 section materials
 wait 0.2
@@ -131,9 +137,13 @@ section tunnel
 reset_section
 wait 0.03
 until tunnel_ready == 1 3
+section navigation
+reset_section
+wait 0.03
+until nav_ready == 1 3
 section materials
 wait 0.3
-expect sections_ready == 12
+expect sections_ready == 13
 expect d_gpu_resources < 4
 expect d_gpu_resources > -4
 expect d_scene_instances == 0

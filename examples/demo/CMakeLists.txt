@@ -150,6 +150,7 @@ quench_add_game(quench_demo
         sections/HdrSection.cpp
         sections/InputSection.cpp
         sections/MaterialsSection.cpp
+        sections/NavigationSection.cpp
         sections/PhysicsSection.cpp
         sections/PostSection.cpp
         sections/RayTracingSection.cpp
@@ -157,7 +158,7 @@ quench_add_game(quench_demo
         sections/SkySection.cpp
         sections/TunnelSection.cpp)
 quench_configure_target(quench_demo)
-target_link_libraries(quench_demo PRIVATE quench_render quench_physics quench_animation)
+target_link_libraries(quench_demo PRIVATE quench_render quench_physics quench_animation quench_navigation)
 target_include_directories(quench_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${demo_build_info_dir})
 target_compile_definitions(quench_demo PRIVATE QUENCH_DEMO_CONFIG="$<CONFIG>")
 add_dependencies(quench_demo quench_demo_build_info)
@@ -165,3 +166,4 @@ quench_add_shaders(quench_demo NAME demo_checker SOURCE shaders/checker.hlsl
     ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment surface_local_shadows_fs:fragment)
 quench_add_ray_hits(quench_demo NAME demo_hits SURFACES shaders/checker.hlsl)
 quench_add_shaders(quench_demo NAME demo_markers SOURCE shaders/markers.hlsl ENTRIES marker_vs:vertex marker_fs:fragment)
+quench_add_shaders(quench_demo NAME demo_debug SOURCE shaders/debug.hlsl ENTRIES debug_vs:vertex debug_fs:fragment)

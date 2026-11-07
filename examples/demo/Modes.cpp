@@ -40,7 +40,7 @@ const char* modeName(int mode) {
 
 // Sections that load assets report when they are done; the benchmark waits for that before it measures.
 bool settled(const Section& section) {
-    for (const char* name : {"assets_idle", "sounds_ready", "anim_ready", "rt_ready"})
+    for (const char* name : {"assets_idle", "sounds_ready", "anim_ready", "rt_ready", "nav_ready"})
         if (const std::optional<double> v = section.value(name); v && *v != 1.0) return false;
     return true;
 }

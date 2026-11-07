@@ -5,6 +5,6 @@
 mode benchmark 0.1
 expect mode == 3
 until benchmark_written == 1 60
-expect benchmark_sections == 12
+expect benchmark_sections == 13
 expect mode == 0
 quit

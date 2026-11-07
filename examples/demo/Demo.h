@@ -81,6 +81,11 @@ public:
         (void)c;
         (void)frameDt;
     }
+    // Before the frame is rendered: uploads for the section's own passes (a copy pass in the frame's commands).
+    virtual void prepare(Context& c, quench::gpu::CommandBuffer& commands) {
+        (void)c;
+        (void)commands;
+    }
     // The section's controls and its numbers in its panel.
     virtual void controls(Context& c) = 0;
     virtual void stats(Context& c) { (void)c; }
@@ -141,6 +146,7 @@ std::unique_ptr<Section> makeAudioSection();
 std::unique_ptr<Section> makeAnimationSection();
 std::unique_ptr<Section> makeRayTracingSection();
 std::unique_ptr<Section> makeTunnelSection();
+std::unique_ptr<Section> makeNavigationSection();
 
 // ---- helpers shared by the sections (Common.cpp)
 

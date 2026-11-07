@@ -38,4 +38,5 @@ include heat.txt
 include raytracing_mirror.txt
 include raytracing_probes.txt
 include assets_basis.txt
+include navigation.txt
 quit

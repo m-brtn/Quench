@@ -114,7 +114,7 @@ Result<void> DemoGame::init(App& app) {
     for (const SectionFactory make :
          {makeMaterialsSection, makeShadowsSection, makeSkySection, makePostSection, makeHdrSection, makePhysicsSection,
           makeInputSection, makeAssetsSection, makeAudioSection, makeAnimationSection, makeRayTracingSection,
-          makeTunnelSection}) {
+          makeTunnelSection, makeNavigationSection}) {
         Slot slot{.make = make, .section = make()};
         slot.home = slot.section->camera;
         m_slots.push_back(std::move(slot));
@@ -235,6 +235,7 @@ void DemoGame::render(App& app, app::Frame& frame) {
         scaled.exposure *= exposure;
         scene.setEnvironment(scaled);
     }
+    if (currentReady()) section.prepare(*m_context, frame.commands);
     m_renderer->render(scene, view, frame.commands, frame.target, section.output(frame.output));
     if (exposure != 1.0f) scene.setEnvironment(environment);
     m_targetWidth = frame.width;
@@ -941,7 +942,8 @@ namespace {
 constexpr const char* kHelp =
     "quench_demo options:\n"
     "  --section ID            start in a section: materials, shadows, sky, post, hdr, physics, input, assets,\n"
-    "                          audio, animation, raytracing, tunnel (default: the last one, from the settings)\n"
+    "                          audio, animation, raytracing, tunnel, navigation (default: the last one, from the\n"
+    "                          settings)\n"
     "  --tour [SECONDS]        show every section in turn, SECONDS each (default 8); any input stops it\n"
     "  --checks                the check mode: the checks waiting for a person, marked OK or problem with a note,\n"
     "                          saved to checks.json in the user directory\n"

@@ -205,6 +205,13 @@ constexpr std::array kItems{
               "it turned serious, whether the motion stayed smooth at 60 fps before and after, and whether the "
               "picture jumps when the scale changes.",
               "set adapt_heat on\nset animate 1\nset drive 1\nset pause 0"},
+    CheckItem{"navigation.crowd", "navigation", "Crowd and navmesh",
+              "The two groups walk their rounds: single file over the narrow bridge, around the mud (at Mud cost 1 "
+              "straight through it), down the stairs and the ramp, and jump down from the ledges; they turn and "
+              "change between walking and running smoothly, step around each other and the moving crates without "
+              "touching or jittering, and their feet do not slide. Tap a floor: the chosen group goes there (on the "
+              "phone, through the compact layout's controls).",
+              "set patrol 1\nset obstacles 1"},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",
