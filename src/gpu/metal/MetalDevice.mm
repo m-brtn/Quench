@@ -926,17 +926,20 @@ void MetalDevice::wait(void* fence) const {
 std::optional<double> MetalDevice::gpuMilliseconds(void* fence) const {
     id<MTLCommandBuffer> handle = static_cast<MetalFence*>(fence)->handle;
     if (handle.status != MTLCommandBufferStatusCompleted) return std::nullopt;
-    const CFTimeInterval start = handle.GPUStartTime;
-    const CFTimeInterval end = handle.GPUEndTime;
-    if (end <= start) return std::nullopt;
-    return (end - start) * 1000.0;
+    // The status can read completed before the GPU times are set (about 1 in 3000 frames in flight); the wait
+    // returns once they are.
+    [handle waitUntilCompleted];
+    return commandBufferMilliseconds(handle.GPUStartTime, handle.GPUEndTime);
 }
 
 std::vector<GpuTiming> MetalDevice::gpuTimings(void* fence) const {
     @autoreleasepool {
         const MetalFence& f = *static_cast<MetalFence*>(fence);
         if (!f.timing || f.handle.status != MTLCommandBufferStatusCompleted) return {};
-        if (!f.timing->results) resolve(*f.timing);
+        if (!f.timing->results) {
+            [f.handle waitUntilCompleted]; // as in gpuMilliseconds
+            resolve(*f.timing);
+        }
         return *f.timing->results;
     }
 }

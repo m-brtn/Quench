@@ -359,8 +359,10 @@ Tracy's thread has about 20 events a frame to send (zones, GPU zones, plots). Th
 
 One run of hello before the change and one recorded run showed `gpu ms avg` of 3,110 and 3,045 ms with p95 under
 0.06 ms: one command buffer's GPU time read as 7.2 days on the native backend, about the host clock since the Mac
-started (a start time of zero, probably), a fault older than Tracy (cause not checked); the frame times and the
-ranges' busy times are not affected.
+started, a fault older than Tracy; the frame times and the ranges' busy times are not affected. Fixed since
+(2026-11-07): a command buffer's status can read completed before Metal sets its start time, so the backends now
+wait for the completed buffer (which returns at once) before reading its times, and a time with a start of 0 or an
+end not after the start is no sample (`gpu_device.gpu_timing_frames_in_flight`).
 
 ### The ray tracing section by frame size
 

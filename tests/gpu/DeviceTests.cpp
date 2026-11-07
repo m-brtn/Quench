@@ -4,7 +4,10 @@
 #include "gpu/Backend.h"
 #include "render_shaders.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <optional>
 #include <vector>
@@ -401,6 +404,66 @@ QUENCH_TEST(gpu_timing) {
     } else {
         CHECK(!ms, "GPU time without Caps::gpuTiming");
     }
+}
+
+QUENCH_TEST(gpu_time_needs_both_times) {
+    using gpu::detail::commandBufferMilliseconds;
+    CHECK(!commandBufferMilliseconds(0.0, 627037.98), "a start of 0 (the host's uptime as the GPU time)");
+    CHECK(!commandBufferMilliseconds(627037.98, 0.0), "an end of 0");
+    CHECK(!commandBufferMilliseconds(0.0, 0.0), "no times");
+    CHECK(!commandBufferMilliseconds(5.0, 5.0) && !commandBufferMilliseconds(5.0, 4.0), "an end not after the start");
+    CHECK(!commandBufferMilliseconds(std::nan(""), 5.0) && !commandBufferMilliseconds(5.0, std::nan("")), "NaN");
+    const std::optional<double> ms = commandBufferMilliseconds(627037.5, 627037.502);
+    CHECK(ms && std::abs(*ms - 2.0) < 1e-6, "%.9f ms", ms.value_or(-1.0));
+}
+
+// Frames in flight read as the app reads them: a fence polled until it is signalled, then its GPU time. The status
+// of a Metal command buffer could read completed before its times were set (about 1 in 3000 such frames on the M4
+// Pro), which reported the host's uptime as the frame's GPU time.
+QUENCH_TEST(gpu_timing_frames_in_flight) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Texture> target = device.createTexture({.usage = TextureUsage::ColorTarget, .width = 64, .height = 64});
+    REQUIRE(target, "creation failed");
+    constexpr int kFrames = 12000;
+    constexpr std::size_t kInFlight = 3;
+    struct Frame {
+        std::optional<Fence> fence;
+        bool empty = false;
+    };
+    std::array<Frame, kInFlight> frames;
+    int timed = 0, untimed = 0, emptyUntimed = 0, wrong = 0;
+    double longest = 0.0;
+    const auto read = [&](Frame& frame) {
+        while (!device.isSignaled(*frame.fence)) {}
+        const std::optional<double> ms = device.gpuMilliseconds(*frame.fence);
+        if (!ms)
+            ++(frame.empty ? emptyUntimed : untimed);
+        else if (*ms <= 0.0 || *ms > 1000.0)
+            ++wrong;
+        else
+            ++timed;
+        longest = std::max(longest, ms.value_or(0.0));
+        frame.fence.reset();
+    };
+    for (int i = 0; i < kFrames; ++i) {
+        Frame& frame = frames[std::size_t(i) % kInFlight];
+        if (frame.fence) read(frame);
+        CommandBuffer commands = device.acquireCommandBuffer();
+        frame.empty = i % 7 == 3; // nothing recorded: may have no GPU time
+        if (!frame.empty) commands.beginRenderPass(ColorTarget{.texture = *target, .clear = {0, 0, 1, 1}});
+        Result<Fence> fence = commands.submitWithFence();
+        REQUIRE(fence, "submit: %s", fence.error().c_str());
+        frame.fence = std::move(*fence);
+    }
+    for (Frame& frame : frames)
+        if (frame.fence) read(frame);
+    std::printf("  %d timed, %d without a time (%d empty), %d wrong; longest %.4f ms\n", timed, untimed + emptyUntimed,
+                emptyUntimed, wrong, longest);
+    CHECK(wrong == 0, "%d frames with a GPU time outside 0 .. 1000 ms (longest %.1f ms)", wrong, longest);
+    if (device.caps().gpuTiming)
+        CHECK(untimed == 0, "%d frames with a pass without a GPU time", untimed);
+    else
+        CHECK(timed == 0, "%d GPU times without Caps::gpuTiming", timed);
 }
 
 QUENCH_TEST(gpu_pass_timing) {

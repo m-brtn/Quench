@@ -15,7 +15,7 @@
 #include <string>
 
 #if QUENCH_PLATFORM_APPLE
-extern "C" double quench_sdlgpu_metal_fence_ms(const void* fence);
+extern "C" int quench_sdlgpu_metal_fence_times(const void* fence, double* start, double* end);
 #endif
 
 namespace quench::gpu {
@@ -73,12 +73,14 @@ TextureFormat sdl::fromSdl(SDL_GPUTextureFormat format) {
 
 namespace detail {
 
-double metalFenceMilliseconds(SDL_GPUFence* fence) {
+std::optional<double> metalFenceMilliseconds(SDL_GPUFence* fence) {
 #if QUENCH_PLATFORM_APPLE
-    return quench_sdlgpu_metal_fence_ms(fence);
+    double start = 0.0, end = 0.0;
+    if (!quench_sdlgpu_metal_fence_times(fence, &start, &end)) return std::nullopt;
+    return commandBufferMilliseconds(start, end);
 #else
     (void)fence;
-    return -1.0;
+    return std::nullopt;
 #endif
 }
 
@@ -490,9 +492,7 @@ void SdlGpuDevice::wait(void* fence) const {
 }
 
 std::optional<double> SdlGpuDevice::gpuMilliseconds(void* fence) const {
-    const double ms = metalFenceMilliseconds(static_cast<SDL_GPUFence*>(fence));
-    if (ms < 0.0) return std::nullopt;
-    return ms;
+    return metalFenceMilliseconds(static_cast<SDL_GPUFence*>(fence));
 }
 
 } // namespace detail

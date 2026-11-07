@@ -14,11 +14,13 @@ typedef struct QuenchSdlMetalFenceView {
     __unsafe_unretained id<MTLCommandBuffer> commandBuffer;
 } QuenchSdlMetalFenceView;
 
-double quench_sdlgpu_metal_fence_ms(const void* fence) {
-    if (!fence) return -1.0;
+int quench_sdlgpu_metal_fence_times(const void* fence, double* start, double* end) {
+    if (!fence) return 0;
     id<MTLCommandBuffer> commandBuffer = ((const QuenchSdlMetalFenceView*)fence)->commandBuffer;
-    if (commandBuffer == nil || commandBuffer.status != MTLCommandBufferStatusCompleted) return -1.0;
-    const CFTimeInterval start = commandBuffer.GPUStartTime;
-    const CFTimeInterval end = commandBuffer.GPUEndTime;
-    return end > start ? (end - start) * 1000.0 : -1.0;
+    if (commandBuffer == nil || commandBuffer.status != MTLCommandBufferStatusCompleted) return 0;
+    // The status can read completed before the GPU times are set; the wait returns once they are.
+    [commandBuffer waitUntilCompleted];
+    *start = commandBuffer.GPUStartTime;
+    *end = commandBuffer.GPUEndTime;
+    return 1;
 }

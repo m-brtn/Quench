@@ -11,9 +11,9 @@
 
 namespace quench::gpu::detail {
 
-// GPU execution time of the command buffer behind a signalled SDL Metal fence (SdlGpuTimingMetal.m); < 0 when
+// GPU execution time of the command buffer behind a signalled SDL Metal fence (SdlGpuTimingMetal.m); nothing when
 // unknown.
-double metalFenceMilliseconds(SDL_GPUFence* fence);
+std::optional<double> metalFenceMilliseconds(SDL_GPUFence* fence);
 
 class SdlGpuDevice final : public DeviceImpl {
 public:

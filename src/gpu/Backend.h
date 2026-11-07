@@ -184,6 +184,13 @@ struct DeviceImpl {
     virtual std::vector<GpuTiming> gpuTimings(void* fence) const = 0;
 };
 
+// A command buffer's GPU time from its start and end on the host clock (s), or nothing when a time is missing: a
+// start of 0 would read as the host's uptime.
+inline std::optional<double> commandBufferMilliseconds(double startSeconds, double endSeconds) {
+    if (!(startSeconds > 0.0) || !(endSeconds > startSeconds)) return std::nullopt;
+    return (endSeconds - startSeconds) * 1000.0;
+}
+
 // The backends. Each fills caps except bcTextures, astcTextures and etc2Textures (Device::create asks
 // supportsFormat).
 Result<std::unique_ptr<DeviceImpl>> createSdlGpuDevice(const DeviceDesc& desc);
