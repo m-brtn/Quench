@@ -202,6 +202,27 @@ blend): it still blends, poses and writes palettes every frame. Holding halves t
 pass to a quarter at 45 m, where 195 of the 260 skins are copied instead of skinned. Not measured on the screen or
 on the iPhone.
 
+### Dual quaternion skinning
+
+2026-11-07 04:02-04:14, Release, Mac (Apple M4 Pro), the demo's Animation section with a crowd of 256 (262
+characters with the skinning pair), **offscreen** as above, perf regions of 3 s after a second each, the hero's view.
+CPU p50 of the frame, the skinning pass's GPU time (mean over 240 frames), in milliseconds:
+
+| Build, skinning of the crowd | CPU p50 | Skinning GPU |
+|---|---|---|
+| `85012e6` (260 characters), 6 regions | 0.985 to 1.039 (mean 1.016) | 2.16 to 2.28 |
+| this change, linear, 6 regions alternating with `85012e6` | 1.037 to 1.114 (mean 1.075) | 2.26 to 2.35 |
+| this change, without the skinning pair (260), 4 regions | 1.006 to 1.069 (mean 1.050) | 2.22 to 2.31 |
+| this change, linear, 4 regions in one run with the next row | 1.045 to 1.075 | 2.27 to 2.32 |
+| this change, dual quaternion, 4 regions | 1.097 to 1.135 | 2.24 to 2.42 |
+
+The default (linear) costs 0.06 ms more than the commit before, 5.8%: 0.026 ms of it are the demo's two new
+characters (the same binary with and without them; they stand out of view but in the shadow cascades, so they are
+skinned and drawn), the rest is within the spread of one binary's regions (about 0.06 ms) and the linear path has
+the same code apart from one branch per instance. Dual quaternions cost 0.06 ms of the frame thread for 5240 joints
+(about 11 ns each: the palette's matrices become dual quaternions on the CPU; 0.11 ms before the conversion skipped
+the scale of unscaled joints) and nothing measurable on the GPU. Not measured on the screen or on the iPhone.
+
 ### On the screen after the bug packages
 
 2026-11-07 00:00-00:06, Release, Mac (Mac mini, Apple M4 Pro), its one display (the LG UltraFine 5K at 60 Hz; no

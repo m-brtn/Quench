@@ -223,8 +223,9 @@ the user"). Described in [Animation](animation.md).
 - Done after 0.9.0 (not released): animation LOD (`AnimationLod`: every frame, 2nd or 4th by screen size with
   hysteresis, interpolated or held, IK off when small, root motion spread over the frames) and the renderer's reuse
   of unchanged skinned vertices; the demo's option and its scripted check (no capture), measured on the crowd of 256.
-- Not done, remaining: retargeting (clips bind to the skeleton they were cooked for), dual quaternion
-  skinning, blend shapes; animation LOD's look in motion; the check in motion by the user (foot sliding, blend pops, IK) and on
+- Done after 0.9.0 (not released): dual quaternion skinning (per instance or per skin of a cooked model, linear the
+  default) with the demo's twisted pair, its scripted check and golden captures.
+- Not done, remaining: retargeting (clips bind to the skeleton they were cooked for), blend shapes; animation LOD's look in motion; the check in motion by the user (foot sliding, blend pops, IK) and on
   the iPhone. The release went ahead before those checks (decided without the user, 2026-11-06, as recommended);
   the release notes list them as not verified.
 - Done: version 0.6.0 (with the cut-out and translucent shadows), release notes in
@@ -476,8 +477,8 @@ The plan the user left (stages 6 to 10) has been worked through with version 0.8
    state and limits the frame rate on request, and does not change settings on its own. The probe grid on phones:
    a fraction of the 2048 probes traced per frame instead of all of them (on the A19 they take about 3 ms at any
    render scale).
-3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); retargeting,
-   dual quaternion skinning and blend shapes (stage 8); normal maps
+3. **Remaining work of the stages:** Basis Universal textures (stage 6); browser audio (stage 7); retargeting
+   and blend shapes (stage 8); normal maps
    and custom surfaces in ray hits, shadow maps for spot and point lights and screen-space fallbacks (SSR, GTAO) for
    devices without ray tracing, a denser or cascaded probe grid (stage 11); shadows of area lights without ray
    tracing, normal maps in ray hits (stage 12).

@@ -217,7 +217,7 @@ ozz. A `.qanim` also holds per clip its events, flags and root motion, and the s
 ## GPU skinning
 
 Skinning runs in a compute pass (`src/render/shaders/skin.hlsl`, `skin_cs`, 64 vertices per thread group; four
-joints per vertex, linear blend skinning). `MeshDesc::skin` (per vertex `SkinVertex`: four joint indices and
+joints per vertex, linear blend or dual quaternion skinning). `MeshDesc::skin` (per vertex `SkinVertex`: four joint indices and
 weights) and `jointCount` make a mesh skinned; `Scene::setJointPalette(instance, palette)` (or
 `SceneAssets::setJointPalette` for cooked models) gives an instance its matrices, three float4 rows per joint in a
 storage buffer. Each frame the renderer skins every skinned instance that is drawn (in view or in a shadow cascade)
@@ -238,6 +238,24 @@ An instance whose palette did not change since the last frame (`setJointPalette`
 like a held animation LOD pose) and that was skinned in the frame before is not skinned again: a copy pass copies
 its vertices from the frame before's buffer into this frame's (`RenderStats::skinnedReused`), and it has no motion
 vectors.
+
+Dual quaternion skinning (since 2026-11-07; Kavan et al., "Skinning with dual quaternions", 2007) is chosen per
+instance: `render::Skinning` in `InstanceDesc::skinning` or `Scene::setSkinning`, and for cooked models per skin with
+`SceneAssets::setSkinning(instance, skin, skinning)` (kept across a reload like the palette). Linear is the default:
+it blends the joints' matrices, which is exact for one joint and cheap, but a vertex between two joints twisted
+against each other moves toward the bone (at 180 degrees the limb collapses to a line, the "candy wrapper"), and
+bends lose volume. Dual quaternions blend the joints' rigid motions, so a twisted or bent limb keeps its thickness,
+and joints bulge slightly where they bend. The renderer converts the palette's matrices into dual quaternions on the
+CPU (rotation, translation and the uniform scale, the cube root of the determinant, blended linearly; a non-uniform
+scale or a shear is lost), and the shader aligns each joint's quaternion to the hemisphere of the vertex's heaviest
+joint before it blends them. Under dual quaternions a vertex can leave the hull of its joints' spheres (it moves on
+an arc around the joint), so the culling bounds of such an instance grow by its largest joint sphere: a margin that
+covers skeleton-like weights, not a proof for any palette. `render.renderer_dual_quaternion_skinning` twists a bar
+by 180 degrees: linear leaves 0 of its 11 pixels of width at the middle, dual quaternions all 11; a quarter up the
+blend 6 and 14 pixels (linear: half the width, 5.5 expected; dual quaternions: the bar turned by 45 degrees, its
+diagonal, 15.6 expected); one rigid motion (turned and moved) and two translations give the same image as linear
+(0 pixels differ), and a uniform scale of 2 is kept (24 pixels). The cost on the demo's crowd of 256: 0.06
+ms of the frame thread, nothing measurable on the GPU ([Performance](performance.md#dual-quaternion-skinning)).
 
 `RenderStats::skinnedInstances`, `skinnedVertices`, `skinnedReused` and `skinningGpuMs` (GPU time of the skinning
 pass, with the copies, measured through its own command buffer's fence where `Caps::gpuTiming` holds, a few frames
@@ -291,8 +309,10 @@ characters that use the asset and keeps their parameters.
 - **Demo**: section 10, "Animation" (key 0): the hero on a circle by root motion (speed blend, jump, wave on a
   masked layer, additive lean, look-at, a torch on its hand, footstep sounds from events), two characters with foot
   placement on a ramp and a step, a crowd of up to 512 with the update and skinning times on screen and animation LOD
-  as an option (off by default; interpolated or held); in the view
-  "2D blend space", a character steered by its velocity through a blend space while it faces one way
+  and dual quaternion skinning as options (off by default; LOD interpolated or held); in the view
+  "2D blend space", a character steered by its velocity through a blend space while it faces one way; in the view
+  "Skinning", two characters whose left forearms the section twists by 170 degrees, skinned linearly and by dual
+  quaternions
   ([Engine demo](demo.md)). Its character is procedural (`tools/assets/make_demo_character.py`, generated and cooked
   at build time; 20 joints, 836 vertices, clips idle, walk, run, jump, wave, lean, walk_back, strafe_l, strafe_r).
 - **Tests**: `animation.*` (29 cases: sampling at and between keys, blend weights and phase sync, 2D blend space
@@ -305,11 +325,13 @@ characters that use the asset and keeps their parameters.
   interpolated against held poses, root motion spread over the frames, the thresholds' hysteresis and IK off); `cook.cook_skeleton_from_skins`, `cook_animation_keys_and_settings`,
   `cook_animation_errors`, `cook_skinned_model`, and `cook_cli` (the demo's character cooked twice, the same bytes);
   `render.renderer_skins_on_the_gpu`, `renderer_reuses_unchanged_skins` (the same image from copied vertices,
-  also when an instance's range in the buffer moves), `renderer_skinned_motion_vectors`, `renderer_rejects_bad_skins`
+  also when an instance's range in the buffer moves), `renderer_dual_quaternion_skinning` (a twisted bar keeps its
+  width; rigid motions and a uniform scale as with linear skinning), `renderer_skinned_motion_vectors`, `renderer_rejects_bad_skins`
   (also `render_vulkan.*`); `gpu_device.compute_dispatch`; `demo_animation_metal` and `demo_animation_vulkan` (21 checks
   and a golden capture); `demo_animation_blend2d_<backend>` (the steered character's root motion against its
   velocity, 17 checks and a golden capture); `demo_animation_lod_<backend>` (the crowd of 256 with LOD: the rates,
-  the characters sampled and the reused skins from the hero's view and from 45 m, 18 checks, no capture).
+  the characters sampled and the reused skins from the hero's view and from 45 m, 18 checks, no capture);
+  `demo_animation_skinning_<backend>` (the twisted pair, 9 checks and a golden capture).
 
 ## Platforms
 
@@ -326,7 +348,9 @@ characters that use the asset and keeps their parameters.
   for. Different proportions with the same joint names need a rest-pose correction (not in ozz).
 - **No sync markers** beyond normalized time (and a point's `phase`): clips whose foot contacts are not at the same
   phases do not stay in step. No directional blend spaces (polar gradient bands): a space's weights are Cartesian.
-- **Linear blend skinning** only (no dual quaternions), four joints per vertex, no blend shapes (morph targets).
+- **Skinning**: four joints per vertex, linear blend or dual quaternions (a joint's non-uniform scale or shear is
+  lost under dual quaternions; their culling bounds have a margin, not a proof), no blend shapes (morph targets).
+  Dual quaternion skinning was checked by numbers and a still capture; nobody has looked at it in motion.
 - **Animation LOD** has three rates (1, 2, 4) by screen size only (no visibility: a character outside the view or in
   a shadow only still updates at its size's rate), interpolation still poses every frame, and its look in motion
   was not seen by a person (the demo's check mode has an item).

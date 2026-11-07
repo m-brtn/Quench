@@ -150,6 +150,8 @@ public:
     // The joint matrices of one of the model's skins (ModelAsset::skins(), Scene::setJointPalette) for the parts that
     // use it; kept and applied again when the parts are rebuilt (loaded, reloaded) with a skin of as many joints.
     void setJointPalette(ModelInstanceId instance, int skin, std::span<const glm::mat4> palette, bool teleport = false);
+    // The skinning of the parts that use one of the model's skins (Linear until set); kept like the palette.
+    void setSkinning(ModelInstanceId instance, int skin, Skinning skinning);
     void removeModel(ModelInstanceId instance);
     const assets::AssetRef<ModelAsset>& model(ModelInstanceId instance) const;
     std::uint32_t modelInstanceCount() const;

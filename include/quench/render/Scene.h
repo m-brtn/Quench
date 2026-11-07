@@ -119,6 +119,14 @@ struct MaterialDesc {
     float anisotropyRotation = 0.0f;
 };
 
+// How a skinned mesh's vertices follow their joints. Linear blends the joints' matrices: cheap and exact for one joint,
+// but a vertex between two joints twisted against each other moves toward the bone (a joint twisted by 180 degrees
+// collapses to a line, the "candy wrapper"). Dual quaternion blends rigid motions: the limb keeps its thickness under
+// twists and bends, and joints bulge slightly where they bend. Dual quaternions take a joint's rotation, translation
+// and uniform scale (the cube root of its matrix's determinant, blended linearly); a non-uniform scale or a shear in
+// a palette is lost.
+enum class Skinning : std::uint8_t { Linear, DualQuaternion };
+
 struct InstanceDesc {
     MeshId mesh{};
     MaterialId material{};
@@ -126,7 +134,8 @@ struct InstanceDesc {
     glm::vec4 color{1.0f};     // multiplies the vertex color (the standard surface: also the base color)
     glm::vec4 custom{0.0f};    // passed to the surface shader as QuenchSurfaceInput::custom
     bool visible = true;
-    bool castsShadows = true; // as the material's ShadowMode says; false: none
+    bool castsShadows = true;             // as the material's ShadowMode says; false: none
+    Skinning skinning = Skinning::Linear; // for skinned meshes
 };
 
 // Rect, Disk and Tube are area lights: an emitting rectangle, disk or cylinder (a light strip, a neon tube).
@@ -226,6 +235,7 @@ public:
     // renderer skins on the GPU (a compute pass), culls with bounds from the palette and measures motion vectors from
     // the previous palette, as setTransform does for the transform; teleport: no motion from the old pose.
     void setJointPalette(InstanceId instance, std::span<const glm::mat4> palette, bool teleport = false);
+    void setSkinning(InstanceId instance, Skinning skinning);
     void removeInstance(InstanceId instance);
 
     LightId addLight(const LightDesc& desc);

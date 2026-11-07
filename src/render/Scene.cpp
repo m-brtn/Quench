@@ -284,6 +284,35 @@ void Scene::removeMaterial(MaterialId material) {
     m_impl->materials.remove(material);
 }
 
+namespace {
+
+// With linear skinning every vertex is a weighted mean of its joints' images of it, so it lies in the hull of the
+// joints' transformed bind-pose spheres. Dual quaternion skinning moves a vertex by a blend of rigid motions, which can
+// swing it out of that hull along an arc around the joint: a margin of the largest sphere covers it for vertices
+// blended near their joints, as in a skeleton (not a proof for any palette).
+void updatePoseBounds(InstanceEntry& entry, const MeshEntry& mesh) {
+    glm::vec3 lo(1e30f), hi(-1e30f);
+    float largest = 0.0f;
+    for (std::size_t j = 0; j < entry.palette.size(); ++j) {
+        const glm::vec4& b = mesh.jointBounds[j];
+        if (b.w < 0.0f) continue;
+        const glm::mat4& m = entry.palette[j];
+        const glm::vec3 c(m * glm::vec4(glm::vec3(b), 1.0f));
+        const float r = b.w * std::sqrt(std::max({glm::dot(glm::vec3(m[0]), glm::vec3(m[0])),
+                                                  glm::dot(glm::vec3(m[1]), glm::vec3(m[1])),
+                                                  glm::dot(glm::vec3(m[2]), glm::vec3(m[2]))}));
+        lo = glm::min(lo, c - r);
+        hi = glm::max(hi, c + r);
+        largest = std::max(largest, r);
+    }
+    if (lo.x > hi.x) return;
+    entry.center = (lo + hi) * 0.5f;
+    entry.radius = glm::length(hi - lo) * 0.5f;
+    if (entry.desc.skinning == Skinning::DualQuaternion) entry.radius += largest;
+}
+
+} // namespace
+
 InstanceId Scene::addInstance(const InstanceDesc& desc) {
     MeshEntry* mesh = lookup(m_impl->meshes, desc.mesh, "addInstance: stale or null mesh");
     MaterialEntry* material = lookup(m_impl->materials, desc.material, "addInstance: stale or null material");
@@ -309,23 +338,16 @@ void Scene::setJointPalette(InstanceId instance, std::span<const glm::mat4> pale
     entry->palette.assign(palette.begin(), palette.end());
     entry->posed = !teleport;
     if (teleport) entry->skinnedFrame = ~0ull;
-    // Every skinned vertex is a weighted mean of its joints' images of it, so it lies in the hull of the joints'
-    // transformed bind-pose spheres.
-    glm::vec3 lo(1e30f), hi(-1e30f);
-    for (std::size_t j = 0; j < palette.size(); ++j) {
-        const glm::vec4& b = mesh->jointBounds[j];
-        if (b.w < 0.0f) continue;
-        const glm::mat4& m = palette[j];
-        const glm::vec3 c(m * glm::vec4(glm::vec3(b), 1.0f));
-        const float r = b.w * std::sqrt(std::max({glm::dot(glm::vec3(m[0]), glm::vec3(m[0])),
-                                                  glm::dot(glm::vec3(m[1]), glm::vec3(m[1])),
-                                                  glm::dot(glm::vec3(m[2]), glm::vec3(m[2]))}));
-        lo = glm::min(lo, c - r);
-        hi = glm::max(hi, c + r);
-    }
-    if (lo.x > hi.x) return;
-    entry->center = (lo + hi) * 0.5f;
-    entry->radius = glm::length(hi - lo) * 0.5f;
+    updatePoseBounds(*entry, *mesh);
+}
+
+void Scene::setSkinning(InstanceId instance, Skinning skinning) {
+    InstanceEntry* entry = lookup(m_impl->instances, instance, "setSkinning: stale or null instance");
+    if (!entry || entry->desc.skinning == skinning) return;
+    entry->desc.skinning = skinning;
+    entry->skinnedFrame = ~0ull; // skinned again, not copied from the last frame
+    if (const MeshEntry* mesh = m_impl->meshes.get(entry->desc.mesh); mesh && !entry->palette.empty())
+        updatePoseBounds(*entry, *mesh);
 }
 
 void Scene::setTransform(InstanceId instance, const glm::mat4& transform, bool teleport) {

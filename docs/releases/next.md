@@ -93,6 +93,14 @@ Not released: no version or tag yet (the version in `project()` stays 0.9.0). St
   offscreen) from 45 m: 65 of 260 characters sampled per frame; the update 0.31 ms on one thread, 0.26 interpolated,
   0.14 held; the skinning pass 1.75 ms GPU, 0.46 held. The demo's Animation section has the option, a scripted check
   (`animation_lod.txt`) and a check mode item. Nobody has looked at it in motion.
+- Dual quaternion skinning (stage 8 remaining work): `render::Skinning::DualQuaternion` per instance
+  (`InstanceDesc::skinning`, `Scene::setSkinning`) or per skin of a cooked model (`SceneAssets::setSkinning`), linear
+  the default ([Animation](../animation.md#gpu-skinning)). A bar twisted by 180 degrees keeps its full width (11 of
+  11 pixels at the middle, linear 0); rigid motions and translations render as with linear skinning. On the demo's
+  crowd of 256 (M4 Pro, offscreen) it costs 0.06 ms of frame CPU and nothing measurable on the GPU. The demo's
+  Animation section has a view "Skinning" (two characters with a forearm twisted by 170 degrees, linear against dual
+  quaternions), an option for the other characters, a scripted check with golden captures
+  (`animation_skinning.txt`) and a check mode item. Nobody has looked at it in motion.
 
 ## Fixes
 
@@ -229,3 +237,7 @@ What a game on 0.9.0 changes or checks when it moves to this release. Neither ga
   copied from the frame before instead of skinned again; **`RenderStats::skinnedReused`** is new, after
   `skinnedVertices` (designated initializers compile unchanged, a positional aggregate initialization would fill the
   members after it one off).
+- **`render::InstanceDesc`** has `skinning` at its end (`render::Skinning::Linear`, as before): designated
+  initializers compile unchanged. **`render::Skinning`**, **`Scene::setSkinning`** and **`SceneAssets::setSkinning`**
+  are new. A game's own compute shader that reads the renderer's palette buffer gets dual quaternions for instances
+  that use them (`SkinUniforms::counts.w` 1); nothing changes for instances left linear.

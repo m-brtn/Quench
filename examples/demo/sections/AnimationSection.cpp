@@ -7,7 +7,9 @@
 // walks in rings, updated in parallel on the job system and skinned by a compute pass; with animation LOD (off by
 // default) the characters small on the screen update every 2nd or 4th frame. A showcase away from them
 // (the views other than the hero's) has a character steered in 2D through a blend space over its velocity (idle,
-// walk, run, walk back, strafes), facing one way while it walks in every direction.
+// walk, run, walk back, strafes), facing one way while it walks in every direction. Another one, on the other side,
+// has two standing characters whose left forearms the section turns by 170 degrees, skinned linearly (the elbow
+// collapses) and by dual quaternions (it keeps its volume); the other characters' skinning is a choice.
 
 #include "Demo.h"
 
@@ -79,6 +81,11 @@ constexpr float kSpaceEdge = 0.6f;
 constexpr float kSteerSpeed = 0.8f; // m/s of the steering by itself, whose direction turns at kSteerTurn
 constexpr float kSteerTurn = 0.45f; // rad/s
 const glm::vec2 kSteerMin(-0.75f, -0.9f), kSteerMax(0.75f, 2.7f); // the blend space's extent (m/s)
+// The skinning showcase, out of the hero's view on the other side: two standing characters whose left forearms the
+// section turns about their length, skinned linearly (left) and by dual quaternions (right).
+const glm::vec3 kTwistAt(18.0f, 0.0f, 0.0f);
+constexpr float kTwistApart = 0.8f;                  // m between the two
+constexpr float kTwistAngle = 170.0f * kPi / 180.0f; // radians
 
 // The camera's places: the hero's stage and the showcase's spots (`set view ID`).
 struct View {
@@ -90,6 +97,7 @@ struct View {
 const std::array kViews{
     View{"hero", "Hero", {0.0f, 0.5f, -0.6f}, 2.0f, 22.0f, 9.0f},
     View{"blend2d", "2D blend space", {-18.0f, 0.6f, 0.0f}, 18.0f, 26.0f, 7.5f},
+    View{"skinning", "Skinning", {18.0f, 1.1f, 0.0f}, 0.0f, 6.0f, 2.1f},
 };
 
 glm::mat4 yawed(const glm::vec3& position, float yaw) {
@@ -111,6 +119,8 @@ struct Walker {
     float angle = 0.0f;
     float turn = 1.0f; // +1: the angle grows (counterclockwise seen from below), -1: it shrinks
     glm::mat4 transform{1.0f};
+    std::optional<Skinning> skinning; // unset: the section's choice
+    float twist = 0.0f;               // radians the left forearm is turned about its length (the showcase)
 };
 
 class AnimationSection final : public Section {
@@ -129,7 +139,8 @@ public:
         return "Cooked glTF clips on quench::animation: speed blend, jump and wave with cross-fades, a masked arm "
                "layer, an additive lean, root motion, footstep events with sound, look-at, foot placement on a slope "
                "and a step (ray queries into Jolt), a held torch; a crowd updated on jobs and skinned on the GPU; a "
-               "character steered through a 2D blend space (View).";
+               "character steered through a 2D blend space and a forearm twisted under linear and dual quaternion "
+               "skinning (View).";
     }
 
     Result<void> init(Context& c) override {
@@ -241,7 +252,7 @@ public:
         // Draw at the transform the update used (IK, look-at and the attachments match it), then move on by the
         // root motion for the next update.
         forEachWalker([&](Walker& w) {
-            if (w.skin >= 0) m_assets->setJointPalette(w.model, 0, m_anim->skinPalette(w.id, w.skin), m_teleport);
+            if (w.skin >= 0) m_assets->setJointPalette(w.model, 0, palette(w), m_teleport);
             m_assets->setTransform(w.model, w.transform, m_teleport);
             walk(w);
         });
@@ -294,6 +305,9 @@ public:
         ImGui::BeginDisabled(!m_lod);
         ImGui::Checkbox("Interpolate", &m_lodInterpolate);
         ImGui::EndDisabled();
+        bool dualQuaternion = m_skinning == Skinning::DualQuaternion;
+        if (ImGui::Checkbox("Dual quaternion skinning", &dualQuaternion))
+            setSkinning(dualQuaternion ? Skinning::DualQuaternion : Skinning::Linear);
         ImGui::SeparatorText("2D blend space");
         ImGui::Checkbox("Steer by itself", &m_autoSteer);
         ImGui::BeginDisabled(m_autoSteer);
@@ -371,6 +385,7 @@ public:
         if (name == "anim_lod_rate2") return double(stats.lodRates[1]);
         if (name == "anim_lod_rate4") return double(stats.lodRates[2]);
         if (name == "skinned_reused") return double(m_skinnedReused);
+        if (name == "dual_quaternion") return m_skinning == Skinning::DualQuaternion ? 1.0 : 0.0;
         if (name == "held_distance") {
             // The torch's grip from the hand joint (m): 0.096 when attached.
             const glm::mat4 hand = m_anim->jointWorld(m_hero.id, m_anim->findJoint(m_hero.id, "hand_l"));
@@ -431,6 +446,8 @@ public:
             m_lod = *flag;
         } else if (name == "lod_interpolate" && flag) {
             m_lodInterpolate = *flag;
+        } else if (name == "dual_quaternion" && flag) {
+            setSkinning(*flag ? Skinning::DualQuaternion : Skinning::Linear);
         } else if (name == "view") {
             const auto it = std::ranges::find_if(kViews, [&](const View& v) { return v.id == value; });
             if (it == kViews.end()) return false;
@@ -525,12 +542,13 @@ private:
 
     template <class F>
     void forEachWalker(F&& f) {
-        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer}) f(*w);
+        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer, &m_twistLinear, &m_twistDual}) f(*w);
         for (Walker& w : m_crowd) f(w);
     }
 
     bool allSkinned() const {
-        if (m_hero.skin < 0 || m_slopeStand.skin < 0 || m_stepStand.skin < 0 || m_strafer.skin < 0) return false;
+        for (const Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer, &m_twistLinear, &m_twistDual})
+            if (w->skin < 0) return false;
         return std::ranges::all_of(m_crowd, [](const Walker& w) { return w.skin >= 0; });
     }
 
@@ -574,7 +592,43 @@ private:
         w.transform = yawed(position, yaw);
         w.id = addCharacter(w.transform, feet, hero, graph);
         w.model = m_assets->addModel(m_model, w.transform);
+        if (m_skinning != Skinning::Linear) m_assets->setSkinning(w.model, 0, m_skinning);
         return w;
+    }
+
+    // A showcase character: stands with its left forearm turned by kTwistAngle, skinned one way whatever the
+    // section's choice.
+    Walker makeTwisted(const glm::vec3& position, Skinning skinning) {
+        Walker w = makeWalker(position, 0.0f, false, false);
+        w.skinning = skinning;
+        w.twist = kTwistAngle;
+        m_assets->setSkinning(w.model, 0, skinning);
+        return w;
+    }
+
+    void setSkinning(Skinning skinning) {
+        m_skinning = skinning;
+        forEachWalker([&](Walker& w) {
+            if (!w.skinning) m_assets->setSkinning(w.model, 0, skinning);
+        });
+    }
+
+    // The palette a walker is drawn with: its skin's, and for the showcase the forearm's joints (lowerarm_l and
+    // hand_l, which follows it) turned about the line from the elbow to the wrist.
+    std::span<const glm::mat4> palette(const Walker& w) {
+        const std::span<const glm::mat4> palette = m_anim->skinPalette(w.id, w.skin);
+        if (w.twist == 0.0f || m_forearmJoints.empty()) return palette;
+        const int elbow = m_anim->findJoint(w.id, "lowerarm_l"), wrist = m_anim->findJoint(w.id, "hand_l");
+        if (elbow < 0 || wrist < 0) return palette;
+        const std::span<const glm::mat4> models = m_anim->modelMatrices(w.id);
+        const glm::vec3 e(models[std::size_t(elbow)][3]), h(models[std::size_t(wrist)][3]);
+        const glm::mat4 turn = glm::translate(glm::mat4(1.0f), e) *
+                               glm::rotate(glm::mat4(1.0f), w.twist, glm::normalize(h - e)) *
+                               glm::translate(glm::mat4(1.0f), -e);
+        m_twisted.assign(palette.begin(), palette.end());
+        for (const std::size_t k : m_forearmJoints)
+            if (k < m_twisted.size()) m_twisted[k] = turn * m_twisted[k];
+        return m_twisted;
     }
 
     Walker makeCircleWalker(const glm::vec2& center, float radius, float angle, float turn, bool feet, bool hero) {
@@ -595,7 +649,8 @@ private:
 
     // Every character from the start: new state machines, phases and foot placement, the same on every run.
     void restart() {
-        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer}) removeWalker(*w);
+        for (Walker* w : {&m_hero, &m_slopeStand, &m_stepStand, &m_strafer, &m_twistLinear, &m_twistDual})
+            removeWalker(*w);
         m_hero = makeCircleWalker(kHeroCenter, kHeroRadius, kHeroStart, 1.0f, true, true);
         m_slopeStand = makeWalker(slopeTop(), 0.0f, true, false);
         // Across the step's edge: the left foot (+X) above the step, the right one on the floor.
@@ -607,6 +662,8 @@ private:
         m_strafer = makeWalker(glm::vec3(start.x, 0.0f, start.y), 0.0f, true, false, m_graph2d);
         m_steerAngle = 0.0f;
         m_steerInput = m_strafeMotion = glm::vec2(0.0f);
+        m_twistLinear = makeTwisted(kTwistAt - glm::vec3(0.5f * kTwistApart, 0.0f, 0.0f), Skinning::Linear);
+        m_twistDual = makeTwisted(kTwistAt + glm::vec3(0.5f * kTwistApart, 0.0f, 0.0f), Skinning::DualQuaternion);
         setCrowd(m_crowdSize);
         m_footsteps = 0;
         m_landings = 0;
@@ -640,6 +697,9 @@ private:
     void bindSkins() {
         if (!m_model.ready() || m_model->skins().empty()) return;
         const assets::ModelSkin& skin = m_model->skins()[0];
+        if (m_forearmJoints.empty())
+            for (std::size_t k = 0; k < skin.joints.size(); ++k)
+                if (skin.joints[k] == "lowerarm_l" || skin.joints[k] == "hand_l") m_forearmJoints.push_back(k);
         forEachWalker([&](Walker& w) {
             if (w.skin < 0 && w.id) w.skin = m_anim->addSkin(w.id, skin.joints, skin.inverseBindMatrices);
         });
@@ -735,8 +795,10 @@ private:
     assets::AssetRef<animation::ClipSetAsset> m_clips;
     assets::AssetRef<animation::GraphAsset> m_graph, m_graph2d;
     assets::AssetRef<audio::SoundAsset> m_step;
-    Walker m_hero, m_slopeStand, m_stepStand, m_strafer;
+    Walker m_hero, m_slopeStand, m_stepStand, m_strafer, m_twistLinear, m_twistDual;
     std::vector<Walker> m_crowd;
+    std::vector<std::size_t> m_forearmJoints; // in the model's skin
+    std::vector<glm::mat4> m_twisted;
     app::ActionId m_jumpAction = 0, m_waveAction = 0;
     float m_speed = 1.1f, m_lean = 0.0f, m_slopeDegrees = 16.0f;
     int m_crowdSize = 48;
@@ -745,6 +807,7 @@ private:
     int m_view = 0;
     bool m_autoSteer = true;
     bool m_lod = false, m_lodInterpolate = true;
+    Skinning m_skinning = Skinning::Linear;
     std::uint32_t m_skinnedReused = 0;
     float m_steerAngle = 0.0f;
     glm::vec2 m_steerVelocity{0.0f}, m_steerInput{0.0f}, m_strafeMotion{0.0f};

@@ -886,6 +886,116 @@ QUENCH_TEST(renderer_reuses_unchanged_skins) {
           renderer->stats().skinnedReused);
 }
 
+namespace {
+
+// A bar of 0.4 x 2 x 0.4 m standing on y = 0, in 20 segments: joint 0 moves it below 0.5 m, joint 1 above 1.5 m, and
+// the weights go linearly from one to the other in between.
+SkinnedBars twistBar() {
+    SkinnedBars out;
+    for (int segment = 0; segment < 20; ++segment) {
+        const MeshData box = boxMesh(glm::vec3(0.2f, 0.05f, 0.2f));
+        const auto base = std::uint32_t(out.mesh.vertices.size());
+        for (Vertex v : box.vertices) {
+            v.position.y += 0.05f + 0.1f * float(segment);
+            out.mesh.vertices.push_back(v);
+            const float upper = std::clamp(v.position.y - 0.5f, 0.0f, 1.0f);
+            SkinVertex s;
+            s.joints = {0, 1, 0, 0};
+            s.weights = {std::uint16_t(std::lround((1.0f - upper) * 65535.0f)),
+                         std::uint16_t(std::lround(upper * 65535.0f)), 0, 0};
+            out.skin.push_back(s);
+        }
+        for (std::uint32_t i : box.indices) out.mesh.indices.push_back(base + i);
+    }
+    return out;
+}
+
+// The width in pixels of what is red in the image row of height y (the bar seen from the front, at x = 0).
+int redWidth(const std::vector<Rgba8>& pixels, const View& view, float y) {
+    const int row = pixelOf(view, {0.0f, y, 0.0f}).y;
+    int count = 0;
+    for (std::uint32_t x = 0; x < kSize; ++x) {
+        const Rgba8 c = at(pixels, {int(x), row});
+        count += c.r > 2 * c.b && c.r > 60 ? 1 : 0;
+    }
+    return count;
+}
+
+} // namespace
+
+// The upper joint twisted by 180 degrees about the bar: linear blending pulls the middle of the bar onto its axis (the
+// candy wrapper), dual quaternions turn it by 90 degrees and keep its width. With joints that only move, the two are
+// the same; a uniform scale is kept by both.
+QUENCH_TEST(renderer_dual_quaternion_skinning) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, plainSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const SkinnedBars bar = twistBar();
+    Result<MeshId> mesh = scene.addMesh(bar.desc());
+    REQUIRE(mesh, "%s", mesh.error().c_str());
+    const MaterialId red = scene.addMaterial({.baseColor = glm::vec4(0.8f, 0.05f, 0.05f, 1.0f)});
+    const InstanceId instance = scene.addInstance({.mesh = *mesh, .material = red});
+    addSun(scene, glm::vec3(-0.3f, -1.0f, -0.5f));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0.0f, 1.0f, 2.5f), glm::vec3(0.0f, 1.0f, 0.0f)); // y -0.2 to 2.2 in view
+    const float full = float(pixelOf(view, {0.2f, 1.0f, 0.2f}).x - pixelOf(view, {-0.2f, 1.0f, 0.2f}).x);
+
+    const auto render = [&](Skinning skinning, std::span<const glm::mat4> palette) {
+        scene.setSkinning(instance, skinning);
+        scene.setJointPalette(instance, palette, true);
+        return renderOnce(device, *renderer, scene, view, *target);
+    };
+    const std::array<glm::mat4, 2> twist{glm::mat4(1.0f),
+                                         glm::rotate(glm::mat4(1.0f), glm::radians(180.0f), {0.0f, 1.0f, 0.0f})};
+    const std::vector<Rgba8> linear = render(Skinning::Linear, twist);
+    const std::vector<Rgba8> dual = render(Skinning::DualQuaternion, twist);
+    CHECK(renderer->stats().skinnedInstances == 1, "%u skinned", renderer->stats().skinnedInstances);
+    const int linearMiddle = redWidth(linear, view, 1.0f), dualMiddle = redWidth(dual, view, 1.0f);
+    CHECK(float(linearMiddle) < 0.15f * full, "linear: the middle collapses (%d of %.0f pixels)", linearMiddle,
+          double(full));
+    CHECK(float(dualMiddle) > 0.85f * full, "dual quaternion: the middle keeps its width (%d of %.0f pixels)",
+          dualMiddle, double(full));
+    for (const float y : {0.25f, 1.75f}) {
+        CHECK(float(redWidth(linear, view, y)) > 0.85f * full && float(redWidth(dual, view, y)) > 0.85f * full,
+              "y %.2f, one joint: the full width in both (%d, %d of %.0f)", double(y), redWidth(linear, view, y),
+              redWidth(dual, view, y), double(full));
+    }
+    // A quarter of the way up the blend (weights 0.75 and 0.25): linear at half the width, dual quaternion turned by
+    // 45 degrees and seen across the square's diagonal.
+    const int linearQuarter = redWidth(linear, view, 0.75f), dualQuarter = redWidth(dual, view, 0.75f);
+    CHECK(std::abs(float(linearQuarter) - 0.5f * full) < 0.25f * full, "linear at 0.75 m: %d of %.0f", linearQuarter,
+          double(full));
+    CHECK(std::abs(float(dualQuarter) - 1.414f * full) < 0.25f * full, "dual quaternion at 0.75 m: %d of %.0f",
+          dualQuarter, double(full));
+
+    const std::array<glm::mat4, 2> moved{glm::translate(glm::mat4(1.0f), {0.3f, 0.0f, 0.0f}),
+                                         glm::translate(glm::mat4(1.0f), {-0.2f, 0.3f, 0.0f})};
+    const std::vector<Rgba8> movedLinear = render(Skinning::Linear, moved);
+    const std::vector<Rgba8> movedDual = render(Skinning::DualQuaternion, moved);
+    int differing = 0;
+    for (std::size_t i = 0; i < movedLinear.size(); ++i)
+        differing += std::abs(sum(movedLinear[i]) - sum(movedDual[i])) > 16 ? 1 : 0;
+    CHECK(differing <= 2, "joints that only move: the same image (%d pixels differ)", differing);
+
+    const glm::mat4 rigid =
+        glm::rotate(glm::translate(glm::mat4(1.0f), {0.25f, 0.15f, 0.0f}), 0.6f, {0.0f, 0.0f, 1.0f});
+    const std::array<glm::mat4, 2> rigidPair{rigid, rigid};
+    const std::vector<Rgba8> rigidLinear = render(Skinning::Linear, rigidPair);
+    const std::vector<Rgba8> rigidDual = render(Skinning::DualQuaternion, rigidPair);
+    differing = 0;
+    for (std::size_t i = 0; i < rigidLinear.size(); ++i)
+        differing += std::abs(sum(rigidLinear[i]) - sum(rigidDual[i])) > 16 ? 1 : 0;
+    CHECK(differing <= 2, "one rigid motion (turned and moved): the same image (%d pixels differ)", differing);
+
+    const std::array<glm::mat4, 2> scaled{
+        glm::mat4(1.0f), glm::scale(glm::translate(glm::mat4(1.0f), {0.0f, -1.0f, 0.0f}), glm::vec3(2.0f))};
+    const std::vector<Rgba8> scaledDual = render(Skinning::DualQuaternion, scaled);
+    CHECK(float(redWidth(scaledDual, view, 2.1f)) > 1.7f * full, "a uniform scale of 2 is kept: %d of %.0f",
+          redWidth(scaledDual, view, 2.1f), double(full));
+}
+
 QUENCH_TEST(renderer_skinned_motion_vectors) {
     QUENCH_GPU_DEVICE(device);
     RenderSettings settings = plainSettings();

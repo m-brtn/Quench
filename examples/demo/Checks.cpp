@@ -99,6 +99,12 @@ constexpr std::array kItems{
               "steps, the near ones and the hero stay smooth. No walker pops when it crosses from one rate to another "
               "while the camera zooms.",
               "set crowd 256\nset lod 1"},
+    CheckItem{"animation.skinning", "animation", "Dual quaternion skinning",
+              "View Skinning: the left character's twisted forearm pinches to a thin neck at the elbow (linear), the "
+              "right one's keeps its thickness (dual quaternion), also as they idle. Back at the hero, tick Dual "
+              "quaternion skinning: elbows, knees and hips keep their shape as they bend, with no flicker or pop at "
+              "the switch.",
+              "set view skinning"},
     CheckItem{"raytracing.noise", "raytracing", "Ray-traced noise",
               "Native Metal backend: with Shadow rays 1 and then 2 the soft shadows stay calm while the sun turns "
               "(little crawling noise).",

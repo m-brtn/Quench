@@ -1,0 +1,32 @@
+# Animation, skinning (ctest: demo_animation_skinning_<backend>, a part of batch.txt): two standing characters whose
+# left forearms the section turns by 170 degrees about their length. The left one is skinned linearly, its elbow
+# collapsing to a thin neck; the right one by dual quaternions, its elbow keeping its thickness. Then the other
+# characters switch to dual quaternion skinning and back. The capture shows the two at 1 s after the restart.
+section animation
+
+set dither 0
+until anim_ready == 1 3
+expect anim_failed == 0
+set restart 1
+set crowd 0
+set view skinning
+wait 0.05
+expect anim_characters == 6
+until anim_bound == 6 1
+until anim_ready == 1 3
+wait 1
+windows off
+capture demo_animation_skinning.png
+windows on
+
+set dual_quaternion 1
+wait 0.2
+expect dual_quaternion == 1
+expect anim_ready == 1
+set dual_quaternion 0
+wait 0.1
+expect dual_quaternion == 0
+set view hero
+set crowd 48
+until anim_ready == 1 3
+quit

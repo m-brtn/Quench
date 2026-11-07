@@ -11,8 +11,8 @@ set restart 1
 set view hero
 set crowd 256
 until anim_ready == 1 3
-expect anim_characters == 260
-expect anim_evaluated == 260
+expect anim_characters == 262
+expect anim_evaluated == 262
 expect anim_lod_rate2 == 0
 
 set lod 1
@@ -34,7 +34,7 @@ set view hero
 
 set lod 0
 wait 0.2
-expect anim_evaluated == 260
+expect anim_evaluated == 262
 expect anim_lod_rate2 == 0
 expect skinned_reused == 0
 set lod_interpolate 1

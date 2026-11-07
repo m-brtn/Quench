@@ -24,7 +24,8 @@ struct QUENCH_ALIGN16 VelocityInstance {
 
 // Uniform slot 0 of skin_cs: one skinned instance (whole numbers, exact as floats below 2^24).
 struct QUENCH_ALIGN16 SkinUniforms {
-    float4 counts; // x: vertices, y: the instance's first joint in the palette buffer, z: its first output vertex
+    float4 counts; // x: vertices, y: the instance's first joint in the palette buffer, z: its first output vertex,
+                   // w: 1 for dual quaternion skinning (the palette's rows are dual quaternions), 0 for linear
 };
 
 QUENCH_SHARED_END

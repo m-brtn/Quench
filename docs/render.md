@@ -543,7 +543,7 @@ matrix times inverse bind matrix, as `animation::AnimationSystem::skinPalette` c
 for cooked models). Before the first palette an instance shows the bind pose.
 
 Every frame the renderer runs one compute pass (`skin_cs` in `src/render/shaders/skin.hlsl`, 64 vertices per group,
-linear blend skinning of positions and normals) over the skinned instances that are drawn in view or in a shadow
+linear blend or dual quaternion skinning of positions, normals and tangents) over the skinned instances that are drawn in view or in a shadow
 cascade, into each instance's range of a shared vertex buffer; the shadow, main and velocity passes then draw those
 vertices like a rigid mesh, with the surface shaders unchanged (also the cut-out and translucent shadow casters,
 which draw them with their surface's `surface_vs`). Two output buffers alternate, so the velocity pass
@@ -561,6 +561,14 @@ before gets its vertices by a copy from the frame before's buffer, in a copy pas
 ([Animation](animation.md#animation-lod)); with a crowd of 260 held at every 4th frame the skinning pass took 0.46
 instead of 1.75 ms on the M4 Pro. `render.renderer_reuses_unchanged_skins` checks that the image from copied
 vertices is the one from skinned vertices, also when an instance's range in the buffer moves.
+
+Dual quaternion skinning (since 2026-11-07) is chosen per instance: `InstanceDesc::skinning` (`Skinning::Linear`,
+the default, or `Skinning::DualQuaternion`) or `Scene::setSkinning(instance, skinning)`; `SceneAssets::setSkinning`
+sets it per skin of a cooked model. The renderer writes such an instance's palette as dual quaternions (three float4
+per joint: the rotation, the dual part and the uniform scale, converted on the CPU), and `SkinUniforms::counts.w` is
+1 for them. A twisted or bent limb keeps its volume (no "candy wrapper"); a joint's non-uniform scale or shear is
+lost. Its culling bounds grow by the largest joint sphere, since a vertex can move out of the joints' hull on an arc
+([Animation](animation.md#gpu-skinning)).
 
 ## Limitations
 
@@ -599,7 +607,8 @@ vertices is the one from skinned vertices, also when an instance's range in the 
   frame's depth is its own (within 0.1% of the distance), so its holes keep the motion of what is behind them; a
   surface less than 0.1% of the distance behind a hole takes the object's motion. A moving alpha-blended object's
   motion covers what is seen through it.
-- Skinning: four joints per vertex, linear blend (no dual quaternions), no blend shapes; every drawn skinned
+- Skinning: four joints per vertex, linear blend or dual quaternions (without non-uniform scale or shear), no blend
+  shapes; every drawn skinned
   instance whose palette changed is skinned every frame (an unchanged one is copied from the frame before; no
   skinning LOD); the output buffers grow with the skinned vertices drawn (two copies).
 - No MSAA, no image-based lighting from a cubemap (the sky model is the environment), shadows of local and area

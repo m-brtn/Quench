@@ -18,6 +18,7 @@
 
 #include <glm/common.hpp>
 #include <glm/geometric.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/matrix.hpp>
 
 #include <algorithm>
@@ -162,7 +163,23 @@ struct SkinJob {
     std::uint32_t offset = 0; // first vertex in the skinned vertex buffer
     // The palette has not changed since the instance was skinned last frame at this offset: copied from there.
     std::uint32_t reuseFrom = kNotSkinned;
+    bool dualQuaternion = false; // the palette's rows are dual quaternions (dualQuaternionRows)
 };
+
+// A palette matrix as three rows for Skinning::DualQuaternion: its rotation as a quaternion, the dual part (half the
+// translation times the rotation) and its uniform scale in x. The scale is taken out first, so a joint with a uniform
+// scale keeps it; a non-uniform scale or a shear is lost (the rotation is the nearest one quat_cast finds).
+std::array<glm::vec4, 3> dualQuaternionRows(const glm::mat4& m) {
+    const glm::mat3 linear(m);
+    const float det = std::abs(glm::determinant(linear));
+    const float scale = std::abs(det - 1.0f) < 1e-4f ? 1.0f : std::cbrt(det);
+    const glm::quat q = scale > 1e-12f
+                            ? glm::normalize(glm::quat_cast(scale == 1.0f ? linear : linear * (1.0f / scale)))
+                            : glm::quat(1, 0, 0, 0);
+    const glm::vec3 t(m[3]), v(q.x, q.y, q.z);
+    return {glm::vec4(v, q.w), glm::vec4(0.5f * (q.w * t + glm::cross(t, v)), -0.5f * glm::dot(t, v)),
+            glm::vec4(scale, 0.0f, 0.0f, 0.0f)};
+}
 
 struct Item {
     std::uint64_t key = 0; // sort key (opaque, shadows) or distance (transparent)
@@ -1119,16 +1136,25 @@ std::uint32_t RendererImpl::skinnedOffset(const InstanceEntry& inst, std::uint32
     skinnedVertices += mesh.vertexCount;
     const bool unchanged = !inst.posed && inst.skinnedFrame != ~0ull && inst.skinnedFrame + 1 == frameIndex &&
                            inst.palette.size() == mesh.jointCount;
-    skinJobs.push_back(
-        {&mesh, std::uint32_t(paletteData.size() / 3), offset, unchanged ? inst.skinnedOffset : kNotSkinned});
+    const bool dualQuaternion = inst.desc.skinning == Skinning::DualQuaternion;
+    skinJobs.push_back({&mesh, std::uint32_t(paletteData.size() / 3), offset,
+                        unchanged ? inst.skinnedOffset : kNotSkinned, dualQuaternion});
     const auto row = [](const glm::mat4& m, int r) { return glm::vec4(m[0][r], m[1][r], m[2][r], m[3][r]); };
-    if (inst.palette.size() == mesh.jointCount) {
+    if (inst.palette.size() != mesh.jointCount) {
+        const glm::mat4 identity(1.0f);
+        const std::array<glm::vec4, 3> rows = dualQuaternion
+                                                  ? dualQuaternionRows(identity)
+                                                  : std::array{row(identity, 0), row(identity, 1), row(identity, 2)};
+        for (std::uint32_t j = 0; j < mesh.jointCount; ++j)
+            paletteData.insert(paletteData.end(), rows.begin(), rows.end());
+    } else if (dualQuaternion) {
+        for (const glm::mat4& m : inst.palette) {
+            const std::array<glm::vec4, 3> rows = dualQuaternionRows(m);
+            paletteData.insert(paletteData.end(), rows.begin(), rows.end());
+        }
+    } else {
         for (const glm::mat4& m : inst.palette)
             paletteData.insert(paletteData.end(), {row(m, 0), row(m, 1), row(m, 2)});
-    } else {
-        const glm::mat4 identity(1.0f);
-        for (std::uint32_t j = 0; j < mesh.jointCount; ++j)
-            paletteData.insert(paletteData.end(), {row(identity, 0), row(identity, 1), row(identity, 2)});
     }
     return offset;
 }
@@ -1223,7 +1249,7 @@ bool RendererImpl::skin(gpu::CommandBuffer& commands) {
                 bound = job.mesh;
             }
             pass.pushUniforms(0, shader::SkinUniforms{glm::vec4(float(job.mesh->vertexCount), float(job.firstJoint),
-                                                                float(job.offset), 0.0f)});
+                                                                float(job.offset), job.dualQuaternion ? 1.0f : 0.0f)});
             pass.dispatch((job.mesh->vertexCount + kSkinGroup - 1) / kSkinGroup);
         }
     }

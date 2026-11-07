@@ -13,8 +13,8 @@ set restart 1
 set crowd 0
 set view blend2d
 wait 0.05
-expect anim_characters == 4
-until anim_bound == 4 1
+expect anim_characters == 6
+until anim_bound == 6 1
 
 # By itself: the clips' root motion follows the velocity asked for, ahead and then to the left. Between the points
 # it is slower than asked (idle's longer cycle slows the shared phase, as in the 1D blend).

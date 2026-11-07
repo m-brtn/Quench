@@ -43,6 +43,7 @@ struct SceneAssets::Impl {
         std::vector<int> instanceSkins;               // per instance: the part's skin (-1: rigid, placeholder)
         std::vector<std::uint32_t> instanceJoints;    // per instance: its mesh's joints
         std::vector<std::vector<glm::mat4>> palettes; // per skin: the last setJointPalette
+        std::vector<Skinning> skinnings;              // per skin: the last setSkinning
         bool placeholder = false;
         bool built = false;
         assets::AssetState builtState = assets::AssetState::Loading;
@@ -362,6 +363,16 @@ void SceneAssets::setJointPalette(ModelInstanceId instance, int skin, std::span<
             m_scene.setJointPalette(placed->instances[i], palette, teleport);
 }
 
+void SceneAssets::setSkinning(ModelInstanceId instance, int skin, Skinning skinning) {
+    Impl::Placed* placed = m_impl->placed.get(instance);
+    QUENCH_ASSERT(placed && skin >= 0, "setSkinning: stale or null model instance, or a negative skin");
+    if (!placed || skin < 0) return;
+    if (placed->skinnings.size() <= std::size_t(skin)) placed->skinnings.resize(std::size_t(skin) + 1);
+    placed->skinnings[std::size_t(skin)] = skinning;
+    for (std::size_t i = 0; i < placed->instances.size(); ++i)
+        if (placed->instanceSkins[i] == skin) m_scene.setSkinning(placed->instances[i], skinning);
+}
+
 void SceneAssets::removeModel(ModelInstanceId instance) {
     Impl::Placed* placed = m_impl->placed.get(instance);
     QUENCH_ASSERT(placed, "removeModel: stale or null model instance");
@@ -406,10 +417,13 @@ void SceneAssets::update() {
             }
         } else {
             for (const ModelAsset::Part& part : model.parts()) {
-                const InstanceId id = m_scene.addInstance({.mesh = part.mesh,
-                                                           .material = part.material,
-                                                           .transform = placed->transform,
-                                                           .visible = placed->visible});
+                const bool known = part.skin >= 0 && std::size_t(part.skin) < placed->skinnings.size();
+                const InstanceId id = m_scene.addInstance(
+                    {.mesh = part.mesh,
+                     .material = part.material,
+                     .transform = placed->transform,
+                     .visible = placed->visible,
+                     .skinning = known ? placed->skinnings[std::size_t(part.skin)] : Skinning::Linear});
                 placed->instances.push_back(id);
                 const std::uint32_t joints = m_scene.jointCount(part.mesh);
                 placed->instanceSkins.push_back(part.skin);
