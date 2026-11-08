@@ -9,9 +9,9 @@
 #include "quench/Sky.hlsli"
 
 // The share of the sun's light the clouds let through to a world point (1 without cloud shadows). The cloud shadow
-// map (the first region of the weather maps, surface sampler 14) holds the transmittance of the cloud layer along the
-// sun's direction above the ground plane y = 0; a point reads it where its ray toward the sun, followed back, meets
-// that plane.
+// map (the first region of the weather maps, surface sampler 14) holds the transmittance along the sun's direction of
+// the clouds above a plane (render::RenderSettings::cloudShadowHeight); a point reads it where its line toward the
+// sun meets that plane (here: y = 0, the map's corner in FrameUniforms::cloudShadow moved to match).
 float quenchCloudShadow(Texture2D<float4> maps, SamplerState s, float3 P) {
     if (quenchFrame.cloudShadow.w <= 0.0) return 1.0;
     const float3 sun = quenchFrame.sunDir.xyz;

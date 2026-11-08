@@ -221,6 +221,11 @@ struct RenderSettings {
     int cloudSteps = 64; // Volumetric: steps along a view ray through the cloud layer, 8..256
     // The clouds shade the sun's light on surfaces (a map 24 km across around the camera; farther away its edge).
     bool cloudShadows = true;
+    // The height (m) of the ground the clouds' shadow falls on: the map holds the light the clouds above this height
+    // let through, and a surface reads it where its line toward the sun meets that height. Surfaces near it are shaded
+    // right (one far above it also takes the shadow of the clouds below it, one far below misses those above it). A
+    // game whose ground lies high (isles above a sea of clouds, mountains) sets its ground's height.
+    float cloudShadowHeight = 0.0f;
     // With clouds: a cube of the sky with its clouds (texels per side, 16..512; 0: none) that surfaces reflect in
     // place of the sky's radiance, and how many of its faces are drawn again each frame (1..6).
     std::uint32_t skyCubeSize = 64;

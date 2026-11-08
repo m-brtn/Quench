@@ -102,8 +102,9 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // map's edge stay inside it).
     float4 localShadows;
     // The clouds (render::RenderSettings::clouds; quench/Clouds.hlsli). Their shadow (sampler 14: the share of the
-    // sun's light they let through, a top-down map on the plane y = 0): xy: the map's corner (world x and z, m), z: 1 /
-    // its size (m), w: 1 when it is read.
+    // sun's light the clouds above RenderSettings::cloudShadowHeight let through, a top-down map on that plane): xy:
+    // the map's corner (world x and z, m) followed along the sun's direction from that plane down to y = 0, where
+    // quenchCloudShadow meets a point's line toward the sun, z: 1 / its size (m), w: 1 when it is read.
     float4 cloudShadow;
     // The sky cube (sampler 15: the sky with its clouds, for the sky's reflection): x: 1 when it is read, y: its last
     // mip level.

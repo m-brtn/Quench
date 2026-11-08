@@ -393,8 +393,14 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
     const bool drawWeather = !m_weatherValid || fresh || turn || mapOrigin != m_weatherOrigin;
     if (drawWeather) m_weatherOrigin = mapOrigin;
     u.weatherMap = glm::vec4(m_weatherOrigin, 1.0f / kWeatherExtent, kWeatherExtent);
+    // The shadow map lies on the plane y = cloudShadowHeight, centred under the camera.
+    const glm::vec3 towardSun(fu.sunDir);
+    const float sunSlope = std::max(towardSun.y, 0.05f);
+    const float shadowHeight = settings.cloudShadowHeight;
+    const glm::vec2 sunXz(towardSun.x, towardSun.z);
     const glm::vec2 shadowOrigin = snapped(camXz, kShadowExtent, kShadowMapSize);
-    const bool drawShadow = !m_shadowValid || fresh || !turn || shadowOrigin != m_shadowOrigin;
+    const bool drawShadow =
+        !m_shadowValid || fresh || !turn || shadowOrigin != m_shadowOrigin || shadowHeight != m_shadowHeight;
     u.layer = glm::vec4(wu.layer.x, wu.layer.y, wu.layer.z, kPlanetRadius);
     // The march ends at the highest top on the map (a stratus deck is marched through its few hundred metres, not
     // through the layer's 7.5 km); a cumulonimbus's anvil reaches the layer's top.
@@ -431,7 +437,8 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
     const bool shadows = settings.cloudShadows && fu.sunDir.w > 0.0f && fu.sunDir.y > 0.0f && frame.maps;
     if (shadows && drawShadow) {
         m_shadowOrigin = shadowOrigin;
-        u.shadowMap = glm::vec4(m_shadowOrigin, 1.0f / kShadowExtent, kShadowExtent);
+        m_shadowHeight = shadowHeight;
+        u.shadowMap = glm::vec4(m_shadowOrigin, 1.0f / kShadowExtent, m_shadowHeight);
         // Its region only: the rest of the weather maps stays.
         if (gpu::RenderPass pass =
                 commands.beginRenderPass(gpu::ColorTarget{.texture = *frame.maps, .load = gpu::LoadOp::Load})) {
@@ -450,7 +457,7 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
     }
     if (!shadows) m_shadowValid = false;
     m_shadows = m_shadowValid;
-    u.shadowMap = glm::vec4(m_shadowOrigin, 1.0f / kShadowExtent, kShadowExtent);
+    u.shadowMap = glm::vec4(m_shadowOrigin, 1.0f / kShadowExtent, m_shadowHeight);
     commands.endTiming();
 
     // ---- The volumetric march at a share of the render size, accumulated over frames
@@ -547,8 +554,11 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
         m_cubeFacesDrawn = 0;
     }
 
-    // ---- The rest of the frame: the clouds' shadow on the sun's light
-    fu.cloudShadow = m_shadows ? glm::vec4(m_shadowOrigin, 1.0f / kShadowExtent, 1.0f) : glm::vec4(0.0f);
+    // ---- The rest of the frame: the clouds' shadow on the sun's light. Surfaces follow their line toward the sun to
+    // y = 0 (quenchCloudShadow): the corner moved along it from the map's plane down to there.
+    fu.cloudShadow = m_shadows
+                         ? glm::vec4(m_shadowOrigin - sunXz * (m_shadowHeight / sunSlope), 1.0f / kShadowExtent, 1.0f)
+                         : glm::vec4(0.0f);
 
     // ---- The lightning: the flashes of the last kFlashLength light the scene (by their distance) and glow in the
     // clouds (the brightest one now). Not in the sky cube, whose faces are drawn in turns.

@@ -144,6 +144,7 @@ sample costs about 0.2 µs with 16 cells (M4 Pro, Release).
 | `cloudTemporal` | Volumetric: each frame's march blended into the previous ones', reprojected (on by default) |
 | `cloudSteps` | Volumetric: steps along a view ray through the layer, 8 to 256 (64) |
 | `cloudShadows` | the clouds shade the sun's light on surfaces (on) |
+| `cloudShadowHeight` | the height of the plane the cloud shadow map lies on (0 m): only the clouds above it shade, so a game over a sea of clouds sets it to its ground's height |
 | `skyCubeSize`, `skyCubeFacesPerFrame` | the sky cube with the clouds that surfaces reflect: texels per side (64; 0: none) and faces drawn again per frame (6) |
 
 `Renderer::effects().clouds` and `.skyCube` say what runs after the fallbacks; `RenderStats::clouds`, `cloudWidth`,
@@ -164,8 +165,8 @@ today (SDL GPU's Metal and Vulkan through MoltenVK, the native Metal backend, th
    texture, and a 256² tiling 2D noise for the layer. Procedural, in the shaders (`cloudnoise.hlsl`).
 2. **The weather map:** the field drawn by the GPU into a 512² Rgba8Unorm texture, 250 m texels over 128 km around
    the camera (on its texel grid, so it does not swim), with mips. **The cloud shadow map:** a 512² map over 24 km
-   (47 m texels): the clouds' transmittance along the sun's direction above the plane y = 0 (16 steps through the
-   shape), or the layer's. The two maps change slowly: each is drawn every other frame, in turns, and at once when
+   (47 m texels): the clouds' transmittance along the sun's direction above the plane y = `cloudShadowHeight` (16
+   steps through the shape above it), or the layer's where the layer is above it. The two maps change slowly: each is drawn every other frame, in turns, and at once when
    it moved with the camera, after a cut or a change of mode.
 3. **The march** (Volumetric) at `cloudResolution` into an Rgba16Float target (premultiplied radiance and
    transmittance) and its depth: the layer is a shell on a sphere of the planet's radius (6360 km), so the clouds
@@ -202,7 +203,8 @@ ones would be.
 ## Light under the clouds
 
 - **Cloud shadows:** surfaces read the cloud shadow map (surface sampler 14, `quench/Clouds.hlsli`:
-  `quenchCloudShadow`) where the sun's ray through them meets the plane y = 0, and multiply the sun's light by it,
+  `quenchCloudShadow`) where the sun's ray through them meets the plane y = `cloudShadowHeight` (0 by default; the
+  clouds below the plane cast no shadow, since 2026-11-08), and multiply the sun's light by it,
   with shadow maps and with ray-traced sun shadows alike. Beyond its 24 km the map's edge holds.
 - **How overcast it is:** `Weather::coverAbove` within 6 km of the camera (`RenderStats::cloudCover`): the cover of
   the clouds above it, all of it under the cloud base and none over the tops, so a camera flying over a sea of
@@ -677,8 +679,9 @@ without missed intervals with the thermal reaction on.
   upright); no slowdowns behind terrain or buildings; no bolts are drawn and the sky cube does not flash; thunder is
   one sound per flash, not echoes from the terrain; `WindDrag` has no torque, lift or shelter.
 - The traced effects see an overcast amount, not the clouds (above); the probe grid does not pick up single clouds.
-- Cloud shadows are a 24 km map on the plane y = 0: a surface far above or below it reads the shadow of the column
-  its sun ray crosses at y = 0, and beyond the map its edge holds.
+- Cloud shadows are a 24 km map on one plane (`cloudShadowHeight`, 0 by default): a surface far above or below it
+  reads the shadow of the column its sun ray crosses at that height, so ground at very different heights (a valley
+  and a mountain top, isles at several heights) shares one plane; beyond the map its edge holds.
 - The storm's bases are somewhat smooth and sheet-like. Inside a storm's rain (the Storm preset from the air) the
   view is an even veil of heavy rain with its streaks, about a kilometre of visibility, without curtains or gaps at
   that range; until 2026-11-08 the veil was lit by the sky's ambient term, pi times the clouds' bases, and shone as
@@ -686,9 +689,10 @@ without missed intervals with the thermal reaction on.
   shafts of the 2D layer's clouds look like smoky blobs more than rain.
 - Clouds beyond 64 km fade out (the weather map's reach). A camera above the cloud base (since 2026-11-08): its
   light counts only the clouds above it (`Weather::coverAbove`) and the volumetric clouds below the horizon are
-  drawn (a sea of clouds under the camera); the 2D layer is still drawn only above the horizon, and the clouds'
-  shadow map still lies on the plane y = 0, so surfaces above the clouds are shaded as if the clouds were above them
-  (a game over a sea of clouds turns `cloudShadows` off).
+  drawn (a sea of clouds under the camera); the 2D layer is still drawn only above the horizon. The clouds' shadow
+  map lies on the plane y = 0 unless the game sets `cloudShadowHeight` (since 2026-11-08): with 0, surfaces above
+  the clouds are shaded as if the clouds were above them, so a game over a sea of clouds sets it to its ground's
+  height.
 - Phone costs are estimates from the Mac; the phone defaults wait for a measured run on the iPhone 17.
 - The rain: no roofs beyond 64 m of the camera (the occlusion map's reach: farther surfaces count as open) and
   nothing above 100 m over the camera counts as a roof; the wetness grid covers 1 km around its focus (beyond it an

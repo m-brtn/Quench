@@ -82,6 +82,7 @@ private:
     bool m_noiseFailed = false;
     gpu::Texture m_weatherMap;
     glm::vec2 m_weatherOrigin{0.0f}, m_shadowOrigin{0.0f}; // of the maps' contents
+    float m_shadowHeight = 0.0f;                           // the plane the shadow map lies on
     bool m_weatherValid = false, m_shadowValid = false;
     std::uint64_t m_frame = 0; // the maps are drawn in turns
     gpu::Texture m_march, m_marchDepth;

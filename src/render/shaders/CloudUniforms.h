@@ -13,7 +13,7 @@ struct QUENCH_ALIGN16 CloudUniforms {
     float4x4 invViewProjStable; // clip -> world without the TAA jitter: the march's rays
     float4x4 prevViewProjStable;
     float4 weatherMap;    // xy: world xz of the weather map's corner (m), z: 1 / its size (1/m), w: its size (m)
-    float4 shadowMap;     // xy: world xz of the cloud shadow map's corner (m), z: 1 / its size (1/m), w: its size (m)
+    float4 shadowMap;     // xy: world xz of the cloud shadow map's corner (m), z: 1 / its size (1/m), w: its plane's y
     float4 layer;         // x: cloud base (m), y: top of the tallest clouds (m), z: cirrus height (m), w: planet radius
     float4 air;           // xy: how far the air has moved (world xz, m), zw: unit wind direction
     float4 shape;         // x: shape noise scale (1/m), y: detail noise scale (1/m), z: evolution time, w: density

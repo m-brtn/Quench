@@ -418,25 +418,29 @@ float4 cloudLayer(float3 dir) {
 // read by quenchCloudShadow in quench/Clouds.hlsli).
 #if defined(QUENCH_ENTRY_cloud_shadow_fs) || defined(QUENCH_ENTRY_cloud_shadow_layer_fs)
 float4 cloudShadowTexel(float2 uv) {
-    const float2 xz = cloud.shadowMap.xy + uv * cloud.shadowMap.w;
+    // The texel's point on the map's plane (y = shadowMap.w); only the clouds above it count.
+    const float plane = cloud.shadowMap.w;
+    const float2 xz = cloud.shadowMap.xy + uv / cloud.shadowMap.z;
     const float3 sun = quenchFrame.sunDir.xyz;
     if (quenchFrame.sunDir.w <= 0.0 || sun.y <= 0.0) return float4(1.0, 1.0, 1.0, 1.0);
     const float sy = max(sun.y, 0.05);
     const float2 slope = sun.xz / sy; // xz per metre of height
 #if defined(QUENCH_ENTRY_cloud_shadow_fs)
-    const float base = cloud.layer.x;
+    const float base = max(cloud.layer.x, plane);
     const float top = cloud.params.w;
+    if (top <= base) return float4(1.0, 1.0, 1.0, 1.0);
     const int steps = 16;
     const float dh = (top - base) / float(steps);
     float od = 0.0;
     for (int i = 0; i < steps; ++i) {
         const float h = base + (float(i) + 0.5) * dh;
-        od += cloudDensity(xz + slope * h, h, false, 0.0) * dh / sy;
+        od += cloudDensity(xz + slope * (h - plane), h, false, 0.0) * dh / sy;
     }
     const float T = exp(-od * cloud.shape.w);
 #else
     const float h = cloud.layer.x + kLayerHeight;
-    const float2 p = xz + slope * h;
+    if (h <= plane) return float4(1.0, 1.0, 1.0, 1.0);
+    const float2 p = xz + slope * (h - plane);
     const float4 w = cloudWeather(p, 0.0);
     const float d = layerDensity(p, w);
     const float T = exp(-d * byType(w.y, 300.0, 1200.0, 2500.0, 4000.0) * cloud.shape.w * 0.25 / sy);

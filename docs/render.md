@@ -136,8 +136,8 @@ scene a weather (a copy, set again after each `Weather::update`; `clearWeather()
 `RenderSettings::clouds` draws its clouds: `Off` (the default), `Layer` (a 2D layer at the cloud base, the fallback
 and the cheap setting) or `Volumetric` (raymarched cumulus, towering cumulus, cumulonimbus, stratus and cirrus after
 Nubis, at `cloudResolution` of the render size, accumulated over frames with `cloudTemporal`, `cloudSteps` along a
-ray). `cloudShadows` shades the sun's light on surfaces through a 24 km cloud shadow map around the camera, with
-shadow maps and with ray-traced sun shadows; `skyCubeSize` and `skyCubeFacesPerFrame` keep a cube of the sky with its
+ray). `cloudShadows` shades the sun's light on surfaces through a 24 km cloud shadow map around the camera, on the
+plane y = `cloudShadowHeight` (the clouds below it cast no shadow), with shadow maps and with ray-traced sun shadows; `skyCubeSize` and `skyCubeFacesPerFrame` keep a cube of the sky with its
 clouds that surfaces reflect (and SSR's misses). As the cover around the camera closes, the sky's ambient light
 moves toward a deck's grey, the ground's ambient light and the fog follow. The traced effects' misses see the sky
 blended toward that grey by the cover, not single clouds. Timed ranges `cloud_noise` (once), `weather` (the weather
