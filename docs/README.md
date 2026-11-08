@@ -12,16 +12,17 @@ blend shapes, and on the native backend ray-traced shadows of the sun, local and
 reflections, indirect light with a probe grid, the engine's temporal denoiser, MetalFX upscaling and denoising and a
 reference path tracer, with shadow maps, screen-space occlusion and reflections, the sky's light and bilinear scaling
 as the fallbacks; ray tracing and the area lights run on the iPhone 17 only), audio (the mixer, 3D sound with an
-optional HRTF, reverb buses, Ogg Vorbis, device output, offline captures; not yet run on the iPhone or listened to),
+optional HRTF, reverb buses, Ogg Vorbis, device output, offline captures; its tests not yet run on the iPhone; the
+weather's sounds listened to by the user on the Mac and the iPhone 17, the rest not yet),
 animation (skeletons and clips, state machines, 1D and 2D blending, events, root motion, IK and foot placement, LOD,
 retargeting, blend shape weights from clips; not yet run on the iPhone or looked at in motion by the user),
-navigation (navmeshes built on jobs or cooked, obstacles, paths and crowds; not yet run on the iPhone or looked at in
-motion), stage 13, weather (a weather map that drifts and evolves, volumetric clouds with a
+navigation (navmeshes built on jobs or cooked, obstacles, paths and crowds; the demo's section looked at in motion by
+the user on the Mac and the iPhone 17, its tests not yet run on the iPhone), stage 13, weather (a weather map that drifts and evolves, volumetric clouds with a
 2D layer as the fallback, their shadows, overcast light and a sky cube for reflections; rain kept from under roofs,
 shafts of rain from afar, wet ground that dries, puddles with ripples and the rain's sound; snow by the temperature
 with flakes, a cover that builds and melts and white shafts; wind with gusts that moves the rain, the snow, the
-clouds, plants and chosen physics bodies and that sounds, lightning and thunder; not yet run on the iPhone, looked at
-in motion or listened to), the sample, the engine demo (finished in stage 10, with a tour, a check mode and a benchmark of every
+clouds, plants and chosen physics bodies and that sounds, lightning and thunder; looked at in motion and listened to
+by the user on the Mac and the iPhone 17, its costs on a phone not measured), the sample, the engine demo (finished in stage 10, with a tour, a check mode and a benchmark of every
 section) and the game template. Where a document describes something planned, it says so. [Migration](migration.md) describes the
 engine code in the two games, what has moved and what is not moved yet.
 

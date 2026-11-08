@@ -6,8 +6,8 @@ tile by tile on the job system across frames, or cooked into `.qnav` assets; are
 (jumps, ladders, teleporters); dynamic obstacles and geometry changes that rebuild only their tiles; paths, raycasts
 and random points; crowds with avoidance and link events; debug geometry for any renderer. The engine demo's
 "Navigation" section shows it ([Engine demo](demo.md)). Written for the engine, not moved from a game; neither game
-uses it yet. What was run where is under [Platforms](#platforms); nobody has looked at it in motion yet. All
-documentation: [index](README.md).
+uses it yet. What was run where is under [Platforms](#platforms); the user looked at the demo's section in motion on
+the Mac and the iPhone 17 on 2026-11-08 and reported it fine. All documentation: [index](README.md).
 
 ## Use
 
@@ -204,13 +204,17 @@ between. The `headless` preset (Debug) took 2 to 6 times as long (a build 6.4 to
 
 - **Mac**: the tests in the `headless`, `debug`, `release`, `asan` and `tsan` presets; the demo section and its
   capture on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK (offscreen).
-- **iOS Simulator**: `navigation.*` in `ios-sim-tests`. Not run on the iPhone.
+- **iOS Simulator**: `navigation.*` in `ios-sim-tests`.
+- **iPhone 17**: the demo's section by hand (the user, 2026-11-08, the demo build of `b91aff0`): "yes, everything is
+  fine". The tests have not run on an iPhone, nothing was measured there, and the iPhone 18 Pro Max has not run it.
 - **Web**: the tests as WebAssembly under Node.js, single-threaded (`wasm-node`). No rendering.
 
 ## Limitations
 
-- **Not looked at in motion**: the crowd's avoidance, the turns, the walk and run blend and the link arcs were
-  checked by numbers and still captures only (the demo's check mode has an item, `navigation.crowd`).
+- **Looked at in motion once, as a whole**: the crowd's avoidance, the turns, the walk and run blend and the link
+  arcs are checked by numbers and still captures; the user looked at the demo's section in motion on the Mac and the
+  iPhone 17 on 2026-11-08 ("yes, everything is fine"), a report on the section as a whole, not item by item (the
+  demo's check mode has an item, `navigation.crowd`).
 - **Link crossings** are Detour's: a straight line at half the agent's speed, which the game can only decorate (the
   demo's arc); a game-driven crossing (a ladder clip, a jump of its own length) is remaining work.
 - **No detail meshes**: tiles made by DetourTileCache's builder have none, so heights on a polygon are those of its

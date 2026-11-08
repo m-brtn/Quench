@@ -14,9 +14,10 @@ the snow and a game's queries share, plants that sway with it (`quench/Wind.hlsl
 physics bodies (`WindDrag`), lightning in storms that lights the clouds and the scene, and the wind's and the
 thunder's sounds ([Wind](#wind)). Written for the engine, not moved from a game; neither game uses it. It ran on the
 Mac (Metal, the native Metal backend and Vulkan through MoltenVK), in the iOS Simulator (the test executables) and
-as WebAssembly under Node.js (the headless tests); not on an iPhone, and nobody has looked at the clouds, the rain,
-the snow or the swaying plants in motion or listened to the rain, the wind or the thunder. All documentation:
-[index](README.md).
+as WebAssembly under Node.js (the headless tests). The user looked at the clouds, the rain, the snow and the wind in
+motion and listened to the rain, the wind and the thunder in the demo on the Mac and on the iPhone 17 on 2026-11-08
+and reported them fine; the tests and the costs have not run on an iPhone, and the iPhone 18 Pro Max has run
+nothing of it. All documentation: [index](README.md).
 
 ## Use
 
@@ -486,7 +487,8 @@ phone: `Low` without the shafts (so without the rainbow), 0.25 ms on the M4 Pro 
 The snow on a phone: `Low` flakes beside that rain, without the shafts, 0.34 ms for a snowfall on the M4 Pro at
 the iPhone 17's size, about 1 ms on the phone by the same ratio. The wind on a phone: the same levels with gusts
 and eddies (0.16 ms for the `Low` drops in the windy storm at the iPhone 17's size, about 0.5 ms by the ratio); the
-plants' sway costs nothing measurable on the Mac. Not run on a phone yet: the defaults wait for that run.
+plants' sway costs nothing measurable on the Mac. Not measured on a phone yet (the user looked at the section on the
+iPhone 17 on 2026-11-08 and reported it fine): the defaults wait for a measured run.
 
 ## Cost
 
@@ -609,8 +611,9 @@ captures (`demo_wind_calm.png`: the meadow upright under a low sun; `demo_wind.p
 grass and the crowns bent downwind in a lull and two seconds later, the rain slanting; `demo_wind_flash.png`: five
 milliseconds after a flash within 3 km); `physics_wind` checks the wind near the floor (4.8 m/s at a 20 m/s
 setting) and three light balls blown 2.7 m downwind in 3 s. Check mode items `weather.clouds`, `weather.rain`,
-`weather.snow`, `weather.wind` (in motion), `weather.rain_sound` and `weather.wind_sound` (by ear) wait for a
-person.
+`weather.snow`, `weather.wind` (in motion), `weather.rain_sound` and `weather.wind_sound` (by ear) are for a
+person; the user looked at the section and listened to it on the Mac and the iPhone 17 on 2026-11-08 and reported it
+fine.
 
 Tests: `weather.*` (21 cases: the coverage's mean by setting, determinism, drift, evolution, seeds, type and
 precipitation, a cell in a clear sky and the distance to it, cells that drift and stay, wind and cloud tops, the
@@ -638,8 +641,9 @@ bent downwind either way the wind blows, and bent about its own foot when rooted
 ## Later parts
 
 All four parts are built (above); where they differ from their plans is said in [Rain](#rain), [Snow](#snow) and
-[Wind](#wind). Footprints in the snow are out of scope unless asked. What waits is the runs on a phone and the
-checks by eye and ear ([Limitations](#limitations)).
+[Wind](#wind). Footprints in the snow are out of scope unless asked. The user looked at it and listened to it on
+the Mac and the iPhone 17 on 2026-11-08 (fine); what waits is the costs on a phone and the iPhone 18 Pro Max
+([Limitations](#limitations)).
 
 ### Phone budget for the whole stage
 
@@ -656,14 +660,16 @@ without missed intervals with the thermal reaction on.
 | Mac, Vulkan through MoltenVK | every test with the Khronos validation layer, the demo's batch (captures within a mean of 0.04 of Metal's); needs the engine's SDL patch (`cmake/patches/SdlVulkan3d.cmake`: 3D textures 2D-array compatible only as color targets) |
 | iOS Simulator | the test executables (`ios-sim-tests`) |
 | WebAssembly under Node.js | `weather.*` (the headless module, the snow's and the wind's cases too), `audio.weather_audio_*` and `physics.physics_wind_drag` |
-| iPhone | not run |
+| iPhone 17 | the demo's Weather section by hand (the user, 2026-11-08, the demo build of `b91aff0`): looked at in motion and listened to, "yes, everything is fine"; no tests, no costs measured |
+| iPhone 18 Pro Max | not run |
 
 ## Limitations
 
-- Nobody has looked at the clouds, the rain, the snow or the swaying plants in motion, on the Mac's screen or on a
-  phone, or listened to the rain, the wind or the thunder (check mode items `weather.clouds`, `weather.rain`,
-  `weather.snow`, `weather.wind`, `weather.rain_sound`, `weather.wind_sound`); the captures were looked at still,
-  the sound measured.
+- Looked at and listened to once, as a whole: the user looked at the clouds, the rain, the snow and the wind in
+  motion and listened to the rain, the wind and the thunder on the Mac and on the iPhone 17 on 2026-11-08 ("yes,
+  everything is fine"), a report on the section as a whole, not item by item (check mode items `weather.clouds`,
+  `weather.rain`, `weather.snow`, `weather.wind`, `weather.rain_sound`, `weather.wind_sound`); the captures were
+  looked at still, the sound measured. The Physics section's wind was not named in the report.
 - The wind: the plants sway in their vertex shader only (motion vectors, acceleration structures and rays see them
   upright); no slowdowns behind terrain or buildings; no bolts are drawn and the sky cube does not flash; thunder is
   one sound per flash, not echoes from the terrain; `WindDrag` has no torque, lift or shelter.
@@ -677,7 +683,7 @@ without missed intervals with the thermal reaction on.
   shafts of the 2D layer's clouds look like smoky blobs more than rain.
 - Clouds beyond 64 km fade out (the weather map's reach); a camera above the cloud layer is not tuned (the march
   works, the look is not checked).
-- Phone costs are estimates from the Mac; the phone defaults wait for a run on the iPhone 17.
+- Phone costs are estimates from the Mac; the phone defaults wait for a measured run on the iPhone 17.
 - The rain: no roofs beyond 64 m of the camera (the occlusion map's reach: farther surfaces count as open) and
   nothing above 100 m over the camera counts as a roof; the wetness grid covers 1 km around its focus (beyond it an
   estimate without the rain's history); wetness knows no roofs (`Weather::wetness` is open ground; the renderer
@@ -693,4 +699,4 @@ without missed intervals with the thermal reaction on.
   Sleet is a mix of the rain's and the snow's drawing, not a particle of its own. A sunbeam through a gap in the
   clouds shows in the snow's shafts as a bright line.
 - The sound: one set of layers for the listener, not per surface (leaves, puddles, metal); the defaults are
-  procedural noise, measured but not listened to.
+  procedural noise, measured, and listened to by the user on the Mac and the iPhone 17 (2026-11-08: fine).

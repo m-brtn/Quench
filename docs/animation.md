@@ -7,7 +7,8 @@ retargeting at cook time), the cooking of glTF skins and animations in
 `quench_cook`, and GPU skinning in `quench_render`'s retained scene. The engine demo's "Animation" section shows it
 ([Engine demo](demo.md)). Written for the engine: neither game has skeletal animation to move (Ashfall animates one
 mesh procedurally in a vertex shader, TrailForge has none). What was run where is under [Platforms](#platforms);
-nothing in this stage was looked at in motion by the user yet. All documentation: [index](README.md).
+nothing in this stage was looked at in motion by the user yet, apart from the walking crowds of the demo's Navigation
+section (on the Mac and the iPhone 17, 2026-11-08: fine). All documentation: [index](README.md).
 
 ## Use
 

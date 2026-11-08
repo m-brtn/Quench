@@ -5,7 +5,8 @@ memory, streamed music with crossfades, sources the game computes, 3D sound with
 HRTF for headphones), and `quench_audio_device`, the playback device
 on miniaudio with the iOS audio session. The app shell owns one of each ([App shell](app.md)); the engine demo's
 "Audio" section shows them ([Engine demo](demo.md)). What was run where is under [Platforms](#platforms); nothing in
-this stage was listened to by the user yet. All documentation: [index](README.md).
+this stage was listened to by the user yet (the weather's sounds of stage 13 were, on the Mac and the iPhone 17 on
+2026-11-08: fine). All documentation: [index](README.md).
 
 ## Use
 
@@ -369,26 +370,29 @@ the sines it was encoded from.
 ## Platforms
 
 - **macOS**: Core Audio through miniaudio; the tests and the demo's checks run on the null backend or offline. No
-  run in this stage opened the default output (`audio_device.default_output` is opt-in and was not run), and the
-  user has not listened to it yet.
+  run in this stage opened the default output (`audio_device.default_output` is opt-in and was not run). The user
+  listened to the demo's weather sounds (rain, wind, thunder) on 2026-11-08 ("yes, everything is fine"), to nothing
+  else yet.
 - **iOS Simulator**: built and tested (`ios-sim-tests`: the audio and audio device cases, the session category
   case included). No test opened a real output there, so session activation, interruptions and route changes have
   not run; not listened to.
-- **iPhone**: built (`ios-device-release`); not run in this stage. The silent switch, interruptions and route changes
-  need the device and the user.
+- **iPhone**: built (`ios-device-release`); not run in this stage. On the iPhone 17 the user listened to the demo's
+  weather sounds (2026-11-08: fine). The silent switch, interruptions and route changes need the device and the
+  user.
 - **Web**: the mixer, decoders and analysis run under Node.js (`wasm-node`, single-threaded, without device I/O);
   browser output (Web Audio, an `AudioWorklet`, and starting audio only after a user gesture) is not built.
 
 ## Limitations
 
 - **Not listened to**: every check is numeric (levels, frequencies, counters, click steps); how it sounds on the
-  Mac's speakers, headphones and the iPhone is for the user to judge.
+  Mac's speakers, headphones and the iPhone is for the user to judge. Only the weather's sounds have been listened
+  to (the user, on the Mac and the iPhone 17, 2026-11-08: fine).
 - **3D**: panning or the HRTF; no occlusion, obstruction or distance filters; one listener; no virtual voices (a
   stolen or rejected sound is gone).
 - **Weather sounds**: rain, wind and thunder, snow silent, one set of layers for the
   listener, not per surface (leaves, puddles, metal), not placed in 3D; the cover is the camera's
-  (`RenderStats::rainCover`) unless the game gives its own. The default loops are procedural noise, measured, not
-  listened to.
+  (`RenderStats::rainCover`) unless the game gives its own. The default loops are procedural noise, measured, and
+  listened to by the user in the demo on the Mac and the iPhone 17 (2026-11-08: fine).
 - **HRTF**: one generic head (the KU100 dummy head), not chosen per listener; no near-field responses (the same
   filters at any distance); its voices go to the first sounds that need one, not by priority or loudness. The
   table's onsets at -70 degrees are uneven (the far ear under the torso), so directions interpolated near that ring

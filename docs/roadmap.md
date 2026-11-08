@@ -545,8 +545,9 @@ makers can change (14:26). The design below was agreed in the reply to those req
 clouds, their light and shadows, the sky cube), part 2 (rain, wetness, puddles, ripples and the rain's sound) and
 part 3 (snow: flakes, the snow cover building and melting, its shafts, its quiet) and part 4 (wind: gusts and
 eddies, plants swaying, the wind's drag on chosen bodies, lightning and thunder, the wind's sound) are built
-([Weather](weather.md), which says where they differ from the design below); what is left is the runs on a phone and
-the checks by eye and ear. Out of scope unless asked: snow footprints.
+([Weather](weather.md), which says where they differ from the design below). The user looked at them in motion and
+listened to them on the Mac and the iPhone 17 on 2026-11-08 ("yes, everything is fine"); what is left is the costs on
+a phone and the iPhone 18 Pro Max. Out of scope unless asked: snow footprints.
 
 **Goal.** Weather that a game turns on and drives: clouds that form, drift and change shape, light that follows
 them, rain and snow only where clouds drop them, one wind that moves all of it, and sound from the same data. For any
@@ -657,7 +658,9 @@ TODO for stage 13, in this order:
   same way; for part 4 (2026-11-08): a meadow of swaying plants, the Windy storm preset, gusts, turbulence and
   lightning, its batch part with four golden captures per backend, the Physics section's wind and its part, two check
   mode items; open: the costs on the iPhone 17.
-- [ ] Look at it in motion and listen to it, on the Mac and the iPhone (by the user).
+- [x] Look at it in motion and listen to it, on the Mac and the iPhone (by the user): on the Mac and the iPhone 17,
+  2026-11-08, "yes, everything is fine" (the clouds, the rain, the snow, the wind; the rain's, the wind's and the
+  thunder's sound). Not on the iPhone 18 Pro Max.
 
 ## What is next
 
@@ -674,8 +677,9 @@ The queue the user set on 2026-11-07, in this order:
    its run on an iPhone is open, with the user); what is left of them in
    [Other modules](#other-modules-when-a-game-needs-them).
 5. Stage 13, weather (above): part 1, the clouds and their light, and part 2, rain, wetness, puddles, ripples and
-   the rain's sound, built 2026-11-07, part 3, snow, and part 4, wind, 2026-11-08 ([Weather](weather.md)); its
-   phone runs and the checks by eye and ear are open.
+   the rain's sound, built 2026-11-07, part 3, snow, and part 4, wind, 2026-11-08 ([Weather](weather.md)); looked
+   at and listened to by the user on the Mac and the iPhone 17 (2026-11-08: fine); its costs on a phone and the
+   iPhone 18 Pro Max are open.
 
 What else stays open, in the order it is useful (not scheduled; the user decides):
 
@@ -686,7 +690,8 @@ What else stays open, in the order it is useful (not scheduled; the user decides
    path tracer, the probe cascades, the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, its lamp
    shadow maps on SDL GPU, the tunnel for 10 minutes with Adapt to heat, the navigation crowd in motion, the clouds,
    the rain, the snow and the plants in the wind in motion, the rain, the wind and the thunder by ear, the frame
-   rate and the layout on the phone;
+   rate and the layout on the phone; the user looked at the Navigation and Weather sections and listened to the
+   weather on the Mac and the iPhone 17 on 2026-11-08, fine, as a whole;
    [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.10.0 code (on the
    iPhone 17 last with the stage 11 code), on the iPhone 18 Pro Max the stage 11 and 12 runs (done on the iPhone 17),
    Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes, background).
@@ -720,8 +725,9 @@ What else stays open, in the order it is useful (not scheduled; the user decides
 
 Navigation is built (2026-11-07, Recast & Detour: [Navigation](navigation.md)). Its remaining work: crossings of
 off-mesh links that a game drives (Detour moves agents along a straight line), navmesh tiles streamed by distance,
-compressed layers, the crowd's update on jobs, a cooked level in the demo, and a look in motion and a run on the
-iPhone. Flecs as an optional ECS module. Tracy profiling, listed here before, was built on 2026-11-07
+compressed layers, the crowd's update on jobs, a cooked level in the demo, and its tests and costs on an iPhone (the
+user looked at the demo's section in motion on the Mac and the iPhone 17 on 2026-11-08: fine). Flecs as an optional
+ECS module. Tracy profiling, listed here before, was built on 2026-11-07
 ([Performance](performance.md#profiling-with-tracy)).
 
 ## Later platforms
@@ -755,7 +761,7 @@ Priorities from the user's request of 2026-11-05.
 | Engine demo: interactive sections for every feature (added 2026-11-05) | after the stages | 10 (done; started in 5; not yet run on the iPhone in its finished form) |
 | Full ray tracing: reflections, indirect light, local light shadows, denoising, a path tracer (added 2026-11-06) | after the stages | 11 (done; run on the iPhone 17, not yet looked at in motion) |
 | Area lights, anisotropic GGX, a demo tunnel with lamps of every shape and metal, wet, rubber and plastic materials (added 2026-11-06) | after stage 11 | 12 (done; run on the iPhone 17, not yet looked at in motion or on the phone's screen) |
-| Weather: rain, snow, sun and wind, volumetric clouds that morph and light that follows them, rain under a single cloud in a blue sky, puddle ripples, replaceable weather sounds (added 2026-11-07) | after the queue in "What is next" | 13 (parts 1 to 4, the clouds, their light, the rain and its sound, the snow, the wind and thunder, built; not yet run on the iPhone, looked at in motion or listened to) |
+| Weather: rain, snow, sun and wind, volumetric clouds that morph and light that follows them, rain under a single cloud in a blue sky, puddle ripples, replaceable weather sounds (added 2026-11-07) | after the queue in "What is next" | 13 (parts 1 to 4, the clouds, their light, the rain and its sound, the snow, the wind and thunder, built; looked at and listened to by the user on the Mac and the iPhone 17; costs on a phone not measured) |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under

@@ -31,8 +31,10 @@ screen. The headless modules
 also pass as single-threaded WebAssembly under Node.js (Emscripten 6.0.13; the cases that need threads are skipped
 there).
 Nothing of the engine has run in a browser.
-Audio (stage 7, see "Audio" below) has run only on the null backend and offline, on the Mac, in the iOS Simulator,
-on the iPhone (the device test app, 2026-11-06) and under Node.js; nothing was listened to. Animation and GPU
+Audio's tests (stage 7, see "Audio" below) have run only on the null backend and offline, on the Mac, in the iOS
+Simulator, on the iPhone (the device test app, 2026-11-06) and under Node.js; the user listened to the demo's
+weather sounds on the Mac and the iPhone 17 (2026-11-08: fine), to nothing else. Navigation and the weather ran on
+the iPhone 17 only by hand, in the demo (the user, 2026-11-08; see "Navigation" and "Weather" below). Animation and GPU
 skinning (stage 8, see "Animation" below) ran on the Mac, in the iOS Simulator, on the iPhone (the device test app
 and the demo's benchmark, 2026-11-06) and (without rendering) under Node.js. The native Metal backend (stage 9, the
 default on Apple platforms since 2026-11-07; see "Native Metal backend" below) ran on the Mac, in the iOS Simulator
@@ -226,9 +228,9 @@ engine compiles only Core Audio and null on Apple platforms, and no device I/O i
 
 | Where | Output | Run so far |
 |---|---|---|
-| Mac | Core Audio (miniaudio, frameworks linked at build time) | tests on the null backend and offline (`audio.*`, `audio_device.null_device`, the demo's audio check with `--audio-capture`); the default output not opened by any test (`audio_device.default_output` is opt-in), not listened to |
+| Mac | Core Audio (miniaudio, frameworks linked at build time) | tests on the null backend and offline (`audio.*`, `audio_device.null_device`, the demo's audio check with `--audio-capture`); the default output not opened by any test (`audio_device.default_output` is opt-in); the demo's weather sounds (rain, wind, thunder) listened to by the user (2026-11-08: fine), nothing else |
 | iOS Simulator | Core Audio; the engine sets the `AVAudioSession` category and activates the session when a real output opens (the null backend leaves the session alone) | `ios-sim-tests`: the audio cases, `audio_device.null_device` and `audio_device.audio_session_category` (sets the playback and ambient categories, reads them back and reads the route); no test opened a real output, so activation, interruptions and route changes did not run; not listened to |
-| iPhone | as in the Simulator | the device test app, 2026-11-06: the audio cases, `audio_device.null_device` and `audio_device.audio_session_category` (route: the speaker) passed on both GPU backends; the demo's audio section on the null backend; no real output opened, not listened to. Needs the user: what plays with the Ring/Silent switch on silent (the default `Ambient` category is silenced), interruptions (a call, Siri, an alarm), route changes (headphones, Bluetooth), background and foreground |
+| iPhone | as in the Simulator | the device test app, 2026-11-06: the audio cases, `audio_device.null_device` and `audio_device.audio_session_category` (route: the speaker) passed on both GPU backends; the demo's audio section on the null backend; no test opened a real output. On the iPhone 17 the user listened to the demo's weather sounds (rain, wind, thunder; 2026-11-08: fine), nothing else. Needs the user: what plays with the Ring/Silent switch on silent (the default `Ambient` category is silenced), interruptions (a call, Siri, an alarm), route changes (headphones, Bluetooth), background and foreground |
 | Web | none (built with `MA_NO_DEVICE_IO`) | the mixer, decoders and analysis under Node.js (`wasm-node`, single-threaded; the thread stress case is skipped). Browser output needs a device backend (miniaudio's Web Audio one or SDL's audio) and starts only after a user gesture: not built |
 | Windows, Linux, Android | miniaudio's defaults for the platform (not configured or built yet) | nothing |
 
@@ -255,7 +257,8 @@ the job system, and inside `NavMesh::update()` where there are no worker threads
 |---|---|
 | Mac | `navigation.*` and the navmesh cook cases in `headless`, `debug`, `release`, `asan` and `tsan`; the demo's Navigation section and its capture on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK (offscreen) |
 | iOS Simulator | `ios-sim-tests`: `navigation.*` |
-| iPhone | nothing. Needs the user: the section in motion, the touch controls of its compact layout |
+| iPhone 17 | the demo's Navigation section by hand (the user, 2026-11-08, the demo build of `b91aff0`): looked at in motion, "yes, everything is fine"; the tests not run there, nothing measured |
+| iPhone 18 Pro Max | nothing |
 | Web | `navigation.*` under Node.js (`wasm-node`, single-threaded: the builds run inside `update()`); no rendering |
 | Windows, Linux, Android | nothing |
 
@@ -268,7 +271,8 @@ thunder included) is `quench_audio`'s and `WindDrag` `quench_physics`' ([Weather
 |---|---|
 | Mac | `weather.*` in `headless`, `debug`, `release`, `asan` and `tsan`; `render.renderer_clouds_shadow_the_ground` and the GPU cases `texture_3d_from_layers` and `cube_faces`, `render.renderer_rain_wets_the_open_ground`, `renderer_rain_shafts_from_afar`, `renderer_snow_covers_the_open_ground`, `renderer_snow_shafts_from_afar`, `renderer_wind_sways_plants` and `renderer_lightning_lights_the_storm` on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK; the demo's Weather section, its `weather`, `rain`, `snow` and `wind` parts and their fourteen captures and the `physics_wind` part on all three (offscreen); `audio.weather_*` (the mix, the wind, the thunder and the default sounds, by measurement); `physics.physics_wind_drag`; the costs on the native backend (offscreen) |
 | iOS Simulator | `ios-sim-tests`: `weather.*`, `physics.physics_wind_drag` and the GPU and render cases on both backends |
-| iPhone | nothing. Needs the user: the clouds, the rain, the snow and the plants in the wind in motion on the phone's screen, the rain, the wind and the thunder by ear, the phone defaults' cost |
+| iPhone 17 | the demo's Weather section by hand (the user, 2026-11-08, the demo build of `b91aff0`): the clouds, the rain, the snow and the wind looked at in motion, the rain, the wind and the thunder listened to, "yes, everything is fine"; the tests and the phone defaults' cost not run there |
+| iPhone 18 Pro Max | nothing |
 | Web | `weather.*` and `physics.physics_wind_drag` under Node.js (`wasm-node`); no rendering |
 | Windows, Linux, Android | nothing |
 

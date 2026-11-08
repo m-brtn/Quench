@@ -1078,7 +1078,8 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   instance whose palette changed is skinned every frame (an unchanged one is copied from the frame before; no
   skinning LOD); the output buffers grow with the skinned vertices drawn (two copies).
 - Clouds ([Weather](weather.md#limitations)): the traced effects see an overcast amount, not single clouds; the
-  cloud shadow map covers 24 km on the plane y = 0; nobody has looked at them in motion.
+  cloud shadow map covers 24 km on the plane y = 0; looked at in motion by the user in the demo on the Mac and the
+  iPhone 17 (2026-11-08: fine), their cost on a phone not measured.
 - No MSAA, no image-based lighting from a cubemap (the sky model is the environment; with clouds the sky cube is the
   sky reflection's, not the ambient light's), shadows of local and area
   lights only by rays or shadow maps (at most 4), at most 16 local lights per frame (8 of them area lights) and no clustered or

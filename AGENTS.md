@@ -26,7 +26,8 @@ for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and a
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
 white shafts, quiet; 2026-11-08) and 4 (wind: gusts and eddies, plants' sway, drag on chosen bodies, lightning,
-thunder, the wind's sound; 2026-11-08) except their runs on a phone and the checks by eye and ear; the
+thunder, the wind's sound; 2026-11-08) except their costs on a phone and their runs on the iPhone 18 Pro Max (the
+user looked at them and listened to them on the Mac and the iPhone 17 on 2026-11-08: fine); the
 plan the user left (stages 6 to 10) and stages 11 and 12 have been
 worked through, apart from the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the
 iPhone 18 Pro Max and the checks by eye and ear:
@@ -96,7 +97,8 @@ on Recast & Detour, 2026-11-07, the user's queue item 4: tiled navmeshes built a
 frames or cooked into `.qnav` assets, area types with costs, off-mesh links, obstacles and geometry changes that
 rebuild only their tiles, paths, raycasts and random points, crowds with avoidance and link events, debug geometry;
 run on the Mac, in the iOS Simulator and as WebAssembly under Node.js, the demo's Navigation section offscreen on the
-three backends; nobody has looked at it in motion), `quench_weather` (headless, 2026-11-07, stage 13 part 1: a
+three backends; the user looked at that section in motion on the Mac and the iPhone 17 on 2026-11-08: "yes,
+everything is fine"; its tests not run on an iPhone), `quench_weather` (headless, 2026-11-07, stage 13 part 1: a
 deterministic weather map of cloud coverage, type, precipitation and cirrus that the wind moves and that changes
 shape, with cells a game places, queries for precipitation, cover and wind; since part 2 the wetness of the ground
 it remembers around a focus, wetting and drying deterministically; since part 3 a temperature that turns it to snow
@@ -116,8 +118,9 @@ clouds and the scene, off by default), `WindDrag` in `quench_physics` (the wind'
 the weather's sound (`audio::WeatherAudio`: light, heavy, distant and roof layers, a light and a strong wind,
 thunder delayed by the distance, replaceable, procedural defaults cooked by `quench_weather_sounds()`; snow is
 quiet); the weather run on the Mac's three backends offscreen, in the iOS Simulator's tests and, the headless part,
-as WebAssembly under Node.js; not on a phone; nobody has looked at it in motion or listened to the rain, the wind or
-the thunder)
+as WebAssembly under Node.js; the user looked at it in motion and listened to the rain, the wind and the thunder in
+the demo on the Mac and the iPhone 17 on 2026-11-08: "yes, everything is fine"; its tests and costs not run on a
+phone, nothing on the iPhone 18 Pro Max)
 and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons, clips and navmeshes).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (finished in stage 10: a section per feature,
@@ -129,9 +132,11 @@ waiting for a person (`checks.json` in the user directory, kept across launches)
 `tools/new_game.py` start a new game. Tests run on the Mac (Metal, and Vulkan through MoltenVK), in the iOS Simulator,
 on the user's iPhones (one signed test app; signed by the user's paid team; on both backends, 2026-11-06: the stage
 10 code on the iPhone 18 Pro Max and the iPhone 17, the stage 11 code on the iPhone 17) and, for the headless modules, as WebAssembly under Node.js. HDR output was looked at on the
-iPhone (the user, 2026-11-05: "everything is fine"), never on a Mac display (this Mac's has no HDR range). Audio has
-run only on miniaudio's null backend and offline (mix checks by measurement); nobody has listened to it yet.
-Animation is checked by numbers and still captures; nobody has looked at it in motion yet. The native Metal backend,
+iPhone (the user, 2026-11-05: "everything is fine"), never on a Mac display (this Mac's has no HDR range). Audio's
+checks run on miniaudio's null backend and offline (mix checks by measurement); the user listened to the demo's
+weather sounds on the Mac and the iPhone 17 (2026-11-08: fine), to nothing else of it yet.
+Animation is checked by numbers and still captures; apart from the Navigation section's walking crowds (the user,
+2026-11-08) nobody has looked at it in motion yet. The native Metal backend,
 ray tracing and MetalFX ran on the Mac and on both iPhones (2026-11-06: the device tests, the demo's benchmarks at
 120 Hz; ray-traced shadows with occlusion 8.0 ms GPU p50 on the iPhone 18 Pro Max, over the phone's 7.5 ms budget,
 about 100 frames per second on the iPhone 17), the native

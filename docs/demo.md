@@ -192,7 +192,7 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
 
 - **Tour** (`--tour [SECONDS]`, default 8; the Tour button takes the Tour time of the settings): every section in turn for
   SECONDS each, round and round, from the current one. Any key, click, touch, button or stick stops it.
-- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 49
+- **Check mode** (`--checks`): the checks of the devlog that wait for a person ("Checks waiting for the user"), 51
   items, one at a time: it switches to the item's section, sets it up (a camera, a setting) and says what to look at
   or listen to. OK, Problem or Skip, with a note, marks the item and goes to the next; the arrows go back and
   forward, End stops. Every mark is written to `checks.json` in the user directory at once, with the backend and the
@@ -222,7 +222,9 @@ The menu's buttons or a flag start them; one runs at a time, and its window at t
   jitter, smearing or seams between the grass's patches; the rain slanting and swirling; lightning lighting the
   clouds and the meadow) and by ear (`weather.wind_sound`: the wind rising and falling with the gusts without an
   audible loop, thunder a second or more after a near flash and duller from a far one, no clipping over the rain),
-  the frame rate and the layout on the device.
+  the frame rate and the layout on the device. The user looked at the Navigation and Weather sections in motion and
+  listened to the weather on the Mac and on the iPhone 17 on 2026-11-08 ("yes, everything is fine"), a report on
+  the sections as a whole; their items stay in the list for a look item by item.
 - **Benchmark** (`--benchmark-all [SECONDS]`, default 5; the Benchmark button: 5 s): every section measured in turn
   as `scenarios/benchmark.txt` measures it: a warm-up of a second (or SECONDS, if shorter) and until the section's
   assets are in (at most 6 s), then a perf region of SECONDS in real time (`App::beginPerf` .. `endPerf`). One report
