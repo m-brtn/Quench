@@ -5,7 +5,7 @@ section materials
 
 wait 0.1
 expect section == 0
-expect sections == 14
+expect sections == 15
 tap ]
 until section == 1 1
 tap PageDown
@@ -34,7 +34,7 @@ gamepad button rightshoulder tap
 until section == 8 1
 gamepad button rightshoulder tap
 until section == 9 1
-# The eleventh to fourteenth sections have no key; the shoulders reach them.
+# The eleventh to fifteenth sections have no key; the shoulders reach them.
 gamepad button rightshoulder tap
 until section == 10 1
 gamepad button rightshoulder tap
@@ -44,9 +44,11 @@ until section == 12 1
 gamepad button rightshoulder tap
 until section == 13 1
 gamepad button rightshoulder tap
+until section == 14 1
+gamepad button rightshoulder tap
 until section == 0 1
 gamepad button leftshoulder tap
-until section == 13 1
+until section == 14 1
 gamepad detach
 until gamepad == 0 2
 

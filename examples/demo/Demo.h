@@ -149,6 +149,7 @@ std::unique_ptr<Section> makeRayTracingSection();
 std::unique_ptr<Section> makeTunnelSection();
 std::unique_ptr<Section> makeNavigationSection();
 std::unique_ptr<Section> makeWeatherSection();
+std::unique_ptr<Section> makeParticlesSection();
 
 // ---- helpers shared by the sections (Common.cpp)
 

@@ -1,0 +1,68 @@
+# The cost of the particles (docs/performance.md, "Particles"): the Particles section's dusk scene (11 systems, about
+# 6900 particles, 20 trails of about 8000 strip vertices together) with every system, on the GPU, on the CPU, at
+# density 0.5 and 0.25, and each part alone; 3 s per setting after 1 s to settle. The GPU busy time per range comes
+# from the line after each perf line (particles_sim: the compute step; particles: the draws of the particles, the
+# trails and the heads; hdr: the main pass). Offscreen, at any size, for example on the native Metal backend:
+#   quench-demo --gpu-backend metal --frame-size 1920x1080 --audio-device null --script particles_cost.txt
+section particles
+reset_section
+set dither 0
+set restart 1
+wait 4
+
+set simulation off
+wait 1
+perf_begin particles_off
+wait 3
+perf_end
+
+set simulation gpu
+wait 1
+perf_begin particles_gpu
+wait 3
+perf_end
+
+set simulation cpu
+wait 1
+perf_begin particles_cpu
+wait 3
+perf_end
+set simulation gpu
+
+set density 0.5
+wait 5
+perf_begin particles_half
+wait 3
+perf_end
+
+set density 0.25
+wait 5
+perf_begin particles_quarter
+wait 3
+perf_end
+set density 1
+wait 5
+
+# Each part alone: the light streams (trails, sparkles, dust), the sparkle field, the campfire.
+set field 0
+set fireflies 0
+set fire 0
+wait 1
+perf_begin particles_streams
+wait 3
+perf_end
+
+set streams 0
+set field 1
+wait 1
+perf_begin particles_field
+wait 3
+perf_end
+
+set field 0
+set fire 1
+wait 1
+perf_begin particles_fire
+wait 3
+perf_end
+quit

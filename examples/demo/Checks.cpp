@@ -260,6 +260,14 @@ constexpr std::array kItems{
               "km): a sharp crack and a long rumble when it is near, a low distant roll when it is far. Lightning "
               "off: no thunder; Weather sound off: silence within a second.",
               "set preset windy_storm\nset view meadow\nset sound 1"},
+    CheckItem{"particles.motion", "particles", "Particles and trails in motion",
+              "The light streams weave through the sky: each ribbon is a smooth curve without kinks or steps, bright "
+              "at its head and thinner and fainter toward its tail, and it sheds sparkles that twinkle and drift "
+              "down; nothing flickers, pops or smears when the camera turns. The points over the meadow twinkle "
+              "softly, the fireflies wander and pulse, the campfire's sparks fly up drawn out along their motion "
+              "and its smoke drifts downwind; no particle shows a hard edge where it meets the ground or a stone. "
+              "Simulation CPU looks the same; Dusk 0 thins the field.",
+              ""},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",

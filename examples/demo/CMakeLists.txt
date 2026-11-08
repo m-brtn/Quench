@@ -153,6 +153,7 @@ quench_add_game(quench_demo
         sections/InputSection.cpp
         sections/MaterialsSection.cpp
         sections/NavigationSection.cpp
+        sections/ParticlesSection.cpp
         sections/PhysicsSection.cpp
         sections/PostSection.cpp
         sections/RayTracingSection.cpp

@@ -447,9 +447,11 @@ void DemoGame::compactLayout(App& app) {
         ImGui::SetNextWindowBgAlpha(0.9f);
         if (m_focusMenuNow) ImGui::SetNextWindowFocus();
         if (ImGui::Begin("##sections", nullptr, kSheetFlags | navFlags())) {
+            // The buttons first: a phone in landscape has no room for the whole list above them.
+            modeButtons();
+            ImGui::Separator();
             sectionList(true);
             ImGui::Separator();
-            modeButtons();
             performancePanel(app);
             logPanel();
             dragScroll();

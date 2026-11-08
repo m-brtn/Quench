@@ -44,4 +44,5 @@ include rain.txt
 include snow.txt
 include wind.txt
 include physics_wind.txt
+include particles.txt
 quit

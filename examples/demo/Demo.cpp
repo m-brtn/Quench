@@ -127,7 +127,7 @@ Result<void> DemoGame::init(App& app) {
     for (const SectionFactory make :
          {makeMaterialsSection, makeShadowsSection, makeSkySection, makePostSection, makeHdrSection, makePhysicsSection,
           makeInputSection, makeAssetsSection, makeAudioSection, makeAnimationSection, makeRayTracingSection,
-          makeTunnelSection, makeNavigationSection, makeWeatherSection}) {
+          makeTunnelSection, makeNavigationSection, makeWeatherSection, makeParticlesSection}) {
         Slot slot{.make = make, .section = make()};
         slot.home = slot.section->camera;
         m_slots.push_back(std::move(slot));

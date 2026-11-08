@@ -1,0 +1,81 @@
+# Particles (ctest: demo_particles_<backend>, a part of batch.txt and batch_native.txt): the meadow at dusk with three
+# light streams (20 trails that shed sparkles), the sparkle field, fireflies and the campfire's sparks, flames and
+# smoke, simulated on the GPU by compute. The section restarts its systems and trails and the stream clock, so every
+# capture shows the same particles in every run: the dusk scene 4 s after the restart (demo_particles.png) and the
+# campfire close up (demo_particles_fire.png). Then the CPU simulation, the density, the switches and the burst by
+# numbers.
+section particles
+reset_section
+reset_camera
+
+set dither 0
+set wind 3
+set restart 1
+wait 4.004
+expect simulation == 1
+expect scene_systems == 11
+expect scene_trails == 20
+expect particle_systems == 11
+expect trails == 20
+expect trail_vertices > 1500
+expect stream_sparkles > 200
+expect field_alive > 3500
+expect fireflies_alive > 40
+expect sparks_alive > 50
+expect smoke_alive > 20
+expect particles > 5000
+windows off
+capture demo_particles.png
+windows on
+
+# The campfire from close by: the sparks drawn out along their motion, the flames, the lit smoke drifting downwind,
+# the field's points near the camera large and soft.
+set view fire
+wait 0.504
+windows off
+capture demo_particles_fire.png
+windows on
+set view wide
+
+# The CPU simulation: the same systems, restarted on the CPU.
+set simulation cpu
+wait 1.004
+expect simulation == 2
+expect particle_systems == 11
+expect particles > 1500
+set simulation gpu
+wait 0.504
+expect simulation == 1
+
+# A burst of 150 sparks on top of the fire's rate.
+mark sparks_alive
+set burst 150
+wait 0.104
+expect d_sparks_alive > 120
+
+# Density 0.25: a quarter of the field's and the streams' dust rate.
+set density 0.25
+wait 5.004
+expect field_alive < 1600
+set density 1
+
+# The streams off: their trails, sparkles and dust hidden (neither drawn nor stepped).
+set streams 0
+wait 0.104
+expect trails == 0
+expect particle_systems == 5
+set streams 1
+wait 0.104
+expect trails == 20
+expect particle_systems == 11
+
+# Off: nothing drawn, nothing stepped.
+set simulation off
+wait 0.104
+expect simulation == 0
+expect particle_systems == 0
+expect particles == 0
+set simulation gpu
+wait 0.104
+expect simulation == 1
+quit

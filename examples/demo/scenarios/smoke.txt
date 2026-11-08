@@ -2,7 +2,7 @@
 # the frame at 1.5 s (the HDR output section, in SDR).
 
 wait 0.2
-expect sections == 14
+expect sections == 15
 section materials
 wait 0.25
 expect draws > 0
@@ -49,4 +49,9 @@ section navigation
 until nav_ready == 1 5
 expect nav_agents == 12
 expect nav_lost == 0
+# The particles step on the GPU by compute (or on the CPU) and draw; the light streams' trails too.
+section particles
+wait 0.5
+expect particle_systems >= 9
+expect trails == 20
 quit

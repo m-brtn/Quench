@@ -127,6 +127,12 @@ void effectsPanel(Context& c, const render::RenderSettings& settings, const rend
     ImGui::TextWrapped("Anti-aliasing: %s", antiAliasingName(e.antiAliasing));
     if (settings.upscaling != render::Upscaling::Bilinear || e.upscaling != render::Upscaling::Bilinear)
         ImGui::TextWrapped("Upscaling: %s", upscalingName(e.upscaling));
+    if (scene.particleSystemCount() > 0 || scene.trailCount() > 0)
+        ImGui::TextWrapped("Particles: %s, %u systems, %u alive in %u slots; %u trails, %u vertices",
+                           e.particles == render::ParticleSimulation::Gpu   ? "GPU (compute)"
+                           : e.particles == render::ParticleSimulation::Cpu ? "CPU"
+                                                                            : "off",
+                           s.particleSystems, s.particles, s.particleSlots, s.trails, s.trailVertices);
     ImGui::TextWrapped("Bloom: %s, sky: %s", e.bloom ? "on" : "off", settings.sky ? "on" : "off");
     ImGui::TextWrapped("Formats: HDR %s, depth %s", gpu::formatInfo(c.renderer.hdrFormat()).name,
                        gpu::formatInfo(c.renderer.depthFormat()).name);
