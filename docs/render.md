@@ -264,7 +264,7 @@ where the light fades to zero.
   the surface or on the dark side), so the penumbra widens away from the caster; the temporal denoiser filters it like
   the other local lights. The visibility multiplies the LTC light (the light's mean visibility over its area, not
   weighted by where on the shape the light comes from). Without ray tracing they are unshadowed, or since
-  2026-11-07 (after 0.10.0) take shadow maps soft by their shape where `localShadowMapSize` is set
+  2026-11-07 (0.11.0) take shadow maps soft by their shape where `localShadowMapSize` is set
   ([below](#local-light-shadow-maps)).
 - **Path tracer**: next-event estimation picks one of the lights at random and an area light's point uniformly over
   its area (a tube over its facing half), and BRDF samples that hit a shape count with multiple importance sampling
@@ -354,7 +354,7 @@ by default until measured on the iPhone, and each runs from the prepass at the r
   it with the standard surface's BRDF: the emissive light, the sun with a shadow ray, the local lights without shadow
   rays, and the probe grid or the sky's ambient light. Its albedo, roughness, metallic, normal, emissive and
   anisotropy are the standard surface's from the material's values, or, for a surface whose hits are in the game's
-  `quench_add_ray_hits()` set (since 2026-11-07, after 0.10.0; "Surface shaders" below), its own function's. The
+  `quench_add_ray_hits()` set (since 2026-11-07, 0.11.0; "Surface shaders" below), its own function's. The
   normal map (texture 2) is read in the raster's frame (`quenchNormalFromMap`: the vertex tangent made perpendicular
   to the interpolated normal of the side the ray hit, the bitangent's sign turned by a mirroring transform); a mapped
   normal that faces away from the ray's origin is dropped for the interpolated one. Since 2026-11-07 (0.10.0)
@@ -454,7 +454,7 @@ passes' GPU costs at 1080p are in [Performance](performance.md#measurements).
 
 ### Local light shadow maps
 
-Since 2026-11-07 (0.10.0; area lights since the same day, after 0.10.0). Where `localLightShadows` cannot be ray
+Since 2026-11-07 (0.10.0; area lights since the same day, 0.11.0). Where `localLightShadows` cannot be ray
 traced (SDL GPU, the default off Apple platforms, and the native backend without `gpu::Caps::rayTracing`),
 `RenderSettings::localShadowMapSize` (0, the default: off; else 64..4096 texels per side) gives the same lights
 shadow maps: the nearest `localLightShadows` (at most 4) point, spot and area lights with `castsShadows`, chosen as
@@ -826,7 +826,7 @@ scene.addMaterial({.surface = checker, .params = {...}});
 
 ### Ray hits of surfaces
 
-Since 2026-11-07 (after 0.10.0) a surface's function can also shade its ray hits: the traced reflections, the indirect
+Since 2026-11-07 (0.11.0) a surface's function can also shade its ray hits: the traced reflections, the indirect
 light, the probe grid's rays and the path tracer, where the hits otherwise take the standard surface from the
 material's values ("Ray-traced lighting" above). The game lists its surface files in one set; the engine's tracing
 entries are compiled again with them at build time, and the hit calls the function of the instance's surface through

@@ -152,7 +152,7 @@ the engine's tests and the demo's new "Assets" section. Described in [Jobs, asse
   pipelines again behind the same handles; after a compile error the old code stays. Checked by
   `gpu_device.shader_hot_reload` on the Mac's three backends and by an edit of the renderer's tone mapping in the
   running demo (offscreen) on SDL GPU and the native backend ([App shell](app.md#shader-hot-reload)).
-- Done (2026-11-07, after 0.10.0, on the Mac): Basis Universal textures, one cooked set for every device. The cook
+- Done (2026-11-07, 0.11.0, on the Mac): Basis Universal textures, one cooked set for every device. The cook
   writes ETC1S or UASTC KTX2 files (`--format basis`, `quench_cook_assets(TEXTURE_FORMAT basis BASIS_CODEC ...)`;
   by default UASTC for data and normal maps, ETC1S for color), and the runtime transcodes them on the loading job
   to what `gpu::Caps` allow: UASTC to ASTC 4x4, BC7 or ETC2, ETC1S to ETC2, ASTC 4x4 or BC7, otherwise RGBA8 with a
@@ -391,7 +391,7 @@ scaler.
   linear hit array, read in the raster's tangent frame, by variants of the tracing passes used only in frames where
   an instance has a normal map ([Render module](render.md#ray-traced-lighting)); test
   `renderer_ray_hits_read_normal_maps`.
-- [x] A game's surface shaders in ray hits (stage 11's remaining work; 2026-11-07, after 0.10.0, on the Mac):
+- [x] A game's surface shaders in ray hits (stage 11's remaining work; 2026-11-07, 0.11.0, on the Mac):
   `quench_add_ray_hits()` compiles the tracing entries again with the game's surface files and a generated switch
   over them; `SurfaceDesc::rayHitShaders` and `rayHit` select the function per surface, the standard surface stays
   the default; `QUENCH_SURFACE_HIT` in the surface file; the demo's checker in the traced mirror (native batch part
@@ -441,7 +441,7 @@ scaler.
   0.68, 0.43, 0.32 ms in turns, and light settles to within 10 % in 70, 166, 276, 629 frames
   ([Performance](performance.md#probe-grid-in-turns)). Open: the run on the iPhone 17
   (`scenarios/raytracing_phone_probes.txt`) and the phone default chosen from it; priority by distance or change.
-- [x] Probe cascades, relocation and classification (stage 11's remaining work; 2026-11-07, after 0.10.0, on the
+- [x] Probe cascades, relocation and classification (stage 11's remaining work; 2026-11-07, 0.11.0, on the
   Mac): `RenderSettings::probeCascades` (1 to 4 grids of 16 x 8 x 16 around the same point, each twice the spacing
   of the one before, blended over the last cell), `probeRelocation` (probes move out of geometry within their cell)
   and `probeClassification` (probes with no surface near them left out: a quarter of their rays, no light), all off
@@ -522,7 +522,7 @@ BRDF; own procedural content only. Released with 0.10.0 ([docs/releases/v0.10.0.
 - [x] Surface shader variants without the area light and anisotropy paths, for frames and materials that do not
   use them (`surface_basic_fs`, `SurfaceDesc::basicFragmentShader`; after stage 12, 2026-11-06): such a frame is
   back to before stage 12 within 0.6% ([Performance](performance.md#the-tunnel)).
-- [x] Shadows of area lights without ray tracing (stage 12's remaining work; 2026-11-07, after 0.10.0, on the Mac):
+- [x] Shadows of area lights without ray tracing (stage 12's remaining work; 2026-11-07, 0.11.0, on the Mac):
   with `RenderSettings::localShadowMapSize` (off by default) an area light takes a cube of shadow maps in its own
   frame (five for a one-sided rect or disk), and its penumbra follows the shape (percentage-closer soft shadows with
   the shape's points as the kernel, each weighted by its light at the receiver). Read in a screen-space pass at half
@@ -536,7 +536,7 @@ BRDF; own procedural content only. Released with 0.10.0 ([docs/releases/v0.10.0.
   aluminium, the puddle): by the user (the demo's check mode).
 - [ ] The tunnel on the iPhone 18 Pro Max.
 
-## Stage 13: weather (parts 1 and 2, clouds and rain, built 2026-11-07; parts 3 and 4, snow and wind, 2026-11-08)
+## Stage 13: weather (parts 1 and 2, clouds and rain, built 2026-11-07; parts 3 and 4, snow and wind, 2026-11-08; version 0.11.0)
 
 Requested by the user on 2026-11-07, to come after the queue in "What is next": rain, snow, sun and wind, with
 raindrop ripples on puddles (14:16); light that changes with the clouds, and volumetric clouds that morph (14:18); rain
@@ -547,7 +547,8 @@ part 3 (snow: flakes, the snow cover building and melting, its shafts, its quiet
 eddies, plants swaying, the wind's drag on chosen bodies, lightning and thunder, the wind's sound) are built
 ([Weather](weather.md), which says where they differ from the design below). The user looked at them in motion and
 listened to them on the Mac and the iPhone 17 on 2026-11-08 ("yes, everything is fine"); what is left is the costs on
-a phone and the iPhone 18 Pro Max. Out of scope unless asked: snow footprints.
+a phone and the iPhone 18 Pro Max. Out of scope unless asked: snow footprints. Released with 0.11.0
+([docs/releases/v0.11.0.md](releases/v0.11.0.md)).
 
 **Goal.** Weather that a game turns on and drives: clouds that form, drift and change shape, light that follows
 them, rain and snow only where clouds drop them, one wind that moves all of it, and sound from the same data. For any
@@ -664,8 +665,9 @@ TODO for stage 13, in this order:
 
 ## What is next
 
-The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, stage 11 with 0.9.0, and stage
-12 (area lights, anisotropy, the tunnel) with most of the earlier stages' remaining work with 0.10.0.
+The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, stage 11 with 0.9.0, stage 12
+(area lights, anisotropy, the tunnel) with most of the earlier stages' remaining work with 0.10.0, and the user's
+queue below with stage 13 (weather) with 0.11.0.
 
 The queue the user set on 2026-11-07, in this order:
 
@@ -692,9 +694,10 @@ What else stays open, in the order it is useful (not scheduled; the user decides
    the rain, the snow and the plants in the wind in motion, the rain, the wind and the thunder by ear, the frame
    rate and the layout on the phone; the user looked at the Navigation and Weather sections and listened to the
    weather on the Mac and the iPhone 17 on 2026-11-08, fine, as a whole;
-   [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.10.0 code (on the
-   iPhone 17 last with the stage 11 code), on the iPhone 18 Pro Max the stage 11 and 12 runs (done on the iPhone 17),
-   Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes, background).
+   [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.11.0 code (on the
+   iPhone 17 last on 2026-11-07 with the native default's code, not with the weather), on the iPhone 18 Pro Max the
+   stage 11 and 12 runs (done on the iPhone 17), Core Audio output on the Mac, the audio session on the iPhone
+   (silent switch, interruptions, routes, background).
 2. **Defaults from those runs:** the ray tracing section's phone defaults are chosen (stage 11, on the iPhone 17);
    the native Metal backend is the default on Apple platforms since 2026-11-07 (the user's decision; it ran the
    device tests and the benchmarks on both iPhones on 2026-11-06 as an option; open: the device test app, the

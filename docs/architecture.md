@@ -9,7 +9,7 @@ system, `quench_assets`, `quench_cook` and shader hot reload (see "Threads and j
 [Audio](audio.md)), and stage 9: the native Metal backend, GPU timestamps per pass, acceleration structures,
 ray-traced sun shadows and ambient occlusion, MetalFX upscaling (see "Native Metal backend" and "Ray tracing"), and
 stage 11: ray-traced local light shadows, reflections and indirect light, a probe grid (also traced in turns since
-0.10.0, and in cascades, with probes moved out of geometry or left out in the open, since 2026-11-07), the engine's temporal
+0.10.0, and in cascades, with probes moved out of geometry or left out in the open, since 0.11.0), the engine's temporal
 denoiser, MetalFX's denoising upscaler and a reference path tracer (see "Ray tracing"), and stage 12: area lights
 and anisotropic GGX (see "Rendering");
 everything else here
@@ -316,7 +316,7 @@ are noted below.
   only in variants of the tracing passes, used while an instance in the top level has one (2026-11-07: the tangent
   frame slowed the path tracer by 2 to 4 % where no hit read a map). One shading for every surface keeps
   the passes few and the shaders known when the pipelines are made. A game's surface functions shade their own hits
-  since 2026-11-07 (after 0.10.0) without hit groups or callable shaders (which inline queries do not have):
+  since 2026-11-07 (0.11.0) without hit groups or callable shaders (which inline queries do not have):
   `quench_add_ray_hits()` compiles the engine's tracing entries again at build time with the game's surface files
   included, each in a namespace, and a switch over their number (`RayInstanceData::maps.y`, from
   `SurfaceDesc::rayHit`) picks the function in the hit; the renderer uses that set's pipelines in frames that trace

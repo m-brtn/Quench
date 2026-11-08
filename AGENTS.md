@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-07, version 0.10.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-08, version 0.11.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -148,8 +148,8 @@ tests on both backends, 0 failed; the cost of each effect, about 3 times the M4 
 section defaults on phones chosen from them: half size with MetalFX spatial, no probe grid, 60 Hz), not on the
 iPhone 18 Pro Max; the user played with that section at its phone defaults on the iPhone 17 (2026-11-06: "it's
 fine"), nobody has looked at the other effects in motion. The default backend on Apple platforms is the native one
-since 2026-11-07 (the user's decision; checked on the Mac, in the iOS Simulator and on the iPhone 17, not yet on
-the iPhone 18 Pro Max or by eye on a phone), SDL GPU
+since 2026-11-07 (the user's decision; checked on the Mac, in the iOS Simulator and on the iPhone 17, where the user
+also looked at it in the ray tracing section; not yet on the iPhone 18 Pro Max), SDL GPU
 elsewhere; the default stays shadow maps, every stage 11 effect off, until the user has looked at them on the
 iPhone. The stage 12 area lights (the demo's
 tunnel, whose lamps move and whose camera drives a loop since the same day) ran on the Mac and on the iPhone 17
@@ -170,7 +170,7 @@ yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`, `docs/demo.md`, `docs/performance.md` and
 `docs/platforms.md` describe what is built, `docs/architecture.md` the design with the native backend and ray tracing
-as built; the rest of `docs/` is design and plan beyond stage 12. Update this paragraph whenever that changes.
+as built; the rest of `docs/` is design and plan beyond stage 13. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,

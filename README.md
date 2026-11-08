@@ -6,7 +6,7 @@
 
 <p align="center">
   A game engine designed for making games entirely with AI coding agents.<br>
-  Version 0.10.0 · macOS and iOS · MIT
+  Version 0.11.0 · macOS and iOS · MIT
 </p>
 
 ## Make your game with AI agents
@@ -64,7 +64,8 @@ look and listen.
 - **Testing:** scripted scenarios, runs without a window, screenshot comparison, frame time and memory measurements.
 - **Profiling:** Tracy zones on the CPU and the GPU for the engine and your game, recorded from a scripted run into
   a table of where the frame's time goes.
-- **Platforms:** macOS and iOS; Windows, Linux, Android and the web are planned.
+- **Platforms:** macOS and iOS, where a game can lower its frame rate and resolution as the phone heats up;
+  Windows, Linux, Android and the web are planned.
 
 ## Getting started
 
@@ -88,8 +89,8 @@ build/release/examples/demo/quench-demo
 iPhone builds, the architecture and every module are in the [documentation](docs/README.md); what comes next is on the
 [roadmap](docs/roadmap.md#what-is-next).
 
-Built on SDL3, Metal, Jolt Physics, Dear ImGui, GLM, enkiTS, meshoptimizer, miniaudio and ozz-animation
-([dependencies](docs/dependencies.md)).
+Built on SDL3, Metal, Jolt Physics, Dear ImGui, GLM, enkiTS, meshoptimizer, Basis Universal, miniaudio, ozz-animation,
+Recast & Detour and, for profiling, Tracy ([dependencies](docs/dependencies.md)).
 
 ## Licence
 

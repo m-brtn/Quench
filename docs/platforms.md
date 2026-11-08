@@ -11,7 +11,7 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.10.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+The engine (version 0.11.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers). Its GPU tests render offscreen and check the pixels read back on Metal (Apple M4 Pro, with the
 Metal API validation layer), on Vulkan through MoltenVK on the same Mac (with the Khronos validation layer; a test of
 the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables
@@ -196,8 +196,10 @@ elsewhere, and a request for it there creates SDL GPU with a warning. As the def
 Simulator (hello and the demo's smoke scenario, 17 of 17, with captures) and on the iPhone 17 (the device tests,
 hello, the demo's smoke run and phone scenarios; all 2026-11-07,
 [Performance](performance.md#the-native-default-on-the-screen-and-on-the-iphone-17)). The Mac's tests and batches
-name their backend; the iPhone 18 Pro Max has run it only when chosen; nobody has looked at it as the default on
-a phone's screen yet.
+name their backend; the iPhone 18 Pro Max has run it only when chosen. On the iPhone 17 the user looked at it as
+the default in the ray tracing section of an interim build (2026-11-07 17:47, launched without a backend flag:
+"the grain is fine now"); on 2026-11-08 the user looked at the Weather and Navigation sections of the demo build of
+`b91aff0` there (the report names no backend).
 
 | Where | Run so far |
 |---|---|
