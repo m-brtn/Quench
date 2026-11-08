@@ -122,6 +122,15 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // The snow (render::RenderSettings::snow): x: 1 when it is drawn (the snow cover on surfaces), y: the share of the
     // precipitation at the camera that falls as snow, zw: unused.
     float4 snow;
+    // The weather's wind (weather::Weather::windUniforms; all 0 without a weather): the members of WindUniforms
+    // (quench/WeatherField.h) in order, read through quenchFrameWind (quench/Wind.hlsli).
+    float4 windAir;
+    float4 windSpeed;
+    float4 windTime;
+    // The lightning (render::RenderSettings::lightning): xyz: the unit direction from the camera toward the brightest
+    // flash now (in its cloud), w: its glow there (0: none); rgb: the glow's radiance at 1, w: unused.
+    float4 lightning;
+    float4 lightningColor;
 };
 
 // One registered instance in the frame's instance buffer.

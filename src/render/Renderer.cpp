@@ -1804,6 +1804,10 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         rainMode = Rain::Off;
         snowMode = Snow::Off;
     }
+    const shader::WindUniforms wind = scene.weather ? scene.weather->windUniforms() : shader::WindUniforms{};
+    fu.windAir = wind.air;
+    fu.windSpeed = wind.speed;
+    fu.windTime = wind.time;
     const bool raining = rain.prepare({.weather = scene.weather ? &*scene.weather : nullptr,
                                        .quality = rainMode,
                                        .snow = snowMode,

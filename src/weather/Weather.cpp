@@ -54,9 +54,11 @@ Weather::Weather(const Settings& settings) : m_settings(settings) {
 void Weather::setSettings(const Settings& settings) {
     m_settings = settings;
     refresh();
+    m_fallStale = true;
 }
 
 void Weather::update(double dt) {
+    if (m_fallStale) refreshFall();
     if (!(dt > 0.0)) return;
     m_time += dt;
     const glm::vec2 dir = unitOr(m_settings.wind.direction, {1.0f, 0.0f});
@@ -75,6 +77,19 @@ void Weather::update(double dt) {
             c.wetness = wetted(c.wetness, c.precipitation, c.snowShare, m_wetPending);
         }
     m_wetPending = 0.0;
+    m_wetVersion = nextWetVersion();
+}
+
+void Weather::refreshFall() {
+    for (int z = 0; z < kWetnessGrid; ++z)
+        for (int x = 0; x < kWetnessGrid; ++x) {
+            WetnessCell& c = m_wetCells[std::size_t(z * kWetnessGrid + x)];
+            const glm::vec2 at =
+                m_wetOrigin + glm::vec2((float(x) + 0.5f) * kWetnessCell, (float(z) + 0.5f) * kWetnessCell);
+            c.precipitation = sample(at).precipitation;
+            c.snowShare = shader::quenchWeatherSnow(m_uniforms, at, 0.0f);
+        }
+    m_fallStale = false;
     m_wetVersion = nextWetVersion();
 }
 
@@ -161,6 +176,7 @@ void Weather::estimateGrid() {
                 m_wetOrigin + glm::vec2((float(x) + 0.5f) * kWetnessCell, (float(z) + 0.5f) * kWetnessCell);
     estimateWetness(points, m_wetCells);
     m_wetPending = 0.0;
+    m_fallStale = false;
     m_wetVersion = nextWetVersion();
 }
 
@@ -218,6 +234,7 @@ CellId Weather::addCell(const Cell& cell) {
     CellEntry entry{m_nextId++, cell, cell.drifts ? cell.position - m_airOffset : cell.position};
     m_cells.push_back(entry);
     refresh();
+    m_fallStale = true;
     return entry.id;
 }
 
@@ -227,6 +244,7 @@ bool Weather::setCell(CellId id, const Cell& cell) {
             entry.cell = cell;
             entry.anchor = cell.drifts ? cell.position - m_airOffset : cell.position;
             refresh();
+            m_fallStale = true;
             return true;
         }
     return false;
@@ -237,12 +255,14 @@ bool Weather::removeCell(CellId id) {
     if (it == m_cells.end()) return false;
     m_cells.erase(it);
     refresh();
+    m_fallStale = true;
     return true;
 }
 
 void Weather::clearCells() {
     m_cells.clear();
     refresh();
+    m_fallStale = true;
 }
 
 std::optional<Cell> Weather::cell(CellId id) const {
@@ -282,6 +302,11 @@ void Weather::refresh() {
                               snow};
     }
     u.climate = {s.temperature, std::max(s.lapseRate, 0.0f), ownSnow ? 1.0f : 0.0f, 0.0f};
+    constexpr double kPeriod = double(QUENCH_WIND_PERIOD);
+    m_wind.air = u.air;
+    m_wind.speed = {std::max(s.wind.speed, 0.0f), base, std::clamp(s.wind.gusts, 0.0f, 1.0f),
+                    std::clamp(s.wind.turbulence, 0.0f, 1.0f)};
+    m_wind.time = {float(m_time - std::floor(m_time / kPeriod) * kPeriod), float(s.seed & 0xffffffu), 0.0f, 0.0f};
 }
 
 Sample Weather::sample(glm::vec2 xz) const { return toSample(shader::quenchWeatherSample(m_uniforms, xz)); }
@@ -357,19 +382,92 @@ float Weather::cover(glm::vec2 xz, float radius) const {
 }
 
 glm::vec3 Weather::windAt(glm::vec3 point) const {
-    const glm::vec2 dir = unitOr(m_settings.wind.direction, {1.0f, 0.0f});
-    // Logarithmic profile with a roughness length of 0.1 m, scaled so that it is 1 at the cloud base.
-    constexpr float kRoughness = 0.1f;
-    const float height = std::max(point.y, kRoughness * 1.01f);
-    const float top = std::max(m_uniforms.layer.x, 10.0f);
-    const float scale = std::clamp(std::log(height / kRoughness) / std::log(top / kRoughness), 0.0f, 1.0f);
-    const float speed = m_settings.wind.speed * scale;
+    const shader::QuenchWind w = shader::quenchWeatherWind(m_wind, point);
+    return w.mean + w.gust;
+}
+
+glm::vec3 Weather::meanWindAt(glm::vec3 point) const {
+    const glm::vec2 dir(m_wind.air.z, m_wind.air.w);
+    const float speed = m_wind.speed.x * shader::quenchWindProfile(point.y, m_wind.speed.y);
     return {dir.x * speed, 0.0f, dir.y * speed};
 }
 
-glm::vec3 Weather::rainVelocity(glm::vec3 point) const { return windAt(point) - glm::vec3(0.0f, kRainFallSpeed, 0.0f); }
+glm::vec3 Weather::windOffset(glm::vec3 point) const { return shader::quenchWeatherWind(m_wind, point).offset; }
 
-glm::vec3 Weather::snowVelocity(glm::vec3 point) const { return windAt(point) - glm::vec3(0.0f, kSnowFallSpeed, 0.0f); }
+glm::vec3 Weather::rainVelocity(glm::vec3 point) const {
+    return meanWindAt(point) - glm::vec3(0.0f, kRainFallSpeed, 0.0f);
+}
+
+glm::vec3 Weather::snowVelocity(glm::vec3 point) const {
+    return meanWindAt(point) - glm::vec3(0.0f, kSnowFallSpeed, 0.0f);
+}
+
+void Weather::strikes(glm::vec2 xz, float radius, double from, double to, std::vector<Strike>& out) const {
+    out.clear();
+    const float rate = std::max(m_settings.lightning, 0.0f);
+    if (!(radius > 0.0f) || !(to > from) || rate <= 0.0f) return;
+    // Only a storm flashes: a cumulonimbus raining heavily, in the field or in a cell.
+    const bool stormy = (m_uniforms.field.w > 0.0f && m_uniforms.field.x > 0.0f && highestType() > 0.75f) ||
+                        std::any_of(m_cells.begin(), m_cells.end(), [](const CellEntry& e) {
+                            return e.cell.precipitation > 0.4f && e.cell.type == CloudType::Cumulonimbus;
+                        });
+    if (!stormy) return;
+    from = std::max(from, to - 60.0);
+    // Candidates on a lattice of kSite m squares in the air's coordinates (the flashes drift with the storms) and
+    // whole seconds: each square has one flash in a second with the probability kChance * rate, kept where the
+    // weather at its place and time is a storm (by how stormy it is there). At rate 1 and a storm everywhere: 0.04 a
+    // second per 4 km^2, 0.6 a minute per km^2.
+    constexpr float kSite = 2000.0f;
+    constexpr float kChance = 0.04f;
+    const float chance = std::min(kChance * rate, 1.0f);
+    const std::uint32_t seed = (m_settings.seed & 0xffffffu) ^ 0x5bd1e9u;
+    const glm::vec2 dir = unitOr(m_settings.wind.direction, {1.0f, 0.0f});
+    const float speed = m_settings.wind.speed;
+    for (double second = std::floor(from); second < to; second += 1.0) {
+        const int slot = int(std::fmod(second, 16777216.0));
+        // The air's offset at the start of that second; the lattice there covers the circle.
+        const glm::vec2 air = m_airOffset - dir * float(double(speed) * (m_time - second));
+        const glm::vec2 lo = glm::floor((xz - air - glm::vec2(radius + kSite)) / kSite);
+        const glm::vec2 hi = glm::floor((xz - air + glm::vec2(radius + kSite)) / kSite);
+        for (int j = int(lo.y); j <= int(hi.y); ++j)
+            for (int i = int(lo.x); i <= int(hi.x); ++i) {
+                if (shader::quenchWeatherHash(i, j, slot, seed) >= chance) continue;
+                const float u = shader::quenchWeatherHash(i, j, slot, seed + 1u);
+                const float v = shader::quenchWeatherHash(i, j, slot, seed + 2u);
+                const double time = second + double(shader::quenchWeatherHash(i, j, slot, seed + 3u));
+                if (time < from || time >= to) continue;
+                const glm::vec2 airAt = m_airOffset - dir * float(double(speed) * (m_time - time));
+                const glm::vec2 at = airAt + (glm::vec2(float(i), float(j)) + glm::vec2(u, v)) * kSite;
+                if (glm::length(at - xz) > radius) continue;
+                const shader::WeatherUniforms past = pastUniforms(m_time - time);
+                const glm::vec4 s = shader::quenchWeatherSample(past, at);
+                const float storm = shader::smoothstep(0.75f, 0.95f, s.y) * shader::smoothstep(0.4f, 0.8f, s.z);
+                if (shader::quenchWeatherHash(i, j, slot, seed + 4u) >= storm) continue;
+                out.push_back({time, at, 0.5f + 0.5f * shader::quenchWeatherHash(i, j, slot, seed + 5u)});
+            }
+    }
+    std::sort(out.begin(), out.end(), [](const Strike& a, const Strike& b) { return a.time < b.time; });
+}
+
+float Weather::flash(const Strike& strike, double time) {
+    const double age = time - strike.time;
+    if (!(age >= 0.0) || age >= kFlashLength) return 0.0f;
+    const std::int64_t tick = std::int64_t(std::floor(strike.time * 4096.0));
+    const auto random = [&](int k) {
+        return shader::quenchWeatherHash(int(tick & 0xffff), int((tick >> 16) & 0xffffff), k, 0x2545f491u);
+    };
+    const int strokes = 2 + std::min(int(random(0) * 3.0f), 2);
+    double at = 0.0;
+    float light = 0.0f;
+    for (int k = 0; k < strokes; ++k) {
+        if (k > 0) at += 0.04 + 0.08 * double(random(k));
+        if (age < at) break;
+        light += (1.0f - 0.2f * float(k)) * float(std::exp(-(age - at) / 0.03));
+    }
+    // The channel's glow and the lit cloud around it, fading to nothing by kFlashLength.
+    light += 0.3f * float(std::exp(-age / 0.25)) * float(1.0 - age / kFlashLength);
+    return std::min(light, 1.3f) * strike.brightness;
+}
 
 float Weather::cloudTop(float type) const {
     const float base = m_uniforms.layer.x;

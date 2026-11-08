@@ -8,6 +8,7 @@
 #include <quench/render/Renderer.h>
 #include <quench/render/ToneMap.h>
 
+#include <render_sway_shaders.h>
 #include <render_test_hits_shaders.h>
 #include <render_test_shaders.h>
 
@@ -504,6 +505,72 @@ QUENCH_TEST(renderer_custom_surface_shader) {
     CHECK(below.g < 200 || below.b > 60, "nothing at the unlifted place: %d %d %d", below.r, below.g, below.b);
 }
 
+// quench/Wind.hlsli: a stem 0.5 m above its root at 10 m stands upright without a weather and in a calm, and bends
+// downwind (about 0.77 radians at its top in the 9.7 m/s at 10.5 m of a 20 m/s wind) either way the wind blows.
+QUENCH_TEST(renderer_wind_sways_plants) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.shadowCascades = 1;
+    settings.shadowMapSize = 256;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Result<SurfaceId> surface =
+        renderer->addSurface({.vertexShader = shaders::render_sway.find("surface_vs"),
+                              .fragmentShader = shaders::render_sway.find("surface_fs"),
+                              .shadowVertexShader = shaders::render_sway.find("surface_shadow_vs"),
+                              .name = "sway"});
+    REQUIRE(surface, "%s", surface.error().c_str());
+    Scene scene(device);
+    MaterialDesc material{.surface = *surface};
+    material.params[0] = glm::vec4(0.0f, 4.0f, 0.0f, 0.0f);
+    scene.addInstance({.mesh = addMesh(scene, boxMesh(glm::vec3(0.1f, 0.5f, 0.1f))),
+                       .material = scene.addMaterial(material),
+                       .transform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 10.0f, 0.0f)),
+                       .custom = glm::vec4(0.5f, 1.0f, 0.0f, 0.0f)});
+    addSun(scene, glm::vec3(-0.2f, -1.0f, -0.3f));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0, 10.2f, 2.5f), glm::vec3(0, 10.2f, 0));
+    const auto green = [](Rgba8 c) { return c.g > 150 && c.r < 80 && c.b < 80; };
+    const glm::ivec2 upright = pixelOf(view, glm::vec3(0.0f, 10.45f, 0.1f));
+    const auto bentAt = [&](float side) { return pixelOf(view, glm::vec3(0.232f * side, 10.326f, 0.1f)); };
+
+    std::vector<Rgba8> pixels = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(green(at(pixels, upright)) && !green(at(pixels, bentAt(1.0f))), "upright without a weather");
+    weather::Settings calm{.coverage = 0.0f, .cirrus = 0.0f};
+    calm.wind.speed = 0.0f;
+    scene.setWeather(weather::Weather(calm));
+    pixels = renderOnce(device, *renderer, scene, view, *target);
+    CHECK(green(at(pixels, upright)) && !green(at(pixels, bentAt(1.0f))), "upright in a calm");
+    for (const float side : {1.0f, -1.0f}) {
+        weather::Settings windy = calm;
+        windy.wind = {.direction = {side, 0.0f}, .speed = 20.0f};
+        scene.setWeather(weather::Weather(windy));
+        pixels = renderOnce(device, *renderer, scene, view, *target);
+        const Rgba8 top = at(pixels, upright), bent = at(pixels, bentAt(side)), other = at(pixels, bentAt(-side));
+        CHECK(!green(top) && green(bent) && !green(other),
+              "wind toward %+.0f x: upright place %d %d %d, downwind %d %d %d, upwind %d %d %d", double(side), top.r,
+              top.g, top.b, bent.r, bent.g, bent.b, other.r, other.g, other.b);
+    }
+    // quenchWindSwayAbout with the root below each vertex: the same stem a metre from its object's origin (a blade in
+    // a patch of grass) bends about its own foot as before, not about the origin (which would sink its top by 0.7 m).
+    Scene patch(device);
+    MeshData offStem = boxMesh(glm::vec3(0.1f, 0.5f, 0.1f));
+    for (Vertex& v : offStem.vertices) v.position.x += 1.0f;
+    patch.addInstance({.mesh = addMesh(patch, offStem),
+                       .material = patch.addMaterial(material),
+                       .transform = glm::translate(glm::mat4(1.0f), glm::vec3(-1.0f, 10.0f, 0.0f)),
+                       .custom = glm::vec4(0.5f, 1.0f, 0.0f, 1.0f)});
+    addSun(patch, glm::vec3(-0.2f, -1.0f, -0.3f));
+    weather::Settings windy = calm;
+    windy.wind = {.direction = {1.0f, 0.0f}, .speed = 20.0f};
+    patch.setWeather(weather::Weather(windy));
+    pixels = renderOnce(device, *renderer, patch, view, *target);
+    const Rgba8 top = at(pixels, upright), bent = at(pixels, bentAt(1.0f));
+    CHECK(!green(top) && green(bent), "rooted below each vertex: upright place %d %d %d, downwind %d %d %d", top.r,
+          top.g, top.b, bent.r, bent.g, bent.b);
+}
+
 QUENCH_TEST(renderer_srgb_and_unorm_targets_match) {
     QUENCH_GPU_DEVICE(device);
     Result<Renderer> renderer = Renderer::create(device, plainSettings());
@@ -749,6 +816,74 @@ QUENCH_TEST(renderer_clouds_shadow_the_ground) {
     scene.clearWeather();
     renderOnce(device, *renderer, scene, view, *target);
     CHECK(renderer->stats().clouds == Clouds::Off, "clouds without a weather: %d", int(renderer->stats().clouds));
+}
+
+// Lightning (RenderSettings::lightning) under a raining cumulonimbus: at a flash the ground under it and the cloud
+// overhead are brighter than just before it; nothing with the setting off.
+QUENCH_TEST(renderer_lightning_lights_the_storm) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.clouds = Clouds::Layer;
+    settings.lightning = true;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(100.0f)));
+    scene.addInstance(
+        {.mesh = ground,
+         .material = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f})});
+    scene.setEnvironment(sunOnly());
+    addSun(scene, glm::normalize(glm::vec3(0.2f, -1.0f, 0.1f)));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+
+    weather::Settings storm{.coverage = 0.0f, .cirrus = 0.0f};
+    storm.wind.speed = 0.0f;
+    weather::Weather w(storm);
+    w.addCell({.position = {0.0f, 0.0f}, .radius = 3200.0f, .precipitation = 1.0f});
+    // The first flash within 2 km that has none in the 1.5 s before it.
+    std::vector<weather::Strike> strikes;
+    const weather::Strike* found = nullptr;
+    for (double t = 60.0; t < 3600.0 && !found; t += 60.0) {
+        w.strikes({0.0f, 0.0f}, 30000.0f, t - 60.0, t, strikes);
+        for (std::size_t i = 0; i < strikes.size() && !found; ++i) {
+            const bool alone =
+                i == 0 ? strikes[i].time - (t - 60.0) > 1.5 : strikes[i].time - strikes[i - 1].time > 1.5;
+            if (alone && glm::length(strikes[i].position) < 2000.0f) found = &strikes[i];
+        }
+    }
+    REQUIRE(found, "no flash in an hour");
+    const double flashTime = found->time;
+    const View down = lookAt(glm::vec3(0, 50.0f, 0), glm::vec3(0), glm::vec3(0, 0, -1));
+    const View up = lookAt(glm::vec3(0, 2.0f, 0), glm::vec3(0, 100.0f, 0), glm::vec3(0, 0, -1));
+    const glm::ivec2 centre{kSize / 2, kSize / 2};
+    const auto render = [&](double time, const View& view) {
+        w.setTime(time);
+        scene.setWeather(w);
+        return sceneValue(at(renderOnce(device, *renderer, scene, view, *target), centre));
+    };
+    const glm::vec3 groundBefore = render(flashTime - 0.5, down);
+    const std::uint32_t flashesBefore = renderer->stats().lightningFlashes;
+    const glm::vec3 groundAt = render(flashTime + 0.002, down);
+    const RenderStats lit = renderer->stats();
+    const glm::vec3 skyBefore = render(flashTime - 0.5, up);
+    const glm::vec3 skyAt = render(flashTime + 0.002, up);
+    std::printf(
+        "  a flash at %.0f m: ground %.3f before, %.3f at it (light %.2f, %u flash); cloud overhead %.3f, %.3f\n",
+        double(glm::length(found->position)), double(groundBefore.g), double(groundAt.g), double(lit.lightning),
+        lit.lightningFlashes, double(skyBefore.g), double(skyAt.g));
+    CHECK(flashesBefore == 0 && lit.lightningFlashes >= 1 && lit.lightning > 0.5f, "flashes %u then %u, light %.2f",
+          flashesBefore, lit.lightningFlashes, double(lit.lightning));
+    CHECK(groundAt.g > groundBefore.g * 1.5f + 0.02f, "the ground at the flash %.3f, before %.3f", double(groundAt.g),
+          double(groundBefore.g));
+    CHECK(skyAt.g > skyBefore.g * 1.3f + 0.02f, "the cloud at the flash %.3f, before %.3f", double(skyAt.g),
+          double(skyBefore.g));
+
+    settings.lightning = false;
+    renderer->setSettings(settings);
+    const glm::vec3 off = render(flashTime + 0.002, down);
+    CHECK(std::abs(off.g - groundBefore.g) < 0.01f && renderer->stats().lightning == 0.0f,
+          "lightning off: the ground %.3f at the flash, %.3f before", double(off.g), double(groundBefore.g));
 }
 
 // Rain (docs/weather.md, "Rain"): soaked ground darker where the rain reaches, dry under a roof (above the camera, so

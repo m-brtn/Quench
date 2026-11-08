@@ -57,6 +57,7 @@ constexpr float kSnowSlant = 0.3f;
 constexpr float kShaftExtinction = 0.0012f;
 constexpr float kShaftNear = 20.0f;
 constexpr float kRainbowStrength = 0.06f;
+constexpr float kPi = 3.14159265f;
 // The cover over the camera: the texels within this many of the camera's (0.75 m), covered where the highest surface
 // is more than kCoverHeight above the camera along the rain.
 constexpr int kCoverRadius = 3;
@@ -416,6 +417,13 @@ void RainRenderer::drawShafts(gpu::CommandBuffer& commands, const Shafts& shafts
         m_shafts = std::move(*t);
     }
     lightUniforms(fu);
+    // The veil scatters the light that reaches it: from the closed share of the sky the radiance of the clouds' bases
+    // (FrameUniforms::overcast, what the traced effects' misses see), not the sky's ambient term there, which is what a
+    // white surface sends back and pi times as bright; else a storm's rain shines brighter than the clouds above it.
+    const float closing = std::pow(std::clamp(fu.overcast.w, 0.0f, 1.0f), 1.2f);
+    const glm::vec3 sky =
+        glm::max(glm::vec3(fu.skyAmbient) - glm::vec3(fu.overcast) * (closing * (kPi - 1.0f)), glm::vec3(0.0f));
+    m_uniforms.light = glm::vec4(glm::mix(glm::vec3(fu.groundAmbient), sky, kSkyShare), m_uniforms.light.w);
     // Where it snows at the camera the shafts begin where the flakes end.
     const float near = glm::mix(kShaftNear, qualityOf(m_snow).flakeBox, m_snowShare);
     m_uniforms.shafts = glm::vec4(float(q.shaftSteps), shafts.cloudBase, kShaftExtinction, near);

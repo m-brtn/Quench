@@ -54,6 +54,17 @@ constexpr float kCoverRadius = 6000.0f;
 // The share of the light above a closed cloud deck that reaches the ground, all of it diffuse.
 constexpr float kOvercastTransmittance = 0.3f;
 constexpr float kPi = 3.14159265f;
+// The lightning (RenderSettings::lightning): flashes within this distance of the camera are lit; a flash's light on
+// the scene halves at kFlashNear, its glow in the clouds at kGlowNear; the glow sits this far above the cloud base.
+// Its light on the scene, as irradiance from the sky at a flash of 1: a fixed amount and a share of the light under
+// the clouds; its glow's radiance: a fixed amount and a share of the cloud base's.
+constexpr float kLightningRadius = 30000.0f;
+constexpr float kFlashNear = 2000.0f;
+constexpr float kGlowNear = 6000.0f;
+constexpr float kFlashAboveBase = 800.0f;
+constexpr float kFlashIrradiance = 0.6f;
+constexpr float kGlowRadiance = 0.3f;
+const glm::vec3 kLightningColor{0.85f, 0.9f, 1.0f};
 
 // The corner of a map of `extent` around `centre`, on its texel grid (the map does not swim as the camera moves).
 glm::vec2 snapped(glm::vec2 centre, float extent, std::uint32_t size) {
@@ -537,6 +548,37 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
 
     // ---- The rest of the frame: the clouds' shadow on the sun's light
     fu.cloudShadow = m_shadows ? glm::vec4(m_shadowOrigin, 1.0f / kShadowExtent, 1.0f) : glm::vec4(0.0f);
+
+    // ---- The lightning: the flashes of the last kFlashLength light the scene (by their distance) and glow in the
+    // clouds (the brightest one now). Not in the sky cube, whose faces are drawn in turns.
+    fu.lightning = glm::vec4(0.0f);
+    if (settings.lightning) {
+        const double now = weather.time();
+        weather.strikes(camXz, kLightningRadius, now - weather::Weather::kFlashLength, now, m_strikes);
+        float light = 0.0f, brightest = 0.0f;
+        glm::vec3 toward(0.0f, 1.0f, 0.0f);
+        for (const weather::Strike& s : m_strikes) {
+            const float flash = weather::Weather::flash(s, now);
+            if (flash <= 0.0f) continue;
+            ++stats.lightningFlashes;
+            const float distance = glm::length(s.position - camXz);
+            light += flash / (1.0f + distance * distance / (kFlashNear * kFlashNear));
+            const float glow = flash / (1.0f + distance * distance / (kGlowNear * kGlowNear));
+            if (glow > brightest) {
+                brightest = glow;
+                toward = glm::normalize(glm::vec3(s.position.x, wu.layer.x + kFlashAboveBase, s.position.y) - cam);
+            }
+        }
+        if (brightest > 0.0f) {
+            const glm::vec3 irradiance = kLightningColor * (light * (kFlashIrradiance + 1.5f * luminance(ambient)));
+            fu.skyAmbient += glm::vec4(irradiance, 0.0f);
+            fu.groundAmbient += glm::vec4(irradiance * 0.3f, 0.0f);
+            fu.lightning = glm::vec4(toward, brightest);
+            fu.lightningColor =
+                glm::vec4(kLightningColor * (kGlowRadiance + 3.0f * luminance(overcastIrradiance) / kPi), 0.0f);
+        }
+        stats.lightning = light;
+    }
 
     stats.clouds = mode;
     stats.cloudCover = cover;

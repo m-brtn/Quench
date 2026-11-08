@@ -470,6 +470,28 @@ QUENCH_TEST(weather_snow_by_temperature) {
     CHECK(w.precipitation({100.0f, 0.0f, 0.0f}) == 1.0f, "precipitation %.3f", w.precipitation({100.0f, 0.0f, 0.0f}));
     w.removeCell(flurry);
     CHECK(w.snowShare({100.0f, 0.0f, 0.0f}) == 0.0f, "snow after the cell went");
+
+    // The wetness grid's precipitation and snow share follow the settings and the cells at the next update, also
+    // with the clock stopped.
+    const auto gridCell = [&w] {
+        const glm::vec2 c = (glm::vec2(0.0f) - w.wetnessOrigin()) / Weather::kWetnessCell;
+        return w.wetnessGrid()[std::size_t(int(c.y)) * Weather::kWetnessGrid + std::size_t(int(c.x))];
+    };
+    const CellId shower =
+        w.addCell({.position = {0.0f, 0.0f}, .radius = 2000.0f, .precipitation = 1.0f, .drifts = false});
+    w.update(0.0);
+    CHECK(gridCell().precipitation > 0.9f && gridCell().snowShare == 0.0f, "grid after a cell: %.3f, snow %.3f",
+          gridCell().precipitation, gridCell().snowShare);
+    s.temperature = -5.0f;
+    w.setSettings(s);
+    const std::uint64_t version = w.wetnessVersion();
+    w.update(0.0);
+    CHECK(gridCell().snowShare == 1.0f && w.wetnessVersion() != version, "grid's snow share %.3f below freezing",
+          gridCell().snowShare);
+    CHECK(gridCell().wetness.water == 0.0f && gridCell().wetness.snow == 0.0f, "no time passed, nothing fell");
+    w.removeCell(shower);
+    w.update(0.0);
+    CHECK(gridCell().precipitation == 0.0f, "grid after the cell went: %.3f", gridCell().precipitation);
 }
 
 // Snow builds a cover without wetting the ground, lies while it is cold, melts as fast as it is warm and wets the
@@ -536,6 +558,209 @@ QUENCH_TEST(weather_rain_or_snow_search) {
     CHECK(w.distanceToPrecipitation({3000.0f, 0.0f}, 0.1f, 20000.0f, Precipitation::Rain) > 4000.0f, "rain in snow");
 }
 
+// Gusts and eddies: the speed along the wind at 10 m deviates by about 0.45 of the mean at gusts 1 (in time at a point,
+// and from place to place at a time), each direction along and across by about 0.3 and up by about 0.12 at
+// turbulence 1; without either the wind is its mean, unchanged.
+QUENCH_TEST(weather_wind_gusts) {
+    const auto deviations = [](float gusts, float turbulence) {
+        Settings s = clearSky();
+        s.wind = {.direction = {0.0f, 1.0f}, .speed = 12.0f, .gusts = gusts, .turbulence = turbulence};
+        Weather w(s);
+        w.setTime(100.0);
+        const glm::vec3 at{30.0f, 10.0f, -40.0f};
+        const float mean = glm::length(w.meanWindAt(at));
+        double sum[3] = {}, squares[3] = {};
+        constexpr int kSteps = 6000;
+        for (int i = 0; i < kSteps; ++i) {
+            w.update(0.1);
+            const glm::vec3 v = w.windAt(at);
+            const double c[3] = {v.z, v.x, v.y}; // along, across, up
+            for (int k = 0; k < 3; ++k) {
+                sum[k] += c[k];
+                squares[k] += c[k] * c[k];
+            }
+        }
+        glm::vec4 out(0.0f);
+        for (int k = 0; k < 3; ++k) {
+            const double m = sum[k] / kSteps;
+            out[k] = float(std::sqrt(std::max(squares[k] / kSteps - m * m, 0.0)) / mean);
+        }
+        out.w = float(sum[0] / kSteps / mean);
+        // Along a line 2 km down the wind at one time.
+        double s1 = 0.0, s2 = 0.0;
+        for (int i = 0; i < 2000; ++i) {
+            const float along = w.windAt(at + glm::vec3(0.0f, 0.0f, float(i) * 1.0f)).z;
+            s1 += along;
+            s2 += double(along) * along;
+        }
+        const double m = s1 / 2000.0;
+        std::printf("  gusts %.1f, turbulence %.1f: %.2f m/s mean; deviation along %.3f, across %.3f, up %.3f of it "
+                    "(in time), along %.3f (in space), mean %.3f of it\n",
+                    gusts, turbulence, mean, out.x, out.y, out.z, std::sqrt(std::max(s2 / 2000.0 - m * m, 0.0)) / mean,
+                    out.w);
+        return out;
+    };
+    const glm::vec4 gusty = deviations(1.0f, 0.0f);
+    CHECK(gusty.x > 0.25f && gusty.x < 0.55f && gusty.y < 1e-6f && gusty.z < 1e-6f, "gusts: %.3f along, %.3f across",
+          gusty.x, gusty.y);
+    CHECK(std::abs(gusty.w - 1.0f) < 0.1f, "the gusts' mean %.3f of the mean wind", gusty.w);
+    const glm::vec4 rough = deviations(0.0f, 1.0f);
+    CHECK(rough.y > 0.2f && rough.y < 0.4f && rough.x > 0.2f && rough.x < 0.4f && rough.z > 0.06f && rough.z < 0.2f,
+          "eddies: %.3f along, %.3f across, %.3f up", rough.x, rough.y, rough.z);
+    const glm::vec4 calm = deviations(0.0f, 0.0f);
+    CHECK(calm.x < 1e-5f && calm.y < 1e-5f && calm.z < 1e-5f, "a steady wind varies");
+
+    Settings s = clearSky();
+    s.wind = {.direction = {3.0f, 4.0f}, .speed = 12.0f, .gusts = 0.8f, .turbulence = 0.6f};
+    Weather w(s);
+    w.setTime(321.0);
+    const glm::vec3 p{5.0f, 2.0f, 7.0f};
+    CHECK(w.windOffset(p) != glm::vec3(0.0f) && w.windAt(p) != w.meanWindAt(p), "no gusts");
+    s.wind.gusts = s.wind.turbulence = 0.0f;
+    w.setSettings(s);
+    CHECK(w.windOffset(p) == glm::vec3(0.0f) && w.windAt(p) == w.meanWindAt(p), "gusts without gusts");
+}
+
+// The offset the gusts give the air changes at the rate of their wind, for a point that travels with them (at 0.6 of
+// the wind at the cloud base); the wind is the same after setTime as after updates, and goes on without a jump where
+// its period starts again.
+QUENCH_TEST(weather_wind_offset_and_period) {
+    Settings s = clearSky();
+    s.wind = {.direction = {0.6f, 0.8f}, .speed = 15.0f, .gusts = 0.7f, .turbulence = 0.5f};
+    Weather w(s);
+    // Early, where the air has moved 300 m: the field's coordinates subtract the air's distance (a float), and at 3 km
+    // its rounding alone puts a few hundredths of a m/s into a rate over 0.01 s (more without fused multiply-adds, as
+    // in WebAssembly).
+    w.setTime(20.0);
+    const glm::vec2 dir(0.6f, 0.8f);
+    constexpr double kStep = 0.01;
+    float worst = 0.0f, largest = 0.0f;
+    glm::vec3 p{12.0f, 3.0f, -20.0f};
+    for (int i = 0; i < 400; ++i) {
+        const glm::vec3 before = w.windOffset(p);
+        const glm::vec3 gust = w.windAt(p) - w.meanWindAt(p);
+        w.update(kStep);
+        const glm::vec2 moved = dir * float(0.6 * 15.0 * kStep);
+        const glm::vec3 next = p + glm::vec3(moved.x, 0.0f, moved.y);
+        const glm::vec3 rate = (w.windOffset(next) - before) / float(kStep);
+        const glm::vec3 gustAfter = w.windAt(next) - w.meanWindAt(next);
+        worst = std::max(worst, glm::length(rate - 0.5f * (gust + gustAfter)));
+        largest = std::max(largest, glm::length(gust));
+        p = next;
+    }
+    std::printf("  the offset's rate against the gust: at most %.4f m/s off (gusts up to %.2f m/s)\n", worst, largest);
+    CHECK(largest > 1.0f && worst < 0.02f * largest, "offset rate %.4f off with gusts of %.2f", worst, largest);
+
+    Weather stepped(s);
+    for (int i = 0; i < 1000; ++i) stepped.update(0.5);
+    Weather jumped(s);
+    jumped.setTime(500.0);
+    const glm::vec3 a = stepped.windAt({1.0f, 4.0f, 2.0f}), b = jumped.windAt({1.0f, 4.0f, 2.0f});
+    CHECK(glm::length(a - b) < 1e-2f, "updated (%.4f %.4f %.4f) against set (%.4f %.4f %.4f)", a.x, a.y, a.z, b.x, b.y,
+          b.z);
+
+    // Across the period's start against an ordinary step of the same length.
+    const auto change = [&](double t) {
+        Weather x(s);
+        x.setTime(t - 0.005);
+        const glm::vec3 v0 = x.windAt({0.0f, 5.0f, 0.0f});
+        x.setTime(t + 0.005);
+        return glm::length(x.windAt({0.0f, 5.0f, 0.0f}) - v0);
+    };
+    const float seam = change(double(QUENCH_WIND_PERIOD)), ordinary = change(1000.0);
+    std::printf("  over 0.01 s: %.4f m/s where the period starts again, %.4f elsewhere\n", seam, ordinary);
+    CHECK(seam < 0.05f && ordinary < 0.05f, "the wind jumps: %.4f at the period, %.4f elsewhere", seam, ordinary);
+}
+
+// Lightning: flashes only where a cumulonimbus rains, within its core, at about the rate asked for; the same flashes
+// however a span is cut and from a later time; none at lightning 0 or from a shower that is not a storm.
+QUENCH_TEST(weather_lightning) {
+    Settings s = clearSky();
+    s.wind = {.direction = {1.0f, 0.0f}, .speed = 5.0f};
+    Weather w(s);
+    w.setTime(1000.0);
+    w.addCell({.position = {0.0f, 0.0f}, .radius = 3200.0f, .precipitation = 1.0f});
+    std::vector<Strike> all, part, out;
+    for (double t = 400.0; t < 1000.0; t += 60.0) {
+        w.strikes({0.0f, 0.0f}, 20000.0f, t, t + 60.0, out);
+        all.insert(all.end(), out.begin(), out.end());
+    }
+    for (double t = 400.0; t < 1000.0; t += 7.5) {
+        w.strikes({0.0f, 0.0f}, 20000.0f, t, t + 7.5, out);
+        part.insert(part.end(), out.begin(), out.end());
+    }
+    float farthest = 0.0f;
+    bool ordered = true;
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        // The cell drifts with the wind (5 m/s): where it was then.
+        const glm::vec2 centre(5.0f * float(all[i].time - 1000.0), 0.0f);
+        farthest = std::max(farthest, glm::length(all[i].position - centre));
+        if (i > 0 && all[i].time < all[i - 1].time) ordered = false;
+    }
+    std::printf("  %zu flashes in 10 minutes (%.1f a minute), the farthest %.0f m from the cell's centre\n", all.size(),
+                double(all.size()) / 10.0, farthest);
+    CHECK(all.size() >= 5 && all.size() <= 200, "%zu flashes in 10 minutes", all.size());
+    CHECK(farthest < 2000.0f && ordered, "a flash %.0f m from the core", farthest);
+    bool same = all.size() == part.size();
+    for (std::size_t i = 0; same && i < all.size(); ++i)
+        same = all[i].time == part[i].time && all[i].position == part[i].position;
+    CHECK(same, "%zu flashes in minutes, %zu in pieces", all.size(), part.size());
+    w.update(25.0);
+    w.strikes({0.0f, 0.0f}, 20000.0f, 940.0, 1000.0, out);
+    std::size_t expected = 0;
+    for (const Strike& k : all) expected += k.time >= 940.0 ? 1 : 0;
+    same = out.size() == expected;
+    for (std::size_t i = 0; same && i < out.size(); ++i)
+        same = std::abs(out[i].position.x - all[all.size() - expected + i].position.x) < 0.05f;
+    CHECK(same, "later: %zu flashes in the last minute, %zu before", out.size(), expected);
+    w.strikes({30000.0f, 0.0f}, 5000.0f, 940.0, 1000.0, out);
+    CHECK(out.empty(), "%zu flashes far from the storm", out.size());
+    // The flicker of a flash: dark before it, two to four strokes, dark again after kFlashLength.
+    REQUIRE(!all.empty(), "no flashes");
+    int fewest = 9, most = 0;
+    for (const Strike& k : all) {
+        int strokes = 0;
+        float previous = Weather::flash(k, k.time - 0.001), rising = 0.0f;
+        for (double age = 0.0; age < Weather::kFlashLength; age += 0.001) {
+            const float light = Weather::flash(k, k.time + age);
+            if (light > previous + 0.05f && rising <= 0.0f) ++strokes;
+            rising = light - previous;
+            previous = light;
+        }
+        fewest = std::min(fewest, strokes);
+        most = std::max(most, strokes);
+        CHECK(Weather::flash(k, k.time - 0.01) == 0.0f &&
+                  Weather::flash(k, k.time + Weather::kFlashLength + 1e-6) == 0.0f &&
+                  Weather::flash(k, k.time) >= k.brightness,
+              "a flash at %.3f s: %.3f before, %.3f at, %.3f after", k.time, double(Weather::flash(k, k.time - 0.01)),
+              double(Weather::flash(k, k.time)), double(Weather::flash(k, k.time + Weather::kFlashLength + 1e-6)));
+    }
+    std::printf("  strokes per flash: %d to %d\n", fewest, most);
+    CHECK(fewest >= 2 && most <= 4, "%d to %d strokes", fewest, most);
+
+    // A frame's query: 30 km around, 1/60 s.
+    const auto start = std::chrono::steady_clock::now();
+    constexpr int kFrames = 200;
+    std::size_t seen = 0;
+    for (int i = 0; i < kFrames; ++i) {
+        const double t = 960.0 + double(i) / 60.0;
+        w.strikes({0.0f, 0.0f}, 30000.0f, t, t + 1.0 / 60.0, out);
+        seen += out.size();
+    }
+    std::printf("  a frame's query of 30 km: %.4f ms (%zu flashes)\n",
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() / kFrames,
+                seen);
+
+    s.lightning = 0.0f;
+    w.setSettings(s);
+    w.strikes({0.0f, 0.0f}, 20000.0f, 940.0, 1000.0, out);
+    CHECK(out.empty(), "%zu flashes at lightning 0", out.size());
+    Weather shower(clearSky());
+    shower.addCell({.position = {0.0f, 0.0f}, .type = CloudType::Cumulus, .precipitation = 1.0f});
+    shower.strikes({0.0f, 0.0f}, 20000.0f, 0.0, 60.0, out);
+    CHECK(out.empty(), "%zu flashes from a cumulus", out.size());
+}
+
 // What a query costs (printed; the bound only catches a pathological slowdown).
 QUENCH_TEST(weather_sample_cost) {
     Settings s;
@@ -552,4 +777,15 @@ QUENCH_TEST(weather_sample_cost) {
         std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / kCount;
     std::printf("  sample with %zu cells: %.0f ns (sum %.1f)\n", Weather::kMaxCells, ns, double(sum));
     CHECK(ns < 200000.0, "a sample takes %.0f ns", ns);
+
+    s.wind.gusts = 0.6f;
+    s.wind.turbulence = 0.4f;
+    w.setSettings(s);
+    const auto windStart = std::chrono::steady_clock::now();
+    glm::vec3 wind(0.0f);
+    for (int i = 0; i < kCount; ++i) wind += w.windAt({float(i) * 1.3f, 2.0f, float(i) * 0.7f});
+    const double windNs =
+        std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - windStart).count() / kCount;
+    std::printf("  windAt with gusts and eddies: %.0f ns (sum %.1f)\n", windNs, double(wind.x));
+    CHECK(windNs < 100000.0, "a wind query takes %.0f ns", windNs);
 }

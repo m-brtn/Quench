@@ -23,6 +23,7 @@
 
 #ifdef __cplusplus
 #include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
 #include <algorithm>
@@ -31,6 +32,7 @@
 
 namespace quench::shader {
 using float2 = glm::vec2;
+using float3 = glm::vec3;
 using uint = std::uint32_t;
 // The HLSL intrinsics the field uses, for float only (no std:: overload sets, no double promotions).
 inline float floor(float v) { return std::floor(v); }
@@ -41,6 +43,7 @@ inline float max(float a, float b) { return a > b ? a : b; }
 inline float clamp(float v, float lo, float hi) { return std::clamp(v, lo, hi); }
 inline float saturate(float v) { return std::clamp(v, 0.0f, 1.0f); }
 inline float lerp(float a, float b, float t) { return a + (b - a) * t; }
+inline float3 lerp(float3 a, float3 b, float t) { return a + (b - a) * t; }
 inline float smoothstep(float e0, float e1, float v) {
     const float t = saturate((v - e0) / (e1 - e0));
     return t * t * (3.0f - 2.0f * t);
@@ -49,9 +52,11 @@ inline float smoothstep(float e0, float e1, float v) {
 
 #define QUENCH_WEATHER_FN inline
 #define QUENCH_WEATHER_UNIFORMS const WeatherUniforms&
+#define QUENCH_WIND_UNIFORMS const WindUniforms&
 #else
 #define QUENCH_WEATHER_FN
 #define QUENCH_WEATHER_UNIFORMS WeatherUniforms
+#define QUENCH_WIND_UNIFORMS WindUniforms
 #endif
 
 QUENCH_SHARED_BEGIN
@@ -70,8 +75,8 @@ struct QUENCH_ALIGN16 WeatherUniforms {
     float4 climate;
 };
 
-// 0..1 from integer lattice coordinates and a seed: a 32-bit integer hash (lowbias32), the top 24 bits as a float.
-QUENCH_WEATHER_FN float quenchWeatherHash(int x, int y, int z, uint seed) {
+// A 32-bit integer hash (lowbias32) of integer lattice coordinates and a seed.
+QUENCH_WEATHER_FN uint quenchWeatherHashBits(int x, int y, int z, uint seed) {
     uint h = uint(x) * 0x8da6b343u;
     h ^= uint(y) * 0xd8163841u;
     h ^= uint(z) * 0xcb1ab31fu;
@@ -81,7 +86,12 @@ QUENCH_WEATHER_FN float quenchWeatherHash(int x, int y, int z, uint seed) {
     h ^= h >> 15;
     h *= 0x846ca68bu;
     h ^= h >> 16;
-    return float(h >> 8) * (1.0f / 16777216.0f);
+    return h;
+}
+
+// 0..1 from integer lattice coordinates and a seed: the hash's top 24 bits as a float.
+QUENCH_WEATHER_FN float quenchWeatherHash(int x, int y, int z, uint seed) {
+    return float(quenchWeatherHashBits(x, y, z, seed) >> 8) * (1.0f / 16777216.0f);
 }
 
 // Smooth value noise, 0..1, on a unit lattice in x, y and z.
@@ -190,6 +200,138 @@ QUENCH_WEATHER_FN float quenchWeatherSnow(QUENCH_WEATHER_UNIFORMS u, float2 xz, 
         }
     }
     return snow;
+}
+
+// ---------------------------------------------------------------- the wind
+
+// The wind field (docs/weather.md, "Wind"), the same for a game's queries (weather::Weather::windAt), the rain's and
+// the snow's particles and the plants (quench/Wind.hlsli): the settings' wind at the cloud base, slower near the
+// ground, with gusts and eddies that travel with the air. Its time runs modulo QUENCH_WIND_PERIOD seconds, over which
+// its noise repeats, so that 32-bit floats keep it as exact after hours as at the start.
+#define QUENCH_WIND_PERIOD 4096.0f
+
+struct QUENCH_ALIGN16 WindUniforms {
+    float4 air;   // xy: how far the air has moved (world xz, m), zw: unit wind direction (world xz)
+    float4 speed; // x: the wind at the cloud base (m/s), y: the cloud base (m), z: gusts (0..1), w: turbulence (0..1)
+    float4 time;  // x: the weather's time modulo QUENCH_WIND_PERIOD (s), y: the seed (24 bits), zw: unused
+};
+
+// The wind at a point in three parts: the mean wind, what the gusts and eddies add to it now (the wind is mean +
+// gust), and how far they have moved the air from where the mean wind alone would have taken it (m; gust is its rate
+// of change): what a particle carried by the wind adds to its mean motion.
+struct QuenchWind {
+    float3 mean;
+    float3 gust;
+    float3 offset;
+};
+
+// Value noise on a unit lattice in x, y and t, periodic in t over `period` lattice steps (a power of two), with its
+// rate of change in t: float2(value 0..1, d value / d t).
+QUENCH_WEATHER_FN float2 quenchWindNoise(float x, float y, float t, uint seed, int period) {
+    const float fx = floor(x);
+    const float fy = floor(y);
+    const float ft = floor(t);
+    const int ix = int(fx);
+    const int iy = int(fy);
+    const int t0 = int(ft) & (period - 1);
+    const int t1 = (int(ft) + 1) & (period - 1);
+    float tx = x - fx;
+    float ty = y - fy;
+    const float f = t - ft;
+    tx = tx * tx * (3.0f - 2.0f * tx);
+    ty = ty * ty * (3.0f - 2.0f * ty);
+    const float a =
+        lerp(lerp(quenchWeatherHash(ix, iy, t0, seed), quenchWeatherHash(ix + 1, iy, t0, seed), tx),
+             lerp(quenchWeatherHash(ix, iy + 1, t0, seed), quenchWeatherHash(ix + 1, iy + 1, t0, seed), tx), ty);
+    const float b =
+        lerp(lerp(quenchWeatherHash(ix, iy, t1, seed), quenchWeatherHash(ix + 1, iy, t1, seed), tx),
+             lerp(quenchWeatherHash(ix, iy + 1, t1, seed), quenchWeatherHash(ix + 1, iy + 1, t1, seed), tx), ty);
+    return float2(lerp(a, b, f * f * (3.0f - 2.0f * f)), (b - a) * 6.0f * f * (1.0f - f));
+}
+
+// Two of them half a lattice step apart in space and time, so that their rate of change never vanishes everywhere at
+// once (one noise's does at each of its time steps): float2(value 0..2, its rate of change).
+QUENCH_WEATHER_FN float2 quenchWindNoise2(float x, float y, float t, uint seed, int period) {
+    return quenchWindNoise(x, y, t, seed, period) + quenchWindNoise(x + 0.5f, y + 0.5f, t + 0.5f, seed + 1u, period);
+}
+
+// Three independent value noises like quenchWindNoise in one pass over the lattice, each corner's hash split into three
+// 10-bit values (a third of the hashing): the values 0..1 and their rates of change in t.
+struct QuenchWindNoise3 {
+    float3 value;
+    float3 rate;
+};
+
+QUENCH_WEATHER_FN float3 quenchWindCorner(int x, int y, int t, uint seed) {
+    const uint h = quenchWeatherHashBits(x, y, t, seed);
+    return float3(float(h >> 22), float((h >> 12) & 1023u), float((h >> 2) & 1023u)) * (1.0f / 1023.0f);
+}
+
+QUENCH_WEATHER_FN QuenchWindNoise3 quenchWindNoise3(float x, float y, float t, uint seed, int period) {
+    const float fx = floor(x);
+    const float fy = floor(y);
+    const float ft = floor(t);
+    const int ix = int(fx);
+    const int iy = int(fy);
+    const int t0 = int(ft) & (period - 1);
+    const int t1 = (int(ft) + 1) & (period - 1);
+    float tx = x - fx;
+    float ty = y - fy;
+    const float f = t - ft;
+    tx = tx * tx * (3.0f - 2.0f * tx);
+    ty = ty * ty * (3.0f - 2.0f * ty);
+    const float3 a =
+        lerp(lerp(quenchWindCorner(ix, iy, t0, seed), quenchWindCorner(ix + 1, iy, t0, seed), tx),
+             lerp(quenchWindCorner(ix, iy + 1, t0, seed), quenchWindCorner(ix + 1, iy + 1, t0, seed), tx), ty);
+    const float3 b =
+        lerp(lerp(quenchWindCorner(ix, iy, t1, seed), quenchWindCorner(ix + 1, iy, t1, seed), tx),
+             lerp(quenchWindCorner(ix, iy + 1, t1, seed), quenchWindCorner(ix + 1, iy + 1, t1, seed), tx), ty);
+    QuenchWindNoise3 o;
+    o.value = lerp(a, b, f * f * (3.0f - 2.0f * f));
+    o.rate = (b - a) * (6.0f * f * (1.0f - f));
+    return o;
+}
+
+// The share of the wind at the cloud base `base` (m) that blows `height` m above y = 0: a logarithmic profile with a
+// roughness length of 0.1 m (open ground, grass), about 0.3 at 2 m under a base at 1.5 km.
+QUENCH_WEATHER_FN float quenchWindProfile(float height, float base) {
+    return saturate(log(max(height, 0.101f) / 0.1f) / log(max(base, 10.0f) / 0.1f));
+}
+
+// The wind at a world point (m). Gusts are bands across the wind, about 40 m along it and 120 m across, that change
+// over about 8 s; eddies are about 10 m across, change over about 2 s and turn the wind in every direction (upward
+// less). Both travel with the air at 0.6 of the cloud base's wind, as gusts of tens of metres do near the ground, and
+// scale with the mean wind at the point. At gusts 1 the speed along the wind deviates by about 0.45 of the mean, at
+// turbulence 1 along and across by about 0.3, upward by about 0.12 (weather_wind_gusts measures them).
+QUENCH_WEATHER_FN QuenchWind quenchWeatherWind(QUENCH_WIND_UNIFORMS w, float3 p) {
+    const float2 dir = float2(w.air.z, w.air.w);
+    const float speed = w.speed.x * quenchWindProfile(p.y, w.speed.y);
+    QuenchWind o;
+    o.mean = float3(dir.x * speed, 0.0f, dir.y * speed);
+    o.gust = float3(0.0f, 0.0f, 0.0f);
+    o.offset = float3(0.0f, 0.0f, 0.0f);
+    if (speed <= 0.0f || w.speed.z + w.speed.w <= 0.0f) return o;
+    const float ax = p.x - w.air.x * 0.6f;
+    const float az = p.z - w.air.y * 0.6f;
+    const float along = ax * dir.x + az * dir.y;
+    const float across = az * dir.x - ax * dir.y;
+    const float t = w.time.x;
+    const uint seed = uint(w.time.y);
+    // The gusts' reach: a displacement whose rate of change has the deviation the setting asks for (the summed
+    // noises' rate of change deviates by about 0.45 per lattice step).
+    const float2 g = quenchWindNoise2(along / 40.0f, across / 120.0f, t / 8.0f, seed + 11u, 512);
+    const float gustReach = w.speed.z * speed * 8.0f;
+    o.offset = float3(dir.x, 0.0f, dir.y) * (gustReach * (g.x - 1.0f));
+    o.gust = float3(dir.x, 0.0f, dir.y) * (gustReach * g.y / 8.0f);
+    // The eddies: x, up and z from one pair of three-channel noises, half a lattice step apart like quenchWindNoise2.
+    const float eddyReach = w.speed.w * speed * 2.0f * 0.625f;
+    const QuenchWindNoise3 e0 = quenchWindNoise3(ax / 10.0f, az / 10.0f, t / 2.0f, seed + 21u, 2048);
+    const QuenchWindNoise3 e1 =
+        quenchWindNoise3(ax / 10.0f + 0.5f, az / 10.0f + 0.5f, t / 2.0f + 0.5f, seed + 22u, 2048);
+    const float3 scale = float3(1.0f, 0.4f, 1.0f);
+    o.offset = o.offset + (e0.value + e1.value - 1.0f) * scale * eddyReach;
+    o.gust = o.gust + (e0.rate + e1.rate) * scale * (eddyReach / 2.0f);
+    return o;
 }
 
 QUENCH_SHARED_END

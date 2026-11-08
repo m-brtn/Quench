@@ -511,6 +511,11 @@ float3 cloudySkyColor(float3 dir, float4 clouds, bool sunDisc) {
     if (sunDisc) col = quenchSunDisc(col, dir);
     col = lerp(col, quenchFrame.overcast.rgb, quenchFrame.overcast.w * saturate(1.0 - abs(dir.y) * 10.0));
     if (dir.y > -0.02) col = col * clouds.a + clouds.rgb;
+    // A flash of lightning lights the clouds around it from within, and the air a little everywhere.
+    [branch] if (quenchFrame.lightning.w > 0.0 && dir.y > -0.02) {
+        const float around = exp((dot(dir, quenchFrame.lightning.xyz) - 1.0) * 6.0);
+        col += quenchFrame.lightningColor.rgb * (quenchFrame.lightning.w * (around * (1.0 - clouds.a) + 0.1));
+    }
     if (quenchFrame.fogParams.x > 0.0) {
         const float haze = pow(1.0 - saturate(abs(dir.y)), 6.0) * 0.6 * quenchFrame.fogColor.w;
         col = lerp(col, hazeColor(dir), haze);

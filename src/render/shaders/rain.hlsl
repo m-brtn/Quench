@@ -5,7 +5,8 @@
 // HDR image).
 //
 // The streaks are procedural: a fixed set of drops in a box around the camera, each falling with the rain's velocity
-// from a place of its own and wrapped around the box, so nothing is simulated or stored. A drop is drawn where the
+// from a place of its own and wrapped around the box, so nothing is simulated or stored; the wind's gusts and eddies
+// carry it off that path by their offset there (quench/Wind.hlsli) and turn its streak. A drop is drawn where the
 // weather's rain there (its precipitation times the share that falls as rain) is above its own random threshold and
 // the rain occlusion map lets the rain reach it. Its streak is the distance it falls during an exposure, at least one
 // pixel wide (its opacity scaled by its width below that), lit by the sky and the ground it refracts and the sun it
@@ -23,6 +24,7 @@
 #include "quench/Fullscreen.hlsli"
 #include "quench/Rain.hlsli"
 #include "quench/SceneUniforms.h"
+#include "quench/Wind.hlsli"
 
 #include "RainUniforms.h"
 
@@ -94,7 +96,10 @@ RainDropOut rain_streak_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     // A fixed place in a lattice of the box's size, moved by the fall and wrapped around the box's centre.
     const float3 start = float3(rainRandom(id), rainRandom(id + 1u), rainRandom(id + 2u)) * side;
     const float3 moved = start + velocity * rain.fall.w - rain.box.xyz;
-    const float3 head = rain.box.xyz + (frac(moved / side) - 0.5) * side;
+    const float3 carried = rain.box.xyz + (frac(moved / side) - 0.5) * side;
+    // Gusts and eddies carry it off its mean path, and turn its streak with their wind.
+    const QuenchWind wind = quenchWindAt(carried);
+    const float3 head = carried + wind.offset;
     const float dist = length(head - quenchFrame.cameraPos.xyz);
     const float fade = saturate(1.0 - dist * dist / (rain.box.w * rain.box.w)) * saturate((dist - 0.3) * 2.0);
     if (fade <= 0.0) return rainCulled();
@@ -102,7 +107,7 @@ RainDropOut rain_streak_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     if (rainRandom(id + 4u) >= weather.b * weather.a) return rainCulled();
     if (quenchRainExposure(mapsTex, mapsSampler, head) < 0.5) return rainCulled();
 
-    const float3 tail = head - velocity * rain.streaks.y;
+    const float3 tail = head - (velocity + wind.gust) * rain.streaks.y;
     const float4 c0 = mul(rain.viewProjStable, float4(head, 1.0));
     const float4 c1 = mul(rain.viewProjStable, float4(tail, 1.0));
     if (c0.w < 0.1 || c1.w < 0.1) return rainCulled();
@@ -197,7 +202,9 @@ RainDropOut rain_flake_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     const float3 flutter = float3(sin(t * rate + phase), 0.0, cos(t * rate * 0.8 + phase * 1.3)) * reach;
     const float3 start = float3(rainRandom(id), rainRandom(id + 1u), rainRandom(id + 2u)) * side;
     const float3 moved = start + velocity * t + flutter - centre;
-    const float3 P = centre + (frac(moved / side) - 0.5) * side;
+    const float3 carried = centre + (frac(moved / side) - 0.5) * side;
+    const QuenchWind wind = quenchWindAt(carried);
+    const float3 P = carried + wind.offset;
     const float dist = length(P - quenchFrame.cameraPos.xyz);
     const float fade = saturate(1.0 - dist * dist / (extent * extent)) * saturate((dist - 0.2) * 3.0);
     if (fade <= 0.0) return rainCulled();
@@ -205,9 +212,9 @@ RainDropOut rain_flake_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     if (rainRandom(id + 4u) >= weather.b * (1.0 - weather.a)) return rainCulled();
     if (quenchRainExposure(mapsTex, mapsSampler, P) < 0.5) return rainCulled();
 
-    // Its motion now (the fall, the wind and the flutter's) over the exposure, in pixels on the screen.
-    const float3 now = velocity + float3(cos(t * rate + phase), 0.0, -0.8 * sin(t * rate * 0.8 + phase * 1.3)) *
-                                      (reach * rate);
+    // Its motion now (the fall, the wind with its gusts and the flutter's) over the exposure, in pixels on the screen.
+    const float3 now = velocity + wind.gust +
+                       float3(cos(t * rate + phase), 0.0, -0.8 * sin(t * rate * 0.8 + phase * 1.3)) * (reach * rate);
     const float4 c0 = mul(rain.viewProjStable, float4(P, 1.0));
     const float4 c1 = mul(rain.viewProjStable, float4(P - now * kFlakeExposure, 1.0));
     if (c0.w < 0.1 || c1.w < 0.1) return rainCulled();

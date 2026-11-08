@@ -38,9 +38,16 @@ float typeValue(CloudType type);
 // The type nearest to a value on that scale.
 CloudType nearestType(float value);
 
+// The wind (Weather::windAt; docs/weather.md, "Wind"): the mean wind at the clouds' height, less near the ground, with
+// gusts and eddies that travel with the air. 0 for both: a steady wind.
 struct Wind {
     glm::vec2 direction{1.0f, 0.0f}; // world xz, the way the air moves (normalized where it is used)
     float speed = 8.0f;              // m/s at the clouds' height
+    // Gusts (0..1): bands of faster and slower air across the wind, tens of metres apart, changing over seconds; at
+    // 1 the speed along the wind deviates by about 0.45 of the mean. Turbulence (0..1): eddies of about 10 m that turn
+    // the wind every way; at 1 the speed along and across deviates by about 0.3 of the mean, upward by about 0.12.
+    float gusts = 0.0f;
+    float turbulence = 0.0f;
     bool operator==(const Wind&) const = default;
 };
 
@@ -79,6 +86,9 @@ struct Settings {
     // 0 degrees). The meltwater wets the ground and fills the puddles.
     float snowTime = 600.0f;
     float meltTime = 900.0f;
+    // Lightning (Weather::strikes): how often a storm flashes, where a cumulonimbus rains heavily. At 1 about 0.6
+    // flashes a minute per km^2 of such a core (a raining cumulonimbus cell of 3 km radius: a few a minute); 0: none.
+    float lightning = 1.0f;
     bool operator==(const Settings&) const = default;
 };
 
@@ -117,6 +127,13 @@ struct Wetness {
     float snow = 0.0f;   // snow cover: 0 bare .. 1 covered (thin snow lies in patches and on flat ground first)
 };
 
+// A flash of lightning (Weather::strikes): when, where it strikes the ground (world xz) and how bright it is (0.5..1).
+struct Strike {
+    double time = 0.0;
+    glm::vec2 position{0.0f};
+    float brightness = 1.0f;
+};
+
 // A cell of the remembered wetness (Weather::wetnessGrid): the wetness at its centre and the precipitation falling
 // there at its last update, with the share of it that falls as snow.
 struct WetnessCell {
@@ -141,7 +158,9 @@ public:
     explicit Weather(const Settings& settings = {});
 
     // Takes effect at once; the air's offset and the evolution time stay (a new wind moves the air from where it is).
-    // The wetness stays too and follows the new precipitation from now on.
+    // The wetness stays too and follows the new precipitation from now on. The wetness grid's precipitation and snow
+    // share (what the renderer's drops and flakes read) follow at the next update(), also one of 0 s while the clock
+    // is stopped; so do they after a change of the cells.
     void setSettings(const Settings& settings);
     const Settings& settings() const { return m_settings; }
 
@@ -187,16 +206,37 @@ public:
                                   Precipitation kind = Precipitation::Any) const;
     // The mean coverage within `radius` of a point (19 samples): how overcast it is there.
     float cover(glm::vec2 xz, float radius) const;
-    // The wind at a point: the settings' wind at the clouds' height, less near the ground (a logarithmic profile,
-    // about 0.3 of it at 2 m under a base at 1.5 km). Gusts and local wind come with part 4 (docs/weather.md).
+    // The wind at a point now (m/s): the settings' wind at the clouds' height, less near the ground (a logarithmic
+    // profile, about 0.3 of it at 2 m under a base at 1.5 km), with its gusts and eddies (Wind::gusts, turbulence).
+    // The same field moves the renderer's rain and snow and the plants of quench/Wind.hlsli. About 40 ns.
     glm::vec3 windAt(glm::vec3 point) const;
-    // The velocity of the rain falling at a point (m/s): kRainFallSpeed down, carried by windAt. The renderer's rain
-    // occlusion map looks along it; a game's own test for cover (a raycast up against it from a listener) can too.
+    // The mean wind there, without the gusts and eddies.
+    glm::vec3 meanWindAt(glm::vec3 point) const;
+    // How far the gusts and eddies have moved the air at a point from where the mean wind alone would have taken it
+    // (m): what a light body carried by the wind adds to its mean motion (windAt - meanWindAt is its rate of change).
+    glm::vec3 windOffset(glm::vec3 point) const;
+    // The velocity of the rain falling at a point (m/s): kRainFallSpeed down, carried by the mean wind. The renderer's
+    // rain occlusion map looks along it; a game's own test for cover (a raycast up against it from a listener) can
+    // too.
     static constexpr float kRainFallSpeed = 7.5f;
     glm::vec3 rainVelocity(glm::vec3 point) const;
     // The same for snow, whose flakes fall at about 1 m/s and drift far with the wind.
     static constexpr float kSnowFallSpeed = 1.0f;
     glm::vec3 snowVelocity(glm::vec3 point) const;
+
+    // The flashes of lightning within `radius` of a point (xz) from `from` to `to` (weather time, s; at most a minute
+    // before `to` is looked at), in time order, into `out` (cleared first). Lightning strikes where a cumulonimbus
+    // rains heavily (Settings::lightning); while the settings stay the same a flash is a pure function of the weather
+    // and its time, so every query of a span gives the same flashes in it, however the span is cut and whenever it
+    // is asked. A few microseconds for a radius of 30 km and a frame's span. The renderer lights the clouds and the
+    // scene by them (RenderSettings::lightning); a game plays the
+    // thunder (audio::WeatherAudio::strike), which comes later by the distance.
+    void strikes(glm::vec2 xz, float radius, double from, double to, std::vector<Strike>& out) const;
+    // A strike's light at a time (weather time, s): 0 before it, two to four return strokes 40 to 120 ms apart (each
+    // fading over about 30 ms) and an afterglow over about a quarter of a second, at most about 1.3 times its
+    // brightness, 0 again kFlashLength after it. The same strike flickers the same way every time.
+    static constexpr double kFlashLength = 1.2;
+    static float flash(const Strike& strike, double time);
     // The height of the cloud tops of a type value (m).
     float cloudTop(float type) const;
     // An upper bound of Sample::type anywhere on the map, the field's and the cells' (what the renderer marches
@@ -224,6 +264,8 @@ public:
 
     // What the renderer's weather pass reads (shaders/quench/WeatherField.h).
     const shader::WeatherUniforms& uniforms() const { return m_uniforms; }
+    // What the renderer's frame uniforms carry for the wind (quenchWeatherWind).
+    const shader::WindUniforms& windUniforms() const { return m_wind; }
 
 private:
     struct CellEntry {
@@ -239,6 +281,8 @@ private:
     // The wetness the last hours of this weather leave at each point (and the precipitation there now).
     void estimateWetness(std::span<const glm::vec2> points, std::span<WetnessCell> out) const;
     void estimateGrid();
+    // The grid's precipitation and snow share now, its wetness as it is.
+    void refreshFall();
     Wetness wetted(Wetness w, float precipitation, float snowShare, double dt) const;
 
     Settings m_settings{};
@@ -248,11 +292,13 @@ private:
     std::vector<CellEntry> m_cells; // in id order
     CellId m_nextId = 1;
     shader::WeatherUniforms m_uniforms{};
+    shader::WindUniforms m_wind{};
     glm::vec2 m_wetFocus{0.0f};
     glm::vec2 m_wetOrigin{0.0f};
     std::vector<WetnessCell> m_wetCells;
     double m_wetPending = 0.0; // weather time since the grid's last update
     std::uint64_t m_wetVersion = 0;
+    bool m_fallStale = false; // the settings or the cells changed since the grid's precipitation was sampled
 };
 
 } // namespace quench::weather

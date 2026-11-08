@@ -225,6 +225,10 @@ struct RenderSettings {
     // place of the sky's radiance, and how many of its faces are drawn again each frame (1..6).
     std::uint32_t skyCubeSize = 64;
     int skyCubeFacesPerFrame = 6;
+    // With clouds: the weather's lightning (weather::Weather::strikes within 30 km) lights the clouds around each
+    // flash and, the nearer it is, the scene's ambient light, as it flickers (weather::Weather::flash). No bolts are
+    // drawn; the thunder is the game's (audio::WeatherAudio::strike). Off by default.
+    bool lightning = false;
     // The rain of the scene's weather. Off by default. The wetness and puddles on surfaces come with any level; the
     // shafts need clouds (they read the clouds' weather map) and can be left out; the rainbow shows where the sun
     // shines on rain in front of a viewer with the sun behind them (it rarely does).
@@ -413,6 +417,10 @@ struct RenderStats {
     std::uint32_t cloudHeight = 0;
     float cloudCover = 0.0f;
     std::uint32_t skyCubeFaces = 0;
+    // The lightning's light this frame (RenderSettings::lightning): the flashes' sum at the camera, each by its
+    // distance (0: none; about 1.3 at the peak of a bright flash within a kilometre), and the flashes lit.
+    float lightning = 0.0f;
+    std::uint32_t lightningFlashes = 0;
     // The rain drawn this frame (Off: none, or no weather), the rain at the camera (the precipitation there less its
     // snow), the streaks and splashes drawn (none where no rain falls near the camera; where some does every instance
     // runs and most are empty), the casters drawn

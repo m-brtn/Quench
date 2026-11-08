@@ -88,6 +88,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
     quench_add_shaders(quench_device_tests NAME render_test SOURCE render/shaders/custom.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment)
+    quench_add_shaders(quench_device_tests NAME render_sway SOURCE render/shaders/sway.hlsl
+        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex)
     quench_add_shaders(quench_device_tests NAME reload_test SOURCE gpu/shaders/reload.hlsl
         ENTRIES reload_vs:vertex reload_fs:fragment)
     quench_add_shaders(quench_device_tests NAME volume SOURCE gpu/shaders/volume.hlsl
@@ -363,6 +365,8 @@ if(NOT QUENCH_HEADLESS)
     quench_add_shaders(quench_render_tests NAME render_test SOURCE render/shaders/custom.hlsl
         ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex surface_shadow_fs:fragment
                 surface_transmittance_fs:fragment)
+    quench_add_shaders(quench_render_tests NAME render_sway SOURCE render/shaders/sway.hlsl
+        ENTRIES surface_vs:vertex surface_fs:fragment surface_shadow_vs:vertex)
     quench_add_ray_hits(quench_render_tests NAME render_test_hits SURFACES render/shaders/custom.hlsl)
     if(QUENCH_TEST_VULKAN_LOADER)
         quench_add_test_variant(quench_render_tests PREFIX render_vulkan LABEL render vulkan

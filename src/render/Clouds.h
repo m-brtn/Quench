@@ -18,6 +18,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 namespace quench::render::detail {
 
@@ -96,6 +97,7 @@ private:
     Clouds m_lastMode = Clouds::Off; // last frame's (the history and cube belong to it)
     bool m_shadows = false;
     shader::CloudUniforms m_uniforms{};
+    std::vector<weather::Strike> m_strikes; // the lightning's of this frame
 };
 
 } // namespace quench::render::detail
