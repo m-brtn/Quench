@@ -220,11 +220,13 @@ server records (for work that only feeds a profile).
 
 **Opening a capture** (by the user; agents do not start the GUI, it opens a window): Tracy's profiler GUI of version
 0.15.0 or newer opens a `.tracy` file (its welcome window, "Open saved trace"); an older one refuses it (Homebrew had
-0.14.1 on 2026-11-07). It builds from the source the configure fetched (not built or run here):
+0.14.1 on 2026-11-07). It builds from the source the configure fetched:
 `cmake -S build/profile/_deps/tracy-src/profiler -B build/tracy-profiler -DCMAKE_BUILD_TYPE=Release`, then
 `cmake --build build/tracy-profiler` (upstream's CMake, which downloads its own libraries). Connected to a running
 profile build instead of `tracy-capture`, it shows the frames live (the program in its list, or `127.0.0.1` and the
-port).
+port). On 2026-11-08 the GUI was built this way for the user, who connected it to `127.0.0.1` (the list did not
+show the demo) and profiled the profile build's demo in its Weather section in a window on the Mac: "everything
+works great"; the user's screenshot showed the frames, the CPU and GPU plots and the native backend's GPU zones.
 
 On iOS the client builds with `TRACY_NO_BROADCAST` (no discovery broadcast on the phone's network) and listens on
 all addresses; a server would connect to the phone's address on the local network. Not run on a phone yet, and the

@@ -37,7 +37,8 @@ skeleton and presets,
 library backend, worker thread priority, the job system `quench::JobSystem` on enkiTS, profiling macros in
 `quench/core/Profile.h`: Tracy's on-demand client with `QUENCH_TRACY`, off by default, the `profile` preset; zones of
 the app loop, the timed ranges (GPU zones on the native backend), jobs, physics, animation, assets and audio;
-captures recorded offscreen and summed up without Tracy's GUI by `tools/tracy_capture.py`; not run on a phone),
+captures recorded offscreen and summed up without Tracy's GUI by `tools/tracy_capture.py`; the user's live session
+with Tracy's GUI on the Mac, 2026-11-08: "everything works great"; not run on a phone),
 `quench_physics`
 (`PhysicsWorld` on Jolt, its jobs on the engine's job system), `quench_assets` (asset IDs, the `AssetManager` cache
 with reference counts, placeholders, budgets, loads on jobs, a per-frame upload budget, hot reload on the Mac and,
