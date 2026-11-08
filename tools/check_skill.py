@@ -12,7 +12,7 @@ A light check of the skill's Markdown files against this checkout, run by `tools
     runner (src/app/Scenario.cpp, src/app/AppScenario.cpp);
   - quench_* CMake functions and targets are defined in CMakeLists.txt or cmake/;
   - engine C++ names (after quench namespaces in code blocks; in inline code, camelCase or PascalCase names alone
-    and names after ::, . or ->) are words in include/quench/.
+    and names after ::, . or ->) are words in include/quench/ or in the shader library (shaders/quench/).
 It cannot tell whether the text is still right: a change of behaviour needs the skill read and updated by hand.
 Standard library only. Exit code 0: every name found; 1: a list of what is missing.
 """
@@ -67,7 +67,8 @@ def main() -> int:
     cmake_text = read(ENGINE_DIR / "CMakeLists.txt") + "".join(read(p) for p in (ENGINE_DIR / "cmake").glob("*.cmake"))
     cmake_names = set(re.findall(r"(?:function|add_library|add_executable)\((quench_[a-z_]+)", cmake_text))
     header_words = set()
-    for header in (ENGINE_DIR / "include/quench").rglob("*.h"):
+    headers = list((ENGINE_DIR / "include/quench").rglob("*.h")) + list((ENGINE_DIR / "shaders/quench").rglob("*.h*"))
+    for header in headers:
         header_words.update(re.findall(r"\b[A-Za-z_]\w*\b", read(header)))
 
     missing = []

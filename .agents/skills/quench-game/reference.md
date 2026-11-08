@@ -329,6 +329,52 @@ m_rainSound->update({.precipitation = m_weather.precipitation(listener),
 - `effects().snow`, `stats().snowAtCamera`, `snowShareAtCamera`, `snowFlakes` say what happened;
   `docs/weather.md`, "Snow"; the demo's Weather section, presets Snowfall, Thaw and Snow showers.
 
+The wind is one field for everything: the mean wind with its profile near the ground, gusts and eddies that travel
+with the air. The renderer's drops and flakes follow it by themselves; plants, physics bodies and the sound are the
+game's to hook up:
+
+```cpp
+s.wind = {.direction = {1, 0}, .speed = 20, .gusts = 0.6f, .turbulence = 0.4f}; // 0 and 0: a steady wind
+s.lightning = 1.0f;                         // how often storms flash (where a cumulonimbus rains heavily)
+rs.lightning = true;                        // off by default: flashes light the clouds and the scene
+
+// a plant surface (shaders/plants.hlsl, built with quench_add_shaders and registered with addSurface like any
+// surface; InstanceDesc::custom carries its height, stiffness and flutter):
+//   #include "quench/Surface.hlsli"
+//   #include "quench/Wind.hlsli"
+//   void sway(inout QuenchVertexIn v, InstanceData instance) {
+//       quenchWindSway(v.position, v.normal, instance, instance.custom.x, instance.custom.y, instance.custom.z);
+//   }
+//   #define QUENCH_SURFACE_VERTEX sway
+//   #include "quench/SurfaceEntries.hlsli"
+
+#include <quench/physics/WindDrag.h>
+quench::WindDrag m_drag;                    // member
+m_drag.add(leafBody, 0.02f, 1.2f);          // area facing the wind (m^2), drag coefficient; only these feel it
+// Game::fixedStep, before m_world->step(dt)
+m_drag.apply(*m_world, [this](glm::vec3 p) { return m_weather.windAt(p); });
+
+// Game::update: the wind's sound and each flash's thunder, passed once
+std::vector<weather::Strike> strikes;
+m_weather.strikes({listener.x, listener.z}, 25000.0f, m_heardUntil, m_weather.time(), strikes);
+for (const weather::Strike& strike : strikes)
+    m_rainSound->strike(glm::distance(strike.position, glm::vec2(listener.x, listener.z)), strike.brightness);
+m_heardUntil = m_weather.time();
+m_rainSound->update({.precipitation = m_weather.precipitation(listener), // as above
+                     .wind = glm::length(m_weather.windAt(listener))}, frameDt);
+```
+
+- `quenchWindSway` turns a plant about its object's origin; `quenchWindSwayAbout(p, n, instance, root, ...)` takes
+  a root per vertex (`float3(v.position.x, 0, v.position.z)` for a patch of grass in one instance). Stiffness 1 is
+  grass, about 2 a bush, 4 or more a tree's crown. Motion vectors, acceleration structures and rays see the plant
+  unbent. Build the shadow entry (`surface_shadow_vs`) too and the shadows sway.
+- `windAt` includes the gusts, `meanWindAt` is the profile alone, `windOffset` how far the gusts moved the air.
+  `WindDrag` has no torque, lift or shelter: lower the wind a game passes for a body behind a wall.
+- The sound's `WindLight` and `WindStrong` layers and the thunder's `Thunder::Near` and `Far` sounds come with
+  `quench_weather_sounds()`; `setSound` and `setThunderSound` replace them. `stats().lightning` and
+  `lightningFlashes` say what was lit; `docs/weather.md`, "Wind"; the demo's Weather section, preset Windy storm,
+  view Meadow, and its Physics section's wind.
+
 ## Physics
 
 ```cpp

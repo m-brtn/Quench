@@ -536,16 +536,17 @@ BRDF; own procedural content only. Released with 0.10.0 ([docs/releases/v0.10.0.
   aluminium, the puddle): by the user (the demo's check mode).
 - [ ] The tunnel on the iPhone 18 Pro Max.
 
-## Stage 13: weather (parts 1 and 2, clouds and rain, built 2026-11-07; part 3, snow, 2026-11-08; part 4 planned)
+## Stage 13: weather (parts 1 and 2, clouds and rain, built 2026-11-07; parts 3 and 4, snow and wind, 2026-11-08)
 
 Requested by the user on 2026-11-07, to come after the queue in "What is next": rain, snow, sun and wind, with
 raindrop ripples on puddles (14:16); light that changes with the clouds, and volumetric clouds that morph (14:18); rain
 with sun, a single cloud pouring while the sky beyond it is blue, and cumulus clouds (14:23); rain sounds that game
 makers can change (14:26). The design below was agreed in the reply to those requests. Part 1 (the weather map, the
 clouds, their light and shadows, the sky cube), part 2 (rain, wetness, puddles, ripples and the rain's sound) and
-part 3 (snow: flakes, the snow cover building and melting, its shafts, its quiet) are built ([Weather](weather.md),
-which also has the design of the later parts in detail and where parts 2 and 3 differ from the design below); the
-rest is a plan. Out of scope unless asked: snow footprints.
+part 3 (snow: flakes, the snow cover building and melting, its shafts, its quiet) and part 4 (wind: gusts and
+eddies, plants swaying, the wind's drag on chosen bodies, lightning and thunder, the wind's sound) are built
+([Weather](weather.md), which says where they differ from the design below); what is left is the runs on a phone and
+the checks by eye and ear. Out of scope unless asked: snow footprints.
 
 **Goal.** Weather that a game turns on and drives: clouds that form, drift and change shape, light that follows
 them, rain and snow only where clouds drop them, one wind that moves all of it, and sound from the same data. For any
@@ -640,10 +641,12 @@ TODO for stage 13, in this order:
 - [x] Wet surfaces, puddles and ripples in the puddles' normals; the wetness the weather remembers (2026-11-07).
 - [x] Snow: flakes, accumulation, none under cover; rain or snow by the temperature and a cell's own share, melting
   into wet ground and puddles, the snow's shafts, quiet in the sound (2026-11-08).
-- [ ] Wind: particles, clouds, vegetation sway, physics forces; wind sound and thunder.
-- [ ] Weather sounds as a game-replaceable set with engine defaults, and the engine's weather audio off for games
-  that drive their own. Built for the rain (2026-11-07, `audio::WeatherAudio`: light, heavy, distant and roof
-  layers, procedural defaults); open: wind and thunder (part 4), layers per surface.
+- [x] Wind: gusts and eddies in the weather's field for the particles, the clouds' drift (the mean wind),
+  vegetation sway (`quench/Wind.hlsli`), physics forces (`WindDrag`, opt-in per body); the wind's sound and thunder
+  after lightning (`Weather::strikes`, `RenderSettings::lightning`) (2026-11-08). Not built: slowdowns behind terrain.
+- [x] Weather sounds as a game-replaceable set with engine defaults, and the engine's weather audio off for games
+  that drive their own: the rain (2026-11-07), the snow's quiet, the wind and the thunder (2026-11-08); open: layers
+  per surface (roof, leaves, puddles).
 - [ ] Demo section "Weather" with its checks, golden captures and phone defaults; costs on the Mac and the iPhone 17.
   Built for part 1 (2026-11-07): the section (14), its batch part with three golden captures per backend, the check
   mode item, phone defaults estimated from the Mac's costs at a phone's size; for part 2 (2026-11-07): the rain on
@@ -651,7 +654,9 @@ TODO for stage 13, in this order:
   captures per backend, two check mode items, phone defaults (Low without shafts) estimated the same way; for part 3
   (2026-11-08): presets Snowfall, Thaw and Snow showers, a view over the shelter, the temperature, its batch part
   with four golden captures per backend, a check mode item, phone defaults (Low flakes without shafts) estimated the
-  same way; open: the costs on the iPhone 17, part 4 in the section (wind).
+  same way; for part 4 (2026-11-08): a meadow of swaying plants, the Windy storm preset, gusts, turbulence and
+  lightning, its batch part with four golden captures per backend, the Physics section's wind and its part, two check
+  mode items; open: the costs on the iPhone 17.
 - [ ] Look at it in motion and listen to it, on the Mac and the iPhone (by the user).
 
 ## What is next
@@ -669,17 +674,19 @@ The queue the user set on 2026-11-07, in this order:
    its run on an iPhone is open, with the user); what is left of them in
    [Other modules](#other-modules-when-a-game-needs-them).
 5. Stage 13, weather (above): part 1, the clouds and their light, and part 2, rain, wetness, puddles, ripples and
-   the rain's sound, built 2026-11-07, part 3, snow, 2026-11-08 ([Weather](weather.md)); part 4 (wind) next.
+   the rain's sound, built 2026-11-07, part 3, snow, and part 4, wind, 2026-11-08 ([Weather](weather.md)); its
+   phone runs and the checks by eye and ear are open.
 
 What else stays open, in the order it is useful (not scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (49 items: the
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (51 items: the
    cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the input
    devices, loading and streaming, the Basis Universal tiles, the audio by ear, animation in motion, ray tracing noise,
    MetalFX ghosting and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the
    path tracer, the probe cascades, the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, its lamp
    shadow maps on SDL GPU, the tunnel for 10 minutes with Adapt to heat, the navigation crowd in motion, the clouds,
-   the rain and the snow in motion, the rain by ear, the frame rate and the layout on the phone;
+   the rain, the snow and the plants in the wind in motion, the rain, the wind and the thunder by ear, the frame
+   rate and the layout on the phone;
    [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.10.0 code (on the
    iPhone 17 last with the stage 11 code), on the iPhone 18 Pro Max the stage 11 and 12 runs (done on the iPhone 17),
    Core Audio output on the Mac, the audio session on the iPhone (silent switch, interruptions, routes, background).
@@ -748,7 +755,7 @@ Priorities from the user's request of 2026-11-05.
 | Engine demo: interactive sections for every feature (added 2026-11-05) | after the stages | 10 (done; started in 5; not yet run on the iPhone in its finished form) |
 | Full ray tracing: reflections, indirect light, local light shadows, denoising, a path tracer (added 2026-11-06) | after the stages | 11 (done; run on the iPhone 17, not yet looked at in motion) |
 | Area lights, anisotropic GGX, a demo tunnel with lamps of every shape and metal, wet, rubber and plastic materials (added 2026-11-06) | after stage 11 | 12 (done; run on the iPhone 17, not yet looked at in motion or on the phone's screen) |
-| Weather: rain, snow, sun and wind, volumetric clouds that morph and light that follows them, rain under a single cloud in a blue sky, puddle ripples, replaceable weather sounds (added 2026-11-07) | after the queue in "What is next" | 13 (parts 1 to 3, the clouds, their light, the rain and its sound, the snow, built; not yet run on the iPhone, looked at in motion or listened to; wind planned) |
+| Weather: rain, snow, sun and wind, volumetric clouds that morph and light that follows them, rain under a single cloud in a blue sky, puddle ripples, replaceable weather sounds (added 2026-11-07) | after the queue in "What is next" | 13 (parts 1 to 4, the clouds, their light, the rain and its sound, the snow, the wind and thunder, built; not yet run on the iPhone, looked at in motion or listened to) |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under

@@ -136,6 +136,7 @@ run_step() {
 labels_for() {
     case "$1" in
     src/core/* | include/quench/core/* | tests/core/*) echo "core shared" ;;
+    src/physics/WindDrag.cpp | include/quench/physics/WindDrag.h) echo "physics demo" ;;
     src/physics/* | include/quench/physics/* | tests/physics/*) echo "physics" ;;
     src/assets/* | include/quench/assets/* | tests/assets/*) echo "assets" ;;
     src/audio/WeatherAudio.cpp | include/quench/audio/WeatherAudio.h | tools/assets/make_weather_sounds.py)

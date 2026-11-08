@@ -259,16 +259,17 @@ the job system, and inside `NavMesh::update()` where there are no worker threads
 | Web | `navigation.*` under Node.js (`wasm-node`, single-threaded: the builds run inside `update()`); no rendering |
 | Windows, Linux, Android | nothing |
 
-`quench_weather` is headless and portable C++ (the field is a header shared with the shaders); the clouds, the
-rain and the snow are `quench_render`'s, with the 2D layer as the clouds' fallback by format support, and `WeatherAudio` is
-`quench_audio`'s ([Weather](weather.md#platforms)).
+`quench_weather` is headless and portable C++ (the field is a header shared with the shaders, the wind's gusts and
+lightning included); the clouds, the rain, the snow, the plants' sway (`quench/Wind.hlsli`) and the lightning's light
+are `quench_render`'s, with the 2D layer as the clouds' fallback by format support, `WeatherAudio` (the wind and the
+thunder included) is `quench_audio`'s and `WindDrag` `quench_physics`' ([Weather](weather.md#platforms)).
 
 | Where | Run so far |
 |---|---|
-| Mac | `weather.*` in `headless`, `debug`, `release`, `asan` and `tsan`; `render.renderer_clouds_shadow_the_ground` and the GPU cases `texture_3d_from_layers` and `cube_faces`, `render.renderer_rain_wets_the_open_ground`, `renderer_rain_shafts_from_afar`, `renderer_snow_covers_the_open_ground` and `renderer_snow_shafts_from_afar` on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK; the demo's Weather section, its `weather`, `rain` and `snow` parts and their ten captures on all three (offscreen); `audio.weather_*` (the mix and the default sounds, by measurement); the costs on the native backend (offscreen) |
-| iOS Simulator | `ios-sim-tests`: `weather.*` and the GPU and render cases on both backends |
-| iPhone | nothing. Needs the user: the clouds, the rain and the snow in motion on the phone's screen, the rain by ear, the phone defaults' cost |
-| Web | `weather.*` under Node.js (`wasm-node`); no rendering |
+| Mac | `weather.*` in `headless`, `debug`, `release`, `asan` and `tsan`; `render.renderer_clouds_shadow_the_ground` and the GPU cases `texture_3d_from_layers` and `cube_faces`, `render.renderer_rain_wets_the_open_ground`, `renderer_rain_shafts_from_afar`, `renderer_snow_covers_the_open_ground`, `renderer_snow_shafts_from_afar`, `renderer_wind_sways_plants` and `renderer_lightning_lights_the_storm` on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK; the demo's Weather section, its `weather`, `rain`, `snow` and `wind` parts and their fourteen captures and the `physics_wind` part on all three (offscreen); `audio.weather_*` (the mix, the wind, the thunder and the default sounds, by measurement); `physics.physics_wind_drag`; the costs on the native backend (offscreen) |
+| iOS Simulator | `ios-sim-tests`: `weather.*`, `physics.physics_wind_drag` and the GPU and render cases on both backends |
+| iPhone | nothing. Needs the user: the clouds, the rain, the snow and the plants in the wind in motion on the phone's screen, the rain, the wind and the thunder by ear, the phone defaults' cost |
+| Web | `weather.*` and `physics.physics_wind_drag` under Node.js (`wasm-node`); no rendering |
 | Windows, Linux, Android | nothing |
 
 ## Windows and Linux

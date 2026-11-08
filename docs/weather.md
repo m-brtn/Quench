@@ -9,10 +9,13 @@ module, and the clouds in `quench_render`, with the demo's "Weather" section. **
 the rain occlusion map, wet surfaces, puddles and ripples) and the rain's sound (`audio::WeatherAudio`). **Part 3,
 snow, is built** (2026-11-08): the weather's temperature and snow share, the snow cover it remembers beside the
 wetness, and in `quench_render` the flakes, the cover on surfaces and the snow's shafts; the rain's sound keeps quiet
-where it snows. Part 4 (wind) is a plan ([Later parts](#later-parts)). Written for the engine, not moved from a game;
-neither game uses it. It ran on the Mac (Metal, the native Metal backend and Vulkan through MoltenVK), in the iOS
-Simulator (the test executables) and as WebAssembly under Node.js (the headless tests); not on an iPhone, and nobody
-has looked at the clouds, the rain or the snow in motion or listened to the rain. All documentation:
+where it snows. **Part 4, wind, is built** (2026-11-08): gusts and eddies in the weather's wind field that the rain,
+the snow and a game's queries share, plants that sway with it (`quench/Wind.hlsli`), the wind's drag on chosen
+physics bodies (`WindDrag`), lightning in storms that lights the clouds and the scene, and the wind's and the
+thunder's sounds ([Wind](#wind)). Written for the engine, not moved from a game; neither game uses it. It ran on the
+Mac (Metal, the native Metal backend and Vulkan through MoltenVK), in the iOS Simulator (the test executables) and
+as WebAssembly under Node.js (the headless tests); not on an iPhone, and nobody has looked at the clouds, the rain,
+the snow or the swaying plants in motion or listened to the rain, the wind or the thunder. All documentation:
 [index](README.md).
 
 ## Use
@@ -28,7 +31,7 @@ wx::Settings s;
 s.seed = 7;
 s.coverage = 0.32f;                       // the share of the sky the clouds cover, 0 clear .. 1 overcast
 s.type = wx::CloudType::Cumulus;          // Stratus, Cumulus, Towering, Cumulonimbus
-s.wind = {.direction = {0, 1}, .speed = 12};
+s.wind = {.direction = {0, 1}, .speed = 12, .gusts = 0.5f, .turbulence = 0.3f};
 s.temperature = 15.0f;                    // degrees C at the ground: rain (below about 1 degree, snow)
 wx::Weather weather(s);
 weather.setTime(1200.0);                  // where the weather's clock starts (s)
@@ -41,6 +44,7 @@ rs.clouds = quench::render::Clouds::Volumetric;
 rs.cloudResolution = 0.5f;                // half size, accumulated over frames (cloudTemporal)
 rs.rain = quench::render::Rain::Medium;   // streaks, splashes, wet surfaces; shafts with the clouds
 rs.snow = quench::render::Snow::Medium;   // flakes, the snow cover on surfaces; where the weather is cold enough
+rs.lightning = true;                      // storms' flashes light the clouds and the scene
 renderer.setSettings(rs);
 // What gets wet: every material by default (wetness 1); puddles where a material asks for them
 MaterialId paving = scene.addMaterial({.baseColor = {0.4f, 0.4f, 0.42f, 1}, .roughness = 0.7f, .puddles = 1});
@@ -55,13 +59,18 @@ scene.setWeather(weather);                // a copy: set it again after each upd
 float rain = weather.precipitation(listenerPosition);           // 0..1 falling here
 float nearest = weather.distanceToPrecipitation({x, z});        // m to the nearest rain
 float overcast = weather.cover({x, z}, 6000.0f);                // mean coverage around a point
-glm::vec3 wind = weather.windAt(position);                      // m/s
+glm::vec3 wind = weather.windAt(position);                      // m/s, with its gusts and eddies
 weather::Wetness wet = weather.wetness({x, z});                 // ground, standing water, snow 0..1
 float snowShare = weather.snowShare(listenerPosition);          // 0 rain .. 1 snow (by the temperature there)
 float rainAway = weather.distanceToPrecipitation({x, z}, 0.1f, 8000.0f, weather::Precipitation::Rain);
 float underRoof = renderer.stats().rainCover;                   // 0 open .. 1 covered (-1: not known yet)
 rainSound.update({.precipitation = rain, .distanceToRain = rainAway, .cover = std::max(underRoof, 0.0f),
-                  .snow = snowShare}, dt);
+                  .snow = snowShare, .wind = glm::length(weather.windAt(listenerPosition))}, dt);
+// Thunder: each flash once, when it appears; heard later by its distance
+weather.strikes({x, z}, 25000.0f, lastTime, weather.time(), flashes);
+for (const weather::Strike& f : flashes) rainSound.strike(glm::distance(f.position, {x, z}), f.brightness);
+// The wind on chosen bodies (quench_physics), before each step
+drag.apply(physics, [&](glm::vec3 p) { return weather.windAt(p); });
 ```
 
 `Scene::clearWeather()` removes it (no clouds, no rain). A game links `quench_weather` for the queries alone
@@ -117,7 +126,8 @@ rain occlusion map handles cover, [Rain](#rain)); `snowShare(point)` and `temper
 precipitation times the share of that kind; rings of 32 directions with a
 bisection, at most 48 rings: 0.03 ms on the M4 Pro with rain 3.7 km away, about 0.3 ms when there is none; a few
 times a second, not per object per frame); `cover(xz, radius)` (19 samples); `windAt(point)` (the setting's wind
-at the cloud base, a logarithmic profile below it: about 0.3 of it at 2 m); `cloudTop(type)`; `highestType()` (an
+at the cloud base, a logarithmic profile below it: about 0.3 of it at 2 m; with its gusts and eddies, [Wind](#wind));
+`strikes(...)` (lightning, [Wind](#wind)); `cloudTop(type)`; `highestType()` (an
 upper bound over the map, what the renderer marches through); `fill(origin, size, resolution, out)` (a grid). A
 sample costs about 0.2 µs with 16 cells (M4 Pro, Release).
 
@@ -251,7 +261,9 @@ off with a line; the path tracer's frame has no rain (a line). Every backend has
    reads the precipitation of the clouds' weather map at a mip as long as the step (a far step does not miss a
    shaft), denser in fall streaks (value noise at 220 and 70 m), thinning in the 150 m below the cloud base; an
    extinction of 0.0012 per metre at precipitation 1 (a visibility of about 2.5 km); single scattering of the sky's
-   and the ground's light (dimmed where clouds are above the step) and of the sun's through the cloud shadow, with
+   and the ground's light (from the share of the sky the clouds close at the camera, the radiance of their bases,
+   `FrameUniforms::overcast`; dimmed where more cloud is above the step than above the camera) and of the sun's
+   through the cloud shadow, with
    the rainbow (the primary bow 40.6 to 42.3 degrees from the antisolar point, the secondary 50.4 to 53.4 at a fifth
    of it, the whole at 0.06 of the sun's light). Jittered per frame (TAA blends the steps); blended into the HDR
    image by a depth-aware upsample (the four nearest texels' bilinear weights divided by how far their depth is from
@@ -315,7 +327,7 @@ drumming on a roof by the cover over the listener (`RenderStats::rainCover`, or 
 `rainVelocity`). The engine's defaults are procedural (`tools/assets/make_weather_sounds.py`, cooked by the CMake
 function `quench_weather_sounds()`); a game names its own sound for any layer, or turns the object off and plays its
 own sounds from the same numbers (`WeatherAudio::targetGains` gives the engine's mix rules). Snow is quiet
-([Snow](#snow)). Wind and thunder come with part 4.
+([Snow](#snow)); the wind and the thunder are layers of the same object ([Wind](#wind)).
 
 ## Snow
 
@@ -363,12 +375,105 @@ own sounds from the same numbers (`WeatherAudio::targetGains` gives the engine's
 - **The sound:** snow is quiet. `WeatherSoundState::snow` (the share at the listener) takes the snowfall out of the
   light and heavy rain and the roof (sleet at share 0.5 and precipitation 0.6 sounds as rain at 0.3), and a
   snowfall at the listener muffles the distant rain (down to 0.4 of it); `distanceToRain` should be the distance
-  to rain only (`Precipitation::Rain`). No sound of its own: falling snow is close to silence (the wind comes with
-  part 4).
+  to rain only (`Precipitation::Rain`). No sound of its own: falling snow is close to silence (the wind's layers
+  play in a snowfall as anywhere, [Wind](#wind)).
+- **The grid follows the settings:** the precipitation and snow share the grid holds per cell (what the drops and
+  flakes read) are sampled again at the next `update()`, also one of 0 s while the clock is stopped, after
+  `setSettings` or a change of the cells; before 2026-11-08 they waited for the grid's next quarter second of weather
+  time, so a scene that set a cold temperature with the clock stopped drew rain where the weather said snow.
 
 Where the build differs from the agreed plan: the occlusion direction is clamped (above); the cover melts by the
 temperature at y = 0 (the grid knows no terrain heights); the estimate after `setTime` assumes the present
 temperature held in the past.
+
+## Wind
+
+**The field** (`quench_weather`, `shaders/quench/WeatherField.h`: `quenchWeatherWind`, the same function in C++ and
+HLSL). `Settings::wind` holds the direction and the speed at the cloud base, with a logarithmic profile below it
+(a roughness length of 0.1 m: open ground, grass; about 0.3 of it at 2 m, 0.48 at 10 m under a base at 1.5 km), and
+two shares, 0 by default (a steady wind, as in parts 1 to 3):
+
+- **Gusts** (`Wind::gusts`, 0..1): bands of faster and slower air across the wind, about 40 m along it and 120 m
+  across, that change over about 8 s. At 1 the speed along the wind deviates by about 0.45 of the mean (measured
+  over time at a point 0.459, over space at a moment 0.443).
+- **Turbulence** (`Wind::turbulence`, 0..1): eddies about 10 m across that change over about 2 s and turn the wind
+  every way. At 1 the speed along and across deviates by about 0.3 of the mean, upward by about 0.12 (measured
+  0.287, 0.292 and 0.120).
+
+Both travel with the air at 0.6 of the cloud base's wind (gusts of tens of metres near the ground move about that
+fast) and scale with the mean wind at the point, so a calm stays calm at every height. The field gives three parts:
+the mean wind, what the gusts and eddies add to it now (`windAt` is the sum) and how far they have moved the air
+from where the mean wind alone would have taken it (`windOffset`, m; the rate of change of the offset is the gust,
+within 0.0012 m/s of the numerical derivative where gusts reach 4.1 m/s). The offset is what a particle carried by
+the wind adds to its mean path, so the renderer's drops and flakes need no state. The noise is value noise on
+integer hashes (the eddies' three axes from one hash per lattice corner, split into three 10-bit values: a third of
+the hashing); its time runs modulo 4096 s, over which it repeats, so that 32-bit floats keep it as exact after
+hours as at the start (over 0.01 s the wind at 5 m changes by 0.027 m/s across the seam, by 0.037 elsewhere). The
+field's place is the point less the distance the air has travelled, also a 32-bit float that grows with the wind
+(the clouds' drift since part 1): at 3 km it rounds to about 0.1 mm, after an hour at 20 m/s (72 km) to about
+4 mm, nothing to see, but a rate taken over one frame from two such evaluations is off by a few hundredths of a m/s.
+`windAt` costs about 40 ns on the M4 Pro. `meanWindAt` is the profile alone; `rainVelocity` and `snowVelocity` (the
+occlusion map's direction) carry the mean wind, not the gusts.
+
+**Where it acts:**
+
+- **The rain and the snow** (`quench_render`): each drop and flake is carried off its mean path by the offset at
+  its place and its streak or blur turned by the gust there, so gusts sweep through the rain and eddies swirl the
+  snow.
+- **The clouds** drift with the mean wind at the cloud base, as before; gusts of tens of metres do not move them.
+- **Plants** (`shaders/quench/Wind.hlsli`): `quenchWindAt(p)` is the field in a shader, from the frame uniforms
+  (`FrameUniforms::windAir`, `windSpeed`, `windTime`; 0 without a weather). `quenchWindSway(p, n, instance, height,
+  stiffness, flutter)` bends a vertex (object space) and its normal for a surface shader's `QUENCH_SURFACE_VERTEX`
+  function: the plant's root is its object's origin, its stem the world's up; a vertex turns about the root by an
+  angle that grows with its height above it, downwind as far as the wind at the plant's top pushes it (about
+  0.08 radians per m/s at stiffness 1, grass; divided by the stiffness, about 2 for a bush and 4 or more for a
+  tree's crown; at most 1.3 radians); gusts bend it further and cross a field as waves, eddies shake it, and its
+  leaves shiver by `flutter` metres in a 10 m/s wind. `quenchWindSwayAbout` takes the root per vertex instead:
+  a patch of grass in one instance, each blade turning about the ground below its vertex (`float3(p.x, 0, p.z)`).
+  Built with `surface_shadow_vs` too, the shadows sway. **The motion vectors, the traced effects' acceleration
+  structures and the rays see the plants unbent** (the sway is a vertex function of the surface entries, not a
+  deformation of the mesh): TAA reprojects a swaying leaf as if it stood still (in the demo's gale it looks
+  steady; a fast flutter could smear), and ray-traced shadows and reflections show the plant upright. Without a
+  weather, in a calm or with no wind uniforms the vertex is returned as it is.
+- **Physics** (`quench_physics`, `include/quench/physics/WindDrag.h`): `WindDrag` pushes the bodies a game adds to
+  it, each with its area facing the wind (m²) and its drag coefficient: F = 1/2 ρ C_d A |w - v| (w - v), with w
+  the wind at the body's centre of mass (a function the game passes: `Weather::windAt` for the weather's, gusts
+  included) and v the body's velocity, as a force before each step. No torque, no lift, no shelter behind other
+  bodies; off unless used (a body not added feels nothing). A sleeping body wakes when its drag is above 1 % of its
+  weight. Measured (`physics.physics_wind_drag`): a 1 kg ball (0.1 m², C_d 1) at rest in a steady 10 m/s wind
+  without gravity reaches 5.514 m/s after 2 s against the analytic 5.506; a ball not added stays; a body that left
+  the world is skipped.
+- **Lightning** (`Settings::lightning`, 1 by default; 0 none): `Weather::strikes(xz, radius, from, to, out)` lists
+  the flashes within a radius over a span of weather time (at most a minute back). Only storms flash: a
+  cumulonimbus raining heavily, in the field or as a cell. Candidates on a lattice of 2 km squares in the air's
+  coordinates (the flashes drift with their storms) and whole seconds, each with a chance of 0.04 times the rate,
+  kept by how stormy the weather is there and then; so a flash is a pure function of the weather and its time, and
+  every query of a span gives the same flashes, however the span is cut. Measured: 2.3 flashes a minute from a
+  raining cumulonimbus cell of 3.2 km radius at rate 1; a frame's query 0.001 to 0.002 ms. `Weather::flash(strike,
+  time)` is its light: two to four return strokes 40 to 120 ms apart, each fading in 30 ms, and the channel's glow,
+  dark again after 1.2 s.
+- **The lightning's light** (`RenderSettings::lightning`, off by default, with clouds): the flashes within 30 km
+  light the scene's ambient light from the sky (and a third of it from the ground), halving at 2 km, and glow in
+  the clouds around the brightest of them, halving at 6 km, 800 m above the cloud base. No bolts are drawn; the sky
+  cube's faces, drawn in turns, do not flash. `RenderStats::lightning` (the light at the camera, about 1.3 at the
+  peak of a bright flash within a kilometre) and `lightningFlashes`. Measured
+  (`render.renderer_lightning_lights_the_storm`, a flash 985 m away): the ground from 0.024 to 0.313, a cloud
+  overhead from 0.146 to 1.331.
+- **The sound** (`audio::WeatherAudio`, [Audio](audio.md#weather-sounds)): two wind layers, a light wind (a soft
+  rush) and a strong one (a roar with a howl), from `WeatherSoundState::wind` (the speed at the listener,
+  `|windAt|`, so gusts swell them): they rise with the square root of the speed from 1 to 20 m/s, crossfade at
+  equal power from light to strong between 6 and 16 m/s and are halved under cover. Thunder:
+  `WeatherAudio::strike(distance, brightness)` for each flash a game passes on once; it plays distance / 343 m/s
+  later by `update()`'s clock, its gain 1 / (1 + distance / 1.5 km) times the brightness and 1 - 0.3 cover, the near
+  clap (with its crack) giving way to the far rumble at equal power from 1 to 5 km, nothing beyond
+  `WeatherSoundDesc::thunderReach` (25 km); at most 16 wait, the farthest dropped. The defaults are procedural
+  (`tools/assets/make_weather_sounds.py`): `wind_light.wav` (RMS 0.05), `wind_strong.wav` (0.11), `thunder_near.wav`
+  (0.10, 6 s) and `thunder_far.wav` (0.08, 8 s); the heavy rain's loop went from 0.2 to 0.13 so that heavy rain, a
+  gale and near thunder together stay below full scale (the demo's windy storm clipped once at 0.2).
+
+Where the build differs from the agreed plan: no slowdowns behind terrain or buildings (the field knows no
+geometry; a game lowers the wind it passes on, as the sound's cover halves it); the plants' bend is a rigid turn
+about the root with a height falloff, not a simulated stem; the gusts do not move the clouds.
 
 ## Phones and fallbacks
 
@@ -379,8 +484,9 @@ stage 11 ratio of about 3 between the iPhone 17 and the M4 Pro: about 4 ms on th
 phone: `Low` without the shafts (so without the rainbow), 0.25 ms on the M4 Pro at the iPhone 17's size, about
 0.7 ms on the phone by the same ratio, within the 1 ms set for the rain; `Low` with the shafts would be about 1.5 ms.
 The snow on a phone: `Low` flakes beside that rain, without the shafts, 0.34 ms for a snowfall on the M4 Pro at
-the iPhone 17's size, about 1 ms on the phone by the same ratio. Not run on a phone yet: the defaults wait for that
-run.
+the iPhone 17's size, about 1 ms on the phone by the same ratio. The wind on a phone: the same levels with gusts
+and eddies (0.16 ms for the `Low` drops in the windy storm at the iPhone 17's size, about 0.5 ms by the ratio); the
+plants' sway costs nothing measurable on the Mac. Not run on a phone yet: the defaults wait for that run.
 
 ## Cost
 
@@ -449,16 +555,41 @@ weather field's uniform block as a function argument, and the shader compilers c
 step; reading it in place took them to 0.58 ms. The flakes cost by their count (0.04 to 0.12 ms) where snow falls
 near the camera, nothing where none does (nor the copy of the image).
 
+**The wind** (`scenarios/wind_cost.txt`, 2026-11-08 02:30, the same way with the weather's clock stopped: the
+meadow in the windy storm, 79 swaying instances of about 2300 tufts of grass, 12 bushes and 3 trees; the rain and
+snow at `Medium`), ms:
+
+| Range | 1920 x 1080 | 1206 x 2622 |
+|---|---|---|
+| HDR pass, the plants still (no wind) | 1.52 | 1.42 |
+| HDR pass, the plants swaying in the gale | 1.52 | 1.46 |
+| Drops (`rain`), steady wind / with gusts and eddies | 0.18 / 0.38 | 0.22 / 0.51 |
+| Flakes (`snow`), steady wind / with gusts and eddies | 0.09 / 0.14 | 0.10 / 0.14 |
+| Drops at `Low` with gusts (phone defaults) | 0.13 | 0.16 |
+
+The sway costs nothing measurable (a run's noise in the shadows range is 0.1 ms). The gusts cost in the drops and
+flakes, every instance evaluating the field at its place: 0.2 ms for 24576 drops at 1080p. The eddies' first noise
+(three separate value noises per instance) took the drops with gusts to 0.61 ms and the flakes to 0.23; one hash
+split into three values took them to 0.44 and 0.15. The lightning costs nothing on the GPU (a branch in the sky)
+and 0.001 to 0.002 ms on the CPU for its query. The meadow's first build, one instance per tuft (2131 instances),
+cost about 0.2 ms of frame CPU time in every view of the section (mean CPU median over the rain cost's nine
+regions 1.17 ms against 0.97 without the meadow); as 64 patches of grass it costs nothing measurable (0.95 ms).
+
 ## Demo and tests
 
 The demo's "Weather" section (14; [Engine demo](demo.md)): a plain 20 km wide with hills, towers and a lake seen
 from a few hundred metres up; presets (fair weather, sun shower, towering, storm, overcast, cirrus, rain here,
-downpour, passing shower, snowfall, thaw, snow showers), coverage, type, variation, precipitation, cirrus, a raining
-cumulonimbus as a cell, wind speed and direction, change of shape, the weather's speed, the temperature, the sun,
-Run day and Sunset, the quality (full size, half size, 2D layer, off), steps, cloud shadows, the sky cube and its
-faces per frame, 60 Hz; the rain's and the snow's levels, shafts, rainbow, sound and its volume; views from the air,
-from the ground, toward the cloud, from the shelter and over the shelter. On the ground: wet paving with puddles, a
-pond, a shelter with a crate under it and one in the open, a dark block that the rain shows against. Its batch
+downpour, passing shower, snowfall, thaw, snow showers, windy storm), coverage, type, variation, precipitation,
+cirrus, a raining cumulonimbus as a cell, wind speed and direction, gusts, turbulence, change of shape, the
+weather's speed, the temperature, the sun, Run day and Sunset, the quality (full size, half size, 2D layer, off),
+steps, cloud shadows, the sky cube and its faces per frame, 60 Hz; the rain's and the snow's levels, shafts,
+rainbow, lightning and its rate, sound and its volume; views from the air, from the ground, toward the cloud, from
+the shelter, over the shelter and in the meadow. On the ground: wet paving with puddles, a pond, a shelter with a
+crate under it and one in the open, a dark block that the rain shows against; beside it a meadow of grass, bushes
+and trees on the demo's plant surface (`examples/demo/shaders/plants.hlsl`, `quenchWindSway` and
+`quenchWindSwayAbout`). The windy storm: a gale of 22 m/s from the west-southwest (about 10.5 m/s at 10 m) with
+gusts 0.6 and turbulence 0.4 under a thunderstorm cell over the meadow, its lightning four times as frequent, the
+lightning on. The Physics section's wind (a slider and gusts) blows the light balls it drops with `WindDrag`. Its batch
 parts: `weather` checks the cell's rain, the distance to it and the cover, the march's
 size and the fallback to the layer, with three golden captures per backend (`demo_weather.png`,
 `demo_weather_sunset.png`, `demo_weather_layer.png`, which show the shafts since part 2); `rain` checks the rain at
@@ -471,40 +602,44 @@ no wetness, the shelter's cover and the silence, the cover building over the she
 0.18, wetness 0.16, standing water 0.04) and the snow showers' shafts, with four captures (`demo_snow.png`: flakes
 and the white ground, the shelter's floor bare; `demo_snow_building.png`: from over the shelter, the first patches
 on the ground, the roof and the crates; `demo_snow_thaw.png`: patches left on wet paving; `demo_snow_sky.png`:
-the snow showers' white curtains). Check mode items `weather.clouds`, `weather.rain`, `weather.snow` (in motion) and
-`weather.rain_sound` (by ear) wait for a person.
+the snow showers' white curtains); `wind` checks the meadow's plants, the calm's silence, the windy storm's mean
+and gusting wind at 10 m and its sound layers, a flash's light and its thunder heard after the sound's delay,
+thunder after thunder without clipping at six times the preset's lightning, and the lightning off, with four
+captures (`demo_wind_calm.png`: the meadow upright under a low sun; `demo_wind.png` and `demo_wind_gust.png`: the
+grass and the crowns bent downwind in a lull and two seconds later, the rain slanting; `demo_wind_flash.png`: five
+milliseconds after a flash within 3 km); `physics_wind` checks the wind near the floor (4.8 m/s at a 20 m/s
+setting) and three light balls blown 2.7 m downwind in 3 s. Check mode items `weather.clouds`, `weather.rain`,
+`weather.snow`, `weather.wind` (in motion), `weather.rain_sound` and `weather.wind_sound` (by ear) wait for a
+person.
 
-Tests: `weather.*` (18 cases: the coverage's mean by setting, determinism, drift, evolution, seeds, type and
+Tests: `weather.*` (21 cases: the coverage's mean by setting, determinism, drift, evolution, seeds, type and
 precipitation, a cell in a clear sky and the distance to it, cells that drift and stay, wind and cloud tops, the
 grid against single samples, queries on the job system's threads, a sample's cost; the wetness building and drying,
 under a passing shower, and the grid following its focus; rain or snow by the temperature and a cell's own share,
-the snow cover building and melting, the distance to rain or to snow), also under Node.js and with the sanitizers;
-`audio.weather_audio_gains`, `weather_audio_mix` (the layers by the strongest frequency of an offline mix, a game's
-sound, a hot reload, the bus, silence and off) and `weather_default_sounds` (the default loops: levels, seams, where
-their energy is); `gpu_device.texture_3d_from_layers` and `cube_faces` on every backend variant (a 3D texture
+the snow cover building and melting, the distance to rain or to snow; the gusts' and the turbulence's deviations,
+the offset against the gusts and the period's seam, lightning only in storms and the same however a span is cut),
+also under Node.js and with the sanitizers; `physics.physics_wind_drag`; `audio.weather_audio_gains` (the wind's
+layers and the thunder's rule too), `weather_audio_mix` (the layers by the strongest frequency of an offline mix,
+the wind's layers, thunder after its delay and the farthest dropped, a game's sound, a hot reload, the bus, silence
+and off) and `weather_default_sounds` (the default loops and the thunder: levels, seams, where their energy is); `gpu_device.texture_3d_from_layers` and `cube_faces` on every backend variant (a 3D texture
 filled from the layers of a 2D array; a cube's faces drawn with `quench/Cube.hlsli`'s directions and sampled back,
 with its mips); on every backend variant `render.renderer_clouds_shadow_the_ground` (off by default changes
 nothing; a raining cell's shadow on the ground, 0.073 under it against 0.775 in the sun, in both modes; the sky
 cube's faces; no clouds after `clearWeather`), `renderer_rain_wets_the_open_ground` (open ground 0.521 dry, 0.288
 wet; under a roof 0.521 both; the cover 0 in the open and above 0.9 under the roof; the streaks; the puddles' rings
 moving; no rain with the path tracer or without a weather), `renderer_rain_shafts_from_afar` (none without
-clouds; with them a shaft over 734 of 4096 pixels), `renderer_snow_covers_the_open_ground` (open ground 0.318 bare,
+clouds; with them a shaft over 737 of 4096 pixels), `renderer_snow_covers_the_open_ground` (open ground 0.318 bare,
 0.875 under snow; under a roof 0.318 both; a material with `snow = 0` bare; flakes over 451 of 4096 pixels; no
-streaks where it snows) and `renderer_snow_shafts_from_afar` (the mean change by a shaft: rain 6.3, snow 14.4,
-snow with only the rain drawn 0.16).
+streaks where it snows), `renderer_snow_shafts_from_afar` (the mean change by a shaft: rain 6.4, snow 14.6,
+snow with only the rain drawn 0.16), `renderer_wind_sways_plants` (a stem upright without a weather and in a calm,
+bent downwind either way the wind blows, and bent about its own foot when rooted below each vertex) and
+`renderer_lightning_lights_the_storm` (above).
 
 ## Later parts
 
-The design agreed for the rest of the stage (a plan: nothing below is built). Parts 2 and 3 are built (above); where
-they differ from their plans is said in [Rain](#rain) and [Snow](#snow). Footprints in the snow are out of scope
-unless asked.
-
-### Part 4: wind
-
-One wind field (direction, speed, gusts that travel with the air, local slowdowns behind terrain) in
-`quench_weather`, extending `windAt`: the particles, the clouds' drift (already from the same wind), vegetation sway
-(a surface shader's `QUENCH_SURFACE_VERTEX` reading the wind uniforms), forces on physics bodies (opt-in, through a
-game's call per body), the wind sound and thunder (new layers of `WeatherAudio`).
+All four parts are built (above); where they differ from their plans is said in [Rain](#rain), [Snow](#snow) and
+[Wind](#wind). Footprints in the snow are out of scope unless asked. What waits is the runs on a phone and the
+checks by eye and ear ([Limitations](#limitations)).
 
 ### Phone budget for the whole stage
 
@@ -520,18 +655,25 @@ without missed intervals with the thermal reaction on.
 | Mac, native Metal backend | every test, the demo's batch (captures identical to SDL GPU's), the costs above |
 | Mac, Vulkan through MoltenVK | every test with the Khronos validation layer, the demo's batch (captures within a mean of 0.04 of Metal's); needs the engine's SDL patch (`cmake/patches/SdlVulkan3d.cmake`: 3D textures 2D-array compatible only as color targets) |
 | iOS Simulator | the test executables (`ios-sim-tests`) |
-| WebAssembly under Node.js | `weather.*` (the headless module, the snow's cases too) and `audio.weather_audio_*` |
+| WebAssembly under Node.js | `weather.*` (the headless module, the snow's and the wind's cases too), `audio.weather_audio_*` and `physics.physics_wind_drag` |
 | iPhone | not run |
 
 ## Limitations
 
-- Nobody has looked at the clouds, the rain or the snow in motion, on the Mac's screen or on a phone, or listened to
-  the rain (check mode items `weather.clouds`, `weather.rain`, `weather.snow`, `weather.rain_sound`); the captures
-  were looked at still, the sound measured.
+- Nobody has looked at the clouds, the rain, the snow or the swaying plants in motion, on the Mac's screen or on a
+  phone, or listened to the rain, the wind or the thunder (check mode items `weather.clouds`, `weather.rain`,
+  `weather.snow`, `weather.wind`, `weather.rain_sound`, `weather.wind_sound`); the captures were looked at still,
+  the sound measured.
+- The wind: the plants sway in their vertex shader only (motion vectors, acceleration structures and rays see them
+  upright); no slowdowns behind terrain or buildings; no bolts are drawn and the sky cube does not flash; thunder is
+  one sound per flash, not echoes from the terrain; `WindDrag` has no torque, lift or shelter.
 - The traced effects see an overcast amount, not the clouds (above); the probe grid does not pick up single clouds.
 - Cloud shadows are a 24 km map on the plane y = 0: a surface far above or below it reads the shadow of the column
   its sun ray crosses at y = 0, and beyond the map its edge holds.
-- The storm's bases are somewhat smooth and sheet-like. Seen from the air a storm is a grey veil over the plain; the
+- The storm's bases are somewhat smooth and sheet-like. Inside a storm's rain (the Storm preset from the air) the
+  view is an even veil of heavy rain with its streaks, about a kilometre of visibility, without curtains or gaps at
+  that range; until 2026-11-08 the veil was lit by the sky's ambient term, pi times the clouds' bases, and shone as
+  a pale grey fog brighter than the clouds above it (now darker, with the streaks and the ground showing). The
   shafts of the 2D layer's clouds look like smoky blobs more than rain.
 - Clouds beyond 64 km fade out (the weather map's reach); a camera above the cloud layer is not tuned (the march
   works, the look is not checked).

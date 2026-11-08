@@ -382,6 +382,26 @@ its 16 cells) by value, and the compiled shaders copied the whole block at every
 took the shafts to 0.577 and 0.785 ms with the same image. By the stage 11 ratio of about 3 the phone defaults would
 take about 1 ms on the iPhone 17: an estimate. Not run on the screen or on a phone.
 
+### Wind
+
+2026-11-08 02:30, the same way (`examples/demo/scenarios/wind_cost.txt`: the weather section's meadow in the Windy
+storm preset, 79 swaying instances, the weather's clock stopped, the rain and the snow at Medium; GPU busy time p50,
+ms).
+
+| Range | 1920 x 1080 | 1206 x 2622 |
+|---|---|---|
+| `hdr`, the plants still (no wind) | 1.52 | 1.42 |
+| `hdr`, the plants swaying in the gale | 1.52 | 1.46 |
+| `rain` (the drops), steady wind / with gusts and eddies | 0.18 / 0.38 | 0.22 / 0.51 |
+| `snow` (the flakes), steady wind / with gusts and eddies | 0.09 / 0.14 | 0.10 / 0.14 |
+| `rain` at Low with gusts (the phone defaults) | 0.13 | 0.16 |
+
+The sway costs nothing measurable; the gusts cost in the drops and flakes, each evaluating the field at its place.
+The eddies' first noise (three value noises per instance) took the drops with gusts to 0.61 ms at 1080p, one hash
+split into three values to 0.44 (the run above: 0.38). The lightning's query takes 0.001 to 0.002 ms of CPU time. The
+meadow's first build, one instance per tuft (2131), took the frame's CPU median over the rain cost's nine regions to
+1.17 ms against 0.97 without the meadow; as 64 patches of grass 0.95 ms. Not run on the screen or on a phone.
+
 ### Tracy on and off
 
 2026-11-07 18:58-19:19, the Mac (Apple M4 Pro), offscreen, the native backend (the default), `--frame-size 480x270

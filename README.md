@@ -48,8 +48,10 @@ look and listen.
   them, sunsets; rain that falls only under raining clouds, dry under roofs, shafts of rain in the distance and a
   rainbow, ground that gets wet and dries again, puddles with rings of drops, and a rain sound you can replace;
   snow when the air is cold, with fluttering flakes, a white cover on open ground that builds up and melts away,
-  and white snow showers in the distance.
-- **Physics:** Jolt Physics, multithreaded on the engine's job system.
+  and white snow showers in the distance; wind with gusts that sweep through the rain and snow, grass and trees
+  that sway in it and a wind sound; thunderstorms with lightning that lights up the clouds and thunder that rolls in
+  later the farther it struck.
+- **Physics:** Jolt Physics, multithreaded on the engine's job system; wind that pushes the bodies you choose.
 - **Sound:** 3D sound with HRTF for headphones, reverb, buses and mixing, streamed music with crossfades; WAV, FLAC,
   MP3 and Ogg Vorbis.
 - **Animation:** blend trees and blend spaces, state machines, layers, IK and foot placement, look-at, root motion,

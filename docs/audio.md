@@ -248,8 +248,9 @@ settings are ignored.
 
 `audio::WeatherAudio` (`quench/audio/WeatherAudio.h`, in `quench_audio`, headless) plays the weather's sounds from
 numbers a game gives it once per frame (`WeatherSoundState`: the precipitation at the listener, the distance to the
-nearest rain, the cover over the listener, the snow's share of the precipitation;
-[Weather](weather.md#the-rains-sound)). Stage 13 part 2 has the rain, part 3 the snow's quiet:
+nearest rain, the cover over the listener, the snow's share of the precipitation, the wind's speed;
+[Weather](weather.md#the-rains-sound)), and thunder for the flashes a game passes on. Stage 13 part 2 has the rain,
+part 3 the snow's quiet, part 4 the wind and the thunder ([Weather](weather.md#wind)):
 
 | Layer | Default sound | Gain |
 |---|---|---|
@@ -257,14 +258,25 @@ nearest rain, the cover over the listener, the snow's share of the precipitation
 | `RainHeavy` | `rain_heavy.wav`: dense, broad, the loudest | the loudness times the heavy share, times 1 - cover |
 | `RainFar` | `rain_far.wav`: a low rumble, most energy below 700 Hz | rises to 1 as the nearest rain comes from `farDistance` (4 km) to 0 m (squared), fades out as rain starts at the listener (gone at precipitation 0.1), halved under cover |
 | `RainCover` | `rain_cover.wav`: drops drumming on a roof, low and ringing | the loudness times the cover |
+| `WindLight` | `wind_light.wav`: a soft rush with a leafy rustle, swelling slowly | the wind's loudness times the light share, halved under cover |
+| `WindStrong` | `wind_strong.wav`: a roar with a howl that rises and falls | the wind's loudness times the strong share, halved under cover |
 
 The rain `p` is the precipitation times 1 - the snow's share: snow falls without a sound (sleet at share 0.5 and
 precipitation 0.6 plays as rain at 0.3), and falling snow at the listener muffles the distant layer (times
 1 - 0.6 x the snowfall). The loudness is `sqrt((p - 0.02) / 0.98)` above a trace of 0.02; light and heavy crossfade
 at equal power (their squares sum to the loudness's) between rain 0.25 and 0.75. `WeatherAudio::targetGains` gives these rules
-for a game that plays its own sounds. Each layer follows its target over `smoothing` (0.5 s), starts (fading in)
+for a game that plays its own sounds. The wind's loudness is `sqrt((v - 1) / 19)` for a speed `v` from 1 to 20 m/s
+(`WeatherSoundState::wind`: `|Weather::windAt|` at the listener, so its gusts swell it), light and strong
+crossfading at equal power between 6 and 16 m/s. Each layer follows its target over `smoothing` (0.5 s), starts (fading in)
 when it becomes audible and stops after two seconds of silence; the layers play on a bus (`effects` by default) at a
 volume of their own.
+
+**Thunder:** `WeatherAudio::strike(distance, brightness)` for each flash of `Weather::strikes` a game passes on once
+plays its thunder `distance / kSpeedOfSound` (343 m/s) later by `update()`'s clock, as one-shots on the same bus: the
+near clap (`thunder_near.wav`, with its crack) and the far rumble (`thunder_far.wav`) at equal power from 1 to 5 km,
+the gain `1 / (1 + distance / 1.5 km)` times the brightness and `1 - 0.3 x cover`, nothing beyond
+`WeatherSoundDesc::thunderReach` (25 km); `thunderGains` gives the rule. At most `kMaxThunder` (16) wait, the
+farthest dropped; `thunderWaiting()` and `thunderPlayed()` count them, `setThunderSound` replaces one.
 
 A game **replaces** a layer with `setSound(layer, path)` or `WeatherSoundDesc::sounds` (a playing layer crossfades
 into the new sound), silences it with an empty path, or turns the object off (`setEnabled(false)`: its sounds fade
@@ -277,9 +289,12 @@ CC0): 4 s at 32 kHz, stereo, filtered as periodic signals and with drops placed 
 seam. The CMake function `quench_weather_sounds(<name>)` (`cmake/QuenchCook.cmake`) writes them at build time and
 cooks them like any sound; a game lists `<name>` in `quench_add_game(... COOKED_ASSETS ...)` to ship them.
 `audio.weather_default_sounds` measures them (rms, peak, the energy below 700 Hz and above 2 kHz through one-pole
-filters, the seam): light 0.060 rms, 0.04 below 700 Hz, 0.51 above 2 kHz; heavy 0.178 rms, peak 0.980, 0.18 and
-0.39; far 0.100, 0.71 and 0.05; roof 0.120, 0.53 and 0.10; each seam smaller than the loop's own largest change over
-two frames. It runs in the Mac's builds (the host writes the sounds) and is skipped under Node.js and in the iOS
+filters, the seam): light 0.060 rms, 0.04 below 700 Hz, 0.51 above 2 kHz; heavy 0.130 rms, peak 0.717, 0.18 and
+0.39; far 0.100, 0.71 and 0.05; roof 0.120, 0.53 and 0.10; the light wind 0.050, 0.72 and 0.05; the strong wind
+0.110, peak 0.682, 0.58 and 0.09; each seam smaller than the loop's own largest change over two frames. The thunder
+is two one-shots (6 and 8 s) that end in silence: near 0.100 rms, peak 0.710, 0.94 below 700 Hz and 0.01 above
+2 kHz; far 0.080, 0.98 and 0.00. The heavy rain's loop was 0.178 rms with a peak of 0.980 until 2026-11-08: heavy
+rain, a gale and near thunder together clipped once in the demo's windy storm. It runs in the Mac's builds (the host writes the sounds) and is skipped under Node.js and in the iOS
 Simulator.
 
 ## Offline mixing and captures
@@ -370,7 +385,7 @@ the sines it was encoded from.
   Mac's speakers, headphones and the iPhone is for the user to judge.
 - **3D**: panning or the HRTF; no occlusion, obstruction or distance filters; one listener; no virtual voices (a
   stolen or rejected sound is gone).
-- **Weather sounds**: rain only, snow silent (wind and thunder come with the weather's part 4), one set of layers for the
+- **Weather sounds**: rain, wind and thunder, snow silent, one set of layers for the
   listener, not per surface (leaves, puddles, metal), not placed in 3D; the cover is the camera's
   (`RenderStats::rainCover`) unless the game gives its own. The default loops are procedural noise, measured, not
   listened to.

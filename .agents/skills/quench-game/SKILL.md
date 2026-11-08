@@ -4,8 +4,8 @@ description: >-
   Builds, extends and verifies a game on the Quench C++20 engine: tools/new_game.py and templates/game, the pinned
   engine (FetchContent and the local override), the quench::app::Game interface and fixed-step loop,
   quench_add_game, input actions, ImGui, the retained render::Scene, cooked assets (quench_cook_assets,
-  SceneAssets), weather, clouds, rain and snow, physics, audio, animation, navigation, jobs, quench::fs, iOS builds, scripted
-  offscreen checks with captures and golden images, and Tracy profiles recorded without its GUI. Use when creating a
+  SceneAssets), weather, clouds, rain, snow, wind and lightning, physics, audio, animation, navigation, jobs,
+  quench::fs, iOS builds, scripted offscreen checks with captures and golden images, and Tracy profiles recorded without its GUI. Use when creating a
   game on Quench, working in a repository whose CMakeLists.txt fetches Quench or calls quench_add_game, or when the
   user asks how to make a game with the engine.
 ---
@@ -139,7 +139,12 @@ Link what the game uses beside `quench_add_game()`:
   Snow: `Settings::temperature` (15 degrees C by default: no snow) below freezing and `RenderSettings::snow =
   render::Snow::Medium` (`Low` on phones) draw flakes and a snow cover on surfaces that face up
   (`MaterialDesc::snow = 0` or `QUENCH_SURFACE_NO_SNOW` keeps one bare); give the sound `.snow =
-  weather.snowShare(listener)`. [reference.md](reference.md), "Weather and clouds"; `docs/weather.md`.
+  weather.snowShare(listener)`. Wind: `Wind::gusts` and `turbulence` (0 by default) move the drops and flakes;
+  plants sway through a surface shader's `QUENCH_SURFACE_VERTEX` calling `quenchWindSway` (`quench/Wind.hlsli`);
+  `quench::WindDrag` pushes the physics bodies a game adds; `.wind = glm::length(weather.windAt(listener))` gives
+  the sound its wind. Lightning: `RenderSettings::lightning = true` lights the storm, and each flash from
+  `weather.strikes(...)` passed once to `WeatherAudio::strike(distance)` thunders later.
+  [reference.md](reference.md), "Weather and clouds"; `docs/weather.md`.
 - **Physics.** `quench::PhysicsWorld` on `&app.jobs()` (Jolt, its jobs on the engine's pool); bodies through
   `bodies()` with `PhysicsLayers::kStatic` or `kMoving`; `step(float(dt))` in `fixedStep`.
 - **Audio.** `app.audio()`: `load`, `play` with `PlayParams` (buses `"music"`, `"effects"`, `"ui"` by default;

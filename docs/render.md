@@ -179,6 +179,20 @@ and `MaterialUniforms::weather.w`; `RenderStats::snow`, `snowAtCamera`, `snowSha
 `renderer_snow_covers_the_open_ground` and `renderer_snow_shafts_from_afar` on every backend variant; the costs in
 [Weather](weather.md#cost).
 
+### Wind and lightning
+
+Since 2026-11-08 (stage 13, part 4; [Weather](weather.md#wind)): the weather's wind with its gusts and eddies
+(`weather::Wind::gusts`, `turbulence`) carries the rain's drops and the snow's flakes off their mean paths and turns
+their streaks, in the same field a game's `Weather::windAt` gives. `FrameUniforms` `windAir`, `windSpeed` and
+`windTime` hold it for any shader (0 without a weather): `quench/Wind.hlsli` has `quenchWindAt(p)` and
+`quenchWindSway` / `quenchWindSwayAbout`, which bend a plant's vertices and normals downwind in a surface shader's
+`QUENCH_SURFACE_VERTEX` function (build `surface_shadow_vs` too, so that its shadows sway); the motion vectors, the
+acceleration structures and the rays see the plants unbent. `RenderSettings::lightning` (off by default, with
+clouds) lights the clouds around each of the weather's flashes within 30 km (`Weather::strikes`) and the scene's
+ambient light by their distance; no bolts are drawn, and the thunder is the game's (`audio::WeatherAudio::strike`).
+`RenderStats::lightning` and `lightningFlashes`. Tests `renderer_wind_sways_plants` and
+`renderer_lightning_lights_the_storm` on every backend variant; the costs in [Weather](weather.md#cost).
+
 ### Tone mapping and HDR output
 
 Exposure and vignette scale the scene before the tone curve, as a lens does: applied after it, the vignette lowers the
@@ -786,7 +800,8 @@ scene.addMaterial({.surface = checker, .params = {...}});
 - `QUENCH_SURFACE_VERTEX` names `void f(inout QuenchVertexIn v, InstanceData instance)`, run before the transform
   (wind, procedural motion). Build `surface_shadow_vs:vertex` too and pass it as `SurfaceDesc::shadowVertexShader`, so
   the shadows move with it. The demo's checker ground (`examples/demo/shaders/checker.hlsl`) and the test shader
-  `tests/render/shaders/custom.hlsl` are examples.
+  `tests/render/shaders/custom.hlsl` are examples; the demo's plants (`examples/demo/shaders/plants.hlsl`) sway in
+  the weather's wind with `quenchWindSway` from `quench/Wind.hlsli` ([Wind and lightning](#wind-and-lightning)).
 - A surface used by cut-out or translucent materials also builds `surface_shadow_fs:fragment` and
   `surface_transmittance_fs:fragment` and passes them as `SurfaceDesc::shadowFragmentShader` and
   `transmittanceShader`, so its shadows have its own holes and opacity. Without them those shadows use the standard
@@ -888,7 +903,7 @@ denoiser
 (spatial or temporal), the path tracer with its bounces and samples, anti-aliasing (none, FXAA, TAA) and sharpening,
 bloom (strength, threshold), sky on or off and the clear color, the clouds (off, 2D layer, volumetric) with their
 resolution, accumulation, steps and shadows and the sky cube's size and faces per frame, the rain (off, low, medium,
-high) with its shafts and rainbow, the snow (off, low, medium, high), tone curve (ACES, AgX),
+high) with its shafts and rainbow, the snow (off, low, medium, high), the lightning (off, on), tone curve (ACES, AgX),
 vignette, dither.
 `setSettings` can be called every frame; the targets are recreated only when a size, the shadow map size or the set
 of active effects changes.
@@ -913,7 +928,8 @@ overcast it is around the camera and the sky cube's faces drawn (`clouds`, `clou
 objects in the rain map, whether the shafts and the rainbow were drawn and the cover over the camera (`rain`,
 `rainAtCamera`, `rainStreaks`, `rainSplashes`, `rainOccluders`, `rainShafts`, `rainbow`, `rainCover`), and the
 snow drawn, the snowfall and the snow's share of the precipitation at the camera and the flakes (`snow`,
-`snowAtCamera`, `snowShareAtCamera`, `snowFlakes`).
+`snowAtCamera`, `snowShareAtCamera`, `snowFlakes`), and the lightning's light at the camera and the flashes lit
+(`lightning`, `lightningFlashes`).
 The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`,
 `area_lights`, `local_shadow_changes`, `local_map_lights`, `local_maps`, `local_map_draws`, `moved`,
 `render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`,

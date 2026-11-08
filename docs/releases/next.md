@@ -13,7 +13,9 @@ a new module with the demo's Navigation section (the user's queue, item 4); prof
 captures recorded and summed up without its GUI; the weather's first part, volumetric clouds that drift, change shape
 and shade the light, in a new headless module with the demo's Weather section (stage 13, part 1); its second part,
 rain where the clouds drop it, wet ground and puddles that dry afterwards, and the rain's sound (stage 13, part 2);
-its third, snow where the air is cold enough, a cover that builds and melts, and quiet (stage 13, part 3).
+its third, snow where the air is cold enough, a cover that builds and melts, and quiet (stage 13, part 3); its
+fourth, a wind with gusts that moves the rain, the snow, plants and chosen bodies and that sounds, with lightning and
+thunder (stage 13, part 4).
 This file becomes
 `v<version>.md` when the user asks for the release; what was verified is in the devlogs of
 [2026-11-07](../../devlog/2026-11-07.md) and [2026-11-08](../../devlog/2026-11-08.md).
@@ -298,6 +300,43 @@ This file becomes
   1920 x 1080 0.35, 0.76 and 1.02 ms for Low, Medium and High under a snowfall, up to 0.97 ms in snow showers seen
   from the air; the phone defaults (rain and snow Low without shafts) 0.23 ms, 0.34 ms at 1206 x 2622.
 
+### Weather: wind, lightning and thunder (stage 13, part 4)
+
+- **A wind field** ([Weather](../weather.md#wind)): `Wind::gusts` (bands of faster and slower air across the wind,
+  tens of metres apart, over seconds; at 1 the speed along the wind deviates by about 0.45 of the mean) and
+  `Wind::turbulence` (eddies of about 10 m over about 2 s; about 0.3 along and across, 0.12 upward), 0 by default.
+  They travel with the air and scale with the mean wind at the point. `Weather::windAt` now includes them (about
+  40 ns); `meanWindAt` is the profile alone and `windOffset` how far they have moved the air (what a light particle
+  adds to its mean path). The field is `quenchWeatherWind` in `shaders/quench/WeatherField.h`, the same in C++ and
+  HLSL, repeating over 4096 s so that 32-bit floats stay exact; deterministic like the rest of the weather.
+- **The rain, the snow and plants follow it:** the drops and flakes are carried off their mean paths by the gusts
+  and eddies at their places; `shaders/quench/Wind.hlsli` gives a surface shader's `QUENCH_SURFACE_VERTEX` the wind
+  (`quenchWindAt`) and a sway (`quenchWindSway` about the object's origin, `quenchWindSwayAbout` about a root per
+  vertex, for a patch of grass in one instance) with stiffness and flutter. Motion vectors, acceleration
+  structures and rays see the plants unbent. The clouds drift with the mean wind as before.
+- **The wind's drag on chosen bodies** (`quench_physics`, `quench/physics/WindDrag.h`): `WindDrag::add(body, area,
+  dragCoefficient)`, then `apply(world, windAt)` before each step adds F = 1/2 rho Cd A |w - v| (w - v) at the
+  centre of mass; only the bodies added feel it, sleeping ones wake when it exceeds 1 % of their weight. No torque,
+  lift or shelter.
+- **Lightning:** `Settings::lightning` (1 by default) and `Weather::strikes(xz, radius, from, to, out)`, the flashes
+  where a cumulonimbus rains heavily, a pure function of the weather and its time (2.3 a minute from a raining
+  cumulonimbus cell of 3.2 km radius); `Weather::flash(strike, time)`, two to four return strokes and a glow over
+  1.2 s. `RenderSettings::lightning` (off by default, with clouds) lights the scene's ambient light and the clouds
+  around the flashes within 30 km; no bolts are drawn. `RenderStats::lightning`, `lightningFlashes`.
+- **The wind's sound and thunder** (`audio::WeatherAudio`): layers `WindLight` and `WindStrong` from
+  `WeatherSoundState::wind` (the speed at the listener), crossfading from 6 to 16 m/s, halved under cover;
+  `WeatherAudio::strike(distance, brightness)` plays thunder distance / 343 m/s later, a near clap giving way to a
+  far rumble from 1 to 5 km, nothing beyond `WeatherSoundDesc::thunderReach` (25 km); `thunderGains` gives the rule
+  to a game that plays its own. Procedural defaults (`wind_light.wav`, `wind_strong.wav`, `thunder_near.wav`,
+  `thunder_far.wav`, cooked by `quench_weather_sounds()`); the heavy rain's loop is quieter (RMS 0.2 to 0.13) so
+  that heavy rain, a gale and near thunder stay below full scale together.
+- **The storm's veil:** the rain's and snow's shafts take the light under the clouds from their bases' radiance
+  instead of the sky's ambient term, which is pi times as bright; a storm's rain no longer looks brighter than the
+  clouds above it (the snow's and the wind's captures darker, the other weather captures within a mean of 0.13).
+- **Cost** on the M4 Pro (offscreen, native backend, GPU busy time; [Performance](../performance.md#wind)): the
+  sway nothing measurable; the drops with gusts and eddies 0.38 ms against 0.18 steady at Medium and 1080p, the
+  flakes 0.14 against 0.09; the phone defaults' drops in the windy storm 0.16 ms at 1206 x 2622.
+
 ### Profiling with Tracy
 
 - **`QUENCH_TRACY`** (CMake option, off by default; the `profile` configure, build and test preset: Release with
@@ -408,7 +447,13 @@ This file becomes
   temperature and the snow's quality (phone defaults Low, estimated); a batch part `snow` with four golden captures
   (`demo_snow.png`, `demo_snow_building.png`, `demo_snow_thaw.png`, `demo_snow_sky.png`),
   `scenarios/snow_cost.txt` and a check mode item `weather.snow` (49 items). The rain's three captures replaced (the
-  splashes and the ripples).
+  splashes and the ripples). With part 4 a meadow of swaying grass, bushes and trees (the demo's plant surface,
+  `examples/demo/shaders/plants.hlsl`), the Windy storm preset, gusts, turbulence, the lightning and its rate, a
+  meadow view; a batch part `wind` with four golden captures (`demo_wind_calm.png`, `demo_wind.png`,
+  `demo_wind_gust.png`, `demo_wind_flash.png`), `scenarios/wind_cost.txt` and check mode items `weather.wind` and
+  `weather.wind_sound` (51 items). The Physics section has a wind (a slider and gusts) that blows the light balls
+  it drops (`WindDrag`), with a batch part `physics_wind` without a capture. The snow's captures replaced (the
+  darker veil).
 
 ### Gates
 
@@ -589,6 +634,21 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `asan` 602; `tsan` 602; `wasm-node` 186 (under Node.js); `ios-sim-tests` 455 in the iOS Simulator; `ios-xcode`
   generated; a new game built and started. All passed.
 
+- **The wind** (M4 Pro; [Weather](../weather.md#wind); devlog of [2026-11-08](../../devlog/2026-11-08.md)):
+  `weather.*` 21 cases (gusts 1: the speed along the wind deviates by 0.459 of the mean; turbulence 1: 0.287
+  along, 0.292 across, 0.120 up; the offset's rate within 0.0012 m/s of the gust; 2.3 flashes a minute from a
+  raining cumulonimbus cell of 3.2 km, a frame's query 0.0013 ms); `physics.physics_wind_drag` (5.514 m/s after
+  2 s against the analytic 5.506); `renderer_wind_sways_plants` and `renderer_lightning_lights_the_storm` (a flash
+  985 m away: the ground from 0.024 to 0.313) on SDL GPU's Metal driver, the native backend and Vulkan through
+  MoltenVK; `audio.weather_*` (the wind's layers, the thunder's delay and gains, the default sounds' levels and
+  spectra). The demo's `wind` (31 checks) and `physics_wind` (8 checks) parts and the four wind captures looked at
+  (offscreen); the native backend's are the same images as SDL GPU's, Vulkan through MoltenVK within a mean of
+  0.026. The snow's three captures and the rain's three replaced (the veil's light, the grid refreshed with the
+  clock stopped; looked at); the other sections' captures unchanged.
+- **Gates with the wind:** `tools/check.sh full` (2026-11-08, 514.8 s): format; `debug` 612 tests; `release` 749;
+  `asan` 612; `tsan` 612; `wasm-node` 190 (under Node.js); `ios-sim-tests` 463 in the iOS Simulator; `ios-xcode`
+  generated; a new game built and started. All passed.
+
 ## What was not verified
 
 - **The per-pixel indirect light's denoiser on a phone:** measured offscreen on the Mac only, no numbers from a
@@ -655,6 +715,11 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   not run on an iPhone, the phone defaults' cost there an estimate. The cover is a whitening of open ground, not
   geometry (no depth, drifts or footprints); beyond 64 m of the camera floors under roofs whiten too; the grid melts
   by the temperature at y = 0. Sleet is a mix of the rain's and the snow's drawing.
+- **The wind in motion, by ear and on a phone:** nobody has looked at the plants swaying, the gusts sweeping
+  through the rain or the lightning flickering, or listened to the wind and the thunder (measured only: gains,
+  levels, the mix's peaks); not run on an iPhone. The field knows no geometry (no slowdown behind hills or
+  buildings); the sway is a rigid turn about a root, not a stem; TAA reprojects the plants as if they stood still;
+  the sky cube does not flash; no bolts are drawn.
 
 ## Changes for games
 
@@ -774,6 +839,21 @@ From the devlog of [2026-11-07](../../devlog/2026-11-07.md). Mac (Apple M4 Pro).
   `Precipitation::Rain` for the distant rain's sound and the snow share to `WeatherAudio` then. The rain occlusion map is drawn without the slope bias now (pipelines of its own for game
   surfaces, made when the rain or snow first falls); `RenderStats::rainStreaks` and `rainSplashes` are 0 where no
   rain falls near the camera.
+- **Wind, lightning and thunder (optional):** `FrameUniforms` grew by 80 bytes (`windAir`, `windSpeed`, `windTime`,
+  `lightning`, `lightningColor` at its end; all 0 without a weather or with the lightning off). `WeatherLayer` has
+  `WindLight` and `WindStrong` (`kWeatherLayers` is 6; a game that sized arrays by it or listed four sounds in
+  `WeatherSoundDesc::sounds` gets the two wind defaults added); `WeatherSoundDesc::thunder` and `thunderReach`,
+  `WeatherSoundState::wind` (0 by default: no wind sound, as before). `Weather::windAt` includes the gusts and
+  eddies, which are 0 by default (the same wind as before); `rainVelocity` and `snowVelocity` carry the mean wind.
+  `Settings::lightning` is 1, but nothing flashes until a game asks `strikes` or turns `RenderSettings::lightning`
+  on. After `setSettings` or a change of the cells the wetness grid's precipitation follows at the next `update()`,
+  also one of 0 s with the clock stopped (before, a stopped clock kept the old one). The default heavy rain is
+  quieter (RMS 0.13 instead of 0.2), and the rain's and snow's shafts under cover darker. New: `Wind::gusts`,
+  `turbulence`, `Strike`, `Weather::strikes`, `flash`, `kFlashLength`, `meanWindAt`, `windOffset`,
+  `windUniforms`; `quench/Wind.hlsli` (`quenchWindAt`, `quenchWindSway`, `quenchWindSwayAbout`);
+  `RenderSettings::lightning`, `RenderStats::lightning`, `lightningFlashes`; `quench::WindDrag`;
+  `audio::Thunder`, `defaultThunderSound`, `WeatherAudio::strike`, `setThunderSound`, `thunderPath`,
+  `thunderWaiting`, `thunderPlayed`, `thunderGains`.
 - **The skill:** a game made before this release has no copy; copy `.agents/skills/quench-game/` from the engine
   at the pinned commit if its agents should use it (and again when the pin moves).
 - The rest is in the demo and the engine's own test and gate scripts; `quench_add_batch()` in
