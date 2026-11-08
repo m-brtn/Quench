@@ -303,6 +303,7 @@ Result<std::unique_ptr<DeviceImpl>> MetalDevice::create(const DeviceDesc& desc) 
         caps.depthClamp = !QUENCH_PLATFORM_IOS_SIMULATOR;
         caps.depthBiasClamp = true;
         caps.indirectDraw = !QUENCH_PLATFORM_IOS_SIMULATOR;
+        caps.computeShaders = true;
 
         // Timestamps at encoder (stage) boundaries: Apple GPUs sample there, not between draws.
         if ([device supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary]) {

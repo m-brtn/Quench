@@ -50,11 +50,13 @@ QUENCH_TEST(caps) {
     QUENCH_GPU_DEVICE(device);
     const Caps& caps = device.caps();
     std::printf("  backend %s, driver %s, device '%s', shaders %s, gpuTiming %d, gpuPassTiming %d, depthClamp %d, "
-                "depthBiasClamp %d, indirectDraw %d, BC %d, ASTC %d, ETC2 %d\n",
+                "depthBiasClamp %d, indirectDraw %d, compute %d, BC %d, ASTC %d, ETC2 %d\n",
                 backendName(caps.backend), caps.driver.c_str(), caps.deviceName.c_str(),
                 shaderFormatName(caps.shaderFormat), caps.gpuTiming, caps.gpuPassTiming, caps.depthClamp,
-                caps.depthBiasClamp, caps.indirectDraw, caps.bcTextures, caps.astcTextures, caps.etc2Textures);
+                caps.depthBiasClamp, caps.indirectDraw, caps.computeShaders, caps.bcTextures, caps.astcTextures,
+                caps.etc2Textures);
     CHECK(caps.backend != Backend::Default, "the device reports the default backend");
+    CHECK(caps.computeShaders, "no compute shaders");
     if (caps.backend == Backend::SdlGpu) CHECK(!caps.etc2Textures, "ETC2 on SDL GPU");
     // SDL GPU has no timestamps inside a command buffer; Apple silicon Macs sample them at pass boundaries.
     if (caps.backend == Backend::SdlGpu) CHECK(!caps.gpuPassTiming, "SDL GPU with pass timing");

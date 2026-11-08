@@ -197,6 +197,8 @@ Result<std::unique_ptr<DeviceImpl>> createSdlGpuDevice(const DeviceDesc& desc) {
     caps.depthBiasClamp = !vulkan;
     // The Simulator's Metal device is GPU family Apple2, without indirect draws; SDL requires Apple3 on devices.
     caps.indirectDraw = !(metal && QUENCH_PLATFORM_IOS_SIMULATOR);
+    // Every SDL GPU driver (Metal, Vulkan, Direct3D 12) has compute pipelines.
+    caps.computeShaders = true;
     return std::unique_ptr<DeviceImpl>(std::move(impl));
 }
 
