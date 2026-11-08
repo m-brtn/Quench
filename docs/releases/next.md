@@ -36,6 +36,16 @@ grassy isles above a sea of clouds) needed from it.
   `RenderSettings::cloudShadowHeight` (0 m by default): the cloud shadow map lies on that plane and holds only the
   clouds above it, so ground above a sea of clouds is no longer shaded by the clouds below it. With 0 nothing
   changes.
+- **The rain, the clouds in motion and the shafts** (a user report on the demo's Weather section; [Weather](../weather.md)).
+  The rain's streaks are a sixtieth of a second of a drop's path, a drop's size through a lens, soft, at most 0.9
+  opaque, at least 1.5 px wide, lit by the clouds' bases instead of the sky's ambient term (pi times as bright under
+  overcast), denser near the camera; the splashes 6 cm for 0.12 s. The volumetric clouds' accumulation reads the
+  march's noise at a new place every frame, its history through a Catmull-Rom filter and this frame through a tent:
+  no hatching or smear while the view turns. The shafts of rain and snow end on the ground plane where a ray misses
+  the scene, fade their noise and the clouds' shadow with the step, move their noise every frame and are smoothed at
+  their reduced size: no dotted rays or dotted band at the horizon. `quenchCloudShadow` fades to the mean light over
+  its map's outer twentieth instead of clamping. The shafts cost up to about 11 % more (the snow's 10 to 15 %), the
+  clouds 2 to 4 %.
 
 ### Rendering
 
@@ -47,6 +57,14 @@ grassy isles above a sea of clouds) needed from it.
   clouds below shook up and down, and the clouds' temporal accumulation multiplied the error. Near the origin the
   image is the same apart from the volumetric clouds, which sat about a pixel off before.
 
+### App
+
+- **ImGui ID conflicts in scripted runs.** Two ImGui items with the same ID in one frame (a label repeated in one
+  window) were reported by ImGui only under the mouse. `quench_imgui` is built with `IMGUI_ENABLE_TEST_ENGINE` and
+  the engine's hooks, which the app turns on in scripted runs and builds with assertions: each shared ID is logged
+  once as an error and counted in the scenario value `imgui_id_conflicts` ([App](../app.md)). The demo's Weather
+  panel had one (its Cirrus preset and slider) and its batches now expect none.
+
 ## What was verified
 
 - Particles: `particles.*` 15 cases (also as WebAssembly under Node.js); `render.renderer_particles_*`,
@@ -56,6 +74,12 @@ grassy isles above a sea of clouds) needed from it.
   `demo_particles_fire.png` the same images on SDL GPU's Metal driver and the native backend, Vulkan through MoltenVK
   within a mean of 0.0008. Cost on the M4 Pro, offscreen, native backend, 1080p: 0.119 ms of compute and 0.389 ms of
   draws for 23488 slots (about 7000 particles alive) and 20 trails. The gates: see the devlog of 2026-11-08.
+- The rain, clouds and shafts after the user's report, offscreen on the Mac (native Metal and SDL GPU's Metal driver,
+  the same images): the clouds' motion error (a frame a few frames into a turn against a still frame of the same
+  view) 0.89 to 0.42 from the ground and 1.09 to 0.25 over the storm; the shafts without dots or band in single
+  frames and TAA stills; 22 of the demo's golden images replaced after looking at each pair (Metal and Vulkan
+  through MoltenVK). The ImGui check found the Weather panel's conflict before its fix and none after.
+  `tools/check.sh full` passed (the new game's step on a second run, after the disk had run full).
 - `weather.weather_cell_in_clear_sky`: `coverAbove` 1.000 under the base (equal to `cover`), 0.500 halfway up the
   cell, 0 over its top. `tools/check.sh quick weather render demo` 260 of 260 (the demo's captures, Metal and the
   native backend, unchanged), `step wasm` and `step new-game` passed.
@@ -78,6 +102,8 @@ grassy isles above a sea of clouds) needed from it.
 - Particles: nobody has looked at them in motion or on the screen; nothing of them ran on a phone (no phone costs).
 - Nothing of it on a phone. The shadow map has one plane: ground far above or below it is still shaded by the
   column its sun ray crosses at that height.
+- The rain, clouds and shafts after the report were looked at in offscreen captures on the Mac only (still and
+  after a few frames of motion), not on the screen, in motion or on a phone; their costs on the Mac only.
 - The view ray fix was measured offscreen on the Mac; nobody has looked at it on the screen yet. The engine still
   renders in world coordinates: positions near the camera keep a float's precision at their distance from the
   origin (0.24 mm at 2.2 km), so worlds of tens of kilometres would want camera-relative rendering.
@@ -91,4 +117,9 @@ particle systems or trails renders as before.
 Weather: `coverAbove` and `cloudShadowHeight` are new; `cover` is unchanged, and the shadow with the default height is
 the same as before. `quenchViewRay` returns the same directions, more precisely; a game shader that builds its own
 view rays from `FrameUniforms::invViewProj` at the near plane should read them at depth 0 or call `quenchViewRay`. A
-game's golden captures with volumetric clouds may move by about a pixel.
+game's golden captures with volumetric clouds may move by about a pixel. A game's captures with rain, snow, shafts
+or volumetric clouds change with the rain's and shafts' new look and the clouds' accumulation.
+
+App: `quench_imgui` defines `IMGUI_ENABLE_TEST_ENGINE` (public) and implements ImGui's test engine hooks; a game that
+links ImGui's own test engine or defines those hooks itself would get duplicate symbols. A game's scripted runs log an
+error for every ImGui ID two items share; `expect imgui_id_conflicts == 0` checks for them.

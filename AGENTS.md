@@ -121,8 +121,10 @@ the weather's sound (`audio::WeatherAudio`: light, heavy, distant and roof layer
 thunder delayed by the distance, replaceable, procedural defaults cooked by `quench_weather_sounds()`; snow is
 quiet); the weather run on the Mac's three backends offscreen, in the iOS Simulator's tests and, the headless part,
 as WebAssembly under Node.js; the user looked at it in motion and listened to the rain, the wind and the thunder in
-the demo on the Mac and the iPhone 17 on 2026-11-08: "yes, everything is fine"; its tests and costs not run on a
-phone, nothing on the iPhone 18 Pro Max), `quench_particles` (headless, 2026-11-08, stage 14: particle system
+the demo on the Mac and the iPhone 17 on 2026-11-08: "yes, everything is fine"; later that day the user found the
+rain unrealistic, the clouds hatched in motion and the shafts dotted on the Mac: the streaks, the clouds'
+accumulation and the shafts were changed the same day, checked in offscreen captures only, not looked at again by
+the user; its tests and costs not run on a phone, nothing on the iPhone 18 Pro Max), `quench_particles` (headless, 2026-11-08, stage 14: particle system
 descs, spawns by rate, distance, bursts and the game's points in a point, sphere, box, disc or along a path,
 deterministic and frame-rate independent, the CPU simulation of gravity, drag, curl noise and the weather's wind
 from `shaders/quench/ParticleField.h`, which the GPU's step shares, trails behind moving points on centripetal
