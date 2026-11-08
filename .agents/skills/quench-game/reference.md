@@ -252,7 +252,7 @@ const float far = m_weather.distanceToPrecipitation({playerPosition.x, playerPos
 ```
 
 `m_renderer->effects().clouds` says what is drawn (Volumetric falls back to Layer by `gpu::Caps`; clouds need
-`RenderSettings::sky`), `stats().cloudCover` how overcast it is around the camera. The sun's light on surfaces goes
+`RenderSettings::sky`), `stats().cloudCover` how overcast it is above the camera. The sun's light on surfaces goes
 through the clouds' shadow (`cloudShadows`), the sky's ambient light and the fog grey with the cover, and surfaces
 reflect a cube of the sky with its clouds (`skyCubeSize`, `skyCubeFacesPerFrame`). Costs and phone settings:
 `docs/weather.md`, "Phones and fallbacks"; `examples/demo/sections/WeatherSection.cpp` (presets, a shower cell, the

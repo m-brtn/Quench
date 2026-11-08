@@ -206,6 +206,10 @@ public:
                                   Precipitation kind = Precipitation::Any) const;
     // The mean coverage within `radius` of a point (19 samples): how overcast it is there.
     float cover(glm::vec2 xz, float radius) const;
+    // The same counting only the clouds above a point: each sample's coverage times the share of its clouds' height
+    // (from the cloud base to cloudTop of its type) above point.y. cover() at and below the cloud base, 0 above the
+    // tops: how overcast it is for a camera that may fly over the clouds (the renderer's dimming of the sun and sky).
+    float coverAbove(glm::vec3 point, float radius) const;
     // The wind at a point now (m/s): the settings' wind at the clouds' height, less near the ground (a logarithmic
     // profile, about 0.3 of it at 2 m under a base at 1.5 km), with its gusts and eddies (Wind::gusts, turbulence).
     // The same field moves the renderer's rain and snow and the plants of quench/Wind.hlsli. About 40 ns.
@@ -276,6 +280,9 @@ private:
 
     void refresh();
     glm::vec2 cellPosition(const CellEntry& entry) const;
+    // The mean of f over the 19 samples of cover() within `radius` of a point.
+    template <class F>
+    float meanAround(glm::vec2 xz, float radius, F f) const;
     // The field as it was `ago` seconds before now, had the settings always been the current ones.
     shader::WeatherUniforms pastUniforms(double ago) const;
     // The wetness the last hours of this weather leave at each point (and the precipitation there now).

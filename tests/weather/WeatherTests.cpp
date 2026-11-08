@@ -230,6 +230,17 @@ QUENCH_TEST(weather_cell_in_clear_sky) {
     CHECK(w.precipitation({5000.0f, 1600.0f, 0.0f}) == 0.0f, "rain above the cloud base");
     CHECK(w.cover({5000.0f, 0.0f}, 1000.0f) > 0.95f, "cover under the cell %.3f", w.cover({5000.0f, 0.0f}, 1000.0f));
     CHECK(w.cover({-20000.0f, 0.0f}, 5000.0f) == 0.0f, "cover in the clear sky");
+    // Only what is above counts: all of it under the base, less inside the cloud, none over its top.
+    const float base = Settings{}.cloudBase;
+    const float top = w.cloudTop(1.0f);
+    const float under = w.coverAbove({5000.0f, base - 100.0f, 0.0f}, 1000.0f);
+    const float inside = w.coverAbove({5000.0f, (base + top) * 0.5f, 0.0f}, 1000.0f);
+    const float over = w.coverAbove({5000.0f, top + 10.0f, 0.0f}, 1000.0f);
+    std::printf("  cover above: %.3f under the base, %.3f halfway up, %.3f over the top (%.0f m)\n", under, inside,
+                over, top);
+    CHECK(under == w.cover({5000.0f, 0.0f}, 1000.0f), "cover above under the base %.3f", under);
+    CHECK(inside > 0.4f && inside < 0.6f, "cover above halfway up the cell %.3f", inside);
+    CHECK(over == 0.0f, "cover above over the top %.3f", over);
 
     // Distance to the rain: 0 inside, about 3.2 to 3.8 km from the origin (rain of at least 0.1 reaches about 0.47
     // radii from the centre, 0.39 to 0.59 with the lobes), the maximum where nothing rains.

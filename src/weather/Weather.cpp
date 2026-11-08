@@ -366,19 +366,33 @@ float Weather::distanceToPrecipitation(glm::vec2 xz, float threshold, float maxD
     return maxDistance;
 }
 
-float Weather::cover(glm::vec2 xz, float radius) const {
-    float sum = sample(xz).coverage;
+template <class F>
+float Weather::meanAround(glm::vec2 xz, float radius, F f) const {
+    float sum = f(sample(xz));
     int count = 1;
     for (int ring = 1; ring <= 2; ++ring) {
         const int n = ring * 6;
         const float r = radius * float(ring) / 2.0f;
         for (int k = 0; k < n; ++k) {
             const float a = 6.2831853f * (float(k) + 0.5f * float(ring - 1)) / float(n);
-            sum += sample(xz + glm::vec2(std::cos(a), std::sin(a)) * r).coverage;
+            sum += f(sample(xz + glm::vec2(std::cos(a), std::sin(a)) * r));
             ++count;
         }
     }
     return sum / float(count);
+}
+
+float Weather::cover(glm::vec2 xz, float radius) const {
+    return meanAround(xz, radius, [](const Sample& s) { return s.coverage; });
+}
+
+float Weather::coverAbove(glm::vec3 point, float radius) const {
+    const float base = m_uniforms.layer.x;
+    if (point.y <= base) return cover({point.x, point.z}, radius);
+    return meanAround({point.x, point.z}, radius, [&](const Sample& s) {
+        const float top = cloudTop(s.type);
+        return s.coverage * std::clamp((top - point.y) / std::max(top - base, 1.0f), 0.0f, 1.0f);
+    });
 }
 
 glm::vec3 Weather::windAt(glm::vec3 point) const {

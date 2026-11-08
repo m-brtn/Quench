@@ -363,7 +363,8 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
     const glm::vec3 sunColor = fu.sunDir.w > 0.0f ? glm::vec3(fu.sunColor) : glm::vec3(0.0f);
     const float sinSun = std::max(fu.sunDir.y, 0.0f);
     const glm::vec3 skyAmbient(fu.skyAmbient);
-    const float cover = weather.cover(camXz, kCoverRadius);
+    // Only the clouds above the camera dim its light: over the tops the sun and the clear sky are back.
+    const float cover = weather.coverAbove(cam, kCoverRadius);
     // A closed deck passes about a third of the light above it, all of it diffuse, grey with a little of the sun's
     // hue: the radiance of its base, and the sky's ambient light moving toward it as the cover closes (also the light
     // from above on the clouds themselves: under a deck they do not see the blue sky).

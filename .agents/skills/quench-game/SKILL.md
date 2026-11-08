@@ -130,7 +130,9 @@ Link what the game uses beside `quench_add_game()`:
   (a single raining cloud), `update(dt)` in `Game::update`, then `scene.setWeather(weather)` every frame (a copy).
   Clouds are off by default: `RenderSettings::clouds = render::Clouds::Volumetric` (or `Layer`, the cheap 2D layer
   and the fallback), with `cloudResolution`, `cloudSteps`, `cloudShadows` and the sky cube for reflections. The game
-  asks the weather what is above a point: `precipitation`, `distanceToPrecipitation`, `cover`, `windAt`. Rain is off
+  asks the weather what is above a point: `precipitation`, `distanceToPrecipitation`, `cover` (`coverAbove`: only the
+  clouds above it), `windAt`. A world above the clouds (a sea of clouds below the camera): cloud bases are at y >= 0,
+  so put the ground higher (bases at 700 m, the ground at 2.2 km), and turn `cloudShadows` off. Rain is off
   by default too: `RenderSettings::rain = render::Rain::Medium` (`Low` on phones) draws streaks, splashes, wet
   surfaces with puddles (`MaterialDesc::puddles`, `water`; `wetness = 0` or `QUENCH_SURFACE_NO_RAIN` keeps one dry)
   and, with clouds, shafts from afar; call `weather.setWetnessFocus(...)` with the camera's ground point. Its sound:

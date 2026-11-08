@@ -379,9 +379,14 @@ float layerDensity(float2 xz, float4 w) {
 }
 
 float4 cloudLayer(float3 dir) {
-    if (dir.y < 0.0) return float4(0.0, 0.0, 0.0, 1.0);
+    // Seen from under the layer above the horizon; from over it (a camera flying over a sea of clouds) below it,
+    // lit on its tops.
+    const float height = cloud.layer.x + kLayerHeight;
+    const bool over = quenchFrame.cameraPos.y > height;
     const float4 cirrus = cloudCirrus(dir);
-    const float t = cloudSphere(quenchFrame.cameraPos.y, dir, cloud.layer.x + kLayerHeight).y;
+    if (over ? dir.y >= 0.0 : dir.y < 0.0) return cirrus;
+    const float2 hit = cloudSphere(quenchFrame.cameraPos.y, dir, height);
+    const float t = over ? hit.x : hit.y;
     if (t <= 0.0) return cirrus;
     const float2 xz = quenchFrame.cameraPos.xz + dir.xz * t;
     const float4 w = cloudWeather(xz, 0.0);
@@ -393,7 +398,12 @@ float4 cloudLayer(float3 dir) {
     const float mu = dot(dir, quenchFrame.sunDir.xyz);
     float3 S = lerp(cloud.ambientBottom.rgb, cloud.ambientTop.rgb, 0.6) * (1.0 / QUENCH_PI) *
                lerp(1.0, 0.45, saturate(od * 0.08));
-    if (cloud.sun.w > 0.0) {
+    if (over) {
+        // The tops: the clear sky's light and the sun's, diffused by the cloud and a little toward it.
+        S = cloud.ambientTop.rgb * (1.0 / QUENCH_PI);
+        if (cloud.sun.w > 0.0)
+            S += cloud.sun.rgb * (saturate(quenchFrame.sunDir.y) * 0.25 + 0.03 + cloudPhase(mu, 1.0) * 0.6);
+    } else if (cloud.sun.w > 0.0) {
         const float lightOd = od * lerp(1.6, 0.6, saturate(quenchFrame.sunDir.y * 2.0));
         S += cloud.sun.rgb * (cloudPhase(mu, 1.0) * exp(-lightOd * 0.5) + 0.06 * exp(-lightOd * 0.08)) * 2.4;
     }
@@ -510,9 +520,12 @@ float3 cloudySkyColor(float3 dir, float4 clouds, bool sunDisc) {
     float3 col = skyRadiance(dir);
     if (sunDisc) col = quenchSunDisc(col, dir);
     col = lerp(col, quenchFrame.overcast.rgb, quenchFrame.overcast.w * saturate(1.0 - abs(dir.y) * 10.0));
-    if (dir.y > -0.02) col = col * clouds.a + clouds.rgb;
+    // Under the cloud base the clouds are above the horizon; over it (a camera flying over a sea of clouds) below it
+    // too.
+    const bool seen = dir.y > -0.02 || quenchFrame.cameraPos.y > cloud.layer.x;
+    if (seen) col = col * clouds.a + clouds.rgb;
     // A flash of lightning lights the clouds around it from within, and the air a little everywhere.
-    [branch] if (quenchFrame.lightning.w > 0.0 && dir.y > -0.02) {
+    [branch] if (quenchFrame.lightning.w > 0.0 && seen) {
         const float around = exp((dot(dir, quenchFrame.lightning.xyz) - 1.0) * 6.0);
         col += quenchFrame.lightningColor.rgb * (quenchFrame.lightning.w * (around * (1.0 - clouds.a) + 0.1));
     }

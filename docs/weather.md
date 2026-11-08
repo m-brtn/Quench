@@ -60,6 +60,7 @@ scene.setWeather(weather);                // a copy: set it again after each upd
 float rain = weather.precipitation(listenerPosition);           // 0..1 falling here
 float nearest = weather.distanceToPrecipitation({x, z});        // m to the nearest rain
 float overcast = weather.cover({x, z}, 6000.0f);                // mean coverage around a point
+float overhead = weather.coverAbove(camera, 6000.0f);           // the same, only the clouds above the point
 glm::vec3 wind = weather.windAt(position);                      // m/s, with its gusts and eddies
 weather::Wetness wet = weather.wetness({x, z});                 // ground, standing water, snow 0..1
 float snowShare = weather.snowShare(listenerPosition);          // 0 rain .. 1 snow (by the temperature there)
@@ -203,7 +204,9 @@ ones would be.
 - **Cloud shadows:** surfaces read the cloud shadow map (surface sampler 14, `quench/Clouds.hlsli`:
   `quenchCloudShadow`) where the sun's ray through them meets the plane y = 0, and multiply the sun's light by it,
   with shadow maps and with ray-traced sun shadows alike. Beyond its 24 km the map's edge holds.
-- **How overcast it is:** `Weather::cover` within 6 km of the camera (`RenderStats::cloudCover`). As the cover
+- **How overcast it is:** `Weather::coverAbove` within 6 km of the camera (`RenderStats::cloudCover`): the cover of
+  the clouds above it, all of it under the cloud base and none over the tops, so a camera flying over a sea of
+  clouds sees the sun and the clear sky (since 2026-11-08; before, the clouds below dimmed them too). As the cover
   closes the sky's ambient light moves toward the radiance of a deck's base (a third of the light above it, grey
   with a little of the sun's hue), the ground's ambient light falls to 0.45 of it, and the fog turns grey; a closed
   deck shades the sun through the shadow map. The clouds' own ambient light follows it, so clouds under a deck are
@@ -681,8 +684,11 @@ without missed intervals with the thermal reaction on.
   that range; until 2026-11-08 the veil was lit by the sky's ambient term, pi times the clouds' bases, and shone as
   a pale grey fog brighter than the clouds above it (now darker, with the streaks and the ground showing). The
   shafts of the 2D layer's clouds look like smoky blobs more than rain.
-- Clouds beyond 64 km fade out (the weather map's reach); a camera above the cloud layer is not tuned (the march
-  works, the look is not checked).
+- Clouds beyond 64 km fade out (the weather map's reach). A camera above the cloud base (since 2026-11-08): its
+  light counts only the clouds above it (`Weather::coverAbove`) and the volumetric clouds below the horizon are
+  drawn (a sea of clouds under the camera); the 2D layer is still drawn only above the horizon, and the clouds'
+  shadow map still lies on the plane y = 0, so surfaces above the clouds are shaded as if the clouds were above them
+  (a game over a sea of clouds turns `cloudShadows` off).
 - Phone costs are estimates from the Mac; the phone defaults wait for a measured run on the iPhone 17.
 - The rain: no roofs beyond 64 m of the camera (the occlusion map's reach: farther surfaces count as open) and
   nothing above 100 m over the camera counts as a roof; the wetness grid covers 1 km around its focus (beyond it an
