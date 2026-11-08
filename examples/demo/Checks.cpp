@@ -244,6 +244,22 @@ constexpr std::array kItems{
               "not on their sides. Thaw: the cover melts into wet paving and puddles. Snow showers from the air: "
               "soft white shafts under the clouds. Snow sound: silence where it snows (no rain hiss).",
               "set preset snowfall\nset view ground\nset snow medium\nset time_scale 10\nset sound 1"},
+    CheckItem{"weather.wind", "weather", "Wind in motion",
+              "Windy storm, in the meadow: gusts sweep across the grass as waves of deeper bending that travel "
+              "downwind, the blades flutter a little on their own, the bushes and the tree crowns lean and rock "
+              "slowly; nothing jitters, stretches or swims with the camera. The rain drives at a slant and changes "
+              "its slant with the gusts. Flashes of lightning light the meadow and the clouds for a moment, a few "
+              "flickers each. Gusts and Turbulence at 0: the plants hold one steady bend. Wind at 0: upright, still. "
+              "Snowfall with Wind 30 and Gusts 1: the flakes stream sideways in gusts. Physics: Wind at 10 m 20, drop "
+              "light balls (L): they roll away downwind, the heavy bodies stay.",
+              "set preset windy_storm\nset view meadow\nset sound 1"},
+    CheckItem{"weather.wind_sound", "weather", "Wind and thunder by ear",
+              "Headphones or speakers, Windy storm in the meadow: a breathy wind that swells and fades with the "
+              "gusts, a whistling howl in the strongest, under the rain's roar; without clicks or a loop you can "
+              "hear. Each flash is followed by its thunder after a delay that grows with the distance (about 3 s per "
+              "km): a sharp crack and a long rumble when it is near, a low distant roll when it is far. Lightning "
+              "off: no thunder; Weather sound off: silence within a second.",
+              "set preset windy_storm\nset view meadow\nset sound 1"},
     CheckItem{"demo.frame_rate", "materials", "Frame rate",
               "The Performance header shows the display's rate (120 fps on a ProMotion iPhone) in every section.", ""},
     CheckItem{"demo.layout", "materials", "Layout",

@@ -1,0 +1,100 @@
+# Wind (ctest: demo_wind_<backend>, a part of batch.txt and batch_native.txt): the Weather section's meadow, its grass,
+# bushes and trees swaying in the weather's wind (docs/weather.md, "Wind"). The weather's clock is stopped (time scale
+# 0) and set, so every capture shows the same moment: the plants upright in a calm under a low sun
+# (demo_wind_calm.png); the windy storm, a gale of 22 m/s with strong gusts under a thunderstorm, the grass, the bushes
+# and the trees' crowns bent downwind (to the right) and the rain driven slanting through the air (demo_wind.png); two
+# seconds later in the same gale, its gusts elsewhere: the plants bent by other amounts (demo_wind_gust.png); five
+# milliseconds after a flash of lightning within 3 km, the meadow and the rain lit by it (demo_wind_flash.png). By
+# numbers: the wind at 10 m with its gusts, the wind's sound layers, the lightning's light and its thunder heard after
+# the sound's delay. The waits end between two frames (1.504 s, not 1.5): a wait of whole frames could end a frame
+# early or late by the rounding of the app's clock, and the streaks would move.
+section weather
+reset_section
+
+set dither 0
+set quality reduced
+set rain medium
+set snow medium
+set rain_shafts 1
+set rainbow 0
+set sound 1
+set time_scale 0
+set view meadow
+set preset fair
+set wind_speed 0
+set sun_elevation 12
+set sun_azimuth 140
+set weather_time 1000
+until time >= 1.504 3
+expect plants == 79
+expect wind_here == 0
+expect lightning == 0
+expect sound_wind_light < 0.01
+expect sound_wind_strong < 0.01
+windows off
+capture demo_wind_calm.png
+windows on
+
+# The windy storm: the wind at 10 m about 10.5 m/s here on the mean (the gale's 22 m/s is at the cloud base), a lull
+# of its gusts now, both wind layers playing, the heavy rain's too.
+set preset windy_storm
+set time_scale 0
+set weather_time 4000
+wait 1.504
+expect gusts == 0.6
+expect turbulence == 0.4
+expect mean_wind_here > 10
+expect mean_wind_here < 11
+expect wind_here > 8
+expect wind_here < 9.5
+expect lightning == 0
+expect rain_at_camera > 0.9
+expect sound_heavy > 0.9
+expect sound_wind_light > 0.4
+expect sound_wind_strong > 0.2
+windows off
+capture demo_wind.png
+windows on
+
+# Two seconds later the gusts have moved on: stronger here.
+set weather_time 4002
+wait 1.504
+expect wind_here > 10.2
+expect sound_wind_strong > 0.4
+windows off
+capture demo_wind_gust.png
+windows on
+
+# A flash of lightning nearby, then its thunder a second or more later (the weather's clock still stopped; the
+# sound's runs on).
+set flash 1
+wait 0.054
+expect lightning > 0.5
+expect lightning_flashes == 1
+expect strikes_heard == 1
+expect thunder_waiting == 1
+windows off
+capture demo_wind_flash.png
+windows on
+until thunder_played == 1 12
+expect thunder_waiting == 0
+
+# The storm going on, its lightning six times as frequent as the preset's: thunder after thunder over the rain and the
+# gale, without clipping.
+set time_scale 1
+set lightning_rate 24
+wait 8
+expect thunder_played >= 3
+expect strikes_heard >= 4
+set time_scale 0
+set lightning_rate 4
+
+# Lightning off: no flash lights the scene, no thunder is passed on.
+set lightning 0
+set flash 1
+wait 0.1
+expect lightning == 0
+expect lightning_flashes == 0
+expect audio_underruns == 0
+expect audio_clipped == 0
+quit

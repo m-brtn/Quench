@@ -10,6 +10,7 @@
 
 #include <demo_checker_shaders.h>
 #include <demo_hits_shaders.h>
+#include <demo_plants_shaders.h>
 
 #include <glm/trigonometric.hpp>
 #include <imgui.h>
@@ -108,7 +109,19 @@ Result<void> DemoGame::init(App& app) {
         checker = *surface;
     else
         log::warning("demo", "checker surface: {}; grounds use the standard surface", surface.error());
-    m_context.emplace(Context{app, *m_renderer, checker});
+    render::SurfaceId plants{};
+    surface = m_renderer->addSurface({
+        .vertexShader = shaders::demo_plants.find("surface_vs"),
+        .fragmentShader = shaders::demo_plants.find("surface_fs"),
+        .basicFragmentShader = shaders::demo_plants.find("surface_basic_fs"),
+        .shadowVertexShader = shaders::demo_plants.find("surface_shadow_vs"),
+        .name = "plants",
+    });
+    if (surface)
+        plants = *surface;
+    else
+        log::warning("demo", "plants surface: {}; plants use the standard surface and do not sway", surface.error());
+    m_context.emplace(Context{app, *m_renderer, checker, plants});
     m_emptyScene.emplace(app.device());
 
     for (const SectionFactory make :

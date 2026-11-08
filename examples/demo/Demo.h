@@ -53,6 +53,7 @@ struct Context {
     quench::app::App& app;
     quench::render::Renderer& renderer;
     quench::render::SurfaceId checker; // the demo's checker surface shader (shaders/checker.hlsl)
+    quench::render::SurfaceId plants;  // plants swaying in the weather's wind (shaders/plants.hlsl)
     // The keyboard and the gamepad are the scene's this frame, not the windows' (Tab or the D-pad hand them to the
     // windows): sections read their actions only then.
     bool sceneInput = true;

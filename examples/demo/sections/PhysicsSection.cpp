@@ -1,10 +1,14 @@
 // Physics: quench::PhysicsWorld (Jolt) with a stack of boxes and a row of balls on a fenced floor. Drop more bodies,
 // push them with a blast (a click or tap on the floor, or at the center), reset. The simulation runs in fixed ticks
-// of 1/120 s; the drawn transforms interpolate between the last two ticks.
+// of 1/120 s; the drawn transforms interpolate between the last two ticks. A wind (off at the start) pushes every
+// body by its drag (quench::WindDrag) in the weather's wind field with its gusts: hollow light balls roll away in it,
+// the heavy bodies hardly move.
 
 #include "Demo.h"
 
 #include <quench/physics/PhysicsWorld.h>
+#include <quench/physics/WindDrag.h>
+#include <quench/weather/Weather.h>
 
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -34,10 +38,27 @@ constexpr float kBoxHalf = 0.35f;
 constexpr float kBallRadius = 0.3f;
 constexpr float kFloorHalf = 7.0f;
 constexpr std::size_t kMaxBodies = 400;
+constexpr float kLightBallMass = 1.5f; // kg, a hollow ball; the other bodies are of Jolt's default density
+// Drag areas facing the wind (m^2) and coefficients: a sphere's cross-section, a cube face on.
+constexpr float kBallArea = 3.14159265f * kBallRadius * kBallRadius;
+constexpr float kBallDrag = 0.47f;
+constexpr float kBoxArea = 4.0f * kBoxHalf * kBoxHalf;
+constexpr float kBoxDrag = 1.05f;
+
+// The air for the wind: no clouds, its speed given at 10 m (the weather's speed is at the cloud base, here 10 m) and
+// blowing toward +x, slower near the floor by the weather's profile.
+weather::Settings windSettings(float speed, float gusts) {
+    return {.coverage = 0.0f,
+            .cirrus = 0.0f,
+            .wind = {.direction = glm::vec2(1.0f, 0.0f), .speed = speed, .gusts = gusts, .turbulence = 0.3f},
+            .cloudBase = 10.0f};
+}
 
 const std::array<glm::vec4, 5> kPalette{glm::vec4(0.85f, 0.32f, 0.12f, 1.0f), glm::vec4(0.95f, 0.72f, 0.2f, 1.0f),
                                         glm::vec4(0.2f, 0.55f, 0.85f, 1.0f), glm::vec4(0.3f, 0.7f, 0.35f, 1.0f),
                                         glm::vec4(0.8f, 0.8f, 0.82f, 1.0f)};
+
+const glm::vec4 kLightBallColor(1.0f, 0.42f, 0.62f, 1.0f);
 
 glm::vec3 toGlm(JPH::RVec3Arg v) { return {float(v.GetX()), float(v.GetY()), float(v.GetZ())}; }
 glm::quat toGlm(JPH::QuatArg q) { return {q.GetW(), q.GetX(), q.GetY(), q.GetZ()}; }
@@ -55,8 +76,9 @@ public:
     std::string_view title() const override { return "Physics"; }
     std::string_view about() const override {
         return "Jolt through quench::PhysicsWorld, stepped at 120 Hz and drawn interpolated. Drop boxes (B, gamepad "
-               "X) and balls (N, gamepad Y), blast them (click or tap the floor; P or gamepad B at the center), reset "
-               "(R, gamepad Back).";
+               "X), balls (N, gamepad Y) and light balls (L), blast them (click or tap the floor; P or gamepad B at "
+               "the center), reset (R, gamepad Back). Raise the wind to push the bodies by their drag: the light "
+               "balls roll away with its gusts.";
     }
 
     Result<void> init(Context& c) override {
@@ -101,6 +123,7 @@ public:
         app::Input& input = c.app.input();
         m_dropBox = action(input, "drop_box", {*Binding::key("B"), Binding::gamepad(GamepadButton::West)});
         m_dropBall = action(input, "drop_ball", {*Binding::key("N"), Binding::gamepad(GamepadButton::North)});
+        m_dropLightBall = action(input, "drop_light_ball", {*Binding::key("L")});
         m_blast = action(input, "blast", {*Binding::key("P"), Binding::gamepad(GamepadButton::East)});
         m_reset = action(input, "reset", {*Binding::key("R"), Binding::gamepad(GamepadButton::Back)});
         reset();
@@ -113,6 +136,10 @@ public:
             b.previousPosition = b.position;
             b.previousRotation = b.rotation;
         }
+        if (m_windSpeed > 0.0f) {
+            m_air.update(dt);
+            m_drag.apply(*m_world, [this](glm::vec3 p) { return m_air.windAt(p); });
+        }
         m_world->step(float(dt));
         readBodies();
     }
@@ -123,6 +150,7 @@ public:
         if (c.sceneInput) {
             if (input.pressed(m_dropBox)) drop(false);
             if (input.pressed(m_dropBall)) drop(true);
+            if (input.pressed(m_dropLightBall)) drop(true, kLightBallMass);
             if (input.pressed(m_blast)) blast(glm::vec3(0.0f));
             if (input.pressed(m_reset)) reset();
         }
@@ -139,10 +167,14 @@ public:
         if (ImGui::Button("Drop a box")) drop(false);
         ImGui::SameLine();
         if (ImGui::Button("Drop a ball")) drop(true);
+        if (ImGui::Button("Drop a light ball")) drop(true, kLightBallMass);
         if (ImGui::Button("Blast")) blast(glm::vec3(0.0f));
         ImGui::SameLine();
         if (ImGui::Button("Reset")) reset();
         ImGui::SliderFloat("Blast strength", &m_blastStrength, 1.0f, 20.0f, "%.0f m/s");
+        bool wind = ImGui::SliderFloat("Wind at 10 m", &m_windSpeed, 0.0f, 25.0f, "%.0f m/s");
+        wind |= ImGui::SliderFloat("Gusts", &m_gusts, 0.0f, 1.0f);
+        if (wind) setWind();
     }
 
     void stats(Context& c) override {
@@ -150,6 +182,9 @@ public:
         ImGui::Text("%zu bodies, %u awake, %d blasts", m_bodies.size(),
                     m_world->system().GetNumActiveBodies(JPH::EBodyType::RigidBody), m_blasts);
         ImGui::TextWrapped("Highest %.2f m, fastest %.2f m/s", double(highest()), double(fastest()));
+        if (m_windSpeed > 0.0f)
+            ImGui::TextWrapped("Wind %.1f m/s at a ball's height, drag on %zu bodies", double(windAtFloor()),
+                               m_drag.size());
         ImGui::TextWrapped("Ticks of 1/120 s on the job system, drawn interpolated");
     }
 
@@ -172,6 +207,10 @@ public:
         if (name == "highest") return double(highest());
         if (name == "fastest") return double(fastest());
         if (name == "blasts") return double(m_blasts);
+        if (name == "wind") return double(m_windSpeed);
+        if (name == "wind_at_floor") return double(windAtFloor());
+        if (name == "light_balls") return double(lightBalls());
+        if (name == "light_ball_x") return double(lightBallX());
         return std::nullopt;
     }
 
@@ -180,6 +219,20 @@ public:
         const std::optional<float> number = parseFloat(value);
         if (name == "blast_strength" && number) {
             m_blastStrength = std::max(*number, 0.0f);
+            return true;
+        }
+        if (name == "wind" && number) {
+            m_windSpeed = std::clamp(*number, 0.0f, 25.0f);
+            setWind();
+            return true;
+        }
+        if (name == "gusts" && number) {
+            m_gusts = std::clamp(*number, 0.0f, 1.0f);
+            setWind();
+            return true;
+        }
+        if (name == "light_balls" && number) {
+            for (int i = 0; i < int(*number); ++i) drop(true, kLightBallMass);
             return true;
         }
         return false;
@@ -196,11 +249,13 @@ private:
     struct Body {
         JPH::BodyID id;
         InstanceId instance;
+        bool lightBall = false;
         glm::vec3 position{0.0f}, previousPosition{0.0f};
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}, previousRotation{1.0f, 0.0f, 0.0f, 0.0f};
     };
 
-    void add(bool ball, const glm::vec3& position, const glm::quat& rotation) {
+    // mass > 0: the body's mass (kg) instead of its density's.
+    void add(bool ball, const glm::vec3& position, const glm::quat& rotation, float mass = 0.0f) {
         if (m_bodies.size() >= kMaxBodies) removeOldest();
         JPH::BodyCreationSettings settings(
             ball ? static_cast<const JPH::ShapeSettings*>(new JPH::SphereShapeSettings(kBallRadius))
@@ -209,21 +264,29 @@ private:
             JPH::EMotionType::Dynamic, PhysicsLayers::kMoving);
         settings.mRestitution = ball ? 0.4f : 0.1f;
         settings.mFriction = 0.6f;
+        if (mass > 0.0f) {
+            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            settings.mMassPropertiesOverride.mMass = mass;
+        }
         Body b;
         b.id = m_world->bodies().CreateAndAddBody(settings, JPH::EActivation::Activate);
         if (b.id.IsInvalid()) return; // the world is full
+        b.lightBall = mass > 0.0f;
+        m_drag.add(b.id, ball ? kBallArea : kBoxArea, ball ? kBallDrag : kBoxDrag);
         b.position = b.previousPosition = position;
         b.rotation = b.previousRotation = rotation;
         const glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) * glm::mat4_cast(rotation);
-        b.instance = m_scene->addInstance({.mesh = ball ? m_ballMesh : m_boxMesh,
-                                           .material = m_bodyMaterial,
-                                           .transform = transform,
-                                           .color = kPalette[m_colorIndex++ % kPalette.size()]});
+        b.instance =
+            m_scene->addInstance({.mesh = ball ? m_ballMesh : m_boxMesh,
+                                  .material = m_bodyMaterial,
+                                  .transform = transform,
+                                  .color = mass > 0.0f ? kLightBallColor : kPalette[m_colorIndex++ % kPalette.size()]});
         m_bodies.push_back(b);
     }
 
     void removeOldest() {
         const Body& b = m_bodies.front();
+        m_drag.remove(b.id);
         m_world->bodies().RemoveBody(b.id);
         m_world->bodies().DestroyBody(b.id);
         m_scene->removeInstance(b.instance);
@@ -249,11 +312,35 @@ private:
         m_world->optimizeBroadPhase();
     }
 
-    void drop(bool ball) {
-        const glm::vec3 p(m_random.uniform(-2.0f, 2.0f), 6.0f + m_random.uniform(0.0f, 1.0f),
-                          m_random.uniform(-2.0f, 2.0f));
+    // Light balls are put down low on the upwind side: dropped from high up, a strong wind would carry them over the
+    // rails before they land.
+    void drop(bool ball, float mass = 0.0f) {
+        const glm::vec3 p = mass > 0.0f ? glm::vec3(m_random.uniform(-5.5f, -3.5f), 1.0f + m_random.uniform(0.0f, 0.5f),
+                                                    m_random.uniform(-3.0f, 3.0f))
+                                        : glm::vec3(m_random.uniform(-2.0f, 2.0f), 6.0f + m_random.uniform(0.0f, 1.0f),
+                                                    m_random.uniform(-2.0f, 2.0f));
         const glm::vec3 axis = glm::normalize(glm::vec3(m_random.uniform(-1, 1), m_random.uniform(-1, 1), 0.3f));
-        add(ball, p, glm::angleAxis(m_random.uniform(0.0f, 6.28f), axis));
+        add(ball, p, glm::angleAxis(m_random.uniform(0.0f, 6.28f), axis), mass);
+    }
+
+    void setWind() { m_air.setSettings(windSettings(m_windSpeed, m_gusts)); }
+
+    float windAtFloor() const { return glm::length(m_air.windAt(glm::vec3(0.0f, kBallRadius, 0.0f))); }
+
+    int lightBalls() const {
+        return int(std::count_if(m_bodies.begin(), m_bodies.end(), [](const Body& b) { return b.lightBall; }));
+    }
+
+    // The light balls' mean x (m): downwind is +x.
+    float lightBallX() const {
+        float x = 0.0f;
+        int n = 0;
+        for (const Body& b : m_bodies)
+            if (b.lightBall) {
+                x += b.position.x;
+                ++n;
+            }
+        return n > 0 ? x / float(n) : 0.0f;
     }
 
     // Pushes the bodies within 4 m of `center` away and upward, harder the closer they are.
@@ -303,11 +390,15 @@ private:
     std::deque<Body> m_bodies;
     MeshId m_boxMesh, m_ballMesh;
     MaterialId m_bodyMaterial;
-    app::ActionId m_dropBox = 0, m_dropBall = 0, m_blast = 0, m_reset = 0;
+    app::ActionId m_dropBox = 0, m_dropBall = 0, m_dropLightBall = 0, m_blast = 0, m_reset = 0;
     Random m_random;
     std::size_t m_colorIndex = 0;
     float m_blastStrength = 9.0f;
     int m_blasts = 0;
+    float m_windSpeed = 0.0f;
+    float m_gusts = 0.5f;
+    weather::Weather m_air{windSettings(0.0f, 0.5f)};
+    WindDrag m_drag;
 };
 
 } // namespace

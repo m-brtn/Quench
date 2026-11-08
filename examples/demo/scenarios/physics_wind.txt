@@ -1,0 +1,22 @@
+# Physics in the wind (ctest: demo_physics_wind_<backend>, a part of batch.txt and batch_native.txt; no capture):
+# quench::WindDrag pushes the Physics section's bodies by their drag in the weather's wind field. Light balls put down
+# upwind roll downwind (+x) in a gale of 20 m/s at 10 m, about 5 m/s at their height; without wind they stay.
+section physics
+reset_section
+
+wait 0.1
+expect bodies == 21
+set light_balls 3
+wait 1.5
+expect light_balls == 3
+expect light_ball_x < -3.4
+expect wind_at_floor == 0
+set wind 20
+wait 0.1
+expect wind == 20
+expect wind_at_floor > 3
+expect wind_at_floor < 7
+wait 3
+expect light_ball_x > -3
+set wind 0
+quit
