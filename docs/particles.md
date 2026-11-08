@@ -203,10 +203,11 @@ Tests: `particles.*` (15 headless cases: curves, rates independent of the frame 
 spawns along the emitter's motion, the ring, the exact motion without air, the curl noise without sinks, the wind,
 the twinkle's mean, the look over the life, paths through their points, trails by distance, fading, stopping and
 breaking; also under Node.js) and `render.renderer_particles_*`, `renderer_trails_*` and
-`renderer_particle_slots_are_limited` (9 cases on SDL GPU's Metal driver, the native backend and Vulkan through
+`renderer_particle_slots_are_limited` (10 cases on SDL GPU's Metal driver, the native backend and Vulkan through
 MoltenVK: the GPU and the CPU simulation give the same pixels (at most 0 levels apart for a glow, a mean of 0.000 for
 120 moving particles), hidden behind surfaces and faded near them, stretched along their motion, nothing in TAA's
-history, trails bright at the head and faded at the tail, sparkles shed per metre, the fallbacks, the slot limits).
+history, trails bright at the head and faded at the tail, faded where seen end on, sparkles shed per metre, the
+fallbacks, the slot limits).
 
 ## Platforms
 

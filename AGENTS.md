@@ -21,14 +21,14 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-08, version 0.11.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-08, version 0.12.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
 white shafts, quiet; 2026-11-08) and 4 (wind: gusts and eddies, plants' sway, drag on chosen bodies, lightning,
 thunder, the wind's sound; 2026-11-08) except their costs on a phone and their runs on the iPhone 18 Pro Max (the
 user looked at them and listened to them on the Mac and the iPhone 17 on 2026-11-08: fine), stage 14 (particles and
-trails, 2026-11-08, not released) except its runs on a phone and the checks by eye; the
+trails, 2026-11-08, released with 0.12.0) except its runs on a phone and the checks by eye; the
 plan the user left (stages 6 to 10) and stages 11 and 12 have been
 worked through, apart from the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the
 iPhone 18 Pro Max and the checks by eye and ear:

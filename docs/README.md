@@ -2,7 +2,7 @@
 
 Stages 1 to 3 and 5 to 14 of the [Roadmap](roadmap.md) are implemented (stages 11 and 12 except their runs on the iPhone
 18 Pro Max and the checks by eye, stage 13 except its costs on a phone and its runs on the iPhone 18 Pro Max, stage 14
-except its runs on a phone and the checks by eye; browser audio still open), stage 4 (games on the engine) for one game (version 0.11.0): the core and physics modules (with the
+except its runs on a phone and the checks by eye; browser audio still open), stage 4 (games on the engine) for one game (version 0.12.0): the core and physics modules (with the
 wind's drag on chosen bodies), the job system, profiling with Tracy (opt-in), the asset system and the asset cooker
 (BC7, ASTC in iOS builds, Basis Universal as an option, transcoded at load time; asset hot reload on the Mac and on a
 device), the GPU layer over SDL GPU and a native Metal backend with GPU timestamps per pass, acceleration structures and
@@ -61,6 +61,6 @@ in `images/`.
 | [Dependencies](dependencies.md) | Pinned libraries, planned libraries with licences and verified capabilities |
 | [Migration](migration.md) | Inventory of the engine code in TrailForge and Ashfall, how far the copies diverged, the procedure for moving code, progress per game |
 | [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, the weather stage (its four parts built), particles and trails, what is next, the requested features and their priorities |
-| [Releases](releases/) | Release notes per version, the latest [0.11.0](releases/v0.11.0.md) |
+| [Releases](releases/) | Release notes per version, the latest [0.12.0](releases/v0.12.0.md) |
 
 Coding agents: see [AGENTS.md](../AGENTS.md). The daily development log is in [devlog/](../devlog/).

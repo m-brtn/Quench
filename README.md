@@ -6,7 +6,7 @@
 
 <p align="center">
   A game engine designed for making games entirely with AI coding agents.<br>
-  Version 0.11.0 · macOS and iOS · MIT
+  Version 0.12.0 · macOS and iOS · MIT
 </p>
 
 ## Make your game with AI agents
@@ -51,6 +51,8 @@ look and listen.
   and white snow showers in the distance; wind with gusts that sweep through the rain and snow, grass and trees
   that sway in it and a wind sound; thunderstorms with lightning that lights up the clouds and thunder that rolls in
   later the farther it struck.
+- **Particles and trails:** sparks, smoke, dust, fireflies and twinkling fields of light that drift in the wind and
+  glow, and glowing ribbons behind moving things that fade toward the tail and shed sparkles.
 - **Physics:** Jolt Physics, multithreaded on the engine's job system; wind that pushes the bodies you choose.
 - **Sound:** 3D sound with HRTF for headphones, reverb, buses and mixing, streamed music with crossfades; WAV, FLAC,
   MP3 and Ogg Vorbis.
