@@ -194,13 +194,26 @@ ParticleOut trail_vs(uint vid : SV_VertexID) {
     const bool hasAfter = i + 1u < count && vertices[(first + i + 1u) * 2u].w >= 0.0;
     float4 before = hasBefore ? trailClip(first + i - 1u) : c0;
     float4 after = hasAfter ? trailClip(first + i + 1u) : c0;
-    if (before.w < pd.camera.w) before = c0;
-    if (after.w < pd.camera.w) after = c0;
+    float3 from = hasBefore ? vertices[(first + i - 1u) * 2u].xyz : p.xyz;
+    float3 to = hasAfter ? vertices[(first + i + 1u) * 2u].xyz : p.xyz;
+    if (before.w < pd.camera.w) {
+        before = c0;
+        from = p.xyz;
+    }
+    if (after.w < pd.camera.w) {
+        after = c0;
+        to = p.xyz;
+    }
     const float2 halfTarget = 0.5 * pd.target.xy;
     float2 dir = (after.xy / after.w - before.xy / before.w) * halfTarget;
-    if (dot(dir, dir) < 1e-8) dir = (cb.xy / cb.w - ca.xy / ca.w) * halfTarget;
     const float len = length(dir);
-    dir = len > 1e-4 ? dir / len : float2(1.0, 0.0);
+    // How much of the strip faces the camera here: its length on the screen over the length it would have seen from
+    // the side (the sine of its angle to the view). Where it points along the view its direction on the screen is
+    // lost and wide quads would fan out round the vertex, so it fades out there.
+    const float side = length(to - from) * pd.right.w / c0.w;
+    const float facing = side > 1e-3 ? smoothstep(0.08, 0.3, len / side) : 1.0;
+    if (dot(dir, dir) < 1e-8) dir = (cb.xy / cb.w - ca.xy / ca.w) * halfTarget;
+    dir = dot(dir, dir) > 1e-8 ? normalize(dir) : float2(1.0, 0.0);
     const float2 across = float2(-dir.y, dir.x);
 
     const float pixels = abs(p.w) * pd.right.w / c0.w;
@@ -211,7 +224,7 @@ ParticleOut trail_vs(uint vid : SV_VertexID) {
     o.position = c0;
     o.position.xy += across * (corner.x * halfWidth) / halfTarget * c0.w;
     o.coord = float3(corner.x, 0.0, 0.0);
-    o.color = particleFinish(color.rgb, color.a * thin, p.xyz, length(p.xyz - pd.camera.xyz));
+    o.color = particleFinish(color.rgb, color.a * thin * facing, p.xyz, length(p.xyz - pd.camera.xyz));
     o.info = float2(c0.w, 0.0);
     return o;
 }

@@ -329,6 +329,46 @@ QUENCH_TEST(renderer_trails_fade_behind_the_head) {
           "faded out after the head stopped");
 }
 
+QUENCH_TEST(renderer_trails_fade_where_seen_end_on) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, blackSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    scene.setEnvironment(dark());
+    particles::TrailDesc d;
+    d.lifetime = 2.0f;
+    d.width = 0.6f;
+    d.widthOverAge = particles::FloatCurve(1.0f);
+    d.color = glm::vec3(4.0f);
+    d.softness = 0.0f;
+    const TrailId trail = scene.addTrail(d);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // The head flies away from the camera, 3 to 7 m from it, wobbling by 5 mm: the strip points along the view, and
+    // its direction on the screen turns from point to point.
+    std::vector<Rgba8> pixels;
+    for (int i = 0; i <= 60; ++i) {
+        const double t = i / 60.0;
+        const glm::vec3 head(0.005f * std::sin(30.0f * float(t)), 0.005f * std::cos(23.0f * float(t)),
+                             1.0f - 4.0f * float(t));
+        scene.moveTrail(trail, head, t);
+        pixels = renderOnce(device, *renderer, scene, viewAt(t), *target);
+    }
+    const glm::ivec2 centre = pixelOf(viewAt(1.0), glm::vec3(0.0f));
+    int fanned = 0;
+    for (int y = 0; y < int(kSize); ++y)
+        for (int x = 0; x < int(kSize); ++x)
+            if (std::abs(x - centre.x) + std::abs(y - centre.y) > 2 && sum(at(pixels, {x, y})) > 30) ++fanned;
+    // The same strip from the side.
+    const View side = viewAt(1.0, glm::vec3(4.0f, 0.0f, 0.0f));
+    pixels = renderOnce(device, *renderer, scene, side, *target);
+    int lit = 0;
+    for (const Rgba8& p : pixels) lit += sum(p) > 30 ? 1 : 0;
+    std::printf("  end on: %d pixels lit away from it; from the side: %d\n", fanned, lit);
+    CHECK(fanned <= 8, "no fan of quads round a strip seen end on: %d pixels", fanned);
+    CHECK(lit > 400, "seen from the side it is drawn: %d pixels", lit);
+}
+
 QUENCH_TEST(renderer_trails_shed_sparkles) {
     QUENCH_GPU_DEVICE(device);
     Result<Renderer> renderer = Renderer::create(device, blackSettings());

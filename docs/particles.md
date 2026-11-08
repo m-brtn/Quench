@@ -109,7 +109,9 @@ sub-pixel points).
 `Scene::addTrail(particles::TrailDesc)` (`include/quench/particles/Trail.h`): the game moves the head every frame or
 tick with `moveTrail(trail, head, time)` on a clock of its own; the head records a point wherever it has moved
 `spacing` m (at most `maxPoints`), the points age, and the strip through them is a centripetal Catmull-Rom curve (up
-to `subdivisions` vertices per segment) facing the camera. Width (`width` times `widthOverAge`) and color (`color`
+to `subdivisions` vertices per segment) facing the camera. Where the strip points along the view (a ribbon behind a
+point flying away from the camera) it fades out: its direction on the screen is lost there, and wide quads would
+fan out round it. Width (`width` times `widthOverAge`) and color (`color`
 times `colorOverAge`) follow t = max(age / `lifetime`, length / `maxLength`): 0 at the head, 1 at the tail, where the
 strip is cut exactly at the end of its life. `headSize` adds a glow at the head while it emits. The renderer ages the
 strip by `View::time`'s change since the last move, so it fades out after the head stops; `setTrailEmitting(false)`

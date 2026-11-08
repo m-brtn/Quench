@@ -20,6 +20,9 @@ grassy isles above a sea of clouds) needed from it.
   them after TAA and upscaling, before bloom; not in the ray tracing structures, off in the path tracer's frames.
   `RenderSettings::particleDensity`, `RenderStats::particleSystems`, `particles`, `particleSlots`,
   `particleSpawns`, `trails`, `trailVertices`; GPU ranges `particles_sim` and `particles`.
+- Trails fade out where they point along the view (the sine of their angle to it from 0.3 down to 0.08): seen from
+  behind a point flying away from the camera, a wide strip no longer fans out into a starburst of thin quads round
+  the point or folds into wedges where it bends (found on Cloudsong's cape).
 - The demo's section 15, Particles: light streams along closed paths with braided heads, a sparkle field, fireflies,
   a campfire with sparks and smoke at the blue hour. In the compact layout the menu sheet shows its buttons above the
   list of sections (a phone in landscape reaches them without scrolling).
