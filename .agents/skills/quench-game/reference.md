@@ -9,6 +9,7 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 - A lit scene with the renderer (and own surface shading)
 - Cooked assets in the scene
 - Weather and clouds
+- Particles and trails
 - Physics
 - Audio
 - Input and ImGui
@@ -375,6 +376,78 @@ m_rainSound->update({.precipitation = m_weather.precipitation(listener), // as a
   `quench_weather_sounds()`; `setSound` and `setThunderSound` replace them. `stats().lightning` and
   `lightningFlashes` say what was lit; `docs/weather.md`, "Wind"; the demo's Weather section, preset Windy storm,
   view Meadow, and its Physics section's wind.
+
+## Particles and trails
+
+Systems and trails live in the scene by handle, like instances; the renderer steps and draws them. Spawns are
+deterministic (the seed and the spawn's index) and frame-rate independent, so scripted captures compare.
+
+```cpp
+#include <quench/particles/Path.h>
+#include <quench/render/Scene.h>
+
+namespace particles = quench::particles;
+
+std::optional<render::ParticleSystemId> m_sparkles; // members
+render::TrailId m_trail;
+particles::Path m_course;
+
+// init: sparkles a trail sheds (no rate: they come from the trail), drifting down and twinkling
+particles::ParticleDesc d;
+d.maxParticles = 2048;                      // slots; a quality preset lowers this, not only the density
+d.rate = 0.0f;
+d.lifetime = {0.8f, 1.6f};
+d.speed = {0.05f, 0.3f};
+d.spread = 3.14159f;                        // every direction
+d.gravity = {0.0f, -0.4f, 0.0f};
+d.drag = 1.5f;
+d.noise = 0.3f;                             // curl noise, m/s
+d.wind = 0.5f;                              // half the scene's weather wind (Scene::setWeather)
+d.size = {0.015f, 0.035f};
+d.color = {1.6f, 2.0f, 3.2f};               // linear HDR: above 1 blooms
+d.twinkle = 0.7f;
+d.sprite = particles::Sprite::Star;
+Result<render::ParticleSystemId> s = m_scene->addParticles(d);
+if (!s) return Error{s.error()};            // the scene's slots are limited (particles::kMaxSceneParticles)
+m_sparkles = *s;
+
+particles::TrailDesc t;
+t.lifetime = 1.5f;                          // s
+t.width = 0.08f;                            // m, thinning toward the tail by widthOverAge
+t.color = {1.0f, 1.6f, 3.0f};
+t.headSize = 0.15f;                         // the bright head
+m_trail = m_scene->addTrail(t);
+m_scene->setTrailSparkles(m_trail, *m_sparkles, 6.0f); // per metre the head moves
+const std::vector<glm::vec3> points{{0, 3, 0}, {6, 5, -4}, {0, 7, -8}, {-6, 5, -4}};
+m_course = particles::Path(points, true);   // closed, centripetal Catmull-Rom
+
+// Game::update, every frame: the head on the game's clock
+const double now = app.time();
+m_scene->moveTrail(m_trail, m_course.at(float(now) * 4.0f), now); // 4 m/s along the course
+
+// a fire: a disc of flames and sparks stretched along their motion, a burst on a hit
+particles::ParticleDesc sparks;
+sparks.rate = 30.0f;
+sparks.shape = particles::Shape::Disc;
+sparks.extent = glm::vec3(0.3f);
+sparks.speed = {2.0f, 4.0f};
+sparks.gravity = {0.0f, -2.0f, 0.0f};
+sparks.color = {6.0f, 2.4f, 0.6f};
+sparks.facing = particles::Facing::Velocity;
+Result<render::ParticleSystemId> fire = m_scene->addParticles(sparks, glm::translate(glm::mat4(1.0f), firePlace));
+if (fire && hit) m_scene->burstParticles(*fire, 40);
+```
+
+- `RenderSettings::particles` is `Gpu` (compute, the default), `Cpu` or `Off`; `particleDensity` times every rate
+  (not bursts). `effects().particles` and `fallbacks()` say what runs; `stats().particles`, `particleSlots`,
+  `trails`, `trailVertices` what was drawn; the GPU ranges `particles_sim` and `particles` on the native backend.
+- `setParticlesEmitting(id, false)` stops spawning (live particles go on); `setParticlesVisible(id, false)` hides and
+  pauses a system. `setTrailEmitting(trail, false)` lets a trail fade where it is (a character landing); `teleport`
+  on `moveTrail` or `setParticleTransform` breaks the strip or skips spawns along a jump.
+- Smoke and dust: `Blend::Alpha` with `lit = true` and `Sprite::Puff`; particles within a system are not sorted, so
+  keep them faint. Particles are not in the ray tracing structures and light nothing: a fire wants a point light.
+- `docs/particles.md` (costs: about 0.12 ms of compute and 0.35 to 0.39 ms of draws for 23488 slots and 20 trails on
+  the M4 Pro); the demo's Particles section (`examples/demo/sections/ParticlesSection.cpp`).
 
 ## Physics
 

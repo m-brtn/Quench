@@ -4,7 +4,8 @@ description: >-
   Builds, extends and verifies a game on the Quench C++20 engine: tools/new_game.py and templates/game, the pinned
   engine (FetchContent and the local override), the quench::app::Game interface and fixed-step loop,
   quench_add_game, input actions, ImGui, the retained render::Scene, cooked assets (quench_cook_assets,
-  SceneAssets), weather, clouds, rain, snow, wind and lightning, physics, audio, animation, navigation, jobs,
+  SceneAssets), weather, clouds, rain, snow, wind and lightning, particles and trails, physics, audio, animation,
+  navigation, jobs,
   quench::fs, iOS builds, scripted offscreen checks with captures and golden images, and Tracy profiles recorded without its GUI. Use when creating a
   game on Quench, working in a repository whose CMakeLists.txt fetches Quench or calls quench_add_game, or when the
   user asks how to make a game with the engine.
@@ -25,16 +26,16 @@ is in [reference.md](reference.md).
   The headers are the truth for names and signatures: read the header before using a call.
 - Depth: `docs/app.md` (game interface, flags, scenarios, captures, `quench_add_game()`, iOS runs), `docs/render.md`,
   `docs/assets.md`, `docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`,
-  `docs/performance.md`, `docs/platforms.md`. Working code: `templates/game/src/Game.cpp` and
+  `docs/particles.md`, `docs/performance.md`, `docs/platforms.md`. Working code: `templates/game/src/Game.cpp` and
   `examples/hello/Hello.cpp` (drawing with `quench::gpu`), `examples/demo/sections/` (renderer, physics, audio,
-  animation, assets, navigation, weather).
+  animation, assets, navigation, weather, particles).
 
 ## Workflow
 
 ```
 - [ ] 1. Create the game, build it, run its smoke check
 - [ ] 2. Shape the Game: simulation in fixedStep, drawing in render
-- [ ] 3. Add the modules it needs (render, assets, weather, physics, audio, animation, navigation)
+- [ ] 3. Add the modules it needs (render, assets, weather, particles, physics, audio, animation, navigation)
 - [ ] 4. A scenario with checks and a capture for every feature, run by ctest
 - [ ] 5. Gates: debug and release builds, ctest, captures looked at, devlog
 ```
@@ -148,6 +149,16 @@ Link what the game uses beside `quench_add_game()`:
   the sound its wind. Lightning: `RenderSettings::lightning = true` lights the storm, and each flash from
   `weather.strikes(...)` passed once to `WeatherAudio::strike(distance)` thunders later.
   [reference.md](reference.md), "Weather and clouds"; `docs/weather.md`.
+- **Particles and trails.** Headless `quench_particles` (linked with `quench_render`): a `particles::ParticleDesc`
+  (`include/quench/particles/Particles.h`: slots, rate per second and per metre, a shape or a path, lifetime, speed,
+  gravity, drag, curl noise, a share of the weather's wind, size and HDR color over the life, twinkle, blend, sprite,
+  facing) registered once with `scene.addParticles(desc, transform)`; per frame only `setParticleTransform`,
+  `burstParticles` or `emitParticles`. Trails: `scene.addTrail(particles::TrailDesc)` and `moveTrail(trail, head,
+  time)` every frame on the game's clock (`teleport` for a jump), `setTrailSparkles` to shed a system's particles
+  along it; `particles::Path` for curves to move heads along. The renderer steps systems by compute (or on the CPU:
+  `RenderSettings::particles`) and draws them after TAA, so colors above 1 glow through bloom. Every slot costs
+  whether alive or not: a quality preset lowers `maxParticles` (and `particleDensity`, the rates). Hidden systems
+  are not stepped. [reference.md](reference.md), "Particles and trails"; `docs/particles.md`.
 - **Physics.** `quench::PhysicsWorld` on `&app.jobs()` (Jolt, its jobs on the engine's pool); bodies through
   `bodies()` with `PhysicsLayers::kStatic` or `kMoving`; `step(float(dt))` in `fixedStep`.
 - **Audio.** `app.audio()`: `load`, `play` with `PlayParams` (buses `"music"`, `"effects"`, `"ui"` by default;

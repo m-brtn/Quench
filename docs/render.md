@@ -101,8 +101,9 @@ on how many were rendered before it (in a scripted run, the frames spent waiting
    TAA with a Halton (2, 3) jitter over 8 frames, the history clipped to the variance box of the 3 x 3 neighbourhood
    (YCoCg), then sharpening. Render scale below 1 renders the 3D part smaller; tone mapping scales it to the target,
    or MetalFX does (below), whose temporal upscaler takes the place of TAA's resolve.
-4. With rain, its streaks and splashes, with snow its flakes, on the anti-aliased (and upscaled) HDR image; then
-   game `PostHdr` passes.
+4. With rain, its streaks and splashes, with snow its flakes, on the anti-aliased (and upscaled) HDR image; then the
+   scene's particle systems and trails ([Particles](particles.md#in-the-frame): stepped by compute or on the CPU,
+   drawn back to front against the scene's depth); then game `PostHdr` passes.
 5. **Bloom**: a threshold with a soft knee, a chain of downsamples and upsamples.
 6. **Tone mapping** into the target (ACES or AgX, exposure, vignette, dither; sRGB and UNORM targets get the same
    display values; HDR output below), FXAA when selected, then game `Overlay` passes. The app draws ImGui after the
@@ -192,6 +193,18 @@ clouds) lights the clouds around each of the weather's flashes within 30 km (`We
 ambient light by their distance; no bolts are drawn, and the thunder is the game's (`audio::WeatherAudio::strike`).
 `RenderStats::lightning` and `lightningFlashes`. Tests `renderer_wind_sways_plants` and
 `renderer_lightning_lights_the_storm` on every backend variant; the costs in [Weather](weather.md#cost).
+
+### Particles and trails
+
+Since 2026-11-08 (stage 14; [Particles](particles.md)): particle systems (`Scene::addParticles` with a
+`particles::ParticleDesc`: spawns by rate, distance and bursts in a point, sphere, box, disc or along a path; gravity,
+drag, curl noise and the weather's wind; size and HDR color over the life, twinkle, additive or alpha blending,
+camera-facing or stretched along the motion, soft against the scene) and trails behind points a game moves
+(`Scene::addTrail`, `moveTrail`: smooth camera-facing strips that thin and fade toward the tail, a glow at the head,
+sparkles shed into a system). `RenderSettings::particles` (`Gpu` by compute, the default, `Cpu` or `Off`) and
+`particleDensity`; `RenderStats::particleSystems`, `particles`, `particleSlots`, `particleSpawns`, `trails`,
+`trailVertices`. They are drawn after TAA and upscaling, glow through bloom, are fogged and are not in the ray
+tracing structures or the path tracer's frames.
 
 ### Tone mapping and HDR output
 
@@ -903,8 +916,8 @@ denoiser
 (spatial or temporal), the path tracer with its bounces and samples, anti-aliasing (none, FXAA, TAA) and sharpening,
 bloom (strength, threshold), sky on or off and the clear color, the clouds (off, 2D layer, volumetric) with their
 resolution, accumulation, steps and shadows and the sky cube's size and faces per frame, the rain (off, low, medium,
-high) with its shafts and rainbow, the snow (off, low, medium, high), the lightning (off, on), tone curve (ACES, AgX),
-vignette, dither.
+high) with its shafts and rainbow, the snow (off, low, medium, high), the lightning (off, on), the particles (off, GPU,
+CPU) and their density, tone curve (ACES, AgX), vignette, dither.
 `setSettings` can be called every frame; the targets are recreated only when a size, the shadow map size or the set
 of active effects changes.
 
@@ -929,7 +942,9 @@ objects in the rain map, whether the shafts and the rainbow were drawn and the c
 `rainAtCamera`, `rainStreaks`, `rainSplashes`, `rainOccluders`, `rainShafts`, `rainbow`, `rainCover`), and the
 snow drawn, the snowfall and the snow's share of the precipitation at the camera and the flakes (`snow`,
 `snowAtCamera`, `snowShareAtCamera`, `snowFlakes`), and the lightning's light at the camera and the flashes lit
-(`lightning`, `lightningFlashes`).
+(`lightning`, `lightningFlashes`), and (stage 14) the particle systems drawn, their live particles, their slots and
+this frame's spawns, the trails drawn and their strips' vertices (`particleSystems`, `particles`, `particleSlots`,
+`particleSpawns`, `trails`, `trailVertices`).
 The demo shows them and its scenarios check them (`draws`, `shadow_draws`, `transmittance_draws`, `lights`,
 `area_lights`, `local_shadow_changes`, `local_map_lights`, `local_maps`, `local_map_draws`, `moved`,
 `render_w`, `skinned_instances`, `skinned_vertices`, `ray_instances`, `ray_builds`, `ray_refits`,
@@ -944,7 +959,8 @@ passes in timed ranges of the command buffer it records into, `upload` (the inst
 tracer), `gtao` (screen-space ambient occlusion, after its own `prepass` where nothing is traced), `ssr` (screen-space
 reflections: the march and the resolve), `cloud_noise` (once), `weather`, `clouds` and `sky_cube` (the clouds),
 `rain_map` (the rain occlusion map and the weather maps' rain regions), `rain_shafts` (after `hdr`), `rain` (the
-streaks and splashes, after `taa` or `upscale`) and `snow` (the flakes, after `rain`),
+streaks and splashes, after `taa` or `upscale`) and `snow` (the flakes, after `rain`), `particles_sim` (the
+particles' compute step) and `particles` (the particles', the trails' and the heads' draws, after `snow`),
 `shadows` (the
 cascades and their
 transmittance maps), `local_shadows` (the local lights' shadow maps), `local_filter` (their screen pass where an area
@@ -1086,5 +1102,6 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   tiled light lists.
 - One render per scene and frame (several views of one scene need a scene per view).
 - Not in this stage, listed in the roadmap: Ashfall's other screen-space effects (bounce light, sun shafts) as
-  fallbacks for devices without ray tracing (GTAO and SSR are there since 2026-11-07), particles, terrain, decals, quality presets. GPU timing per pass exists only on the
+  fallbacks for devices without ray tracing (GTAO and SSR are there since 2026-11-07), terrain, decals, quality
+  presets (particles are there since 2026-11-08, [Particles](particles.md#limitations)). GPU timing per pass exists only on the
   native Metal backend (SDL GPU has no timestamps inside a command buffer).

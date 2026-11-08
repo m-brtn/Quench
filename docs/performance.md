@@ -404,6 +404,28 @@ split into three values to 0.44 (the run above: 0.38). The lightning's query tak
 meadow's first build, one instance per tuft (2131), took the frame's CPU median over the rain cost's nine regions to
 1.17 ms against 0.97 without the meadow; as 64 patches of grass 0.95 ms. Not run on the screen or on a phone.
 
+### Particles
+
+2026-11-08 15:55, offscreen on the native Metal backend (`examples/demo/scenarios/particles_cost.txt`: the demo's
+Particles section at dusk, 11 systems in 23488 slots with about 7000 particles alive, 20 trails of about 8500 strip
+vertices together; 3 s per setting after 1 s to settle; GPU busy time p50, ms).
+
+| Range | 1920 x 1080 | 1206 x 2622 |
+|---|---|---|
+| `particles_sim` (the compute step), everything | 0.119 | 0.125 |
+| `particles` (the draws), everything on the GPU / on the CPU | 0.389 / 0.343 | 0.350 / 0.311 |
+| `particles`, density 0.5 / 0.25 | 0.340 / 0.308 | 0.315 / 0.308 |
+| `particles_sim` / `particles`, the streams alone (6 systems, 20 trails) | 0.069 / 0.191 | 0.071 / 0.218 |
+| `particles_sim` / `particles`, the sparkle field alone (8192 slots) | 0.024 / 0.121 | 0.043 / 0.139 |
+| `particles_sim` / `particles`, the campfire alone (3 systems) | 0.066 / 0.093 | 0.064 / 0.105 |
+| `hdr` with and without the particles | 0.227 / 0.270 | 0.349 / 0.356 |
+
+The cost follows the slots (every slot is stepped and runs the vertex shader) more than the pixels or the density.
+The frame's CPU time p50 at 1080p: 0.48 ms without the particles, 0.47 with them on the GPU (p95 0.54 and 1.13),
+0.87 with the CPU simulation (p95 2.15); 7 to 78 % of the process's time on the performance cores, so these vary
+between runs. The bloom range moved between 1.1 and 1.7 ms in the same runs with and without particles (offscreen,
+the GPU's clock is not held up by presenting). Not run on the screen or on a phone. [Particles](particles.md#cost).
+
 ### Tracy on and off
 
 2026-11-07 18:58-19:19, the Mac (Apple M4 Pro), offscreen, the native backend (the default), `--frame-size 480x270

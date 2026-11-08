@@ -32,6 +32,7 @@ src/<module>/              sources and internal headers, per module:
   navigation/ Recast navmesh building (tiles on jobs, obstacles), Detour queries and crowds, debug geometry
   weather/    the weather map (clouds, precipitation, cirrus) drifting with the wind and evolving, cells, queries,
               the ground's wetness and snow cover, rain or snow by the temperature, the wind's gusts, lightning
+  particles/  particle systems' descs, spawns (emitters), the CPU simulation, trails, paths (docs/particles.md)
   audio/      mixer, sounds, streams, 3D sound, WAV writer, analysis (headless); the playback device and the
               iOS audio session (miniaudio)
   gpu/        the GPU layer (resources, pipelines, command recording, captures, timing) and its backends:
@@ -65,11 +66,12 @@ docs/releases/        release notes per version
 | `quench_animation` | skeletons and clip sets (the `"skeleton"`, `"animation"`, `"animgraph"` asset types), sampling, blending, state machines, events, root motion, IK, foot placement | core, assets, GLM, ozz-animation (`quench_ozz`; `quench_ozz_offline` for the build functions) | yes |
 | `quench_navigation` | navmeshes built on jobs or cooked (the `"navmesh"` asset type, `.qnav`), obstacles, queries, crowds, debug geometry | core, assets, GLM, Recast & Detour (`quench_recast`) | yes |
 | `quench_weather` | the weather map (coverage, cloud type, precipitation, cirrus) with wind and evolution, cells, queries (precipitation, its snow share and the temperature, distance to rain or snow, cover, wind with gusts and eddies, lightning strikes), the wetness and snow cover it remembers | core, gpu_shaders (the field's shared header), GLM | yes |
+| `quench_particles` | particle system descs, spawns by rate, distance and bursts in shapes and along paths, the CPU simulation (the same functions as the GPU's step, `quench/ParticleField.h`), trails behind moving points, centripetal Catmull-Rom paths | core, gpu_shaders (the field's shared header), GLM | yes |
 | `quench_audio` | mixer, buses, sounds (the `"sound"` asset type), streams, generators, 3D sound, WAV writer, signal analysis | core, assets, GLM, miniaudio (decoders) | yes |
 | `quench_audio_device` | playback device, iOS audio session | audio, miniaudio (device API), Core Audio, AVFoundation on iOS | no |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
 | `quench_gpu` | GPU layer and backends (SDL GPU; native Metal on Apple platforms) | core, gpu_shaders, SDL3; GLM (private); Metal, QuartzCore on Apple platforms | no |
-| `quench_render` | retained scene, standard frame, render modules, GPU skinning, the clouds, the rain, the snow and the lightning, `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, weather, GLM | no |
+| `quench_render` | retained scene, standard frame, render modules, GPU skinning, the clouds, the rain, the snow and the lightning, the particles and trails (stepped by compute or on the CPU), `SceneAssets` (cooked textures and models in a scene) | core, assets, gpu, gpu_shaders, particles, weather, GLM | no |
 | `quench_app` | window, lifecycle, input, ImGui, game interface, flags, scenarios, captures, SDL backends of `quench::fs` and the log, the app's job system and asset manager | core, assets, audio, audio_device, gpu, GLM, ImGui, SDL3 | no |
 | `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
 | `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files (also skins, skeletons, clips and navmeshes), sounds checked or converted to WAV; `quench_cook_assets()` | assets, audio, animation, navigation, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
@@ -438,6 +440,19 @@ drift with the mean wind, `WindDrag` in `quench_physics` pushes the bodies a gam
 the wind and the thunder. Lightning is a function of the field too (`Weather::strikes`: strikes in a lattice, kept
 by the storminess under them), so a flash, its light in the frame (`RenderSettings::lightning`) and its thunder
 come from one answer.
+
+### Particles and trails (stage 14)
+
+Built 2026-11-08 ([Particles](particles.md)). The split is the weather's: `quench_particles` is headless (descs,
+spawns, the CPU simulation, trails, paths), and `quench_render` keeps systems and trails in the retained scene by
+handle (`ParticleSystemId`, `TrailId`), with every system's slots in one pool (at most 262144) given out by range.
+Spawns are made on the CPU in both paths, each at its time in the frame with random numbers from the system's seed
+and its index, so the GPU and the CPU simulation hold the same particles; the step is one function in
+`quench/ParticleField.h`, read by C++ and HLSL (the weather field's pattern), run by a compute pass (one dispatch
+per system) where `gpu::Caps::computeShaders`, else by `particles::Simulation` and uploaded. The choice is
+`RenderSettings::particles` and the caps, never the platform. Particles and trails are drawn after TAA and
+upscaling, before bloom: TAA's history stays free of them, and they are not in the ray tracing structures. Trails
+are built on the CPU from the times a game gives, so their look does not depend on the frame rate.
 
 ## Shaders
 

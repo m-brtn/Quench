@@ -5,6 +5,25 @@ grassy isles above a sea of clouds) needed from it.
 
 ## What changed
 
+### Particles and trails (stage 14)
+
+- **A new headless module, `quench_particles`, and particles and trails in the renderer**
+  ([Particles](../particles.md)). `Scene::addParticles(particles::ParticleDesc, transform)` registers a system:
+  spawns by rate, per metre the emitter moves, bursts and points a game gives, in a point, sphere, box, disc or
+  along a path, deterministic and frame-rate independent; gravity, drag, curl noise and the weather's wind; size and
+  HDR color over the life, twinkle, additive or alpha (lit) blending, camera-facing or velocity-stretched quads,
+  procedural sprites, a soft fade against the scene. `Scene::addTrail(particles::TrailDesc)` and `moveTrail` draw a
+  smooth camera-facing ribbon behind a point the game moves, thinning and fading toward the tail, with a glow at the
+  head and sparkles shed into a system. `particles::Path` is a centripetal Catmull-Rom curve for emitters and games.
+- The renderer steps systems by compute (`RenderSettings::particles = Gpu`, the default) where
+  `gpu::Caps::computeShaders`, else on the CPU with the same functions (`shaders/quench/ParticleField.h`), and draws
+  them after TAA and upscaling, before bloom; not in the ray tracing structures, off in the path tracer's frames.
+  `RenderSettings::particleDensity`, `RenderStats::particleSystems`, `particles`, `particleSlots`,
+  `particleSpawns`, `trails`, `trailVertices`; GPU ranges `particles_sim` and `particles`.
+- The demo's section 15, Particles: light streams along closed paths with braided heads, a sparkle field, fireflies,
+  a campfire with sparks and smoke at the blue hour. In the compact layout the menu sheet shows its buttons above the
+  list of sections (a phone in landscape reaches them without scrolling).
+
 ### Weather and clouds
 
 - **A camera above the clouds** ([Weather](../weather.md)). `Weather::coverAbove(point, radius)`: the cover of the
@@ -30,6 +49,13 @@ grassy isles above a sea of clouds) needed from it.
 
 ## What was verified
 
+- Particles: `particles.*` 15 cases (also as WebAssembly under Node.js); `render.renderer_particles_*`,
+  `renderer_trails_*`, `renderer_particle_slots_are_limited` 9 cases on SDL GPU's Metal driver, the native backend
+  and Vulkan through MoltenVK (the GPU and the CPU simulation 0 levels apart for a glow, a mean of 0.000 for 120
+  moving particles); the demo's `particles` part 26 checks on the three backends, `demo_particles.png` and
+  `demo_particles_fire.png` the same images on SDL GPU's Metal driver and the native backend, Vulkan through MoltenVK
+  within a mean of 0.0008. Cost on the M4 Pro, offscreen, native backend, 1080p: 0.119 ms of compute and 0.389 ms of
+  draws for 23488 slots (about 7000 particles alive) and 20 trails. The gates: see the devlog of 2026-11-08.
 - `weather.weather_cell_in_clear_sky`: `coverAbove` 1.000 under the base (equal to `cover`), 0.500 halfway up the
   cell, 0 over its top. `tools/check.sh quick weather render demo` 260 of 260 (the demo's captures, Metal and the
   native backend, unchanged), `step wasm` and `step new-game` passed.
@@ -49,6 +75,7 @@ grassy isles above a sea of clouds) needed from it.
 
 ## What was not verified
 
+- Particles: nobody has looked at them in motion or on the screen; nothing of them ran on a phone (no phone costs).
 - Nothing of it on a phone. The shadow map has one plane: ground far above or below it is still shaded by the
   column its sun ray crosses at that height.
 - The view ray fix was measured offscreen on the Mac; nobody has looked at it on the screen yet. The engine still
@@ -57,7 +84,11 @@ grassy isles above a sea of clouds) needed from it.
 
 ## Changes for games
 
-None: `coverAbove` and `cloudShadowHeight` are new; `cover` is unchanged, and the shadow with the default height is
+Particles: `quench_render` links `quench_particles` (nothing to add); `render/Scene.h` includes
+`quench/particles/Particles.h` and `Trail.h`. `gpu::Caps` has a new member, `computeShaders`. A scene without
+particle systems or trails renders as before.
+
+Weather: `coverAbove` and `cloudShadowHeight` are new; `cover` is unchanged, and the shadow with the default height is
 the same as before. `quenchViewRay` returns the same directions, more precisely; a game shader that builds its own
 view rays from `FrameUniforms::invViewProj` at the near plane should read them at depth 0 or call `quenchViewRay`. A
 game's golden captures with volumetric clouds may move by about a pixel.

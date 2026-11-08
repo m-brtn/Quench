@@ -663,11 +663,50 @@ TODO for stage 13, in this order:
   2026-11-08, "yes, everything is fine" (the clouds, the rain, the snow, the wind; the rain's, the wind's and the
   thunder's sound). Not on the iPhone 18 Pro Max.
 
+## Stage 14: particles and trails (built 2026-11-08 except the runs on a phone and the checks by eye; not released)
+
+Requested by the user on 2026-11-08, after a picture of light painting (long thin glowing ribbons across a blue sky,
+bright heads, tapered fading tails, shed sparkles, a dense field of twinkling points, soft bloom), for the first game
+on the engine: a general particle and trail system for any game, with a demo section, then the game's light trail,
+streams of light in its sky and a sparkle field over its meadow. Built in `quench_particles` (headless) and
+`quench_render` ([Particles](particles.md)).
+
+**Goal.** Effects a game registers once and moves: sparks, smoke, dust, magic, fireflies, glowing points, ribbons
+behind moving things. For any genre: no game's effects or rules in it.
+
+**Design.** Systems and trails in the retained scene by handle; spawns on the CPU, frame-rate independent and
+deterministic; the step on the GPU by compute where `gpu::Caps` allow it, the same functions on the CPU otherwise
+(one shared header for C++ and HLSL); drawn after TAA and upscaling so they glow through bloom and leave no history;
+budgets per system and per scene; no per-frame allocation once a scene's particles have been seen.
+
+- [x] Systems and emitters in the scene by handle; rate (per second and per metre), bursts, particles placed by the
+  game; shapes point, sphere, box, disc and path (2026-11-08).
+- [x] Motion: lifetime, start velocity in a cone, gravity, drag, curl noise, the weather's wind with its gusts
+  (2026-11-08).
+- [x] Look: size and HDR color over the life, twinkle, additive and alpha blending (lit puffs), soft depth fade,
+  camera-facing and velocity-stretched quads, procedural sprites (2026-11-08).
+- [x] The step by compute on SDL GPU and the native Metal backend, the CPU simulation as the fallback by caps; SPIR-V
+  and MSL built and run on the Mac, DXIL on Windows hosts only as for every shader (2026-11-08).
+- [x] Trails: width and color over the age and the length, a glow at the head, a fading tail, sparkles shed into a
+  system, camera-facing on a centripetal Catmull-Rom curve, frame-rate independent; paths for emitters and games
+  (2026-11-08).
+- [x] With bloom, reversed depth, TAA (no history), fog and the render scale; not in the ray tracing structures, off in
+  the path tracer's frames (2026-11-08).
+- [x] Budgets (65536 slots per system, 262144 per scene), profiling zones and GPU timed ranges; costs on the Mac
+  ([Performance](performance.md#particles)) (2026-11-08).
+- [x] Tests: 15 headless (also under Node.js), 9 render cases on SDL GPU's Metal driver, the native backend and
+  Vulkan through MoltenVK (2026-11-08).
+- [x] Demo section 15 "Particles" with its batch part, two golden captures per backend, a check mode item and a
+  benchmark entry (2026-11-08).
+- [ ] Runs and costs on a phone; looked at in motion by a person. Not built: sorting within a system, collisions,
+  particles in the ray tracing structures, lights cast by particles, GPU-driven trails.
+
 ## What is next
 
 The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, stage 11 with 0.9.0, stage 12
 (area lights, anisotropy, the tunnel) with most of the earlier stages' remaining work with 0.10.0, and the user's
-queue below with stage 13 (weather) with 0.11.0.
+queue below with stage 13 (weather) with 0.11.0. Stage 14 (particles and trails) was asked for the first game on
+2026-11-08 and is built, not released yet.
 
 The queue the user set on 2026-11-07, in this order:
 
@@ -685,13 +724,14 @@ The queue the user set on 2026-11-07, in this order:
 
 What else stays open, in the order it is useful (not scheduled; the user decides):
 
-1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (51 items: the
+1. **The checks that need a person**, mostly on the iPhone: the demo's check mode on both GPU backends (52 items: the
    cut-out and tinted shadows, the cascades, the sky and fog, anti-aliasing, HDR on an HDR display, physics, the input
    devices, loading and streaming, the Basis Universal tiles, the audio by ear, animation in motion, ray tracing noise,
    MetalFX ghosting and the fallbacks, the stage 11 reflections, bounced light, lamp shadows, MetalFX denoising and the
    path tracer, the probe cascades, the tunnel's lamps, brushed aluminium and puddle, the tunnel in motion, its lamp
    shadow maps on SDL GPU, the tunnel for 10 minutes with Adapt to heat, the navigation crowd in motion, the clouds,
-   the rain, the snow and the plants in the wind in motion, the rain, the wind and the thunder by ear, the frame
+   the rain, the snow and the plants in the wind in motion, the rain, the wind and the thunder by ear, the particles
+   and trails in motion, the frame
    rate and the layout on the phone; the user looked at the Navigation and Weather sections and listened to the
    weather on the Mac and the iPhone 17 on 2026-11-08, fine, as a whole;
    [Engine demo](demo.md#check-mode-on-the-iphone)), the device test app on both backends with the 0.11.0 code (on the
@@ -765,6 +805,7 @@ Priorities from the user's request of 2026-11-05.
 | Full ray tracing: reflections, indirect light, local light shadows, denoising, a path tracer (added 2026-11-06) | after the stages | 11 (done; run on the iPhone 17, not yet looked at in motion) |
 | Area lights, anisotropic GGX, a demo tunnel with lamps of every shape and metal, wet, rubber and plastic materials (added 2026-11-06) | after stage 11 | 12 (done; run on the iPhone 17, not yet looked at in motion or on the phone's screen) |
 | Weather: rain, snow, sun and wind, volumetric clouds that morph and light that follows them, rain under a single cloud in a blue sky, puddle ripples, replaceable weather sounds (added 2026-11-07) | after the queue in "What is next" | 13 (parts 1 to 4, the clouds, their light, the rain and its sound, the snow, the wind and thunder, built; looked at and listened to by the user on the Mac and the iPhone 17; costs on a phone not measured) |
+| Particles and trails for any game, light painting: ribbons with bright heads and fading tails, shed sparkles, twinkling fields (added 2026-11-08) | for the first game | 14 (built; not yet run on a phone or looked at in motion) |
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under

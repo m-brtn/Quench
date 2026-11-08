@@ -278,6 +278,18 @@ thunder included) is `quench_audio`'s and `WindDrag` `quench_physics`' ([Weather
 | Web | `weather.*` and `physics.physics_wind_drag` under Node.js (`wasm-node`); no rendering |
 | Windows, Linux, Android | nothing |
 
+`quench_particles` is headless and portable C++ (the motion is a header shared with the shaders); the particles'
+step by compute, the CPU fallback and the draws are `quench_render`'s, chosen by `gpu::Caps::computeShaders`
+([Particles](particles.md#platforms)).
+
+| Where | Run so far |
+|---|---|
+| Mac | `particles.*` in `headless`, `debug`, `release`, `asan` and `tsan`; `render.renderer_particles_*`, `renderer_trails_*` and `renderer_particle_slots_are_limited` on SDL GPU's Metal driver, the native Metal backend and Vulkan through MoltenVK; the demo's Particles section, its `particles` part and its two captures on all three (offscreen); the costs on the native backend (offscreen) |
+| iOS Simulator | `ios-sim-tests`: `particles.*` and the render cases on both backends |
+| iPhone 17, iPhone 18 Pro Max | nothing |
+| Web | `particles.*` under Node.js (`wasm-node`); no rendering |
+| Windows, Linux, Android | nothing |
+
 ## Windows and Linux
 
 - Shader formats: SPIR-V (Vulkan) on both, DXIL (D3D12) on Windows. Today DXIL is compiled only on Windows hosts,

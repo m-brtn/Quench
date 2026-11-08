@@ -1,8 +1,8 @@
 # Quench documentation
 
-Stages 1 to 3 and 5 to 13 of the [Roadmap](roadmap.md) are implemented (stages 11 and 12 except their runs on the iPhone
-18 Pro Max and the checks by eye, stage 13 except its costs on a phone and its runs on the iPhone 18 Pro Max; browser
-audio still open), stage 4 (games on the engine) for one game (version 0.11.0): the core and physics modules (with the
+Stages 1 to 3 and 5 to 14 of the [Roadmap](roadmap.md) are implemented (stages 11 and 12 except their runs on the iPhone
+18 Pro Max and the checks by eye, stage 13 except its costs on a phone and its runs on the iPhone 18 Pro Max, stage 14
+except its runs on a phone and the checks by eye; browser audio still open), stage 4 (games on the engine) for one game (version 0.11.0): the core and physics modules (with the
 wind's drag on chosen bodies), the job system, profiling with Tracy (opt-in), the asset system and the asset cooker
 (BC7, ASTC in iOS builds, Basis Universal as an option, transcoded at load time; asset hot reload on the Mac and on a
 device), the GPU layer over SDL GPU and a native Metal backend with GPU timestamps per pass, acceleration structures and
@@ -23,7 +23,10 @@ their shadows, overcast light and a sky cube for reflections; rain kept from und
 ground that dries, puddles with ripples and the rain's sound; snow by the temperature with flakes, a cover that builds
 and melts and white shafts; wind with gusts that moves the rain, the snow, the clouds, plants and chosen physics bodies
 and that sounds, lightning and thunder; looked at in motion and listened to by the user on the Mac and the iPhone 17,
-its costs on a phone not measured), the sample, the engine demo (finished in stage 10, with a tour, a check mode and a
+its costs on a phone not measured), stage 14, particles and trails (systems stepped by compute or on the CPU, spawns in
+shapes and along paths, curl noise and the weather's wind, twinkling glows, sparks and smoke, ribbons of light with
+bright heads and fading tails that shed sparkles; not yet run on a phone or looked at in motion), the sample, the
+engine demo (finished in stage 10, with a tour, a check mode and a
 benchmark of every section) and the game template. Where a document describes something planned, it says so.
 [Migration](migration.md) describes the engine code in the two games, what has moved and what is not moved yet.
 
@@ -43,20 +46,21 @@ in `images/`.
 
 | Document | Contents |
 |---|---|
-| [Architecture](architecture.md) | Modules and targets, the graphics layer and its backends (SDL GPU, native Metal), GPU timestamps per pass, the ray tracing design, rendering, weather and clouds, shaders, main loop, files, threads, assets, audio, animation, navigation |
+| [Architecture](architecture.md) | Modules and targets, the graphics layer and its backends (SDL GPU, native Metal), GPU timestamps per pass, the ray tracing design, rendering, weather and clouds, particles, shaders, main loop, files, threads, assets, audio, animation, navigation |
 | [App shell](app.md) | The game interface, input, ImGui, command line flags, scenarios, the thermal state and a game's reaction to it, HDR output, captures and golden images, `quench_add_game()`, iOS runs |
 | [Jobs, assets and the cook](assets.md) | The job system, asset IDs and the manager, budgets and placeholders, textures and models in a scene, streaming by distance, hot reload, the cooked formats (skins, skeletons and clip sets included), `quench_cook` and `quench_cook_assets()`, limitations |
 | [Audio](audio.md) | The mixer, buses, sounds and streams, generators, 3D sound, voice limit, the audio thread, device output and the iOS audio session, offline mixing and captures, `audio_measure`, the demo section and tests, platforms, limitations |
 | [Animation](animation.md) | Skeletons and clip sets, graphs (state machines), events, root motion, IK, foot placement and attachments, cooking glTF skins and animations, the file formats, GPU skinning, budgets and failures, the demo section and tests, platforms, limitations |
 | [Navigation](navigation.md) | Navmeshes built at run time on jobs or cooked (`.qnav`), area types, off-mesh links, obstacles and rebuilds, queries, crowds and their link events, debug geometry, cooking, threads, cost, the demo section and tests, platforms, limitations |
 | [Weather](weather.md) | Stage 13's design and what is built: the headless weather map, its queries and the wetness and snow cover it remembers, the clouds (volumetric and the 2D layer), their light and shadows, the sky cube, the rain (occlusion map, streaks, splashes, wet surfaces, puddles, ripples, shafts, rainbow) and its sound, the snow (flakes, the cover on surfaces, shafts, quiet), the wind (gusts and eddies, plants' sway, drag on bodies, its sound), lightning and thunder, phone defaults, cost, the demo section and tests, platforms, limitations |
+| [Particles](particles.md) | Stage 14: particle systems in the retained scene (spawning, motion with curl noise and the weather's wind, the look, GPU and CPU simulation), trails behind moving points, paths, where they are in the frame, budgets, cost, the demo section and tests, platforms, limitations |
 | [Render module](render.md) | The retained scene, the standard frame, sky and sun, tone mapping and HDR output, fallbacks, game passes, surface shaders, the shader library, skinned meshes, limitations |
 | [Engine demo](demo.md) | The demo's code, sections, coverage, layouts and controls, its modes (tour, check mode, benchmark of every section), flags and files, About and settings, the check mode on the iPhone, its checks and golden images, its benchmark, packaged builds (`tools/package_demo.sh`) |
 | [Performance](performance.md) | The benchmark, how to run and compare it, GPU time per pass, budgets per device, the thermal state |
 | [Platforms](platforms.md) | Target platforms, what has run where, backend and shader formats, known constraints (WebGPU, Android, texture formats) |
 | [Dependencies](dependencies.md) | Pinned libraries, planned libraries with licences and verified capabilities |
 | [Migration](migration.md) | Inventory of the engine code in TrailForge and Ashfall, how far the copies diverged, the procedure for moving code, progress per game |
-| [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, the weather stage (its four parts built), what is next, the requested features and their priorities |
+| [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, the weather stage (its four parts built), particles and trails, what is next, the requested features and their priorities |
 | [Releases](releases/) | Release notes per version, the latest [0.11.0](releases/v0.11.0.md) |
 
 Coding agents: see [AGENTS.md](../AGENTS.md). The daily development log is in [devlog/](../devlog/).

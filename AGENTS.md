@@ -27,7 +27,8 @@ the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the wea
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
 white shafts, quiet; 2026-11-08) and 4 (wind: gusts and eddies, plants' sway, drag on chosen bodies, lightning,
 thunder, the wind's sound; 2026-11-08) except their costs on a phone and their runs on the iPhone 18 Pro Max (the
-user looked at them and listened to them on the Mac and the iPhone 17 on 2026-11-08: fine); the
+user looked at them and listened to them on the Mac and the iPhone 17 on 2026-11-08: fine), stage 14 (particles and
+trails, 2026-11-08, not released) except its runs on a phone and the checks by eye; the
 plan the user left (stages 6 to 10) and stages 11 and 12 have been
 worked through, apart from the remaining work listed at the end of this paragraph, the stage 11 and 12 runs on the
 iPhone 18 Pro Max and the checks by eye and ear:
@@ -121,7 +122,18 @@ thunder delayed by the distance, replaceable, procedural defaults cooked by `que
 quiet); the weather run on the Mac's three backends offscreen, in the iOS Simulator's tests and, the headless part,
 as WebAssembly under Node.js; the user looked at it in motion and listened to the rain, the wind and the thunder in
 the demo on the Mac and the iPhone 17 on 2026-11-08: "yes, everything is fine"; its tests and costs not run on a
-phone, nothing on the iPhone 18 Pro Max)
+phone, nothing on the iPhone 18 Pro Max), `quench_particles` (headless, 2026-11-08, stage 14: particle system
+descs, spawns by rate, distance, bursts and the game's points in a point, sphere, box, disc or along a path,
+deterministic and frame-rate independent, the CPU simulation of gravity, drag, curl noise and the weather's wind
+from `shaders/quench/ParticleField.h`, which the GPU's step shares, trails behind moving points on centripetal
+Catmull-Rom curves, paths) and the particles and trails in `quench_render` (systems and trails in the retained
+scene by handle, 65536 slots per system and 262144 per scene; stepped by compute where `gpu::Caps::computeShaders`,
+else on the CPU; drawn after TAA and upscaling against the scene's depth, soft, fogged, glowing through bloom:
+size and HDR color over the life, twinkle, additive, alpha and lit blending, camera-facing or stretched along the
+motion, procedural sprites; trails thin and fade toward the tail, a glow at the head, sparkles shed into a system;
+not in the ray tracing structures, off in the path tracer's frames; run on the Mac's three backends offscreen, in
+the iOS Simulator's tests and, the headless part, as WebAssembly under Node.js; nobody has looked at it in motion,
+nothing of it on a phone)
 and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons, clips and navmeshes).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (finished in stage 10: a section per feature,
@@ -164,13 +176,13 @@ and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scen
 `d708783`, not yet moved to a release) with its own input layer fed through `Game::event` and its own physics clock;
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
-the asset system, the engine's audio, animation, navigation or weather yet. No browser audio (stage 7 remaining
-work)
+the asset system, the engine's audio, animation, navigation, weather or particles yet. No browser audio (stage 7
+remaining work)
 yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
-`docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`, `docs/demo.md`, `docs/performance.md` and
-`docs/platforms.md` describe what is built, `docs/architecture.md` the design with the native backend and ray tracing
-as built; the rest of `docs/` is design and plan beyond stage 13. Update this paragraph whenever that changes.
+`docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`, `docs/particles.md`, `docs/demo.md`,
+`docs/performance.md` and `docs/platforms.md` describe what is built, `docs/architecture.md` the design with the
+native backend and ray tracing as built; the rest of `docs/` is design and plan beyond stage 14. Update this paragraph whenever that changes.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,
@@ -256,7 +268,7 @@ build/debug/quench_cook --help
 ```
 
 Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...) with its
-module's label (`ctest -L animation`; labels: core, physics, assets, audio, animation, navigation, weather, cook,
+module's label (`ctest -L animation`; labels: core, physics, assets, audio, animation, navigation, weather, particles, cook,
 gpu, app, render, hello, demo; the variants on Vulkan through MoltenVK also have `vulkan`). A test executable runs one case by
 name (`build/debug/tests/quench_core_tests json_round_trip`), all cases
 without arguments, and lists them with `--list`. A case that cannot run in a build (threads in the single-threaded
@@ -344,7 +356,7 @@ Details and rationale: `docs/architecture.md`.
 - **Names.** Namespace `quench`; CMake prefix `QUENCH_`; targets `quench_<module>`; shader entry guards
   `QUENCH_ENTRY_<name>` and `QUENCH_STAGE_VERTEX` / `QUENCH_STAGE_FRAGMENT` / `QUENCH_STAGE_COMPUTE`. Games keep
   their own namespaces and prefixes.
-- **Headless core.** Simulation, physics, assets, animation, navigation, weather and the audio mixer must not depend on
+- **Headless core.** Simulation, physics, assets, animation, navigation, weather, particles and the audio mixer must not depend on
   windowing, the GPU or rendering, so they run in CTest without a window (and under Node.js for the web check).
 - **Graphics goes through `quench::gpu`.** Backends: SDL GPU (portable, the first one, the default off Apple
   platforms, `--gpu-backend sdl`) and native Metal (since stage 9, `--gpu-backend metal`; the default on Apple
@@ -606,7 +618,7 @@ cmake/                 Dependencies (runtime pins), ShaderToolchain (shader comp
                        aligned to 8 bytes with 64-bit references; TracyPpqsort: Tracy's changes to PPQSort;
                        SdlVulkan3d: SDL GPU's 3D textures 2D-array compatible only as color targets, for MoltenVK)
 include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, navigation/,
-                       weather/, gpu/, app/, render/
+                       weather/, particles/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
                        src/core/Jobs.cpp: the job system; src/physics/JoltJobSystem: Jolt's jobs on it;
                        src/physics/WindDrag: the wind's drag on chosen bodies;
@@ -618,7 +630,8 @@ src/                   sources and internal headers per module (src/core/Platfor
                        (ozz-animation inside); src/navigation/: navmesh builds on jobs (Build.cpp), tiles and
                        obstacles (NavMesh.cpp), .qnav data and the asset type, queries, the crowd, debug geometry
                        (Recast & Detour inside); src/weather/: the weather map, its cells, queries, wetness,
-                       the wind and lightning;
+                       the wind and lightning; src/particles/: descs and curves (Particles.cpp), spawns
+                       (Emitter.cpp), the CPU simulation, trails, paths;
                        src/gpu/Backend.h: the backend interface; src/gpu/sdlgpu/: the
                        SDL GPU backend; src/gpu/metal/: the native Metal backend (Objective-C++, ARC; Apple
                        platforms); src/gpu/shaders/: the backends' own shaders (blit); src/app/Main.cpp: quench_main;
@@ -629,23 +642,27 @@ src/                   sources and internal headers per module (src/core/Platfor
                        the area lights' fitted table; Clouds: the cloud noise, the weather and cloud shadow maps,
                        the volumetric march and its accumulation, the 2D layer and the sky cube; Rain: the rain
                        occlusion map, the weather maps' rain regions, streaks, splashes, the snow's flakes and the
-                       shafts of rain and snow (rain.hlsl, RainUniforms.h))
+                       shafts of rain and snow (rain.hlsl, RainUniforms.h); Particles: the particles' step, the
+                       trails' strips and their draws (particles.hlsl, ParticleUniforms.h); SceneParticles: the
+                       scene's systems and trails)
 shaders/quench/        the engine shader library (#include "quench/..."): BRDF (also anisotropic), shadows, sky, fog,
                        tone curves, surface shaders, the probe grid, area lights (AreaLights.hlsli: LTC), the
                        clouds' shadow and the sky cube (Clouds.hlsli, Cube.hlsli), the rain and snow on surfaces
                        (Rain.hlsli: wetness, puddles, ripples, the snow cover), plants in the wind (Wind.hlsli:
                        the field in a shader, sway); SceneUniforms.h, the uniform structs shared by C++ and HLSL;
-                       WeatherField.h, the weather and wind field shared by quench_weather and the shaders
+                       WeatherField.h, the weather and wind field shared by quench_weather and the shaders;
+                       ParticleField.h, the particles' motion and look shared by quench_particles and the shaders
 examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
 examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input, assets,
-                       audio, animation, ray tracing, the tunnel, navigation, weather), one file each in sections/ behind
+                       audio, animation, ray tracing, the tunnel, navigation, weather, particles), one file each in sections/ behind
                        Demo.h's Section interface (shaders/: the checker and plant surfaces); the app around them (DemoGame.h: the layouts in Ui.cpp, the camera in
                        Camera.cpp, the tour, check and benchmark modes in Modes.cpp and Checks.cpp, the settings); per
                        section a scenario with a golden capture, scenarios for the menu, the modes, the settings and the
                        switch cycle; smoke and benchmark scenarios (raytracing_benchmark.txt: ray tracing, denoising and
                        MetalFX options and the tunnel; raytracing_phone*.txt, tunnel_phone*.txt: the same on a phone;
                        weather_cost.txt, rain_cost.txt, snow_cost.txt and wind_cost.txt: the clouds', the rain's,
-                       the snow's and the wind's cost per quality level, offscreen);
+                       the snow's and the wind's cost per quality level, offscreen; particles_cost.txt: the
+                       particles' on the GPU and the CPU, by density and by part);
                        assets_src/ (procedural sources cooked at build time) and assets/ (files used as they are)
 templates/game/        starting point for a new game (copied by tools/new_game.py)
 tools/shaderc/         quench_shaderc, the build-time shader compiler
@@ -673,13 +690,13 @@ tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a
 tools/format.sh        clang-format over the C and C++ sources (--check)
 tests/                 harness/, core/ (job system included), physics/, assets/ (data/: CC0 Basis Universal test files
                        written by cook.cook_basis_test_data), audio/ (mixer, streams, decoders, device; data/: CC0 test
-                       sounds), animation/, navigation/, weather/, cook/ (and CookCli.cmake), gpu/ (shader tests; GPU
+                       sounds), animation/, navigation/, weather/, particles/, cook/ (and CookCli.cmake), gpu/ (shader tests; GPU
                        device tests and their shaders; RayTracingTests: acceleration structures, MetalFX;
                        VolumeTests: 3D textures from 2D array layers, cube faces), app/, render/ (scene,
-                       scene assets, skinning and frame tests), header check, RunBatch.cmake and CheckPart.cmake (the
+                       scene assets, skinning, particle and frame tests), header check, RunBatch.cmake and CheckPart.cmake (the
                        apps' batch runs and their parts); golden/ (reference captures)
 docs/                  documentation (index docs/README.md): architecture, app shell, jobs, assets and the cook, audio,
-                       animation, navigation, weather, render module, engine demo, performance, platforms, dependencies,
+                       animation, navigation, weather, particles, render module, engine demo, performance, platforms, dependencies,
                        migration, roadmap, releases/
 docs/images/           the README's screenshots (a few small JPEG files from the demo, each under about 300 KB)
 dist/                  demo packages from tools/package_demo.sh (not committed)
