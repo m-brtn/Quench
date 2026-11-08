@@ -4,26 +4,36 @@
 section hdr
 
 set dither 0
+set cascades 1
 wait 0.2
 expect hdr == 0
 expect hdr_headroom == 1
 expect sun_elevation == 14
+# One cascade contains the ground, white card, seven poles and seven opaque glowing panels. With the panels'
+# shadows disabled there were only nine casters; emissive brightness must not make opaque geometry transparent.
+expect cascades == 1
+expect shadow_instances == 16
 hdr on
 until hdr == 1 1
 expect hdr_supported == 1
 expect hdr_headroom >= 1
+set panels 2
 set peak 4
 wait 0.05
 expect peak == 4
+expect shadow_instances == 16
 set sdr_curve 1
 wait 0.05
 expect sdr_curve == 1
 set sdr_curve 0
 set peak 0
+set panels 1
 hdr off
 until hdr == 0 1
 expect hdr_headroom == 1
+set cascades 3
 wait 0.1
+expect cascades == 3
 until time >= 2 3
 windows off
 capture demo_hdr.png

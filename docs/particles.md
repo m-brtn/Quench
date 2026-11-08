@@ -120,6 +120,14 @@ stops recording (the strip fades where it is), `teleport` breaks the strip, `cle
 with the head's velocity times the system's `inherit`. Trails follow the times the game gives, so they look the same
 at any frame rate; they are built on the CPU (`particles::Trail::build`) and drawn as one strip each.
 
+Since 0.12.1, each endpoint's screen-facing frame is shared by its two neighbouring segments, including at a
+reversal. The renderer estimates direction across a distance comparable to the ribbon's width (at least 3 cm,
+at most eight sampled neighbours in either direction), stopping at a run break or the near plane. This keeps a
+wide soft ribbon from rotating with every tiny movement of a cloth or hand attachment. A degenerate direction
+fades out; a tight turn limits the join's width, tapering a true cusp to a point. The head positions and the
+Catmull-Rom centreline are unchanged. A game may still smooth its attachment for the desired gesture, but does
+not need to reduce the whole ribbon's opacity or width to prevent unstable joins.
+
 ## Paths
 
 `particles::Path` (`include/quench/particles/Path.h`): a centripetal Catmull-Rom curve through points (no cusps or
@@ -182,6 +190,13 @@ vertices together; GPU busy time p50 per timed range, ms ([Performance](performa
 | The sparkle field alone (8192 slots) | 0.024 | 0.121 | 0.043 | 0.139 |
 | The campfire alone (3 systems) | 0.066 | 0.093 | 0.064 | 0.105 |
 
+These measurements are from 0.12.0. The 0.12.1 ribbon-frame fix was compared separately at 1920 x 1080 on native
+Metal: 20 trails with about 8,800 vertices and 1,715 particles, two four-second pairs in opposite order. The
+`particles` GPU range p50 rose from 0.134–0.136 ms to 0.142 ms (0.006–0.008 ms). CPU p50 was 0.366–0.378 ms before
+and 0.404–0.436 ms after. Frame p50 stayed around 0.88 ms, but the second pair's mean and tails varied while the
+user's demo was active. These are offscreen measurements, not an isolated onscreen or phone performance result;
+details are in the [0.12.1 release notes](releases/v0.12.1.md#trail-cost).
+
 The cost follows the slots more than the pixels: half the density saves about a tenth. The frame's CPU time p50 was
 0.47 ms with the particles on the GPU and 0.48 ms with them off (p95 1.13 and 0.54), 0.87 ms with the CPU simulation
 (p95 2.15); offscreen runs spend most of it on the efficiency cores, so these vary between runs. Not measured on the
@@ -208,6 +223,13 @@ MoltenVK: the GPU and the CPU simulation give the same pixels (at most 0 levels 
 120 moving particles), hidden behind surfaces and faded near them, stretched along their motion, nothing in TAA's
 history, trails bright at the head and faded at the tail, faded where seen end on, sparkles shed per metre, the
 fallbacks, the slot limits).
+
+The 0.12.1 regression `renderer_trails_keep_soft_edges_with_jitter` adds a 0.9 m soft ribbon whose attachment
+oscillates by 2 to 2.5 cm, checked from three views close to its direction and from the side. On native Metal on the
+Mac, the old shader lights 260 pixels more than 3 pixels from the centre; the fix lights 7. The broad side view
+retains 673 lit pixels against 737 before. The old shader fails the regression and the fixed one passes. The trail
+fix completed the release gate, including the Mac's three backends and the iOS Simulator; exact passed and skipped
+counts and the unrelated Vulkan demo retry are in the [release notes](releases/v0.12.1.md).
 
 ## Platforms
 

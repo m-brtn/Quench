@@ -369,6 +369,53 @@ QUENCH_TEST(renderer_trails_fade_where_seen_end_on) {
     CHECK(lit > 400, "seen from the side it is drawn: %d pixels", lit);
 }
 
+QUENCH_TEST(renderer_trails_keep_soft_edges_with_jitter) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, blackSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    scene.setEnvironment(dark());
+    particles::TrailDesc d;
+    d.lifetime = 2.0f;
+    d.spacing = 0.04f;
+    d.maxPoints = 256;
+    d.width = 0.9f;
+    d.widthOverAge = particles::FloatCurve(1.0f);
+    d.colorOverAge = particles::ColorCurve(glm::vec4(1.0f));
+    d.color = glm::vec3(4.0f);
+    d.opacity = 0.2f;
+    d.softness = 0.0f;
+    const TrailId trail = scene.addTrail(d);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // A soft, wide trail attached to cloth: centimetre-scale oscillations are comparable to the distance travelled
+    // per frame. Its frame must describe the flight path, not fan out with every tiny turn of the attachment.
+    for (int i = 0; i <= 96; ++i) {
+        const float step = float(i);
+        scene.moveTrail(trail, {0.025f * std::sin(1.3f * step), 0.020f * std::cos(1.7f * step), 1.0f - step / 30.0f},
+                        double(i) / 120.0);
+    }
+    // Cross the view axis as well: an unstable perpendicular used to flip between these views.
+    int worstFan = 0;
+    for (const float x : {-0.015f, 0.0f, 0.015f}) {
+        const View view = viewAt(0.8, glm::vec3(x, 0, 4));
+        const glm::ivec2 centre = pixelOf(view, glm::vec3(0));
+        const auto pixels = renderOnce(device, *renderer, scene, view, *target);
+        int fanned = 0;
+        for (int y = 0; y < int(kSize); ++y)
+            for (int px = 0; px < int(kSize); ++px)
+                if (std::abs(px - centre.x) + std::abs(y - centre.y) > 3 && sum(at(pixels, {px, y})) > 30) ++fanned;
+        worstFan = std::max(worstFan, fanned);
+    }
+    // The fix must preserve the broad soft glow from the side, not make noisy ribbons disappear altogether.
+    const auto side = renderOnce(device, *renderer, scene, viewAt(0.8, glm::vec3(4, 0, 0)), *target);
+    int sideLit = 0;
+    for (const Rgba8& p : side) sideLit += sum(p) > 30 ? 1 : 0;
+    std::printf("  jittered soft trail: %d fanned pixels, %d side-lit pixels\n", worstFan, sideLit);
+    CHECK(worstFan <= 12, "no wide spikes along the view axis: %d pixels", worstFan);
+    CHECK(sideLit > 300, "the side view keeps its broad soft glow: %d pixels", sideLit);
+}
+
 QUENCH_TEST(renderer_trails_shed_sparkles) {
     QUENCH_GPU_DEVICE(device);
     Result<Renderer> renderer = Renderer::create(device, blackSettings());

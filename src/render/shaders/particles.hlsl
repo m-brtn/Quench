@@ -170,9 +170,34 @@ StructuredBuffer<float4> vertices : QUENCH_STORAGE(0);
 
 float4 trailClip(uint v) { return mul(pd.viewProj, float4(vertices[v * 2u].xyz, 1.0)); }
 
+// Estimate the frame over the ribbon's width, rather than the last tiny movement of its emitter. This is bounded
+// work and stops at a run break or the near plane. Interpolating the last step avoids a frame jump when the width
+// crosses a sample. Wide soft ribbons then keep their frame through small cloth/emitter oscillations.
+float3 trailNeighbour(uint first, uint count, uint i, bool backwards, float reach) {
+    float3 previous = vertices[(first + i) * 2u].xyz;
+    float travelled = 0.0;
+    for (uint step = 0u; step < 8u; ++step) {
+        if (backwards) {
+            if (i == 0u || vertices[(first + i) * 2u].w < 0.0) break;
+            --i;
+        } else {
+            if (i + 1u >= count || vertices[(first + i + 1u) * 2u].w < 0.0) break;
+            ++i;
+        }
+        const float3 next = vertices[(first + i) * 2u].xyz;
+        if (trailClip(first + i).w < pd.camera.w) break;
+        const float distance = length(next - previous);
+        if (travelled + distance >= reach)
+            return lerp(previous, next, saturate((reach - travelled) / max(distance, 1e-6)));
+        travelled += distance;
+        previous = next;
+    }
+    return previous;
+}
+
 // A vertex of segment s of the strip: its end (0 or 1) and side (-1, 1). Each end is pushed out across the strip's
-// direction on the screen there (from the vertex before it to the one after it, within its strip), so neighbouring
-// segments meet without gaps.
+// direction on the screen there. The frame depends only on i, never on s: both segments sharing an endpoint must
+// produce exactly the same corners, including when an emitter reverses or points along the view.
 ParticleOut trail_vs(uint vid : SV_VertexID) {
     const uint first = uint(pd.draw.x);
     const uint count = uint(pd.draw.y);
@@ -188,37 +213,44 @@ ParticleOut trail_vs(uint vid : SV_VertexID) {
     const float4 ca = trailClip(first + s);
     const float4 cb = trailClip(first + s + 1u);
     if (ca.w < pd.camera.w || cb.w < pd.camera.w) return particleCulled();
-    // The neighbours within the strip: before i (none at its start or after a break), after i (none at its end or
-    // before a break).
-    const bool hasBefore = i > 0u && p.w >= 0.0;
-    const bool hasAfter = i + 1u < count && vertices[(first + i + 1u) * 2u].w >= 0.0;
-    float4 before = hasBefore ? trailClip(first + i - 1u) : c0;
-    float4 after = hasAfter ? trailClip(first + i + 1u) : c0;
-    float3 from = hasBefore ? vertices[(first + i - 1u) * 2u].xyz : p.xyz;
-    float3 to = hasAfter ? vertices[(first + i + 1u) * 2u].xyz : p.xyz;
-    if (before.w < pd.camera.w) {
-        before = c0;
-        from = p.xyz;
-    }
-    if (after.w < pd.camera.w) {
-        after = c0;
-        to = p.xyz;
-    }
+    const float reach = max(2.0 * abs(p.w), 0.03);
+    const float3 from = trailNeighbour(first, count, i, true, reach);
+    const float3 to = trailNeighbour(first, count, i, false, reach);
+    const float4 before = mul(pd.viewProj, float4(from, 1.0));
+    const float4 after = mul(pd.viewProj, float4(to, 1.0));
     const float2 halfTarget = 0.5 * pd.target.xy;
-    float2 dir = (after.xy / after.w - before.xy / before.w) * halfTarget;
-    const float len = length(dir);
+    const float2 incoming = (c0.xy / c0.w - before.xy / before.w) * halfTarget;
+    const float2 outgoing = (after.xy / after.w - c0.xy / c0.w) * halfTarget;
+    const float inLength = length(incoming), outLength = length(outgoing);
+    const float2 chord = incoming + outgoing;
+    const float len = length(chord);
     // How much of the strip faces the camera here: its length on the screen over the length it would have seen from
     // the side (the sine of its angle to the view). Where it points along the view its direction on the screen is
     // lost and wide quads would fan out round the vertex, so it fades out there.
     const float side = length(to - from) * pd.right.w / c0.w;
-    const float facing = side > 1e-3 ? smoothstep(0.08, 0.3, len / side) : 1.0;
-    if (dot(dir, dir) < 1e-8) dir = (cb.xy / cb.w - ca.xy / ca.w) * halfTarget;
-    dir = dot(dir, dir) > 1e-8 ? normalize(dir) : float2(1.0, 0.0);
+    const float facing = side > 1e-3 ? smoothstep(0.08, 0.3, len / side) : 0.0;
+    // An angle bisector handles unequal sample spacing. At a reversal the fallback is still identical in both
+    // neighbouring segments; the join below closes to zero instead of swapping the two edges of a wide quad.
+    const float2 fallback = inLength > outLength ? incoming / max(inLength, 1e-4)
+                                                : outgoing / max(outLength, 1e-4);
+    const float2 inDir = inLength > 1e-4 ? incoming / inLength : fallback;
+    const float2 outDir = outLength > 1e-4 ? outgoing / outLength : fallback;
+    const float2 bisector = inDir + outDir;
+    const float2 dir = dot(bisector, bisector) > 1e-8 ? normalize(bisector) : fallback;
     const float2 across = float2(-dir.y, dir.x);
 
     const float pixels = abs(p.w) * pd.right.w / c0.w;
     const float least = max(pd.fade.z, 0.0) * 0.5;
-    const float halfWidth = max(pixels, least);
+    float halfWidth = max(pixels, least);
+    if (inLength > 1e-4 && outLength > 1e-4) {
+        const float alignment = clamp(dot(inDir, outDir), -1.0, 1.0);
+        const float sine = sqrt(max((1.0 - alignment) * 0.5, 0.0));
+        const float cosine = sqrt(max((1.0 + alignment) * 0.5, 0.0));
+        // Keep the inside edge from folding across its adjacent segment at a tight turn. A straight or gently
+        // curved strip retains its authored width; a true cusp tapers to one point.
+        const float joinWidth = 0.45 * min(inLength, outLength) * cosine / max(sine, 1e-4);
+        halfWidth = min(halfWidth, joinWidth);
+    }
     const float thin = pixels < least ? pixels / least : 1.0;
     ParticleOut o;
     o.position = c0;

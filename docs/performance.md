@@ -458,6 +458,15 @@ The frame's CPU time p50 at 1080p: 0.48 ms without the particles, 0.47 with them
 between runs. The bloom range moved between 1.1 and 1.7 ms in the same runs with and without particles (offscreen,
 the GPU's clock is not held up by presenting). Not run on the screen or on a phone. [Particles](particles.md#cost).
 
+2026-11-09, the 0.12.1 ribbon-frame fix, native Metal at 1920 x 1080 offscreen: 20 trails, about 8,800 vertices,
+1,715 particles, two four-second pairs in opposite order. `particles` GPU busy p50 rose from 0.134–0.136 ms to
+0.142 ms; CPU p50 from 0.366–0.378 ms to 0.404–0.436 ms. Frame p50 stayed around 0.88 ms. The second after-run's
+mean/p95 rose to 1.013/2.521 ms versus 0.918/1.068 ms before, with the user's demo active during that pair, so those
+wall-time differences cannot all be attributed to the shader change. Nominal thermal state; no onscreen or phone
+measurement. The bounded extra GPU work is accepted for the corrected joins; the CPU rise is recorded rather than
+called unchanged. Details: [0.12.1 release notes](releases/v0.12.1.md#trail-cost) and
+[devlog](../devlog/2026-11-09.md).
+
 ### Tracy on and off
 
 2026-11-07 18:58-19:19, the Mac (Apple M4 Pro), offscreen, the native backend (the default), `--frame-size 480x270

@@ -11,9 +11,11 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.12.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
-and thread sanitizers). Its GPU tests render offscreen and check the pixels read back on Metal (Apple M4 Pro, with the
-Metal API validation layer), on Vulkan through MoltenVK on the same Mac (with the Khronos validation layer; a test of
+The engine (version 0.12.1) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+and thread sanitizers); [the release notes](releases/v0.12.1.md) separate passed and skipped cases and record the
+Vulkan demo retry for an intermittent image-layout validation error. Its GPU tests render offscreen and check the
+pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
+Mac (with the Khronos validation layer; a test of
 the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables
 run through `simctl spawn`) and on the user's iPhone 18 Pro Max (A20 Pro GPU, iOS 27, Metal with the API validation
 layer; all cases in one signed app, `quench_device_tests`, launched through `devicectl`; last run 2026-11-06 with

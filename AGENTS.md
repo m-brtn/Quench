@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-08, version 0.12.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-09, version 0.12.1): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -185,6 +185,19 @@ yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
 `docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`, `docs/particles.md`, `docs/demo.md`,
 `docs/performance.md` and `docs/platforms.md` describe what is built, `docs/architecture.md` the design with the
 native backend and ray tracing as built; the rest of `docs/` is design and plan beyond stage 14. Update this paragraph whenever that changes.
+
+The 0.12.1 patch stabilizes the screen-facing frame of wide trails driven by a jittering attachment: neighbouring
+segments share the same endpoint frame, direction is estimated over the ribbon's width, and sharp reversals taper
+instead of folding into spikes. Its native Metal regression on the Mac reduces the fan from 260 to 7 pixels while
+retaining a broad side view (737 to 673 lit pixels). Its release gate is complete: Debug/ASan/TSan each 596 passed
+and 70 skipped, Release 737 passed and 69 skipped after the known Vulkan demo retry, iOS Simulator 434 passed and
+70 skipped, WebAssembly under Node.js 196 passed and 9 skipped; the local package smoke passed 22 checks. The
+offscreen trail draw cost rose by 0.006–0.008 ms GPU p50. The additional HDR demo correction (opaque glowing panels
+cast sunlight shadows) passed 21 assertions on each Mac backend, Debug demo 5/5 and Release quick demo 91/91;
+four intentional HDR golden changes and the refreshed package's smoke capture were inspected. Details and
+measurement limits are in
+`devlog/2026-11-09.md` and `docs/releases/v0.12.1.md`; no phone run or onscreen performance claim for this patch.
+The earlier platform claims above describe 0.12.0.
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,
