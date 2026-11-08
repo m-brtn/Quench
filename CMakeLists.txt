@@ -165,6 +165,18 @@ add_library(quench_weather STATIC src/weather/Weather.cpp)
 quench_configure_target(quench_weather)
 target_link_libraries(quench_weather PUBLIC quench_core quench_gpu_shaders quench_glm)
 
+# ------------------------------------------------------------------ particles
+# Headless: particle systems (spawns, the CPU simulation) and trails behind moving points, with the curves they follow.
+# A particle's motion and look are shared with the renderer's compute pass (shaders/quench/ParticleField.h).
+add_library(quench_particles STATIC
+    src/particles/Emitter.cpp
+    src/particles/Particles.cpp
+    src/particles/Path.cpp
+    src/particles/Simulation.cpp
+    src/particles/Trail.cpp)
+quench_configure_target(quench_particles)
+target_link_libraries(quench_particles PUBLIC quench_core quench_gpu_shaders quench_glm)
+
 # The asset cooker (host tool, tools/cook) and quench_cook_assets().
 include(cmake/QuenchCook.cmake)
 

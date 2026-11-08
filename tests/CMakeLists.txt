@@ -103,9 +103,9 @@ target_include_directories(quench_test_harness PUBLIC harness)
 target_compile_definitions(quench_test_harness PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
 # Every test has the label of the module it checks (ctest -L <label>; tools/check.sh quick picks them from the changed
-# files): core, physics, assets, audio, animation, navigation, weather, cook, gpu, render, app, hello, demo. The
-# variants on Vulkan through MoltenVK also have the label vulkan: tools/check.sh quick leaves them out (-LE vulkan),
-# full and release run them.
+# files): core, physics, assets, audio, animation, navigation, weather, particles, cook, gpu, render, app, hello,
+# demo. The variants on Vulkan through MoltenVK also have the label vulkan: tools/check.sh quick leaves them out
+# (-LE vulkan), full and release run them.
 # quench_add_test_executable(<name> PREFIX <ctest prefix> LABEL <label> SOURCES <file>... LIBS <target>...
 #                            [ENVIRONMENT <NAME=value>...])
 function(quench_add_test_executable name)
@@ -189,6 +189,10 @@ quench_add_test_executable(quench_navigation_tests PREFIX navigation LABEL navig
 quench_add_test_executable(quench_weather_tests PREFIX weather LABEL weather
     SOURCES weather/WeatherTests.cpp
     LIBS quench_weather)
+
+quench_add_test_executable(quench_particles_tests PREFIX particles LABEL particles
+    SOURCES particles/ParticlesTests.cpp
+    LIBS quench_particles)
 
 # quench_cook (host builds that build the cook themselves): the library's cases, and the command line run twice on the
 # demo's sources and its generated character with byte-identical outputs.
@@ -619,8 +623,8 @@ endforeach()
 add_library(quench_header_check OBJECT ${header_sources})
 quench_configure_target(quench_header_check)
 target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_assets quench_audio
-                                                  quench_animation quench_navigation quench_weather
-                                                  quench_gpu_shaders)
+                                                  quench_animation quench_navigation quench_particles
+                                                  quench_weather quench_gpu_shaders)
 if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_header_check PRIVATE quench_app quench_render)
 endif()
