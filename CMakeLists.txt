@@ -84,9 +84,9 @@ endif()
 
 # ------------------------------------------------------------------ physics
 # Headless: Jolt Physics wrapper.
-add_library(quench_physics STATIC src/physics/JoltJobSystem.cpp src/physics/PhysicsWorld.cpp)
+add_library(quench_physics STATIC src/physics/JoltJobSystem.cpp src/physics/PhysicsWorld.cpp src/physics/WindDrag.cpp)
 quench_configure_target(quench_physics)
-target_link_libraries(quench_physics PUBLIC quench_core Jolt)
+target_link_libraries(quench_physics PUBLIC quench_core quench_glm Jolt)
 if(EMSCRIPTEN)
     # Single-threaded, Jolt runs its jobs nested on the stack of step(): Emscripten's 64 KB default overflows (found by
     # the wasm-node tests). 1 MB is what Jolt links its own WebAssembly programs with.

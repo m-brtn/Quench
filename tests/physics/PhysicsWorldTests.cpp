@@ -3,6 +3,7 @@
 #include <quench/core/Jobs.h>
 #include <quench/core/Thread.h>
 #include <quench/physics/PhysicsWorld.h>
+#include <quench/physics/WindDrag.h>
 
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -119,6 +120,62 @@ QUENCH_TEST(physics_worker_priority) {
     CHECK(done.load() == kJobs, "%d of %d jobs ran", done.load(), kJobs);
     CHECK(withPriority.load() == kJobs, "%d of %d jobs had the worker priority", withPriority.load(), kJobs);
     CHECK(onWorkers.load() == kJobs, "%d of %d jobs ran on the job system's workers", onWorkers.load(), kJobs);
+}
+
+// The wind's drag (WindDrag) on a 1 kg ball without gravity or damping in a steady 10 m/s wind follows
+// v(t) = w - 1 / (1 / w + k t), k = rho Cd A / 2; a ball the wind does not know stays; a body that left the world is
+// skipped; a sleeping body wakes only when its drag is above 1% of its weight.
+QUENCH_TEST(physics_wind_drag) {
+    PhysicsWorld world(nullptr);
+    world.system().SetGravity(JPH::Vec3::sZero());
+    const auto ball = [&](float z, JPH::EActivation activation) {
+        JPH::BodyCreationSettings s(new JPH::SphereShape(0.2f), JPH::RVec3(0.0f, 1.0f, z), JPH::Quat::sIdentity(),
+                                    JPH::EMotionType::Dynamic, PhysicsLayers::kMoving);
+        s.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+        s.mMassPropertiesOverride.mMass = 1.0f;
+        s.mLinearDamping = 0.0f;
+        return world.bodies().CreateAndAddBody(s, activation);
+    };
+    const JPH::BodyID pushed = ball(0.0f, JPH::EActivation::Activate);
+    const JPH::BodyID still = ball(5.0f, JPH::EActivation::Activate);
+    const JPH::BodyID gone = ball(10.0f, JPH::EActivation::Activate);
+    WindDrag drag;
+    constexpr float kArea = 0.1f, kCd = 1.0f, kWind = 10.0f;
+    drag.add(pushed, kArea, kCd);
+    drag.add(gone, kArea, kCd);
+    drag.add(gone, kArea, kCd);
+    CHECK(drag.size() == 2, "%zu bodies", drag.size());
+    world.bodies().RemoveBody(gone);
+    const auto wind = [](glm::vec3) { return glm::vec3(kWind, 0.0f, 0.0f); };
+    for (int i = 0; i < 240; ++i) {
+        drag.apply(world, wind);
+        world.step(1.0f / 120.0f);
+    }
+    const float k = 0.5f * WindDrag::kAirDensity * kCd * kArea;
+    const float expected = kWind - 1.0f / (1.0f / kWind + k * 2.0f);
+    const float v = world.bodies().GetLinearVelocity(pushed).GetX();
+    std::printf("    after 2 s: %.4f m/s, expected %.4f m/s\n", double(v), double(expected));
+    CHECK(std::abs(v - expected) < 0.01f * expected, "%.4f m/s, expected %.4f", double(v), double(expected));
+    CHECK(world.bodies().GetLinearVelocity(still).Length() == 0.0f, "the other ball moves");
+    const glm::vec3 f = WindDrag::force({kWind, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, kArea, kCd);
+    CHECK(std::abs(f.x - k * kWind * kWind) < 1e-4f && f.y == 0.0f && f.z == 0.0f, "force %.4f", double(f.x));
+    CHECK(drag.remove(gone) && !drag.remove(gone) && drag.size() == 1, "remove");
+    world.bodies().DestroyBody(gone);
+
+    PhysicsWorld heavy(nullptr);
+    JPH::BodyCreationSettings s(new JPH::SphereShape(0.2f), JPH::RVec3(0.0f, 1.0f, 0.0f), JPH::Quat::sIdentity(),
+                                JPH::EMotionType::Dynamic, PhysicsLayers::kMoving);
+    s.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+    s.mMassPropertiesOverride.mMass = 1.0f;
+    const JPH::BodyID sleeping = heavy.bodies().CreateAndAddBody(s, JPH::EActivation::DontActivate);
+    WindDrag light;
+    light.add(sleeping, kArea, kCd);
+    // 0.06 N at 1 m/s (0.6% of its weight), 6.1 N at 10 m/s.
+    light.apply(heavy, [](glm::vec3) { return glm::vec3(1.0f, 0.0f, 0.0f); });
+    const bool breeze = heavy.bodies().IsActive(sleeping);
+    light.apply(heavy, wind);
+    CHECK(!breeze && heavy.bodies().IsActive(sleeping), "a breeze wakes it: %d; a wind: %d", int(breeze),
+          int(heavy.bodies().IsActive(sleeping)));
 }
 
 // A pile of boxes steps on the shared pool while slow engine jobs keep workers busy: the step does not wait for them
