@@ -180,14 +180,16 @@ endfunction()
 
 # quench_weather_sounds(<name>): the engine's default weather sounds (audio::WeatherAudio; docs/audio.md, "Weather
 # sounds"), written at build time by tools/assets/make_weather_sounds.py (procedural, needs Python 3) and cooked like
-# any sound as quench/weather/rain_light.wav, rain_heavy.wav, rain_far.wav and rain_cover.wav. A game that plays them
+# any sound as quench/weather/rain_light.wav, rain_heavy.wav, rain_far.wav, rain_cover.wav, wind_light.wav,
+# wind_strong.wav, thunder_near.wav and thunder_far.wav. A game that plays them
 # lists <name> in quench_add_game(... COOKED_ASSETS); one with its own sounds names them instead.
 set(_QUENCH_COOK_TOOLS_DIR ${CMAKE_CURRENT_LIST_DIR}/../tools)
 function(quench_weather_sounds name)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(script ${_QUENCH_COOK_TOOLS_DIR}/assets/make_weather_sounds.py)
     set(source_dir ${CMAKE_CURRENT_BINARY_DIR}/quench_weather_sounds/${name})
-    set(sounds rain_light.wav rain_heavy.wav rain_far.wav rain_cover.wav)
+    set(sounds rain_light.wav rain_heavy.wav rain_far.wav rain_cover.wav wind_light.wav wind_strong.wav thunder_near.wav
+               thunder_far.wav)
     list(TRANSFORM sounds PREPEND ${source_dir}/quench/weather/ OUTPUT_VARIABLE written)
     add_custom_command(
         OUTPUT ${written}

@@ -13,6 +13,8 @@ constexpr float kStartFade = 0.2f;      // s: a layer fades in when it starts
 constexpr float kCrossfade = 0.5f;      // s: a new or reloaded sound replaces the old one
 constexpr float kRainThreshold = 0.02f; // precipitation below this is not heard (weather::Weather::kWettingThreshold)
 constexpr float kPriority = 100.0f;     // weather layers keep their voices against effects
+constexpr float kWindHeard = 1.0f;      // m/s: a wind below this is not heard
+constexpr float kWindFull = 20.0f;      // m/s: the wind's layers at full loudness
 
 float smoothstep(float a, float b, float x) {
     const float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
@@ -27,6 +29,8 @@ const char* weatherLayerName(WeatherLayer layer) {
     case WeatherLayer::RainHeavy: return "rain_heavy";
     case WeatherLayer::RainFar: return "rain_far";
     case WeatherLayer::RainCover: return "rain_cover";
+    case WeatherLayer::WindLight: return "wind_light";
+    case WeatherLayer::WindStrong: return "wind_strong";
     }
     return "?";
 }
@@ -37,8 +41,14 @@ const char* defaultWeatherSound(WeatherLayer layer) {
     case WeatherLayer::RainHeavy: return "quench/weather/rain_heavy.wav";
     case WeatherLayer::RainFar: return "quench/weather/rain_far.wav";
     case WeatherLayer::RainCover: return "quench/weather/rain_cover.wav";
+    case WeatherLayer::WindLight: return "quench/weather/wind_light.wav";
+    case WeatherLayer::WindStrong: return "quench/weather/wind_strong.wav";
     }
     return "";
+}
+
+const char* defaultThunderSound(Thunder thunder) {
+    return thunder == Thunder::Near ? "quench/weather/thunder_near.wav" : "quench/weather/thunder_far.wav";
 }
 
 std::array<float, kWeatherLayers> WeatherAudio::targetGains(const WeatherSoundState& state, float farDistance) {
@@ -57,7 +67,23 @@ std::array<float, kWeatherLayers> WeatherAudio::targetGains(const WeatherSoundSt
     g[std::size_t(WeatherLayer::RainFar)] =
         near * near * (1.0f - std::clamp(p / 0.1f, 0.0f, 1.0f)) * (1.0f - 0.5f * cover) * muffled;
     g[std::size_t(WeatherLayer::RainCover)] = cover * level;
+    const float wind = std::max(state.wind, 0.0f);
+    const float blowing = std::sqrt(std::clamp((wind - kWindHeard) / (kWindFull - kWindHeard), 0.0f, 1.0f));
+    const float strong = smoothstep(6.0f, 16.0f, wind);
+    const float sheltered = 1.0f - 0.5f * cover;
+    g[std::size_t(WeatherLayer::WindLight)] = sheltered * blowing * std::sqrt(1.0f - strong);
+    g[std::size_t(WeatherLayer::WindStrong)] = sheltered * blowing * std::sqrt(strong);
     return g;
+}
+
+std::array<float, kThunderSounds> WeatherAudio::thunderGains(float distance, float brightness, float cover,
+                                                             float reach) {
+    distance = std::max(distance, 0.0f);
+    if (distance > reach) return {};
+    const float loud =
+        std::max(brightness, 0.0f) / (1.0f + distance / 1500.0f) * (1.0f - 0.3f * std::clamp(cover, 0.0f, 1.0f));
+    const float near = 1.0f - smoothstep(1000.0f, 5000.0f, distance);
+    return {loud * std::sqrt(near), loud * std::sqrt(1.0f - near)};
 }
 
 WeatherAudio::WeatherAudio(AudioSystem& audio, WeatherSoundDesc desc) : m_audio(audio), m_desc(std::move(desc)) {
@@ -67,6 +93,7 @@ WeatherAudio::WeatherAudio(AudioSystem& audio, WeatherSoundDesc desc) : m_audio(
         layer.path = m_desc.sounds[i];
         if (!layer.path.empty()) layer.asset = m_audio.load(layer.path, kPriority);
     }
+    for (std::size_t i = 0; i < kThunderSounds; ++i) setThunderSound(Thunder(i), m_desc.thunder[i]);
 }
 
 WeatherAudio::~WeatherAudio() {
@@ -90,6 +117,28 @@ void WeatherAudio::setSound(WeatherLayer which, std::string_view path) {
 
 const std::string& WeatherAudio::soundPath(WeatherLayer layer) const { return m_layers[std::size_t(layer)].path; }
 
+void WeatherAudio::setThunderSound(Thunder thunder, std::string_view path) {
+    const std::size_t i = std::size_t(thunder);
+    if (m_thunderSounds[i] && m_thunderPaths[i] == path) return;
+    m_thunderPaths[i] = std::string(path);
+    m_desc.thunder[i] = m_thunderPaths[i];
+    m_thunderSounds[i] = path.empty() ? assets::AssetRef<SoundAsset>{} : m_audio.load(m_thunderPaths[i], kPriority);
+}
+
+const std::string& WeatherAudio::thunderPath(Thunder thunder) const { return m_thunderPaths[std::size_t(thunder)]; }
+
+void WeatherAudio::strike(float distance, float brightness) {
+    if (!m_enabled || !(distance >= 0.0f) || distance > m_desc.thunderReach) return;
+    if (m_thunder.size() >= kMaxThunder) {
+        const auto farthest =
+            std::max_element(m_thunder.begin(), m_thunder.end(),
+                             [](const Waiting& a, const Waiting& b) { return a.distance < b.distance; });
+        if (farthest->distance <= distance) return;
+        m_thunder.erase(farthest);
+    }
+    m_thunder.push_back({m_clock + double(distance / kSpeedOfSound), distance, brightness});
+}
+
 void WeatherAudio::setBus(std::string_view name) {
     m_desc.bus = std::string(name);
     m_bus = m_audio.bus(m_desc.bus);
@@ -110,6 +159,7 @@ void WeatherAudio::setEnabled(bool enabled) {
         layer.gain = 0.0f;
         layer.silent = 0.0;
     }
+    m_thunder.clear();
 }
 
 void WeatherAudio::start(Layer& layer, float volume, float fadeIn) {
@@ -120,7 +170,28 @@ void WeatherAudio::start(Layer& layer, float volume, float fadeIn) {
 }
 
 void WeatherAudio::update(const WeatherSoundState& state, double dt) {
+    m_clock += std::max(dt, 0.0);
     if (!m_enabled) return;
+    m_cover = state.cover;
+    // The thunder whose sound has arrived: one-shots at the gains of their distance.
+    for (std::size_t i = 0; i < m_thunder.size();) {
+        const Waiting w = m_thunder[i];
+        if (w.at > m_clock) {
+            ++i;
+            continue;
+        }
+        m_thunder.erase(m_thunder.begin() + std::ptrdiff_t(i));
+        const std::array<float, kThunderSounds> g =
+            thunderGains(w.distance, w.brightness, m_cover, m_desc.thunderReach);
+        bool played = false;
+        for (std::size_t k = 0; k < kThunderSounds; ++k) {
+            const float volume = g[k] * m_desc.volume;
+            if (volume <= kAudible || !m_thunderSounds[k] || !m_thunderSounds[k].ready()) continue;
+            m_audio.play(m_thunderSounds[k], {.bus = m_bus, .volume = volume, .priority = kPriority});
+            played = true;
+        }
+        if (played) ++m_thunderPlayed;
+    }
     const std::array<float, kWeatherLayers> target = targetGains(state, m_desc.farDistance);
     const float follow =
         m_desc.smoothing > 0.0f ? float(1.0 - std::exp(-std::max(dt, 0.0) / double(m_desc.smoothing))) : 1.0f;

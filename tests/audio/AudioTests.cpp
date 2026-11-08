@@ -1408,11 +1408,45 @@ QUENCH_TEST(weather_audio_gains) {
     CHECK(near(at(snowing, WeatherLayer::RainFar), at(near_, WeatherLayer::RainFar) * 0.4f, 1e-5f),
           "the distant rain through a snowfall: %f against %f", at(snowing, WeatherLayer::RainFar),
           at(near_, WeatherLayer::RainFar));
+
+    // Wind: silent in a calm, the light layer in a breeze, the strong one in a gale, at equal power between; halved
+    // under cover.
+    const auto wind = [](float speed, float cover) {
+        return WeatherAudio::targetGains({.cover = cover, .wind = speed}, 4000.0f);
+    };
+    for (float g : wind(0.5f, 0.0f)) CHECK(g == 0.0f, "a calm is heard: %f", g);
+    const auto breeze = wind(4.0f, 0.0f), gale = wind(18.0f, 0.0f);
+    CHECK(at(breeze, WeatherLayer::WindLight) > 0.3f && at(breeze, WeatherLayer::WindStrong) == 0.0f &&
+              at(gale, WeatherLayer::WindStrong) > 0.9f && at(gale, WeatherLayer::WindLight) == 0.0f,
+          "breeze %f / %f, gale %f / %f", at(breeze, WeatherLayer::WindLight), at(breeze, WeatherLayer::WindStrong),
+          at(gale, WeatherLayer::WindLight), at(gale, WeatherLayer::WindStrong));
+    for (float v = 1.5f; v <= 25.0f; v += 0.5f) {
+        const auto g = wind(v, 0.0f);
+        const float power = at(g, WeatherLayer::WindLight) * at(g, WeatherLayer::WindLight) +
+                            at(g, WeatherLayer::WindStrong) * at(g, WeatherLayer::WindStrong);
+        CHECK(near(power, std::min((v - 1.0f) / 19.0f, 1.0f), 1e-4f), "wind power %f at %f m/s", power, v);
+        for (std::size_t i = 0; i < 4; ++i) CHECK(g[i] == 0.0f, "wind plays rain layer %zu", i);
+    }
+    CHECK(near(at(wind(18.0f, 1.0f), WeatherLayer::WindStrong), at(gale, WeatherLayer::WindStrong) * 0.5f, 1e-5f),
+          "the wind under cover");
+
+    // Thunder: louder near, the clap giving way to the rumble from 1 to 5 km, nothing beyond the reach.
+    const auto close = WeatherAudio::thunderGains(500.0f, 1.0f, 0.0f, 25000.0f);
+    const auto middle = WeatherAudio::thunderGains(3000.0f, 1.0f, 0.0f, 25000.0f);
+    const auto distant = WeatherAudio::thunderGains(12000.0f, 1.0f, 0.0f, 25000.0f);
+    CHECK(close[1] == 0.0f && close[0] > 0.7f && distant[0] == 0.0f && distant[1] > 0.05f && distant[1] < close[0],
+          "thunder near %f / %f, far %f / %f", close[0], close[1], distant[0], distant[1]);
+    CHECK(near(middle[0] * middle[0] + middle[1] * middle[1], 1.0f / (3.0f * 3.0f), 1e-4f), "equal power at 3 km");
+    const auto past = WeatherAudio::thunderGains(30000.0f, 1.0f, 0.0f, 25000.0f);
+    CHECK(past[0] == 0.0f && past[1] == 0.0f, "thunder beyond the reach");
+    CHECK(near(WeatherAudio::thunderGains(500.0f, 0.5f, 1.0f, 25000.0f)[0], close[0] * 0.5f * 0.7f, 1e-5f),
+          "a dim flash heard under a roof");
 }
 
 // The engine's default weather sounds (tools/assets/make_weather_sounds.py, written at build time where the build has
 // Python and the cook): loops without a seam, below full scale, heavy rain louder than light, the light rain's
-// energy the highest, the distant rain's the lowest and the roof's below the open-air rain's. The share of a band is
+// energy the highest, the distant rain's the lowest and the roof's below the open-air rain's; the wind low, the
+// strong one louder; the thunder ending in silence, the far one the lower. The share of a band is
 // the energy of the sound through a one-pole low-pass (or what it leaves: the high-pass) against the whole; one pole
 // is a gentle slope, so the shares overlap.
 QUENCH_TEST(weather_default_sounds) {
@@ -1455,8 +1489,10 @@ QUENCH_TEST(weather_default_sounds) {
         m.peak = std::max(levels.peak[0], levels.peak[1]);
         m.below700 = lowShare(mono, 700.0f, rate, false);
         m.above2k = lowShare(mono, 2000.0f, rate, true);
-        // The jump from the last frame to the first against the loop's largest change over two frames.
+        // The jump from the last frame to the first against the loop's largest change over two frames; a one-shot
+        // (thunder) ends in silence instead.
         m.seam = std::abs(mono.front() - mono.back());
+        if (std::string_view(name).starts_with("thunder")) m.seam = std::abs(mono.back());
         m.step = maxStep(mono);
         std::printf("  %s: %.1f s, rms %.4f, peak %.3f, energy below 700 Hz %.2f, above 2 kHz %.2f, seam %.4f "
                     "(largest step %.4f)\n",
@@ -1469,6 +1505,14 @@ QUENCH_TEST(weather_default_sounds) {
     };
     const Measured light = measure("rain_light.wav"), heavy = measure("rain_heavy.wav");
     const Measured far = measure("rain_far.wav"), cover = measure("rain_cover.wav");
+    const Measured breeze = measure("wind_light.wav"), gale = measure("wind_strong.wav");
+    CHECK(gale.rms > breeze.rms * 2.0f, "the strong wind louder: %f against %f", double(gale.rms), double(breeze.rms));
+    CHECK(breeze.below700 > 0.65f && breeze.above2k < 0.1f && gale.below700 > 0.5f && gale.above2k < 0.15f,
+          "the wind is low: %.2f and %.2f below 700 Hz", double(breeze.below700), double(gale.below700));
+    const Measured clap = measure("thunder_near.wav"), roll = measure("thunder_far.wav");
+    CHECK(roll.below700 > 0.9f && clap.above2k > roll.above2k,
+          "the far thunder is the lower: %.2f below 700 Hz, %.4f above 2 kHz against the near one's %.4f",
+          double(roll.below700), double(roll.above2k), double(clap.above2k));
     CHECK(heavy.rms > light.rms * 1.5f, "heavy rain louder: %f against %f", double(heavy.rms), double(light.rms));
     CHECK(light.above2k > 0.45f && light.above2k > heavy.above2k, "light rain is high: %.2f above 2 kHz (heavy %.2f)",
           double(light.above2k), double(heavy.above2k));
@@ -1484,11 +1528,10 @@ QUENCH_TEST(weather_default_sounds) {
 // layer plays. A changed sound and a reloaded file crossfade in; a disabled object goes silent and stops its sounds.
 QUENCH_TEST(weather_audio_mix) {
     AssetDir dir("audio_weather_audio_mix");
-    const std::pair<const char*, float> files[] = {{"light.wav", 3000.0f},
-                                                   {"heavy.wav", 1000.0f},
-                                                   {"far.wav", 200.0f},
-                                                   {"cover.wav", 500.0f},
-                                                   {"other.wav", 1500.0f}};
+    const std::pair<const char*, float> files[] = {
+        {"light.wav", 3000.0f}, {"heavy.wav", 1000.0f}, {"far.wav", 200.0f},
+        {"cover.wav", 500.0f},  {"other.wav", 1500.0f}, {"breeze.wav", 700.0f},
+        {"gale.wav", 2200.0f},  {"clap.wav", 2600.0f},  {"roll.wav", 350.0f}};
     for (const auto& [name, hz] : files) dir.write(name, encodeWav(sineSamples(hz, 0.5f, 1.0, 1), 1, kRate));
     JobSystem jobs(JobSystemDesc{.workerThreads = 0});
     assets::AssetManager manager(jobs);
@@ -1496,8 +1539,11 @@ QUENCH_TEST(weather_audio_mix) {
     audio.setOffline(true);
     std::vector<float> out;
     {
-        WeatherAudio weather(
-            audio, {.sounds = {"light.wav", "heavy.wav", "far.wav", "cover.wav"}, .bus = "effects", .smoothing = 0.1f});
+        WeatherAudio weather(audio,
+                             {.sounds = {"light.wav", "heavy.wav", "far.wav", "cover.wav", "breeze.wav", "gale.wav"},
+                              .thunder = {"clap.wav", "roll.wav"},
+                              .bus = "effects",
+                              .smoothing = 0.1f});
         const auto run = [&](const WeatherSoundState& state, double seconds) {
             out.clear();
             for (double t = 0.0; t < seconds - 1e-9; t += 0.01) {
@@ -1556,6 +1602,40 @@ QUENCH_TEST(weather_audio_mix) {
         CHECK(measureLevels(last(out, 0.25), 2).rmsMono() < 1e-4f, "dry: silent");
         run({.precipitation = 0.0f}, 2.5);
         CHECK(audio.stats().sounds == 0, "dry: sounds stopped (%u alive)", audio.stats().sounds);
+
+        // Wind: the breeze's layer, then the gale's.
+        run({.wind = 4.0f}, 1.0);
+        peak = strongest();
+        CHECK(near(peak.frequency, 700.0f, 2.0f), "a breeze: %f Hz", peak.frequency);
+        run({.wind = 18.0f}, 1.0);
+        peak = strongest();
+        CHECK(near(peak.frequency, 2200.0f, 2.0f), "a gale: %f Hz", peak.frequency);
+        run({}, 2.5);
+
+        // Thunder: a flash 686 m away is heard 2 s later as the clap; one 4 km away 11.7 s later, mostly the rumble
+        // and quieter; the farthest of too many waiting is dropped.
+        weather.strike(686.0f);
+        run({}, 1.9);
+        CHECK(measureLevels(out, 2).rmsMono() < 1e-4f && weather.thunderWaiting() == 1 && weather.thunderPlayed() == 0,
+              "thunder before its sound arrives: rms %f", measureLevels(out, 2).rmsMono());
+        run({}, 0.3);
+        peak = strongest();
+        const float clapRms = measureLevels(last(out, 0.15), 2).rmsMono();
+        CHECK(weather.thunderPlayed() == 1 && weather.thunderWaiting() == 0 && near(peak.frequency, 2600.0f, 2.0f),
+              "the clap: played %u, %f Hz", weather.thunderPlayed(), peak.frequency);
+        run({}, 1.0);
+        weather.strike(4000.0f);
+        run({}, 11.5);
+        CHECK(weather.thunderPlayed() == 1, "the far thunder too early");
+        run({}, 0.4);
+        peak = strongest();
+        const float rollRms = measureLevels(last(out, 0.15), 2).rmsMono();
+        CHECK(weather.thunderPlayed() == 2 && near(peak.frequency, 350.0f, 2.0f) && rollRms < clapRms * 0.6f,
+              "the far thunder: played %u, %f Hz, rms %f against %f", weather.thunderPlayed(), peak.frequency, rollRms,
+              clapRms);
+        for (int i = 0; i < 20; ++i) weather.strike(1000.0f + 500.0f * float(i));
+        CHECK(weather.thunderWaiting() == WeatherAudio::kMaxThunder, "%zu waiting", weather.thunderWaiting());
+        run({}, 1.0);
 
         run({.precipitation = 0.95f}, 0.5);
         CHECK(audio.stats().sounds > 0, "rain again");
