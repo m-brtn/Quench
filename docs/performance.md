@@ -328,6 +328,13 @@ times the M4 Pro's: by that ratio the phone defaults would take about 4.3 ms and
 the roadmap's 2 and 0.5 ms; an estimate, not a measurement, so the section's phone defaults (half size, 48 steps,
 one cube face, 60 Hz) wait for a run on the phone. Not run on the screen.
 
+Measured again on 2026-11-08 17:24-17:27 at 1080p, before and after the clouds' accumulation was changed against the
+hatching in motion (the march's noise read at a new place every frame, the history read through a Catmull-Rom filter,
+this frame through a 3x3 tent; [Weather](weather.md#clouds)), the two binaries alternated three times and the lower
+p50 kept: the clouds range 1.471 and 1.506 ms at half size, 3.791 and 3.897 at full size, 1.070 and 1.094 and 2.795
+and 2.895 in the storm, 1.107 and 1.134 with the phone defaults: 2 to 4 % more, the history's nine reads in place
+of one. The weather and sky cube ranges did not change.
+
 ### Rain
 
 2026-11-07 23:08-23:10, the Mac (Apple M4 Pro), offscreen, the native backend, `--window 1920x1080` and
@@ -360,6 +367,17 @@ the shafts 0.191, 0.486, 0.685), the phone defaults 0.20; the storm from the air
 the evening before, not compared in one session. Since then the streaks, splashes and flakes are not drawn where
 none of their kind falls near the camera (the drops' range was 0.04 to 0.46 ms in a clear sky with the rain on).
 
+Measured again on 2026-11-08 17:08-17:15, before and after the changes of that afternoon (the streaks a sixtieth of
+a second of the drops' path, thinner and lit by the overcast sky; the splashes smaller and shorter; the shafts'
+march with its curtains' noise faded with the step, the clouds' shadow on short steps only and a new noise offset
+every frame, then smoothed at its reduced size; 17 and 28 steps at Medium and High instead of 20 and 32), the two
+binaries alternated twice and the lower p50 kept, since other GPU work ran on the Mac during the session. The
+shafts from the ground 0.187, 0.481 and 0.677 ms before, 0.222, 0.533 and 0.742 after at 1080p (0.281, 0.686,
+0.937 and 0.312, 0.726, 1.002 at 1206 x 2622); from the air 0.242, 0.867, 1.293 and 0.258, 0.803, 1.251 (0.361,
+1.353, 2.030 and 0.407, 1.338, 2.078): up to 11 % more from the ground, about the same from the air. The smoothing
+pass is about 0.02 ms of it at Low and 0.05 ms at Medium and High at 1080p. The drops (0.084, 0.145 and 0.496
+before, 0.085, 0.142 and 0.452 after), the map and the phone defaults (no shafts) did not change.
+
 ### Snow
 
 2026-11-08 01:03, the same way (`examples/demo/scenarios/snow_cost.txt`: the Snowfall preset from the ground and the
@@ -384,6 +402,13 @@ its 16 cells) by value, and the compiled shaders copied the whole block at every
 took the shafts to 0.577 and 0.785 ms with the same image. By the stage 11 ratio of about 3 the phone defaults would
 take about 1 ms on the iPhone 17: an estimate. Not run on the screen or on a phone.
 
+With the shafts' changes of 2026-11-08 afternoon ([Rain](#rain), measured the same way at 17:11-17:21): from the
+ground 0.195, 0.572 and 0.774 ms before, 0.236, 0.641 and 0.870 after at 1080p (0.260, 0.701, 0.960 and 0.317,
+0.807, 1.095 at 1206 x 2622, three runs each); the snow showers from the air 0.189 and 0.536 before, 0.226 and
+0.595 after at Low and Medium at 1080p (High 0.834 after; its run before was disturbed), 0.295, 0.925, 1.341 and
+0.349, 1.025, 1.479 at 1206 x 2622: 10 to 15 % more, the smoothing pass most of it. The flakes, the copy and the
+phone defaults (no shafts) did not change.
+
 ### Wind
 
 2026-11-08 02:30, the same way (`examples/demo/scenarios/wind_cost.txt`: the weather section's meadow in the Windy
@@ -403,6 +428,13 @@ The eddies' first noise (three value noises per instance) took the drops with gu
 split into three values to 0.44 (the run above: 0.38). The lightning's query takes 0.001 to 0.002 ms of CPU time. The
 meadow's first build, one instance per tuft (2131), took the frame's CPU median over the rain cost's nine regions to
 1.17 ms against 0.97 without the meadow; as 64 patches of grass 0.95 ms. Not run on the screen or on a phone.
+
+With the streaks of 2026-11-08 afternoon, whose tails read the wind field an exposure earlier ([Rain](#rain);
+17:32-17:35, before and after alternated twice, the lower p50 kept, 1080p): the drops 0.174 and 0.167 ms in the
+steady wind, 0.306 and 0.330 with gusts and eddies, 0.129 and 0.125 at the phone defaults; the flakes and the sway
+unchanged; the `hdr` range 0.02 to 0.07 ms more (1.502 and 1.518 with the plants still, 1.655 and 1.724 in the
+gusting rain), of which only the clouds' shadow's fade at its map's edge changed in that pass (two runs, with other
+GPU work on the Mac: not settled).
 
 ### Particles
 

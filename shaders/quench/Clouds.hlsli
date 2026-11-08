@@ -11,16 +11,26 @@
 // The share of the sun's light the clouds let through to a world point (1 without cloud shadows). The cloud shadow
 // map (the first region of the weather maps, surface sampler 14) holds the transmittance along the sun's direction of
 // the clouds above a plane (render::RenderSettings::cloudShadowHeight); a point reads it where its line toward the
-// sun meets that plane (here: y = 0, the map's corner in FrameUniforms::cloudShadow moved to match).
-float quenchCloudShadow(Texture2D<float4> maps, SamplerState s, float3 P) {
+// sun meets that plane (here: y = 0, the map's corner in FrameUniforms::cloudShadow moved to match). Over the outer
+// twentieth of the map's width it fades to `outside`: past the map there are only its edge texels drawn out, which
+// show as stripes along its axes in the distance (the shafts of rain and snow reach farther than the map).
+float quenchCloudShadow(Texture2D<float4> maps, SamplerState s, float3 P, float outside) {
     if (quenchFrame.cloudShadow.w <= 0.0) return 1.0;
     const float3 sun = quenchFrame.sunDir.xyz;
     const float2 ground = P.xz - sun.xz * (P.y / max(sun.y, 0.05));
     const float2 uv = (ground - quenchFrame.cloudShadow.xy) * quenchFrame.cloudShadow.z;
+    const float2 off = abs(uv - 0.5) * 2.0;
+    const float beyond = smoothstep(0.9, 1.0, max(off.x, off.y));
+    [branch] if (beyond >= 1.0) return outside;
     // Clamped to the region's edge texels, as a texture of its own would be.
     const float edge = 0.5 / float(QUENCH_RAIN_MAP_ROW);
     const float v = clamp(uv.y, edge, 1.0 - edge) * (float(QUENCH_RAIN_MAP_ROW) / float(QUENCH_WEATHER_MAPS_HEIGHT));
-    return maps.SampleLevel(s, float2(uv.x, v), 0.0).r;
+    return lerp(maps.SampleLevel(s, float2(uv.x, v), 0.0).r, outside, beyond);
+}
+
+// The same, fading to the share of the sun's light that the cover around the camera lets through.
+float quenchCloudShadow(Texture2D<float4> maps, SamplerState s, float3 P) {
+    return quenchCloudShadow(maps, s, P, 1.0 - quenchFrame.overcast.w);
 }
 
 // The sky with the scene's clouds as one overcast amount: the plain sky blended toward the radiance of the cloud

@@ -31,18 +31,34 @@ constexpr float kMapAbove = 100.0f;
 constexpr float kMapDepth = 200.0f;
 // The wind the rain falls with is the wind at this height (the drops near the ground keep their speed from above).
 constexpr float kWindHeight = 10.0f;
-// The streaks: the distance a drop falls in this exposure (0.3 m at 7.5 m/s), this wide (a drop's width with its
-// blur), this opaque at full rain; the light a drop sends toward the camera: the sky's radiance (the ambient terms
-// are the radiance a white diffuse surface sends back) refracted from the wide cone above it, kSkyShare of it sky and
-// the rest ground, and the sun's times kSunForward in a forward lobe.
-constexpr float kStreakExposure = 0.04f;
-constexpr float kStreakWidth = 0.006f;
-constexpr float kStreakOpacity = 0.8f;
+// The streaks: the distance a drop moves in this exposure (12.5 cm at 7.5 m/s), its diameter in light and in heavy
+// rain (give or take 30 %), seen through a lens of kLensAperture focused at kLensFocus (nearer drops blur into wide,
+// faint smears), as opaque as kStreakOpacity where it is sharp and fading out within kStreakNear of the camera; the
+// light a drop sends toward the camera: the radiance it refracts from the wide cone around the view, kSkyShare of it
+// the sky's (the ambient terms are the radiance a white diffuse surface sends back; under a closing cover the clouds'
+// bases, as for the shafts) and the rest the ground's, and the sun's times kSunForward in a forward lobe. A drop is
+// about as bright as what lies around it, so it shows as a faint brighter line against a dark wall and hardly at
+// all against the sky.
+constexpr float kStreakExposure = 1.0f / 60.0f;
+constexpr float kDropLight = 0.001f;
+constexpr float kDropHeavy = 0.0025f;
+constexpr float kLensAperture = 0.006f;
+constexpr float kLensFocus = 6.0f;
+constexpr float kStreakOpacity = 0.9f;
+constexpr float kStreakNear = 1.5f;
+// kNearShare of the streaks fall in a box around the camera kNearBox times the size of the box of the others.
+constexpr float kNearShare = 0.5f;
+constexpr float kNearBox = 0.4f;
 constexpr float kSkyShare = 0.7f;
 constexpr float kSunForward = 0.06f;
-// The splashes: each lives this long, this big (half their width and their height, give or take 30 %).
-constexpr float kSplashLife = 0.25f;
-constexpr float kSplashSize = 0.15f;
+// An overcast sky is brighter above than at its horizon (three times at the zenith in the CIE's overcast sky); a
+// drop seen across the view refracts mostly the sky above the horizon, this many times the cover's mean radiance.
+constexpr float kDropSky = 1.6f;
+// The splashes: each lives this long, this big (half their width and their height, give or take 30 %). A raindrop's
+// crown on a hard surface is a centimetre or two across and its droplets fly a few centimetres for a tenth of a
+// second; drawn bigger and longer they read as white prints scattered on the ground.
+constexpr float kSplashLife = 0.12f;
+constexpr float kSplashSize = 0.06f;
 // The flakes: this big (give or take 40 %), white diffuse scatterers that send this share of the sky's and the
 // ground's light (kFlakeSkyShare of it the sky's) and kFlakeSun of the sun's irradiance toward the camera. The
 // occlusion map under snow looks along a direction at most kSnowSlant (horizontal / vertical) from the vertical:
@@ -77,8 +93,8 @@ struct Quality {
 constexpr Quality kQualities[] = {
     {0, 0.0f, 0, 0.0f, 0, 1, 0, 0.0f},               // Off
     {8192, 9.0f, 0, 0.0f, 12, 4, 6144, 4.5f},        // Low
-    {24576, 12.0f, 1536, 10.0f, 20, 2, 16384, 6.0f}, // Medium
-    {49152, 15.0f, 4096, 15.0f, 32, 2, 32768, 7.0f}, // High
+    {24576, 12.0f, 1536, 10.0f, 17, 2, 16384, 6.0f}, // Medium
+    {49152, 15.0f, 4096, 15.0f, 28, 2, 32768, 7.0f}, // High
 };
 
 const Quality& qualityOf(Rain rain) { return kQualities[std::size_t(rain)]; }
@@ -157,6 +173,8 @@ bool RainRenderer::init(gpu::Device& device, TextureFormat hdrFormat, TextureFor
              "render rain splashes") &&
         make(m_flakePipeline, rain.find("rain_flake_vs"), "rain_flake_fs", {hdrFormat, drops}, "render snow flakes") &&
         make(m_shaftsPipeline, fullscreen, "rain_shafts_fs", {kWeatherMapsFormat}, "render rain shafts") &&
+        make(m_shaftsBlurPipeline, fullscreen, "rain_shafts_blur_fs", {kWeatherMapsFormat},
+             "render rain shafts blur") &&
         make(m_shaftsUpPipeline, fullscreen, "rain_shafts_up_fs", {hdrFormat, shafts}, "render rain shafts upsample");
     if (ok) {
         Result<gpu::TransferBuffer> grid = device.createTransferBuffer(
@@ -179,6 +197,7 @@ void RainRenderer::release() {
     m_occlusion = {};
     m_image = {};
     m_shafts = {};
+    m_shaftsSmooth = {};
     m_gridVersion = ~0ull;
     m_lastMapValid = false;
     m_readSerial = m_readbackSerial; // results still on their way are left unread
@@ -262,7 +281,10 @@ bool RainRenderer::prepare(const Frame& frame, shader::FrameUniforms& fu, Render
     m_uniforms.invRainViewProj = glm::inverse(m_viewProj);
     m_uniforms.box = glm::vec4(camera + glm::vec3(0.0f, q.box * 0.3f, 0.0f), q.box);
     m_uniforms.fall = glm::vec4(rainVelocity, float(std::fmod(frame.time, 4096.0)));
-    m_uniforms.streaks = glm::vec4(float(q.streaks), kStreakExposure, kStreakWidth, kStreakOpacity);
+    const float nearBox = q.box * kNearBox;
+    m_uniforms.nearBox = glm::vec4(camera + glm::vec3(0.0f, nearBox * 0.3f, 0.0f), nearBox);
+    m_uniforms.streaks = glm::vec4(float(q.streaks) * kNearShare, kStreakExposure, kDropLight, kDropHeavy);
+    m_uniforms.lens = glm::vec4(kLensAperture, kLensFocus, kStreakOpacity, kStreakNear);
     m_uniforms.splashes = glm::vec4(float(q.splashes), q.splashRadius, kSplashLife, kSplashSize);
     m_uniforms.snowFall = glm::vec4(snowVelocity, m_snow != Snow::Off ? 1.0f : 0.0f);
     m_uniforms.flakes = glm::vec4(float(s.flakes), s.flakeBox, kFlakeSize, kFlakeSun * kFlakeAlbedo);
@@ -388,9 +410,15 @@ void RainRenderer::updateMaps(gpu::CommandBuffer& commands, const gpu::Texture& 
     }
 }
 
-void RainRenderer::lightUniforms(const shader::FrameUniforms& fu) {
+void RainRenderer::lightUniforms(const shader::FrameUniforms& fu, float deck) {
     const glm::vec3 sky(fu.skyAmbient), ground(fu.groundAmbient);
-    m_uniforms.light = glm::vec4(glm::mix(ground, sky, kSkyShare), m_uniforms.light.w);
+    // The drops and the veil refract and scatter the light that reaches them: from the closed share of the sky `deck`
+    // times the radiance of the clouds' bases (FrameUniforms::overcast, what the traced effects' misses see), not the
+    // sky's ambient term there, which is what a white surface sends back and pi times as bright; else a storm's rain
+    // shines brighter than the clouds above it. The flakes are lit as the snow on the ground is.
+    const float closing = std::pow(std::clamp(fu.overcast.w, 0.0f, 1.0f), 1.2f);
+    const glm::vec3 seen = glm::max(sky - glm::vec3(fu.overcast) * (closing * (kPi - deck)), glm::vec3(0.0f));
+    m_uniforms.light = glm::vec4(glm::mix(ground, seen, kSkyShare), m_uniforms.light.w);
     m_uniforms.sun =
         fu.sunDir.w > 0.0f && fu.sunDir.y > 0.0f ? glm::vec4(glm::vec3(fu.sunColor), kSunForward) : glm::vec4(0.0f);
     m_uniforms.flakeLight = glm::vec4(glm::mix(ground, sky, kFlakeSkyShare) * kFlakeAlbedo, m_uniforms.flakeLight.w);
@@ -405,31 +433,30 @@ void RainRenderer::drawShafts(gpu::CommandBuffer& commands, const Shafts& shafts
     const std::uint32_t h = (shafts.height + q.shaftScale - 1) / q.shaftScale;
     if (!m_shafts || m_shafts.desc().width != w || m_shafts.desc().height != h) {
         m_shafts = {};
-        Result<gpu::Texture> t = m_device->createTexture({.format = kWeatherMapsFormat,
-                                                          .usage = TextureUsage::ColorTarget | TextureUsage::Sampled,
-                                                          .width = w,
-                                                          .height = h,
-                                                          .name = "render rain shafts"});
-        if (!t) {
-            log::error("render", "rain shafts {} x {}: {}; no shafts", w, h, t.error());
-            return;
+        m_shaftsSmooth = {};
+        for (gpu::Texture* texture : {&m_shafts, &m_shaftsSmooth}) {
+            Result<gpu::Texture> t =
+                m_device->createTexture({.format = kWeatherMapsFormat,
+                                         .usage = TextureUsage::ColorTarget | TextureUsage::Sampled,
+                                         .width = w,
+                                         .height = h,
+                                         .name = "render rain shafts"});
+            if (!t) {
+                log::error("render", "rain shafts {} x {}: {}; no shafts", w, h, t.error());
+                m_shafts = {};
+                m_shaftsSmooth = {};
+                return;
+            }
+            *texture = std::move(*t);
         }
-        m_shafts = std::move(*t);
     }
-    lightUniforms(fu);
-    // The veil scatters the light that reaches it: from the closed share of the sky the radiance of the clouds' bases
-    // (FrameUniforms::overcast, what the traced effects' misses see), not the sky's ambient term there, which is what a
-    // white surface sends back and pi times as bright; else a storm's rain shines brighter than the clouds above it.
-    const float closing = std::pow(std::clamp(fu.overcast.w, 0.0f, 1.0f), 1.2f);
-    const glm::vec3 sky =
-        glm::max(glm::vec3(fu.skyAmbient) - glm::vec3(fu.overcast) * (closing * (kPi - 1.0f)), glm::vec3(0.0f));
-    m_uniforms.light = glm::vec4(glm::mix(glm::vec3(fu.groundAmbient), sky, kSkyShare), m_uniforms.light.w);
+    lightUniforms(fu, 1.0f);
     // Where it snows at the camera the shafts begin where the flakes end.
     const float near = glm::mix(kShaftNear, qualityOf(m_snow).flakeBox, m_snowShare);
     m_uniforms.shafts = glm::vec4(float(q.shaftSteps), shafts.cloudBase, kShaftExtinction, near);
     m_uniforms.weatherMap = shafts.weatherMapUv;
-    m_uniforms.rainbow = glm::vec4(shafts.rainbow ? 1.0f : 0.0f, kRainbowStrength,
-                                   float(std::fmod(double(shafts.sequence) * 0.6180339887, 1.0)), float(q.shaftScale));
+    m_uniforms.rainbow =
+        glm::vec4(shafts.rainbow ? 1.0f : 0.0f, kRainbowStrength, float(shafts.sequence % 4096u), float(q.shaftScale));
     m_uniforms.target =
         glm::vec4(float(shafts.width), float(shafts.height), 1.0f / float(shafts.width), 1.0f / float(shafts.height));
     if (gpu::RenderPass pass = commands.beginRenderPass(
@@ -444,9 +471,19 @@ void RainRenderer::drawShafts(gpu::CommandBuffer& commands, const Shafts& shafts
         pass.draw(3);
         pass.end();
     }
+    if (gpu::RenderPass pass = commands.beginRenderPass(
+            gpu::ColorTarget{.texture = m_shaftsSmooth, .load = gpu::LoadOp::DontCare, .cycle = true})) {
+        const gpu::TextureSamplerBinding bindings[] = {{*shafts.depth, pointSampler}, {m_shafts, pointSampler}};
+        pass.bindPipeline(m_shaftsBlurPipeline);
+        pass.pushUniforms(kFragment, 0, fu);
+        pass.pushUniforms(kFragment, 1, m_uniforms);
+        pass.bindSamplers(kFragment, 0, bindings);
+        pass.draw(3);
+        pass.end();
+    }
     if (gpu::RenderPass pass =
             commands.beginRenderPass(gpu::ColorTarget{.texture = shafts.hdr, .load = gpu::LoadOp::Load})) {
-        const gpu::TextureSamplerBinding bindings[] = {{*shafts.depth, pointSampler}, {m_shafts, pointSampler}};
+        const gpu::TextureSamplerBinding bindings[] = {{*shafts.depth, pointSampler}, {m_shaftsSmooth, pointSampler}};
         pass.bindPipeline(m_shaftsUpPipeline);
         pass.pushUniforms(kFragment, 0, fu);
         pass.pushUniforms(kFragment, 1, m_uniforms);
@@ -488,7 +525,7 @@ gpu::TextureRef RainRenderer::drawDrops(gpu::CommandBuffer& commands, const Drop
     }
     if (!m_dropsNear) return image;
     const Quality& q = qualityOf(m_quality);
-    lightUniforms(fu);
+    lightUniforms(fu, kDropSky);
     m_uniforms.light.w = drops.proj[1][1] * float(h) * 0.5f;
     m_uniforms.viewProjStable = drops.viewProjStable;
     m_uniforms.target = glm::vec4(float(w), float(h), 1.0f / float(w), 1.0f / float(h));
@@ -520,7 +557,7 @@ void RainRenderer::drawFlakes(gpu::CommandBuffer& commands, const Drops& drops, 
     if (!m_flakesNear || !drops.depth || !drops.image) return;
     const std::uint32_t w = drops.image.desc.width, h = drops.image.desc.height;
     const Quality& q = qualityOf(m_snow);
-    lightUniforms(fu);
+    lightUniforms(fu, kDropSky);
     m_uniforms.light.w = drops.proj[1][1] * float(h) * 0.5f;
     m_uniforms.viewProjStable = drops.viewProjStable;
     m_uniforms.target = glm::vec4(float(w), float(h), 1.0f / float(w), 1.0f / float(h));

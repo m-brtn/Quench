@@ -95,16 +95,18 @@ public:
 
 private:
     void readCover(RenderStats& stats);
-    void lightUniforms(const shader::FrameUniforms& fu);
+    // The light of the drops, the veil and the flakes; deck: the share of the overcast's mean radiance they see.
+    void lightUniforms(const shader::FrameUniforms& fu, float deck);
 
     gpu::Device* m_device = nullptr;
     gpu::TextureFormat m_depthFormat = gpu::TextureFormat::Invalid;
     gpu::TextureFormat m_hdrFormat = gpu::TextureFormat::Invalid;
     gpu::GraphicsPipeline m_mapPipeline, m_streakPipeline, m_splashPipeline, m_flakePipeline, m_shaftsPipeline,
-        m_shaftsUpPipeline;
+        m_shaftsBlurPipeline, m_shaftsUpPipeline;
     gpu::Texture m_occlusion;
-    gpu::Texture m_image;  // the copy drawn into when the image must stay as it is
-    gpu::Texture m_shafts; // the shafts at a reduced size (color, transmittance)
+    gpu::Texture m_image;        // the copy drawn into when the image must stay as it is
+    gpu::Texture m_shafts;       // the shafts at a reduced size (color, transmittance)
+    gpu::Texture m_shaftsSmooth; // the same, smoothed
     gpu::TransferBuffer m_gridTransfer;
     std::uint64_t m_gridVersion = ~0ull;
     glm::vec2 m_gridOrigin{0.0f};

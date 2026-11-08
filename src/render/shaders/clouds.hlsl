@@ -472,8 +472,11 @@ struct CloudMarchOut {
 
 CloudMarchOut cloud_march_fs(FullscreenOut vin) {
     const float3 dir = cloudViewRay(vin.uv);
-    // A different start in every step for every pixel and frame: the temporal accumulation averages them.
-    const float jitter = frac(ign(vin.position.xy) + cloud.march.w);
+    // A different start in every step for every pixel and frame: the temporal accumulation averages them. The noise is
+    // read at a place of its own in every frame (cloud.temporal.zw, whole pixels), not shifted by a constant step: on
+    // a turning camera the history of a pixel comes from its neighbours, and noise that only steps on would repeat
+    // along that path in stripes that move with the view.
+    const float jitter = ign(vin.position.xy + cloud.temporal.zw);
     float depth;
     CloudMarchOut o;
     o.color = marchClouds(dir, jitter, int(cloud.march.x), int(cloud.march.y), true, depth);
@@ -490,28 +493,58 @@ SamplerState depthSampler : QUENCH_SAMPLER(1);
 Texture2D<float4> historyTex : QUENCH_TEXTURE(2);
 SamplerState historySampler : QUENCH_SAMPLER(2);
 
+// The history at a uv, Catmull-Rom filtered from nine bilinear reads, so that it stays sharp when the view moves:
+// a bilinear read blurs the history a little in every frame it moves by a fraction of a texel, and the blur builds up
+// over the frames the history lasts (the clouds smear while the camera turns).
+float4 cloudHistoryAt(float2 uv) {
+    const float2 size = cloud.target.xy;
+    const float2 centre = floor(uv * size - 0.5) + 0.5;
+    const float2 f = uv * size - centre;
+    const float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    const float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    const float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    const float2 w3 = f * f * (-0.5 + 0.5 * f);
+    const float2 w12 = w1 + w2;
+    const float2 t0 = (centre - 1.0) * cloud.target.zw;
+    const float2 t12 = (centre + w2 / w12) * cloud.target.zw;
+    const float2 t3 = (centre + 2.0) * cloud.target.zw;
+    float4 sum = historyTex.SampleLevel(historySampler, float2(t0.x, t0.y), 0.0) * (w0.x * w0.y);
+    sum += historyTex.SampleLevel(historySampler, float2(t12.x, t0.y), 0.0) * (w12.x * w0.y);
+    sum += historyTex.SampleLevel(historySampler, float2(t3.x, t0.y), 0.0) * (w3.x * w0.y);
+    sum += historyTex.SampleLevel(historySampler, float2(t0.x, t12.y), 0.0) * (w0.x * w12.y);
+    sum += historyTex.SampleLevel(historySampler, float2(t12.x, t12.y), 0.0) * (w12.x * w12.y);
+    sum += historyTex.SampleLevel(historySampler, float2(t3.x, t12.y), 0.0) * (w3.x * w12.y);
+    sum += historyTex.SampleLevel(historySampler, float2(t0.x, t3.y), 0.0) * (w0.x * w3.y);
+    sum += historyTex.SampleLevel(historySampler, float2(t12.x, t3.y), 0.0) * (w12.x * w3.y);
+    sum += historyTex.SampleLevel(historySampler, float2(t3.x, t3.y), 0.0) * (w3.x * w3.y);
+    return max(sum, 0.0);
+}
+
 // The march reprojected over the frames: the history where the clouds were last frame (by their distance), kept within
-// the range of this frame's neighbourhood, blended with this frame.
+// the range of this frame's neighbourhood, blended with this frame. This frame enters through a 3x3 tent: its noise
+// (the march's jitter) is mostly of the finest scale, which the tent takes out, while the clouds' shapes are wider;
+// what the accumulation leaves of it would otherwise show as a fine hatching that TAA's clamp brings out when the
+// view moves. Where there is no history (the edge a turning view reveals, the first frame) the tent alone is used.
 float4 cloud_temporal_fs(FullscreenOut vin) : SV_Target0 {
     const int2 p = int2(vin.position.xy);
-    const float4 current = currentTex.Load(int3(p, 0));
-    if (cloud.temporal.y <= 0.0) return current;
-    float4 lo = current;
-    float4 hi = current;
+    float4 lo = float4(1e9, 1e9, 1e9, 1e9);
+    float4 hi = float4(-1e9, -1e9, -1e9, -1e9);
+    float4 current = float4(0.0, 0.0, 0.0, 0.0);
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x) {
             const float4 n = currentTex.Load(int3(clamp(p + int2(x, y), int2(0, 0), int2(cloud.target.xy) - 1), 0));
             lo = min(lo, n);
             hi = max(hi, n);
+            current += n * ((x == 0 ? 2.0 : 1.0) * (y == 0 ? 2.0 : 1.0) / 16.0);
         }
+    if (cloud.temporal.y <= 0.0) return current;
     const float depth = depthTex.Load(int3(p, 0)).r;
     const float3 world = quenchFrame.cameraPos.xyz + cloudViewRay(vin.uv) * depth;
     const float4 clip = mul(cloud.prevViewProjStable, float4(world, 1.0));
-    if (clip.w <= 0.0) return current;
-    const float2 ndc = clip.xy / clip.w;
+    const float2 ndc = clip.xy / max(clip.w, 1e-6);
     const float2 prevUv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-    if (any(prevUv < 0.0) || any(prevUv > 1.0)) return current;
-    const float4 history = clamp(historyTex.SampleLevel(historySampler, prevUv, 0.0), lo, hi);
+    if (clip.w <= 0.0 || any(prevUv < 0.0) || any(prevUv > 1.0)) return current;
+    const float4 history = clamp(cloudHistoryAt(prevUv), lo, hi);
     return lerp(history, current, cloud.temporal.x);
 }
 #endif

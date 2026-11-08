@@ -414,8 +414,11 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
     u.ambientBottom = glm::vec4((sunColor * sinSun * (1.0f - 0.8f * cover) + ambient) * 0.15f, 0.0f);
     const int steps = std::clamp(settings.cloudSteps, 8, 256);
     const int lightSteps = steps >= 64 ? 6 : 4;
-    u.march = glm::vec4(float(steps), float(lightSteps), kLongestPath,
-                        float(std::fmod(double(frame.sequence) * 0.6180339887, 1.0)));
+    u.march = glm::vec4(float(steps), float(lightSteps), kLongestPath, 0.0f);
+    // The march's noise from a place of its own in every frame (an R2 sequence of whole pixels).
+    const double n = double(frame.sequence);
+    u.temporal = glm::vec4(1.0f, 0.0f, std::floor(float(std::fmod(n * 0.7548776662, 1.0) * 256.0)),
+                           std::floor(float(std::fmod(n * 0.5698402910, 1.0) * 256.0)));
 
     commands.pushUniforms(kFragment, 0, fu);
     const gpu::TextureSamplerBinding weatherBinding{m_weatherMap, m_weatherSampler};
@@ -484,7 +487,8 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
             }
             if (settings.cloudTemporal) {
                 const bool valid = m_historyValid && !frame.cut && m_lastMode == Clouds::Volumetric;
-                u.temporal = glm::vec4(kCurrentWeight, valid ? 1.0f : 0.0f, 0.0f, 0.0f);
+                u.temporal.x = kCurrentWeight;
+                u.temporal.y = valid ? 1.0f : 0.0f;
                 const int next = m_historyIndex ^ 1;
                 if (gpu::RenderPass pass = commands.beginRenderPass(gpu::ColorTarget{
                         .texture = m_history[std::size_t(next)], .load = gpu::LoadOp::DontCare, .cycle = true})) {

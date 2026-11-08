@@ -1,16 +1,17 @@
 // The rain and snow (src/render/Rain.cpp, docs/weather.md, "Rain" and "Snow"): the rain occlusion map copied into
 // the weather maps, the streaks and splashes of the drops and the snow's flakes near the camera (drawn after TAA and
 // upscaling into the output-size image, tested against the scene's depth here), and the shafts of rain and snow with
-// the rainbow (marched at half or a quarter of the render size after the HDR pass, then blended into the render-size
-// HDR image).
+// the rainbow (marched at half or a quarter of the render size after the HDR pass, smoothed there, then blended into
+// the render-size HDR image).
 //
 // The streaks are procedural: a fixed set of drops in a box around the camera, each falling with the rain's velocity
 // from a place of its own and wrapped around the box, so nothing is simulated or stored; the wind's gusts and eddies
 // carry it off that path by their offset there (quench/Wind.hlsli) and turn its streak. A drop is drawn where the
 // weather's rain there (its precipitation times the share that falls as rain) is above its own random threshold and
-// the rain occlusion map lets the rain reach it. Its streak is the distance it falls during an exposure, at least one
-// pixel wide (its opacity scaled by its width below that), lit by the sky and the ground it refracts and the sun it
-// sends forward. The splashes land on the highest surface the occlusion map has at a random place near the camera,
+// the rain occlusion map lets the rain reach it. Its streak is the path it moved along during an exposure (a sixtieth
+// of a second), a soft capsule as wide as the drop and the lens's blur of it, at least a pixel and a half (its
+// opacity thinned by its width below that), mostly transparent, lit by the sky and the ground it refracts and the sun
+// it sends forward; more drops in a small box near the camera than farther out. The splashes land on the highest surface the occlusion map has at a random place near the camera,
 // for a short lifetime each. The flakes are the same with the snow's velocity, a flutter of their own and the
 // snowfall's share: small soft discs, drawn out a little along their motion, lit as white diffuse scatterers.
 //
@@ -89,46 +90,67 @@ SamplerState mapsSampler : QUENCH_SAMPLER(0);
 #endif
 
 #if defined(QUENCH_ENTRY_rain_streak_vs)
+// A streak is drawn at least this many pixels wide, its opacity thinned by its width below that (a thinner quad
+// would flicker from pixel to pixel as the drop moves).
+static const float kStreakMinPixels = 1.5;
+
 RainDropOut rain_streak_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     const uint id = iid * 8u;
-    const float side = rain.box.w * 2.0;
+    // The drops near the camera, which show as streaks, in a smaller box of their own, more of them in less room:
+    // the rain grows denser toward the camera there and fades into the sparser, larger box around it.
+    const float4 box = float(iid) < rain.streaks.x ? rain.nearBox : rain.box;
+    const float side = box.w * 2.0;
     const float3 velocity = rain.fall.xyz * lerp(0.85, 1.15, rainRandom(id + 3u));
     // A fixed place in a lattice of the box's size, moved by the fall and wrapped around the box's centre.
     const float3 start = float3(rainRandom(id), rainRandom(id + 1u), rainRandom(id + 2u)) * side;
-    const float3 moved = start + velocity * rain.fall.w - rain.box.xyz;
-    const float3 carried = rain.box.xyz + (frac(moved / side) - 0.5) * side;
-    // Gusts and eddies carry it off its mean path, and turn its streak with their wind.
-    const QuenchWind wind = quenchWindAt(carried);
-    const float3 head = carried + wind.offset;
+    const float3 moved = start + velocity * rain.fall.w - box.xyz;
+    const float3 carried = box.xyz + (frac(moved / side) - 0.5) * side;
+    // Gusts and eddies carry it off its mean path.
+    const float3 head = carried + quenchWindAt(carried).offset;
     const float dist = length(head - quenchFrame.cameraPos.xyz);
-    const float fade = saturate(1.0 - dist * dist / (rain.box.w * rain.box.w)) * saturate((dist - 0.3) * 2.0);
+    const float fade = saturate(1.0 - dist * dist / (box.w * box.w)) * smoothstep(0.3, rain.lens.w, dist);
     if (fade <= 0.0) return rainCulled();
     const float4 weather = quenchWetnessAt(mapsTex, mapsSampler, head.xz);
-    if (rainRandom(id + 4u) >= weather.b * weather.a) return rainCulled();
+    const float intensity = weather.b * weather.a;
+    if (rainRandom(id + 4u) >= intensity) return rainCulled();
     if (quenchRainExposure(mapsTex, mapsSampler, head) < 0.5) return rainCulled();
 
-    const float3 tail = head - (velocity + wind.gust) * rain.streaks.y;
+    // Where it was an exposure ago, by the same fall and the wind's offset there and then: the streak lies along the
+    // drop's motion, which the gusts and eddies turn, so that it moves along its streak from frame to frame.
+    WindUniforms before = quenchFrameWind();
+    before.time.x -= rain.streaks.y;
+    before.air.xy -= before.air.zw * (before.speed.x * rain.streaks.y);
+    const float3 back = carried - velocity * rain.streaks.y;
+    const float3 tail = back + quenchWeatherWind(before, back).offset;
     const float4 c0 = mul(rain.viewProjStable, float4(head, 1.0));
     const float4 c1 = mul(rain.viewProjStable, float4(tail, 1.0));
     if (c0.w < 0.1 || c1.w < 0.1) return rainCulled();
-    // In pixels: the streak's axis, and its width (at least a pixel, its opacity scaled by its width below that).
     const float2 halfSize = 0.5 * rain.target.xy;
     float2 axis = (c1.xy / c1.w - c0.xy / c0.w) * halfSize;
     const float pixels = sqrt(dot(axis, axis));
     axis = pixels > 1e-3 ? axis / pixels : float2(0.0, -1.0);
     const float2 across = float2(-axis.y, axis.x);
-    const float width = rain.streaks.z * rain.light.w / c0.w;
-    const float drawn = max(width, 1.0);
+    // In pixels: the drop (bigger in heavier rain), the lens's blur of it (focused at lens.y: drops nearer and much
+    // farther are out of focus) and the width drawn. Its light spreads over the blur, and below the least width over
+    // that: a near drop is a wide, faint smear, a distant one a faint thread.
+    const float diameter = lerp(rain.streaks.z, rain.streaks.w, intensity) * lerp(0.7, 1.3, rainRandom(id + 5u));
+    const float sharp = diameter * rain.light.w / c0.w;
+    const float blur = rain.lens.x * rain.light.w * abs(1.0 / c0.w - 1.0 / rain.lens.y);
+    const float drawn = max(sharp + blur, kStreakMinPixels);
+    const float radius = drawn * 0.5;
 
+    // A capsule from the head back to the tail: x across (-1..1 of its radius), y along (in radii, 0 at the head, z at
+    // the tail).
     const float2 corner = kRainCorners[vid];
-    float4 position = corner.y < 0.5 ? c0 : c1;
-    const float2 offset = across * (corner.x * drawn * 0.5) + axis * ((corner.y * 2.0 - 1.0) * 0.5);
-    position.xy += offset / halfSize * position.w;
+    const float along = lerp(-radius, pixels + radius, corner.y);
+    const float2 ndc = c0.xy / c0.w + (across * (corner.x * radius) + axis * along) / halfSize;
+    // In NDC with w = 1: the depth (z / w is linear along a line on the screen) between the head's and the tail's.
+    const float depth = lerp(c0.z / c0.w, c1.z / c1.w, saturate(along / max(pixels, 1e-3)));
 
     RainDropOut o;
-    o.position = position;
-    o.coord = float3(corner, 0.0);
-    const float opacity = rain.streaks.w * min(width, 1.0) * fade;
+    o.position = float4(ndc, depth, 1.0);
+    o.coord = float3(corner.x, along / radius, pixels / radius);
+    const float opacity = rain.lens.z * (sharp / drawn) * fade;
     o.color = float4(rainDropLight(mapsTex, mapsSampler, head) * opacity, opacity);
     return o;
 }
@@ -257,11 +279,13 @@ bool rainHidden(float4 position) {
 #endif
 
 #if defined(QUENCH_ENTRY_rain_streak_fs)
+// The drop's blurred disc drawn out along its motion: even along the streak, soft across it and at its ends.
 float4 rain_streak_fs(RainDropOut vin) : SV_Target0 {
     if (rainHidden(vin.position)) discard;
-    const float across = saturate(1.0 - abs(vin.coord.x));
-    const float along = sqrt(saturate(sin(vin.coord.y * QUENCH_PI)));
-    return vin.color * (across * along);
+    const float y = vin.coord.y;
+    const float dy = y < 0.0 ? y : max(y - vin.coord.z, 0.0);
+    const float d = saturate(1.0 - (vin.coord.x * vin.coord.x + dy * dy));
+    return vin.color * (d * d);
 }
 #endif
 
@@ -298,7 +322,7 @@ float4 rain_flake_fs(RainDropOut vin) : SV_Target0 {
 
 // ---------------------------------------------------------------- the shafts and the rainbow
 
-#if defined(QUENCH_ENTRY_rain_shafts_fs) || defined(QUENCH_ENTRY_rain_shafts_up_fs)
+#if defined(QUENCH_ENTRY_rain_shafts_fs) || defined(QUENCH_ENTRY_rain_shafts_blur_fs) || defined(QUENCH_ENTRY_rain_shafts_up_fs)
 Texture2D<float> depthTex : QUENCH_TEXTURE(0);
 SamplerState depthSampler : QUENCH_SAMPLER(0);
 
@@ -308,12 +332,17 @@ float2 shaftPixel(float2 texel) {
     return min(texel * scale + floor(scale * 0.5), rain.target.xy - 1.0) + 0.5;
 }
 
-// The distance (m) from the camera to the scene at a target uv, 30 km where the sky is.
-float shaftDistance(float2 uv) {
+// The farthest the shafts are marched (m).
+static const float kShaftFar = 30000.0;
+
+// The distance (m) from the camera to the scene at a target uv along dir. A ray that misses the scene ends where it
+// meets the weather's ground (y = 0), as the sky draws ground below the horizon: past the scene's far edge the veil
+// grows on from the edge's instead of jumping to the whole distance there.
+float shaftDistance(float2 uv, float3 dir) {
     const float depth = depthTex.SampleLevel(depthSampler, uv, 0.0);
-    if (depth <= 0.0) return 30000.0;
+    if (depth <= 0.0) return dir.y < -1e-4 ? min(max(quenchFrame.cameraPos.y, 0.0) / -dir.y, kShaftFar) : kShaftFar;
     const float4 w = mul(quenchFrame.invViewProj, float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0));
-    return min(length(w.xyz / w.w - quenchFrame.cameraPos.xyz), 30000.0);
+    return min(length(w.xyz / w.w - quenchFrame.cameraPos.xyz), kShaftFar);
 }
 #endif
 
@@ -367,13 +396,14 @@ float3 rainbow(float theta) {
 // rain does (a heavy snowfall's visibility is about 800 m against the rain's 2.5 km), falls in smoother curtains and
 // sends more of the sun's light toward the camera; the part of the precipitation whose kind is not drawn (rain or
 // snow off) is left out. Drawn at a reduced size (rain.rainbow.w target pixels per texel), each texel for the target
-// pixel at its block's centre; rain_shafts_up_fs blends it as color + destination * transmittance.
+// pixel at its block's centre; rain_shafts_blur_fs smooths it and rain_shafts_up_fs blends it as color + destination
+// * transmittance.
 float4 rain_shafts_fs(FullscreenOut vin) : SV_Target0 {
     const float2 pixel = shaftPixel(floor(vin.position.xy));
     const float2 uv = pixel * rain.target.zw;
     const float3 camera = quenchFrame.cameraPos.xyz;
     const float3 dir = quenchViewRay(uv);
-    const float sceneDistance = shaftDistance(uv);
+    const float sceneDistance = shaftDistance(uv, dir);
     // The part of the ray below the cloud base.
     const float base = rain.shafts.y;
     float t0 = rain.shafts.w, t1 = sceneDistance;
@@ -386,7 +416,10 @@ float4 rain_shafts_fs(FullscreenOut vin) : SV_Target0 {
     if (t1 <= t0) return float4(0.0, 0.0, 0.0, 1.0);
 
     const int steps = int(rain.shafts.x);
-    const float jitter = frac(ign(vin.position.xy) + rain.rainbow.z);
+    // The march's noise read at a place of its own every frame: TAA then averages frames whose patterns do not line
+    // up (one pattern shifted a little each frame lines up with itself along the camera's motion).
+    const float2 noiseAt = floor(frac(rain.rainbow.z * float2(0.7548776662, 0.5698402910)) * 256.0);
+    const float jitter = ign(vin.position.xy + noiseAt);
     const bool sun = rain.sun.w > 0.0;
     float3 bow = float3(0.0, 0.0, 0.0);
     if (sun && rain.rainbow.x > 0.0) bow = rainbow(acos(clamp(dot(dir, -quenchFrame.sunDir.xyz), -1.0, 1.0)));
@@ -417,20 +450,38 @@ float4 rain_shafts_fs(FullscreenOut vin) : SV_Target0 {
         float p = weather.b;
         if (p <= 0.01) continue;
         // Fall streaks: the rain is denser in curtains a few hundred metres apart, the same at every height; snow in
-        // wider, smoother ones.
-        const float large = valueNoise(P.xz / 220.0);
+        // wider, smoother ones. A step longer than a curtain crosses several and sees their mean (a point would
+        // pick one at random from step to step and pixel to pixel: noise in the distance).
+        const float largeMean = saturate(dt * (1.0 / 330.0) - (1.0 / 3.0));
+        float large = 0.5;
+        [branch] if (largeMean < 1.0) large = lerp(valueNoise(P.xz / 220.0), 0.5, largeMean);
         float snow = 0.0;
         [branch] if (snowy) snow = shaftSnow(P);
         float density = lerp(3.0, 5.0, large);
         [branch] if (snow < 1.0) {
-            const float streaks = large * 0.65 + valueNoise(P.xz / 70.0 + 7.3) * 0.35;
+            const float fineMean = saturate(dt * (1.0 / 105.0) - (1.0 / 3.0));
+            float fine = 0.5;
+            [branch] if (fineMean < 1.0) fine = lerp(valueNoise(P.xz / 70.0 + 7.3), 0.5, fineMean);
+            const float streaks = large * 0.65 + fine * 0.35;
             density = lerp(lerp(0.25, 1.75, streaks), density, snow);
         }
         const float3 phase = lerp(sunShare + bow, (float3)(sunShare * 1.5), snow);
         p *= lerp(rain.flakeLight.w, rain.snowFall.w, snow);
         const float sigma = rain.shafts.z * p * density * saturate((base - P.y) / 150.0);
         float3 light = rain.light.rgb * ((1.0 - 0.65 * weather.r) / openHere);
-        if (sun) light += rain.sun.rgb * quenchCloudShadow(mapsTex, mapsSampler, P) * phase;
+        [branch] if (sun) {
+            // The clouds' shadow at the step's point, on short steps only: a step longer than the shadows' gaps
+            // catches a sunlit gap in one pixel and misses it in the next (dotted rays), so long steps, and the air
+            // past the shadow map (the shafts reach farther), take the share of the sun the weather's cover there
+            // lets through.
+            const float mean = 1.0 - weather.r;
+            float shadow = mean;
+            const float detail = saturate((1.0 / 0.75) - dt * (1.0 / 900.0));
+            [branch] if (detail > 0.0) {
+                shadow = lerp(mean, quenchCloudShadow(mapsTex, mapsSampler, P, mean), detail);
+            }
+            light += rain.sun.rgb * shadow * phase;
+        }
         const float stepT = exp(-sigma * dt);
         color += T * light * (1.0 - stepT);
         T *= stepT;
@@ -441,13 +492,43 @@ float4 rain_shafts_fs(FullscreenOut vin) : SV_Target0 {
 }
 #endif
 
-#if defined(QUENCH_ENTRY_rain_shafts_up_fs)
+#if defined(QUENCH_ENTRY_rain_shafts_blur_fs) || defined(QUENCH_ENTRY_rain_shafts_up_fs)
 Texture2D<float4> shaftsTex : QUENCH_TEXTURE(1);
 SamplerState shaftsSampler : QUENCH_SAMPLER(1);
 
-// The shafts at the target's size: the four nearest shaft texels, bilinear, each weighed down by how far the depth
-// it was marched for is from this pixel's (so that a near edge does not take the veil of the distance behind it).
-// The reversed depth is near / view depth, so the depths' ratio is the view depths' inverse ratio. Blended as
+// How much a shaft texel marched for the depth there counts at a pixel or texel of the depth here: less the farther
+// the two are apart (so that a near edge does not take the veil of the distance behind it). The reversed depth is
+// near / view depth, so the depths' ratio is the view depths' inverse ratio.
+float shaftDepthWeight(float here, float2 texel) {
+    const float there = max(depthTex.SampleLevel(depthSampler, shaftPixel(texel) * rain.target.zw, 0.0), 1e-7);
+    return 1.0 / (1e-3 + abs(here / there - 1.0));
+}
+#endif
+
+#if defined(QUENCH_ENTRY_rain_shafts_blur_fs)
+// The shafts smoothed at their reduced size: a 3x3 tent over the texels, weighed by their depths. Each texel's march
+// has a jitter of its own; TAA averages it over frames when the view holds still, but in motion it keeps less of its
+// history and the noise, upsampled into blocks of the target, reads as a screen-door over the rays.
+float4 rain_shafts_blur_fs(FullscreenOut vin) : SV_Target0 {
+    const float2 shaftSize = ceil(rain.target.xy / rain.rainbow.w);
+    const float2 texel = floor(vin.position.xy);
+    const float here = max(depthTex.SampleLevel(depthSampler, shaftPixel(texel) * rain.target.zw, 0.0), 1e-7);
+    float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+    float weights = 0.0;
+    [unroll] for (int y = -1; y <= 1; ++y) {
+        [unroll] for (int x = -1; x <= 1; ++x) {
+            const float2 at = clamp(texel + float2(float(x), float(y)), 0.0, shaftSize - 1.0);
+            const float w = (x == 0 ? 2.0 : 1.0) * (y == 0 ? 2.0 : 1.0) * shaftDepthWeight(here, at);
+            sum += shaftsTex.SampleLevel(shaftsSampler, (at + 0.5) / shaftSize, 0.0) * w;
+            weights += w;
+        }
+    }
+    return sum / weights;
+}
+#endif
+
+#if defined(QUENCH_ENTRY_rain_shafts_up_fs)
+// The shafts at the target's size: the four nearest shaft texels, bilinear, each weighed by its depth. Blended as
 // color + destination * transmittance.
 float4 rain_shafts_up_fs(FullscreenOut vin) : SV_Target0 {
     const float scale = rain.rainbow.w;
@@ -460,8 +541,7 @@ float4 rain_shafts_up_fs(FullscreenOut vin) : SV_Target0 {
     [unroll] for (int i = 0; i < 4; ++i) {
         const float2 texel = clamp(base + float2(float(i & 1), float(i >> 1)), 0.0, shaftSize - 1.0);
         const float2 b = float2((i & 1) != 0 ? f.x : 1.0 - f.x, (i >> 1) != 0 ? f.y : 1.0 - f.y);
-        const float there = max(depthTex.SampleLevel(depthSampler, shaftPixel(texel) * rain.target.zw, 0.0), 1e-7);
-        const float w = b.x * b.y / (1e-3 + abs(here / there - 1.0));
+        const float w = b.x * b.y * shaftDepthWeight(here, texel);
         sum += shaftsTex.SampleLevel(shaftsSampler, (texel + 0.5) / shaftSize, 0.0) * w;
         weights += w;
     }

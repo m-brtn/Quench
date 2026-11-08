@@ -172,9 +172,13 @@ today (SDL GPU's Metal and Vulkan through MoltenVK, the native Metal backend, th
    transmittance) and its depth: the layer is a shell on a sphere of the planet's radius (6360 km), so the clouds
    meet the horizon; the march ends at the highest top on the map (a stratus deck is marched through its few hundred
    metres, a storm through 7.5 km), at most 60 km of path, in steps that grow with the distance (each a constant
-   share of it) and stop when the ray is opaque, jittered per frame by the golden ratio. **The accumulation**
-   (`cloudTemporal`): each frame's march reprojected by its depth into the previous result and blended at 0.1; a cut
-   or a change of mode starts it again.
+   share of it) and stop when the ray is opaque, jittered per pixel by interleaved gradient noise read at a place of
+   its own in every frame (an R2 sequence of whole pixels: a pattern that only stepped on would repeat along a turning
+   view's reprojection and show as moving stripes). **The accumulation** (`cloudTemporal`): each frame's march,
+   smoothed by a 3x3 tent (the jitter's noise is finer than the clouds' shapes), blended at 0.1 with the previous
+   result reprojected by its depth, read Catmull-Rom (a bilinear read blurs it a little every frame the view moves,
+   and the blur builds up: smeared clouds while the camera turns) and kept within the range of this frame's 3x3
+   neighbourhood; a cut or a change of mode starts it again.
 4. **The sky cube** (with `skyCubeSize`): the sky with its clouds (24 steps, no detail erosion) into an Rgba16Float
    cube, `skyCubeFacesPerFrame` faces per frame in turns (all six on the first frame, a cut or a change of mode),
    with mips for rough reflections.
@@ -237,8 +241,8 @@ single raining cloud rains on its own patch of ground and the sun shines beside 
 | Level | Streaks | Box around the camera | Splashes | Within | Shaft steps | Shafts marched at |
 |---|---|---|---|---|---|---|
 | `Low` | 8192 | 18 m | none | | 12 | a quarter of the render size per side |
-| `Medium` | 24576 | 24 m | 1536 | 10 m | 20 | half |
-| `High` | 49152 | 30 m | 4096 | 15 m | 32 | half |
+| `Medium` | 24576 | 24 m | 1536 | 10 m | 17 | half |
+| `High` | 49152 | 30 m | 4096 | 15 m | 28 | half |
 
 `Renderer::effects().rain` and `.rainShafts` say what runs after the fallbacks; `RenderStats::rain`, `rainAtCamera`,
 `rainStreaks`, `rainSplashes`, `rainOccluders`, `rainShafts`, `rainbow` and `rainCover` what a frame drew.
@@ -263,29 +267,43 @@ off with a line; the path tracer's frame has no rain (a line). Every backend has
    changes.
 3. **Wet surfaces** in the HDR pass and the G-buffer ([Wetness and puddles](#wetness-and-puddles)).
 4. **The shafts** (with clouds), after the HDR pass and before TAA: marched at a quarter or half of the render size
-   from 20 m to the scene, the cloud base or 30 km, in steps that grow with the square of their number. Each step
-   reads the precipitation of the clouds' weather map at a mip as long as the step (a far step does not miss a
-   shaft), denser in fall streaks (value noise at 220 and 70 m), thinning in the 150 m below the cloud base; an
-   extinction of 0.0012 per metre at precipitation 1 (a visibility of about 2.5 km); single scattering of the sky's
-   and the ground's light (from the share of the sky the clouds close at the camera, the radiance of their bases,
-   `FrameUniforms::overcast`; dimmed where more cloud is above the step than above the camera) and of the sun's
-   through the cloud shadow, with
-   the rainbow (the primary bow 40.6 to 42.3 degrees from the antisolar point, the secondary 50.4 to 53.4 at a fifth
-   of it, the whole at 0.06 of the sun's light). Jittered per frame (TAA blends the steps); blended into the HDR
-   image by a depth-aware upsample (the four nearest texels' bilinear weights divided by how far their depth is from
-   the pixel's), so a near edge does not take the veil of the distance behind it.
+   from 20 m to the scene, the cloud base or 30 km, in steps that grow with the square of their number; a ray that
+   misses the scene below the horizon ends on the weather's ground (y = 0), as the sky draws ground there, so the
+   veil past the scene's far edge grows on from the edge's instead of jumping to 30 km. Each step reads the
+   precipitation of the clouds' weather map at a mip as long as the step (a far step does not miss a shaft), denser
+   in fall streaks (value noise at 220 and 70 m, each fading to its mean on steps longer than half its scale:
+   sampled at points, a far step would pick a streak at random from pixel to pixel), thinning in the 150 m below the
+   cloud base; an extinction of 0.0012 per metre at precipitation 1 (a visibility of about 2.5 km); single
+   scattering of the sky's and the ground's light (from the share of the sky the clouds close at the camera, the
+   radiance of their bases, `FrameUniforms::overcast`; dimmed where more cloud is above the step than above the
+   camera) and of the sun's through the cloud shadow on steps up to 300 m, fading to the share the weather's cover
+   lets through by 1200 m (a long step catches a sunlit gap in one pixel and misses it in the next: dotted rays) and
+   past the shadow map's 24 km (whose edge texels, drawn out, would show as stripes), with the rainbow (the primary
+   bow 40.6 to 42.3 degrees from the antisolar point, the secondary 50.4 to 53.4 at a fifth of it, the whole at 0.06
+   of the sun's light). Jittered per pixel by interleaved gradient noise read at a place of its own every frame (TAA
+   blends the steps); smoothed at the reduced size by a 3x3 tent weighed by depth (in motion TAA keeps less history,
+   and the jitter, upsampled into blocks, read as a screen-door over the rays); blended into the HDR image by a
+   depth-aware upsample (the four nearest texels' bilinear weights divided by how far their depth is from the
+   pixel's), so a near edge does not take the veil of the distance behind it.
 5. **The streaks and splashes**, after TAA and upscaling in the output-size image (TAA would smear them), tested
    against the scene's depth in the shader. Procedural: a fixed set of drops in a box around the camera, each falling
    with the rain's velocity from a place of its own and wrapped around the box, so nothing is simulated or stored; a
    drop is drawn where the precipitation there is above its own threshold and the occlusion map lets the rain reach
-   it. A streak is the distance its drop falls in 0.04 s, 6 mm wide (at least a pixel; thinner ones fainter), faded
-   toward the box's edge and within 0.3 m of the camera; lit by the sky's and the ground's light it refracts (as
-   radiance) and the sun's it scatters forward (Henyey-Greenstein, g 0.7): rain against a dark wall and rain toward
-   the sun shine. Splashes: crowns 15 cm high (give or take 30 %) for 0.25 s each at random places within the
-   radius on the highest surface the occlusion map has, a rim of droplets rising and spreading and four droplets
-   thrown up and out of it; twice the light the drops refract and 0.1 of the sun's irradiance (they glint where the
-   puddles' mirror of the sky around them does not). One instanced draw of six vertices per streak or splash (every
-   instance runs; culled ones are degenerate).
+   it. A streak is the path its drop moved along in a sixtieth of a second (12.5 cm at 7.5 m/s): from where it is
+   back to where the fall and the wind's offset put it then (the gusts and eddies turn the streak with the drop's
+   motion, so it moves along its streak from frame to frame), a soft capsule as wide as the drop (1 mm in light rain,
+   2.5 mm in heavy, give or take 30 %) and a lens's blur of it (6 mm aperture focused at 6 m: near drops are wide,
+   faint smears), at least 1.5 pixels (thinner ones fainter), at most 0.9 opaque where sharp; half of the streaks in
+   a box 0.4 times the size of the others' around the camera (the rain grows denser toward the camera there), faded
+   toward the boxes' edges and within 1.5 m of the camera. Lit by the sky's and the ground's light it refracts (as
+   radiance: under a closing cover the bases' radiance, 1.6 times the cover's mean for the sky above the horizon a
+   drop sees) and the sun's it scatters forward (Henyey-Greenstein, g 0.7): about as bright as what lies around it,
+   so rain shows as faint lines against a dark wall and toward the sun and hardly against the sky. Splashes: crowns
+   6 cm high (give or take 30 %) for 0.12 s each at random places within the radius on the highest surface the
+   occlusion map has, a rim of droplets rising and spreading and four droplets thrown up and out of it; twice the
+   light the drops refract and 0.1 of the sun's irradiance (they glint where the puddles' mirror of the sky around
+   them does not). One instanced draw of six vertices per streak or splash (every instance runs; culled ones are
+   degenerate).
 
 Where the build differs from the agreed plan: the drops are procedural instances instead of compute particles with
 an indirect draw (the same look without state, on every backend and in the iOS Simulator); the shafts are a pass of
@@ -515,7 +533,10 @@ The march's cost follows its steps more than its pixels (half size has a quarter
 full size); a storm costs less than fair weather because its rays turn opaque sooner. The noise is drawn once,
 outside these numbers. Drawing the weather and shadow maps in turns took the weather range from
 0.36 to 0.22 ms, and the sky cube without detail and with 24 instead of 32 steps from 0.41 to 0.28 ms (two faces per
-frame). Measured offscreen only, never on the screen or on a phone.
+frame). Measured offscreen only, never on the screen or on a phone. The accumulation's changes against the hatching
+in motion (2026-11-08, [Clouds](#clouds)) cost 2 to 4 % of the clouds range at 1080p in one session before and
+after (half size 1.47 and 1.51 ms, full size 3.79 and 3.90, the storm 1.07 and 1.09 and 2.80 and 2.90, the phone
+defaults 1.11 and 1.13).
 
 **The rain** (`scenarios/rain_cost.txt`, the same way: the Rain here preset from the ground and the storm preset
 from the air, half-size clouds, the snow off, 3 s per setting; 2026-11-08 00:57, with the splashes of part 3's
@@ -539,6 +560,14 @@ the most where rain fills the view (a storm seen from the air); at full size the
 1080p (part 2's first runs), hence the reduced size. Their upsample is most of `Low`'s shaft time. The drops cost by
 their count where rain falls near the camera (every instance runs) and nothing where none does.
 
+The shafts' smoothing and the march's changes of 2026-11-08 afternoon (the dotted rays and the horizon's band,
+[Rain](#rain)), with 17 and 28 steps at `Medium` and `High` instead of 20 and 32, measured in one session before and
+after (17:08-17:15, the lower median of two alternated runs, other GPU work on the Mac): the shafts from the ground
+0.19, 0.48 and 0.68 ms before, 0.22, 0.53 and 0.74 after at 1080p (0.28, 0.69, 0.94 and 0.31, 0.73, 1.00 at
+1206 x 2622), from the air 0.24, 0.87, 1.29 and 0.26, 0.80, 1.25 (0.36, 1.35, 2.03 and 0.41, 1.34, 2.08). The
+smoothing pass is about 0.02 ms of it at `Low` and 0.05 ms at `Medium` and `High` at 1080p; the drops with the new
+streaks and splashes 0.08, 0.14 and 0.45 ms, as before.
+
 **The snow** (`scenarios/snow_cost.txt`, 2026-11-08 01:03, the same way with the weather's clock stopped: the
 Snowfall preset from the ground and the Snow showers preset from the sky view, one shower over the camera; the
 rain's drawing off but for the phone defaults): `rain_map`, `rain_shafts`, the drops' range (`rain`: with no rain
@@ -560,7 +589,10 @@ The snow's shafts cost more than the rain's under a snowfall (they begin nearer,
 version took 2.21 ms at `Medium` and 3.71 at `High` from the ground at 1080p: the step's snow share took the
 weather field's uniform block as a function argument, and the shader compilers copied the whole block at every
 step; reading it in place took them to 0.58 ms. The flakes cost by their count (0.04 to 0.12 ms) where snow falls
-near the camera, nothing where none does (nor the copy of the image).
+near the camera, nothing where none does (nor the copy of the image). With the shafts' changes of 2026-11-08
+afternoon (measured as the rain's above): from the ground 0.20, 0.57 and 0.77 ms before, 0.24, 0.64 and 0.87 after
+at 1080p (0.26, 0.70, 0.96 and 0.32, 0.81, 1.10 at 1206 x 2622), the snow showers from the sky view 0.30, 0.93 and
+1.34 before, 0.35, 1.03 and 1.48 after at 1206 x 2622: 10 to 15 % more, mostly the smoothing pass.
 
 **The wind** (`scenarios/wind_cost.txt`, 2026-11-08 02:30, the same way with the weather's clock stopped: the
 meadow in the windy storm, 79 swaying instances of about 2300 tufts of grass, 12 bushes and 3 trees; the rain and
@@ -674,14 +706,22 @@ without missed intervals with the thermal reaction on.
   motion and listened to the rain, the wind and the thunder on the Mac and on the iPhone 17 on 2026-11-08 ("yes,
   everything is fine"), a report on the section as a whole, not item by item (check mode items `weather.clouds`,
   `weather.rain`, `weather.snow`, `weather.wind`, `weather.rain_sound`, `weather.wind_sound`); the captures were
-  looked at still, the sound measured. The Physics section's wind was not named in the report.
+  looked at still, the sound measured. The Physics section's wind was not named in the report. A later report
+  (2026-11-08 14:39, the Mac, in motion: the rain unrealistic, a rippling hatch on the clouds while the view moves,
+  dotted sun shafts and a hard dotted band at the horizon, an ImGui ID conflict in the panel) was fixed the same
+  day (the streaks, the splashes, the clouds' accumulation, the shafts' sampling and smoothing above); the fixes
+  were checked in offscreen captures, still and over runs of moving frames, not yet looked at by the user. From
+  afar a snow shower's shaft still reads as a band with a flat top (its column has vertical sides and ends at the
+  flat cloud base), and in a dark storm the streaks are hard to see, as real rain is.
 - The wind: the plants sway in their vertex shader only (motion vectors, acceleration structures and rays see them
   upright); no slowdowns behind terrain or buildings; no bolts are drawn and the sky cube does not flash; thunder is
   one sound per flash, not echoes from the terrain; `WindDrag` has no torque, lift or shelter.
 - The traced effects see an overcast amount, not the clouds (above); the probe grid does not pick up single clouds.
 - Cloud shadows are a 24 km map on one plane (`cloudShadowHeight`, 0 by default): a surface far above or below it
   reads the shadow of the column its sun ray crosses at that height, so ground at very different heights (a valley
-  and a mountain top, isles at several heights) shares one plane; beyond the map its edge holds.
+  and a mountain top, isles at several heights) shares one plane; over the outer twentieth of the map and beyond
+  it (since 2026-11-08) a point takes the share of the sun the cover around the camera lets through (the shafts:
+  the cover over the step), not the shadow of its clouds.
 - The storm's bases are somewhat smooth and sheet-like. Inside a storm's rain (the Storm preset from the air) the
   view is an even veil of heavy rain with its streaks, about a kilometre of visibility, without curtains or gaps at
   that range; until 2026-11-08 the veil was lit by the sky's ambient term, pi times the clouds' bases, and shone as
