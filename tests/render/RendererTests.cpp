@@ -764,6 +764,83 @@ QUENCH_TEST(renderer_sun_disc_outshines_its_glow) {
           double(disc.b), double(glow));
 }
 
+// The view rays of the sky and the clouds keep their precision far from the world's origin. The sky is a function of
+// the direction alone, so a low sun seen through TAA's jittered frames looks the same from the origin, from 3 km up and
+// from 20 km away; and the clouds seen from 3 km up, over their tops, do not change when the camera rises by a
+// millimetre (rays taken from the near plane minus the camera's position were off by about 2 mrad at 3 km, differently
+// in every frame of the jitter, and the sea of clouds below shook).
+QUENCH_TEST(renderer_view_rays_far_from_the_origin) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.antiAliasing = AntiAliasing::Taa;
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    // TAA's whole jitter sequence from a renderer of its own.
+    const auto frames = [&](Scene& scene, const View& view) {
+        std::vector<std::vector<Rgba8>> out;
+        Result<Renderer> renderer = Renderer::create(device, settings);
+        CHECK(renderer, "renderer");
+        if (!renderer) return out;
+        for (int i = 0; i < 8; ++i) out.push_back(renderOnce(device, *renderer, scene, view, *target));
+        return out;
+    };
+    // The largest channel difference and the mean one, frame by frame.
+    const auto compare = [](const std::vector<std::vector<Rgba8>>& a, const std::vector<std::vector<Rgba8>>& b) {
+        int largest = 0;
+        double total = 0.0;
+        std::size_t count = 0;
+        for (std::size_t f = 0; f < std::min(a.size(), b.size()); ++f)
+            for (std::size_t i = 0; i < std::min(a[f].size(), b[f].size()); ++i)
+                for (const int d : {a[f][i].r - b[f][i].r, a[f][i].g - b[f][i].g, a[f][i].b - b[f][i].b}) {
+                    largest = std::max(largest, std::abs(d));
+                    total += std::abs(d);
+                    ++count;
+                }
+        return std::pair(largest, count > 0 ? total / double(count) : 255.0);
+    };
+
+    const glm::vec3 towardSun = skyDirection(4.0f, 0.0f);
+    const Daylight day = daylightFor(towardSun);
+    Scene sky(device);
+    sky.setEnvironment(day.environment);
+    sky.addLight({.type = LightType::Directional, .color = day.sunColor, .direction = -towardSun});
+    const auto sunFrom = [&](glm::vec3 eye) {
+        return frames(sky,
+                      {.view = glm::lookAt(eye, eye + towardSun, glm::vec3(0, 1, 0)), .fovY = 0.2f, .nearPlane = 0.1f});
+    };
+    const auto origin = sunFrom(glm::vec3(0.0f));
+    for (const glm::vec3 eye : {glm::vec3(0.0f, 3000.0f, 0.0f), glm::vec3(4000.0f, 20000.0f, -3000.0f)}) {
+        const auto [largest, mean] = compare(origin, sunFrom(eye));
+        std::printf("  the sun from %.0f %.0f %.0f: largest difference %d, mean %.3f\n", double(eye.x), double(eye.y),
+                    double(eye.z), largest, mean);
+        CHECK(largest <= 4 && mean <= 0.05,
+              "the sky from %.0f %.0f %.0f as from the origin: largest difference %d, mean %.3f", double(eye.x),
+              double(eye.y), double(eye.z), largest, mean);
+    }
+
+    Scene clouds(device);
+    clouds.setEnvironment(day.environment);
+    clouds.addLight({.type = LightType::Directional, .color = day.sunColor, .direction = -towardSun});
+    // Cumulus only, their tops at 2.2 km.
+    clouds.setWeather(weather::Weather(
+        weather::Settings{.coverage = 0.5f, .typeVariation = 0.0f, .cirrus = 0.0f, .cloudBase = 700.0f}));
+    // Toward the horizon, 3 degrees down onto the clouds, from 3 km and from a millimetre higher.
+    const glm::vec3 ahead = glm::normalize(glm::vec3(0.4f, -0.052f, -1.0f));
+    const auto cloudsFrom = [&](float height) {
+        const glm::vec3 eye(0.0f, height, 0.0f);
+        return frames(clouds,
+                      {.view = glm::lookAt(eye, eye + ahead, glm::vec3(0, 1, 0)), .fovY = 0.3f, .nearPlane = 0.1f});
+    };
+    for (const Clouds mode : {Clouds::Layer, Clouds::Volumetric}) {
+        settings.clouds = mode;
+        const auto [largest, mean] = compare(cloudsFrom(3000.0f), cloudsFrom(3000.001f));
+        std::printf("  clouds %d from 3 km, the camera a millimetre higher: largest difference %d, mean %.3f\n",
+                    int(mode), largest, mean);
+        CHECK(largest <= 4 && mean <= 0.05, "clouds %d: a millimetre moves them: largest difference %d, mean %.3f",
+              int(mode), largest, mean);
+    }
+}
+
 // A raining cumulonimbus overhead (a weather cell in a clear sky): its shadow takes the sun off the ground in both
 // cloud modes, the sky cube is drawn whole on the first frame and in turns after it, and with clouds off (the
 // default) the weather changes nothing.

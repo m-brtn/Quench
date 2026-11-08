@@ -371,10 +371,8 @@ float3 rainbow(float theta) {
 float4 rain_shafts_fs(FullscreenOut vin) : SV_Target0 {
     const float2 pixel = shaftPixel(floor(vin.position.xy));
     const float2 uv = pixel * rain.target.zw;
-    const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     const float3 camera = quenchFrame.cameraPos.xyz;
-    const float4 far = mul(quenchFrame.invViewProj, float4(ndc, 1.0, 1.0));
-    const float3 dir = normalize(far.xyz / far.w - camera);
+    const float3 dir = quenchViewRay(uv);
     const float sceneDistance = shaftDistance(uv);
     // The part of the ray below the cloud base.
     const float base = rain.shafts.y;

@@ -458,11 +458,10 @@ float4 cloud_shadow_layer_fs(FullscreenOut vin) : SV_Target0 { return cloudShado
 
 // ---------------------------------------------------------------- the march, its accumulation and the sky
 
-// A view ray without the TAA jitter through a uv of the target (top left 0, 0).
+// A view ray without the TAA jitter through a uv of the target (top left 0, 0), read at depth 0 as quenchViewRay is.
 float3 cloudViewRay(float2 uv) {
     const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-    const float4 w = mul(cloud.invViewProjStable, float4(ndc, 1.0, 1.0));
-    return normalize(w.xyz / w.w - quenchFrame.cameraPos.xyz);
+    return normalize(mul(cloud.invViewProjStable, float4(ndc, 0.0, 1.0)).xyz);
 }
 
 #if defined(QUENCH_ENTRY_cloud_march_fs)

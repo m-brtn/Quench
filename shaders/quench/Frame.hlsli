@@ -12,11 +12,13 @@ cbuffer QuenchFrameBlock : QUENCH_UNIFORM(0) {
     FrameUniforms quenchFrame;
 };
 
-// Unit direction from the camera through a uv of the render target (top left 0, 0).
+// Unit direction from the camera through a uv of the render target (top left 0, 0). Read at depth 0, the far end of
+// the renderer's infinite projection, where invViewProj gives a direction without the camera's translation: a point
+// on the near plane minus the camera's position loses the direction's precision away from the world's origin (about
+// 2 mrad at 2 km).
 float3 quenchViewRay(float2 uv) {
     const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-    const float4 w = mul(quenchFrame.invViewProj, float4(ndc, 1.0, 1.0));
-    return normalize(w.xyz / w.w - quenchFrame.cameraPos.xyz);
+    return normalize(mul(quenchFrame.invViewProj, float4(ndc, 0.0, 1.0)).xyz);
 }
 
 // View distance of a world position along the camera's forward axis.
