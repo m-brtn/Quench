@@ -44,8 +44,8 @@ grassy isles above a sea of clouds) needed from it.
   layer 2 and 0.001, before 45 and 0.650; the volumetric clouds 1 and 0.006, before 8 and 0.131). In the game,
   standing still at 2.2 km, the cloud band's mean frame-to-frame difference fell from 0.511 to 0.100 (Light,
   2560x1440) and its vertical shift from 0.261 px at most to 0.075. The demo's `demo_weather.png`,
-  `demo_weather_sunset.png` and `demo_snow_sky.png` were replaced (the clouds about 1 px higher; mean differences
-  0.59, 0.58 and 0.66 against the old images); `tools/check.sh quick render demo hello` 254 of 254.
+  `demo_weather_sunset.png` and `demo_snow_sky.png` were replaced (the clouds about 1 px lower in the frame; mean
+  differences 0.59, 0.58 and 0.66 against the old images); `tools/check.sh quick render demo hello` 254 of 254.
 
 ## What was not verified
 
