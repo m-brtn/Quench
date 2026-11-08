@@ -183,7 +183,8 @@ endfunction()
 # any sound as quench/weather/rain_light.wav, rain_heavy.wav, rain_far.wav, rain_cover.wav, wind_light.wav,
 # wind_strong.wav, thunder_near.wav and thunder_far.wav. A game that plays them
 # lists <name> in quench_add_game(... COOKED_ASSETS); one with its own sounds names them instead.
-set(_QUENCH_COOK_TOOLS_DIR ${CMAKE_CURRENT_LIST_DIR}/../tools)
+# A cache variable: the function is called from a game's directories, which do not see this file's scope.
+set(_QUENCH_COOK_TOOLS_DIR ${CMAKE_CURRENT_LIST_DIR}/../tools CACHE INTERNAL "")
 function(quench_weather_sounds name)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(script ${_QUENCH_COOK_TOOLS_DIR}/assets/make_weather_sounds.py)
