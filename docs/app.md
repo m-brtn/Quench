@@ -94,6 +94,12 @@ written. `quench::app::imguiTexture(texture)` gives an id for `ImGui::Image`. Th
 (`quench/app/ImGuiRenderer.h`), so a program with its own window and loop (a game on its way to the app shell) can
 draw ImGui through `quench::gpu` without `App`: it creates the ImGui context and the SDL3 platform backend itself.
 
+Two items with the same ID in one frame (the same label in one window) are a bug that ImGui reports only while the
+mouse is over one of them. `quench_imgui` is built with `IMGUI_ENABLE_TEST_ENGINE` and the engine's hooks
+(`src/app/ImGuiIdCheck.cpp`; ImGui's test engine itself is not used), which the app turns on in scripted runs and in
+builds with assertions: they look at every item of every frame, and each ID two items share is logged once as an
+error with its label and window and counted in the scenario value `imgui_id_conflicts`.
+
 ## Command line flags
 
 `--help` prints them; arguments the engine does not know go to `createGame`.
@@ -214,7 +220,10 @@ Values: `time`, `frame`, `ticks`, `fps`, `frame_ms`, `cpu_ms`, `gpu_ms`, `window
 `gamepad` (1 when connected), `fingers`, `action:NAME` (an action's value), `hdr` (1 while the output is HDR),
 `hdr_supported`, `hdr_headroom` (of the output; 1 in SDR), `display_headroom`, `display_headroom_potential`,
 `capture_peak` (of the last capture,
-in multiples of paper white; -1 before one), after `perf_end` `perf_frames`,
+in multiples of paper white; -1 before one), `imgui_id_conflicts` (IDs that two ImGui items of one frame shared so
+far, the same label in one window without `##` or `PushID`: ImGui shows its "conflicting ID" error only while the
+mouse is over one of them, so the app looks at every item of every frame through ImGui's test engine hooks, in
+scripted runs and builds with assertions, and logs an error with the label once per ID), after `perf_end` `perf_frames`,
 `perf_frame_avg`, `perf_frame_p10`, `perf_frame_p50`, `perf_frame_p95`, `perf_frame_p99`, `perf_frame_max`,
 `perf_cpu_avg`, `perf_cpu_p50`, `perf_cpu_p95`, `perf_cpu_p99`, `perf_gpu_avg`, `perf_gpu_min`, `perf_gpu_p10`,
 `perf_gpu_p50`, `perf_gpu_p95` (milliseconds; -1 when

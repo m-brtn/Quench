@@ -2,6 +2,7 @@
 // engine, ImGui and the game see them exactly like real input, one frame later.
 
 #include "AppState.h"
+#include "ImGuiIdCheck.h"
 #include "ScenarioPoint.h"
 #include "ThermalState.h"
 
@@ -459,6 +460,7 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
     if (name == "display_headroom") return double(s.displayHeadroom);
     if (name == "display_headroom_potential") return double(s.displayPotentialHeadroom);
     if (name == "capture_peak") return s.capturePeak;
+    if (name == "imgui_id_conflicts") return double(imguiIdConflicts());
     if (name == "memory_mb") {
         const std::optional<std::uint64_t> bytes = s.app.memoryFootprint();
         return bytes ? double(*bytes) / double(1u << 20) : -1.0;

@@ -207,7 +207,8 @@ Link what the game uses beside `quench_add_game()`:
   `click`, `mouse`, `gamepad`, `resize`, `capture`, `audio_measure`, `perf_begin`, `perf_end`, `max_frame_rate`,
   `thermal_state` (a fake thermal state, `system` ends it; also `--thermal-state NAME`), `include`, `quit`.
   Values: the game's (`scenarioValue`), `time`, `action:NAME`, `audio_played`, `audio_rms`, `gpu_resources`,
-  `thermal_reaction`, `frame_rate_limit` and more.
+  `thermal_reaction`, `frame_rate_limit`, `imgui_id_conflicts` (ImGui items sharing an ID in one frame, each also
+  logged as an error: `expect imgui_id_conflicts == 0` after showing a panel) and more.
   Each check logs `ok` or `FAIL line N`; the exit code is 1 when one failed. Scripted runs are deterministic: one
   fixed step per frame. Points in percent (`50% 50%`) or `@NAME` work at any window size.
 - **ctest.** One test per scenario with `FAIL_REGULAR_EXPRESSION "FAIL line"`, as the template's `smoke`.

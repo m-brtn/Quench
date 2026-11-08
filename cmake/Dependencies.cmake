@@ -332,5 +332,14 @@ add_library(quench_imgui STATIC
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp)
 target_include_directories(quench_imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+# The test engine's item hooks (the engine's, src/app/ImGuiIdCheck.cpp; not ImGui's test engine) find items with the
+# same ID; they run only while ImGuiContext::TestEngineHookItems is set. Public, so that every translation unit sees
+# the same enums.
+target_sources(quench_imgui PRIVATE ${PROJECT_SOURCE_DIR}/src/app/ImGuiIdCheck.cpp)
+if(NOT MSVC)
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/src/app/ImGuiIdCheck.cpp
+        PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+endif()
+target_compile_definitions(quench_imgui PUBLIC IMGUI_ENABLE_TEST_ENGINE)
 target_link_libraries(quench_imgui PUBLIC SDL3::SDL3-static)
 target_compile_features(quench_imgui PUBLIC cxx_std_20)

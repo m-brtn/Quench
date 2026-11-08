@@ -1,4 +1,5 @@
 #include "AppState.h"
+#include "ImGuiIdCheck.h"
 #include "ThermalState.h"
 
 #include "core/Platform.h"
@@ -6,6 +7,7 @@
 #include <quench/app/SdlFileSystem.h>
 #include <quench/app/SdlLog.h>
 #include <quench/audio/Wav.h>
+#include <quench/core/Assert.h>
 #include <quench/core/FileSystem.h>
 #include <quench/core/Log.h>
 #include <quench/core/Profile.h>
@@ -786,6 +788,7 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     io.IniFilename = nullptr; // window layouts are not saved (user files go through quench::fs)
     io.LogFilename = nullptr;
     const float scale = uiScale(s);
+    enableImGuiIdCheck(s.imgui.context, QUENCH_ENABLE_ASSERTS || s.options.deterministic());
     ImGui::StyleColorsDark();
     ImGui::GetStyle().ScaleAllSizes(scale);
     ImGui::GetStyle().FontScaleDpi = scale;
@@ -884,6 +887,9 @@ SDL_AppResult iterate(AppState& s) {
         ImGui::NewFrame();
         s.game->ui(s.app);
         ImGui::Render();
+        for (const std::string& conflict : takeImGuiIdConflicts())
+            log::error("app", "ImGui: two items with the same ID in one frame: {} (give one a \"##\" suffix)",
+                       conflict);
     }
 
     double waitMs = 0.0;

@@ -164,4 +164,6 @@ expect d_gpu_resources < 4
 expect d_gpu_resources > -4
 expect d_scene_instances == 0
 expect d_memory_mb < 64
+# No two items of one window with the same ID in any frame of the run (the app's check, docs/app.md).
+expect imgui_id_conflicts == 0
 quit

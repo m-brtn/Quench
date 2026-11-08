@@ -19,4 +19,5 @@ expect wind_at_floor < 7
 wait 3
 expect light_ball_x > -3
 set wind 0
+expect imgui_id_conflicts == 0
 quit

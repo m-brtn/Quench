@@ -250,10 +250,13 @@ public:
         int view = int(m_view);
         if (ImGui::Combo("View", &view, kViewNames.data(), int(kViewNames.size()))) setView(View(view));
         ImGui::TextUnformatted("Weather");
+        // Apart from the sliders' IDs: the Cirrus preset and the Cirrus slider share a label.
+        ImGui::PushID("presets");
         for (std::size_t i = 0; i < kPresets.size(); ++i) {
             if (i % 3 != 0) ImGui::SameLine();
             if (ImGui::Button(kPresetNames[i])) preset(kPresets[i]);
         }
+        ImGui::PopID();
         wx::Settings w = m_weather.settings();
         bool changed = false;
         changed |= ImGui::SliderFloat("Coverage", &w.coverage, 0.0f, 1.0f);
