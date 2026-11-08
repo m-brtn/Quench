@@ -144,6 +144,16 @@ enum class Rain : std::uint8_t { Off, Low, Medium, High };
 // many flakes there are and how far around the camera, and in the shafts' steps.
 enum class Snow : std::uint8_t { Off, Low, Medium, High };
 
+// Where the scene's particle systems are stepped (Scene::addParticles; docs/particles.md). Their spawns are made on the
+// CPU either way; their particles live in the scene's slots on the GPU (stepped by a compute pass, one dispatch per
+// system) or on the CPU (particles::Simulation, the same functions, uploaded every frame). The trails are built on
+// the CPU.
+enum class ParticleSimulation : std::uint8_t {
+    Off, // no particles or trails drawn, none stepped
+    Gpu, // a compute pass where the device has compute shaders (gpu::Caps::computeShaders); else Cpu
+    Cpu,
+};
+
 // Ray-traced shadows of at most this many local lights per frame (RenderSettings::localLightShadows).
 inline constexpr int kMaxRayLocalShadows = 4;
 // Cascades of the probe grid (RenderSettings::probeCascades).
@@ -243,6 +253,11 @@ struct RenderSettings {
     // The snow of the scene's weather. Off by default (then the weather's snow is not drawn: neither as snow nor as
     // rain). The snow cover on surfaces comes with any level.
     Snow snow = Snow::Off;
+    // The scene's particle systems and trails, drawn after TAA and upscaling (they glow through bloom). Changing
+    // where they are stepped restarts every system.
+    ParticleSimulation particles = ParticleSimulation::Gpu;
+    // Times every system's spawn rate (quality presets: fewer particles on slow devices); not bursts.
+    float particleDensity = 1.0f;
     ToneCurve toneCurve = ToneCurve::Aces;
     float vignette = 0.28f;
     bool dither = true;
@@ -283,6 +298,9 @@ struct ActiveEffects {
     Rain rain = Rain::Off;
     bool rainShafts = false;
     Snow snow = Snow::Off;
+    // Particles need a depth texture to sample (they are drawn after TAA, tested against the scene's depth) and their
+    // pipelines; Gpu also compute shaders and the step's pipeline, else Cpu. None in the path tracer's frame.
+    ParticleSimulation particles = ParticleSimulation::Off;
 
     friend bool operator==(const ActiveEffects&, const ActiveEffects&) = default;
 };
@@ -449,6 +467,15 @@ struct RenderStats {
     float snowAtCamera = 0.0f;
     float snowShareAtCamera = 0.0f;
     std::uint32_t snowFlakes = 0;
+    // Particles this frame: the systems drawn (visible, with live particles), their live particles and their slots
+    // (every slot of a drawn system runs the vertex shader), the particles spawned, the trails drawn and their strips'
+    // vertices.
+    std::uint32_t particleSystems = 0;
+    std::uint32_t particles = 0;
+    std::uint32_t particleSlots = 0;
+    std::uint32_t particleSpawns = 0;
+    std::uint32_t trails = 0;
+    std::uint32_t trailVertices = 0;
 };
 
 class Renderer {

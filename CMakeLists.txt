@@ -278,6 +278,7 @@ if(NOT QUENCH_HEADLESS)
         src/render/Daylight.cpp
         src/render/Effects.cpp
         src/render/MeshBuilder.cpp
+        src/render/Particles.cpp
         src/render/PathTracer.cpp
         src/render/Projection.cpp
         src/render/Rain.cpp
@@ -285,12 +286,13 @@ if(NOT QUENCH_HEADLESS)
         src/render/Renderer.cpp
         src/render/Scene.cpp
         src/render/SceneAssets.cpp
+        src/render/SceneParticles.cpp
         src/render/ScreenSpace.cpp
         src/render/TemporalFilter.cpp
         src/render/ToneMap.cpp)
     quench_configure_target(quench_render)
     target_link_libraries(quench_render PUBLIC quench_core quench_assets quench_gpu quench_gpu_shaders quench_glm
-                                               quench_weather)
+                                               quench_particles quench_weather)
     quench_add_shaders(quench_render NAME render_frame SOURCE src/render/shaders/frame.hlsl
         ENTRIES fullscreen_vs:vertex shadow_vs:vertex shadow_fs:fragment depth_vs:vertex sky_fs:fragment
                 velocity_fs:fragment velocity_obj_vs:vertex velocity_skin_vs:vertex velocity_obj_fs:fragment
@@ -320,6 +322,10 @@ if(NOT QUENCH_HEADLESS)
         ENTRIES rain_map_fs:fragment rain_streak_vs:vertex rain_streak_fs:fragment rain_splash_vs:vertex
                 rain_splash_fs:fragment rain_flake_vs:vertex rain_flake_fs:fragment rain_shafts_fs:fragment
                 rain_shafts_up_fs:fragment)
+    # The particles and trails (Scene::addParticles, addTrail; docs/particles.md): the step on the GPU, the particles'
+    # and the trails' draws.
+    quench_add_shaders(quench_render NAME render_particles SOURCE src/render/shaders/particles.hlsl
+        ENTRIES particle_step_cs:compute particle_vs:vertex particle_fs:fragment trail_vs:vertex trail_fs:fragment)
     # Ray tracing (gpu::Caps::rayTracing): the rayquery entries need DXC (cmake/QuenchDxc.cmake); without it the sets
     # have the other entries only and the renderer uses the shadow maps and the sky's light.
     quench_add_shaders(quench_render NAME render_raytrace SOURCE src/render/shaders/raytrace.hlsl

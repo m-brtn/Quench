@@ -2,6 +2,7 @@
 
 #include "Clouds.h"
 #include "Effects.h"
+#include "Particles.h"
 #include "PathTracer.h"
 #include "Rain.h"
 #include "RayTracing.h"
@@ -403,6 +404,9 @@ struct RendererImpl {
     // made when either first needs them.
     RainRenderer rain;
     bool rainTried = false;
+    // The scene's particles and trails (RenderSettings::particles), made when a scene first has some.
+    ParticleRenderer particles;
+    bool particlesTried = false;
     gpu::Texture weatherMaps;
     bool weatherMapsFailed = false;
     std::vector<Item> rainItems;
@@ -506,6 +510,8 @@ Result<void> RendererImpl::init() {
     support.cloudVolume = CloudRenderer::volumeSupported(*device);
     support.skyCube = CloudRenderer::cubeSupported(*device);
     support.rain = support.shadowArray && RainRenderer::supported(*device, shadowFormat);
+    support.particles = support.sampledDepth; // and their pipelines, made when a scene first has particles
+    support.particleCompute = caps.computeShaders;
     if (!supports(ldrFormat, gpu::TextureType::Texture2D, targetSampled))
         return Error{"render: Rgba8Unorm cannot be rendered to and sampled"};
 
@@ -848,6 +854,14 @@ void RendererImpl::applySettings() {
                                                  "pipelines failed; none");
     if ((next.rain != Rain::Off || next.snow != Snow::Off) && settings.rainShafts && !next.rainShafts)
         fallbacks.emplace_back("rain shafts: they read the clouds' weather map (RenderSettings::clouds); none");
+    if (settings.particles != ParticleSimulation::Off && next.particles == ParticleSimulation::Off)
+        fallbacks.emplace_back(next.pathTracer ? "particles: not in the path tracer's frame; none"
+                                               : "particles: no depth texture to sample, or their pipelines failed; "
+                                                 "none");
+    if (settings.particles == ParticleSimulation::Gpu && next.particles == ParticleSimulation::Cpu)
+        fallbacks.emplace_back(device->caps().computeShaders
+                                   ? "particles on the GPU: the step's compute pipeline failed; on the CPU"
+                                   : "particles on the GPU: no compute shaders (gpu::Caps); on the CPU");
     if (next == effects && effectsChosen) return;
     for (const std::string& line : fallbacks) log::warning("render", "{}", line);
     effects = next;
@@ -1799,6 +1813,19 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             snowMode = Snow::Off;
         }
     }
+    // The particles and trails: their pipelines when a scene first has some. Without them this frame the scene's
+    // systems wait where they are.
+    ParticleSimulation particleMode = ParticleRenderer::any(scene) ? effects.particles : ParticleSimulation::Off;
+    if (particleMode != ParticleSimulation::Off && !particles.ready()) {
+        if (!particlesTried) {
+            if (!particles.init(*device, hdrFormat, pipelineCount)) support.particles = false; // logged
+            support.particleCompute = particles.computes();
+            applySettings();
+        }
+        particlesTried = true;
+        particleMode = particles.ready() ? effects.particles : ParticleSimulation::Off;
+    }
+    if (particleMode == ParticleSimulation::Off && settings.particles == ParticleSimulation::Off) particles.release();
     if ((rainMode != Rain::Off || snowMode != Snow::Off || (cloudMode != Clouds::Off && settings.cloudShadows)) &&
         !ensureWeatherMaps()) {
         rainMode = Rain::Off;
@@ -2591,7 +2618,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         if (const PassEntry* e = passes.get(id);
             e && (e->stage == PassStage::PostHdr || e->stage == PassStage::Overlay))
             hasLaterPasses = true;
-    const bool keepDepth = taa || hasLaterPasses || raining;
+    const bool particlesDrawn = particleMode != ParticleSimulation::Off && !pathFrame;
+    const bool keepDepth = taa || hasLaterPasses || raining || particlesDrawn;
     const glm::vec3 clear = settings.sky ? glm::vec3(0.0f) : settings.clearColor;
     if (pathFrame) {
         // ---- 2. The path tracer's mean in place of the HDR pass (sky, lights and materials as the hits see them)
@@ -2811,6 +2839,23 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                             weatherMaps, pointClamp, linearClamp, fu, stats);
             commands.endTiming();
         }
+    }
+    // ---- 3c. The particles and trails, after TAA and upscaling (TAA's history is kept as it is)
+    if (particlesDrawn) {
+        const bool intoHistory =
+            taaResolve && image.native == gpu::TextureRef(history[std::size_t(historyIndex)]).native;
+        image = particles.render(commands, scene,
+                                 {.mode = particleMode,
+                                  .time = view.time,
+                                  .density = std::max(settings.particleDensity, 0.0f),
+                                  .image = image,
+                                  .keepImage = intoHistory,
+                                  .depth = &depth,
+                                  .viewProjStable = viewProjStable,
+                                  .proj = proj,
+                                  .invView = invView,
+                                  .nearPlane = view.nearPlane},
+                                 pointClamp, fu, stats);
     }
 
     // ---- 4. Game passes on the HDR image

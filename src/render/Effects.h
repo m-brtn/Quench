@@ -22,7 +22,9 @@ struct DeviceSupport {
     bool cloudLayer = false;         // the cloud pipelines (the 2D layer)
     bool cloudVolume = false;        // also a renderable Rgba8Unorm 3D texture and the volumetric pipelines
     bool skyCube = false;            // an Rgba16Float cube that can be rendered to and sampled
-    bool rain = false; // Rgba16Float targets and a 2D depth texture that can be sampled, and the rain's pipelines
+    bool rain = false;      // Rgba16Float targets and a 2D depth texture that can be sampled, and the rain's pipelines
+    bool particles = false; // sampledDepth and the particles' draw pipelines
+    bool particleCompute = false; // gpu::Caps::computeShaders and the particles' step pipeline
 };
 
 ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport& support);

@@ -13,6 +13,8 @@
 
 #include <quench/assets/Texture.h>
 #include <quench/core/Result.h>
+#include <quench/particles/Particles.h>
+#include <quench/particles/Trail.h>
 #include <quench/render/Handles.h>
 #include <quench/weather/Weather.h>
 
@@ -283,11 +285,55 @@ public:
     void clearWeather();
     const weather::Weather* weather() const; // null: none
 
+    // Particle systems (docs/particles.md). A system spawns at its emitter's place (transform: the emitter's space to
+    // world) as its desc says, and the renderer steps it every frame by View::time's change (at most 0.25 s; on the
+    // GPU or the CPU, RenderSettings::particles) and draws it after TAA and upscaling. Its particles take
+    // desc.maxParticles of the scene's slots (at most particles::kMaxSceneParticles together): an error when they
+    // would be exceeded.
+    Result<ParticleSystemId> addParticles(const particles::ParticleDesc& desc,
+                                          const glm::mat4& transform = glm::mat4(1.0f));
+    // A new desc; another maxParticles restarts the system (an error when the slots would be exceeded: it keeps its
+    // old desc).
+    Result<void> setParticles(ParticleSystemId system, const particles::ParticleDesc& desc);
+    // Spawns between frames are placed along the motion from the last frame's transform; teleport: a jump.
+    void setParticleTransform(ParticleSystemId system, const glm::mat4& transform, bool teleport = false);
+    // Off: no spawns by rate or distance; its live particles go on.
+    void setParticlesEmitting(ParticleSystemId system, bool emitting);
+    // Hidden: neither drawn nor stepped (its particles wait where they are).
+    void setParticlesVisible(ParticleSystemId system, bool visible);
+    void burstParticles(ParticleSystemId system, std::uint32_t count);
+    // One particle at each world position at the next frame, with `velocity` plus the desc's start velocity.
+    void emitParticles(ParticleSystemId system, std::span<const glm::vec3> positions,
+                       const glm::vec3& velocity = glm::vec3(0.0f));
+    void restartParticles(ParticleSystemId system); // forgets its particles
+    void removeParticles(ParticleSystemId system);  // trails that shed sparkles into it stop shedding
+    // Its live particles after the last frame, and its desc (null for a stale handle).
+    std::uint32_t particlesAlive(ParticleSystemId system) const;
+    const particles::ParticleDesc* particleDesc(ParticleSystemId system) const;
+
+    // Trails behind moving points (particles::Trail): the game moves the head every frame (or tick) on a clock of its
+    // own; the renderer ages the strip by View::time's change since the last move, so it fades out after the head
+    // stops. Drawn camera-facing, with an optional glow at the head.
+    TrailId addTrail(const particles::TrailDesc& desc);
+    void setTrail(TrailId trail, const particles::TrailDesc& desc);
+    void moveTrail(TrailId trail, const glm::vec3& head, double time, bool teleport = false);
+    // Off: the head stops recording and its glow goes out, the strip fades out where it is; on: a new strip.
+    void setTrailEmitting(TrailId trail, bool emitting);
+    void setTrailVisible(TrailId trail, bool visible);
+    void clearTrail(TrailId trail);
+    // Sparkles the head sheds while it emits: `perMeter` particles of `system` along each move, at their places, with
+    // the head's velocity times the system's ParticleDesc::inherit (plus the system's start velocity). 0: none.
+    void setTrailSparkles(TrailId trail, ParticleSystemId system, float perMeter);
+    void removeTrail(TrailId trail);
+    const particles::Trail* trail(TrailId trail) const; // null for a stale handle
+
     bool contains(MeshId mesh) const;
     bool contains(TextureId texture) const;
     bool contains(MaterialId material) const;
     bool contains(InstanceId instance) const;
     bool contains(LightId light) const;
+    bool contains(ParticleSystemId system) const;
+    bool contains(TrailId trail) const;
     // Instances that use a mesh or a material (0 for a stale handle).
     std::uint32_t meshUsers(MeshId mesh) const;
     std::uint32_t materialUsers(MaterialId material) const;
@@ -298,6 +344,9 @@ public:
     std::uint32_t materialCount() const;
     std::uint32_t instanceCount() const;
     std::uint32_t lightCount() const;
+    std::uint32_t particleSystemCount() const;
+    std::uint32_t particleSlots() const; // the slots of every system together
+    std::uint32_t trailCount() const;
 
 private:
     friend class Renderer;

@@ -5,6 +5,9 @@
 #include "SlotMap.h"
 
 #include <quench/gpu/Device.h>
+#include <quench/particles/Emitter.h>
+#include <quench/particles/Simulation.h>
+#include <quench/particles/Trail.h>
 #include <quench/render/Scene.h>
 
 #include <glm/mat4x4.hpp>
@@ -14,6 +17,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -80,6 +84,52 @@ struct LightEntry {
     MaterialId shapeMaterial{};
 };
 
+// Where a system's slots hold particles: not yet, the GPU's (the scene's state buffer) or the CPU's (`cpu`).
+enum class ParticleHome : std::uint8_t { None, Gpu, Cpu };
+
+struct ParticleEntry {
+    particles::Emitter emitter;
+    particles::ParticleUniforms uniforms{}; // the desc's parts (particles::uniformsOf)
+    std::uint32_t offset = 0;               // its first slot in the scene's pool
+    bool visible = true;
+    ParticleHome home = ParticleHome::None;
+    std::unique_ptr<particles::Simulation> cpu;
+};
+
+struct TrailEntry {
+    particles::Trail trail;
+    bool visible = true;
+    ParticleSystemId sparkles{};
+    float sparklesPerMeter = 0.0f;
+    float sparkleCarry = 0.0f; // the fraction of a sparkle left over from the last move
+    // The trail's clock against View::time: at the frame that first saw move number `anchoredMove`, View::time was
+    // anchorView and the trail's last move time anchorTrail.
+    std::uint64_t moves = 0;
+    std::uint64_t anchoredMove = ~0ull;
+    double anchorView = 0.0;
+    double anchorTrail = 0.0;
+};
+
+// The scene's particle slots: ranges given to systems, their state on the GPU (made and grown by the renderer).
+struct ParticlePool {
+    struct Range {
+        std::uint32_t offset;
+        std::uint32_t size;
+    };
+    std::vector<Range> free; // by offset, merged
+    std::uint32_t end = 0;   // slots up to here are given out or free
+    std::uint32_t used = 0;
+    // Three float4 per slot each (quench/ParticleField.h): the particles and what the draw reads of them.
+    gpu::Buffer state, instances;
+    std::uint32_t capacity = 0;
+    double lastTime = 0.0; // View::time of the last frame that stepped the particles
+    bool stepped = false;
+
+    // A range of `size` slots, or nothing when the scene's slots would be exceeded.
+    std::optional<std::uint32_t> allocate(std::uint32_t size);
+    void release(std::uint32_t offset, std::uint32_t size);
+};
+
 bool isAreaLight(LightType type);
 
 // An area light's unit frame (tangent: rect along the width, tube the axis; normal: rect and disk; bitangent:
@@ -103,6 +153,9 @@ struct SceneImpl {
     SlotMap<MaterialId, MaterialEntry> materials;
     SlotMap<InstanceId, InstanceEntry> instances;
     SlotMap<LightId, LightEntry> lights;
+    SlotMap<ParticleSystemId, ParticleEntry> particleSystems;
+    SlotMap<TrailId, TrailEntry> trails;
+    ParticlePool particlePool;
     Environment environment;
     std::optional<weather::Weather> weather;
     // The area lights' shapes (rect, disk, tube), made with the first light of each, and the scene's own entries

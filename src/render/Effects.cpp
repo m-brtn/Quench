@@ -82,6 +82,10 @@ ActiveEffects selectEffects(const RenderSettings& settings, const DeviceSupport&
         e.snow = settings.snow;
     }
     e.rainShafts = (e.rain != Rain::Off || e.snow != Snow::Off) && settings.rainShafts && e.clouds != Clouds::Off;
+    if (settings.particles != ParticleSimulation::Off && support.particles && !e.pathTracer)
+        e.particles = settings.particles == ParticleSimulation::Gpu && support.particleCompute
+                          ? ParticleSimulation::Gpu
+                          : ParticleSimulation::Cpu;
     return e;
 }
 
