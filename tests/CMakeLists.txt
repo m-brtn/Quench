@@ -408,7 +408,8 @@ if(NOT QUENCH_HEADLESS)
         # part's lines in the log and compares its capture with the golden image. The batches and the other app runs
         # are registered where the captures are compared (QUENCH_TEST_CAPTURES, Release builds by default); other
         # builds run one smoke run of the demo.
-        if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        # The batches and golden images exist for the Mac's backends only.
+        if(CMAKE_BUILD_TYPE STREQUAL "Release" AND APPLE)
             set(captures_default ON)
         else()
             set(captures_default OFF)

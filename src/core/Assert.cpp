@@ -11,6 +11,8 @@ void defaultHandler(const AssertInfo& info) {
     log::error("assert", "{}:{}: {}: {}", info.file, info.line, info.condition, info.message);
 #if defined(__clang__)
     __builtin_debugtrap();
+#elif defined(_MSC_VER)
+    __debugbreak();
 #endif
     std::abort();
 }

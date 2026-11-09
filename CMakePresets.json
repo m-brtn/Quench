@@ -74,6 +74,18 @@
       }
     },
     {
+      "name": "windows-release",
+      "displayName": "Windows Release (MSVC, from a Visual Studio x64 developer prompt; static runtime)",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded"
+      }
+    },
+    {
       "name": "ios-base",
       "hidden": true,
       "inherits": "base",
@@ -127,6 +139,7 @@
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "host-tools", "configurePreset": "host-tools", "targets": ["quench_shaderc", "quench_cook"] },
     { "name": "wasm-node", "configurePreset": "wasm-node" },
+    { "name": "windows-release", "configurePreset": "windows-release" },
     { "name": "ios-sim-release", "configurePreset": "ios-sim-release" },
     { "name": "ios-sim-tests", "configurePreset": "ios-sim-tests" },
     { "name": "ios-device-release", "configurePreset": "ios-device-release" },
@@ -145,6 +158,7 @@
     { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
     { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true } },
     { "name": "wasm-node", "configurePreset": "wasm-node", "output": { "outputOnFailure": true } },
+    { "name": "windows-release", "configurePreset": "windows-release", "output": { "outputOnFailure": true } },
     { "name": "ios-sim-tests", "configurePreset": "ios-sim-tests", "output": { "outputOnFailure": true } }
   ]
 }

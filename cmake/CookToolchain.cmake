@@ -8,6 +8,18 @@
 # are built by quench_navigation itself.
 include(FetchContent)
 
+# Third-party sources build without warnings: -w, or /w with MSVC (its options have no strict aliasing or contraction
+# switches to turn off).
+if(MSVC)
+    set(_quench_cook_no_warnings /w)
+    set(_quench_cook_no_aliasing "")
+    set(_quench_cook_no_contract "")
+else()
+    set(_quench_cook_no_warnings -w)
+    set(_quench_cook_no_aliasing -fno-strict-aliasing)
+    set(_quench_cook_no_contract -ffp-contract=off)
+endif()
+
 # ---------------------------------------------------------------- fastgltf v1.0.0
 FetchContent_Declare(fastgltf
     URL https://github.com/spnda/fastgltf/archive/0b800b4a584704f9e9add67c79c4c8732e552787.tar.gz
@@ -25,7 +37,7 @@ set(CMAKE_DISABLE_FIND_PACKAGE_simdutf ON)
 FetchContent_MakeAvailable(fastgltf)
 foreach(_target fastgltf fastgltf_simdjson fastgltf_simdutf)
     if(TARGET ${_target})
-        target_compile_options(${_target} PRIVATE -w)
+        target_compile_options(${_target} PRIVATE ${_quench_cook_no_warnings})
     endif()
 endforeach()
 
@@ -73,7 +85,7 @@ add_library(quench_basisu_encoder STATIC EXCLUDE_FROM_ALL ${_basisu_encoder_sour
 target_include_directories(quench_basisu_encoder SYSTEM PUBLIC ${QUENCH_BASISU_SOURCE_DIR}/encoder)
 target_compile_definitions(quench_basisu_encoder PUBLIC BASISU_SUPPORT_SSE=0 BASISU_SUPPORT_OPENCL=0
                                                         BASISU_SUPPORT_ASTCENC=0)
-target_compile_options(quench_basisu_encoder PRIVATE -w -fno-strict-aliasing)
+target_compile_options(quench_basisu_encoder PRIVATE ${_quench_cook_no_warnings} ${_quench_cook_no_aliasing})
 find_package(Threads REQUIRED)
 target_link_libraries(quench_basisu_encoder PUBLIC quench_basisu_transcoder Threads::Threads)
 
@@ -91,8 +103,9 @@ add_library(quench_cook_lib STATIC EXCLUDE_FROM_ALL
     ${_astcenc_sources})
 quench_configure_target(quench_cook_lib)
 set_source_files_properties(${Quench_SOURCE_DIR}/tools/cook/ThirdParty.cpp ${bc7enc_SOURCE_DIR}/bc7enc.cpp
-    PROPERTIES COMPILE_OPTIONS "-w")
-set_source_files_properties(${_astcenc_sources} PROPERTIES COMPILE_OPTIONS "-w;-ffp-contract=off")
+    PROPERTIES COMPILE_OPTIONS "${_quench_cook_no_warnings}")
+set_source_files_properties(${_astcenc_sources} PROPERTIES
+    COMPILE_OPTIONS "${_quench_cook_no_warnings};${_quench_cook_no_contract}")
 target_include_directories(quench_cook_lib PUBLIC ${Quench_SOURCE_DIR}/tools/cook)
 target_include_directories(quench_cook_lib SYSTEM PRIVATE ${stb_SOURCE_DIR} ${bc7enc_SOURCE_DIR}
                                                           ${astcenc_SOURCE_DIR}/Source)

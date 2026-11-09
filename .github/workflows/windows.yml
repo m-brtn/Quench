@@ -1,0 +1,128 @@
+# The Windows build of the engine and its demo on GitHub's Windows runner (MSVC, Ninja): the headless tests, a try of
+# the GPU tests and of the packaged demo on the runner's software adapter (the runner has no GPU: their failure is
+# reported, not fatal), and the demo as an artifact. Not a gate: the engine's checks run locally (AGENTS.md, "Build and
+# test"). Nothing here is a run on real Windows hardware.
+name: Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [windows-build]
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows x64 (MSVC, Ninja)
+    runs-on: windows-2025
+    timeout-minutes: 150
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      # Scenarios, JSON and shader sources are read as they are in the repository (LF).
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7
+
+      - name: Visual Studio developer environment (x64)
+        shell: pwsh
+        run: |
+          $before = @{}
+          Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          Get-ChildItem env: | Where-Object { $before[$_.Name] -ne $_.Value } |
+            ForEach-Object { "$($_.Name)=$($_.Value)" } | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          cl 2>&1 | Select-Object -First 1
+          cmake --version | Select-Object -First 1
+          ninja --version
+
+      - uses: mozilla-actions/sccache-action@v0.0.11
+
+      # Basis Universal's sources, downloaded once per machine into the engine's tool cache (cmake/QuenchBasisu.cmake).
+      - name: Restore the tool cache
+        uses: actions/cache@v6
+        with:
+          path: ~\AppData\Local\Quench
+          key: quench-tool-cache-windows-${{ hashFiles('cmake/QuenchBasisu.cmake') }}
+
+      # QUENCH_WERROR stays off until the first MSVC builds have no warnings left (/W4 /WX is the goal, AGENTS.md).
+      - name: Configure
+        shell: bash
+        run: |
+          cmake --preset windows-release -DQUENCH_WERROR=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      - name: Build
+        shell: bash
+        run: |
+          status=0
+          cmake --build --preset windows-release -- -k 0 2>&1 | tee build-windows.log || status=$?
+          echo "Warnings by code:"
+          grep -oE "warning C[0-9]+" build-windows.log | sort | uniq -c | sort -rn | head -40 || true
+          sccache --show-stats || true
+          exit $status
+
+      - name: Headless tests
+        shell: bash
+        run: |
+          ctest --preset windows-release -j4 --timeout 600 \
+            -L "^(core|physics|assets|audio|animation|navigation|weather|particles|cook)$"
+
+      # SDL GPU's default driver on Windows is Direct3D 12; on the runner the only adapter is a software one.
+      - name: GPU, app and demo tests (software adapter, not fatal)
+        continue-on-error: true
+        shell: bash
+        run: ctest --preset windows-release -j2 --timeout 900 -L "^(gpu|render|app|hello|demo)$"
+
+      - name: Package the demo
+        id: package
+        shell: bash
+        run: |
+          version=$(sed -n 's/^project(Quench VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          name="QuenchDemo-${version}-${GITHUB_SHA::7}-windows-x64"
+          mkdir -p "dist/$name"
+          cp build/windows-release/examples/demo/quench-demo.exe "dist/$name/"
+          cp -r build/windows-release/examples/demo/assets "dist/$name/"
+          cp LICENSE THIRD_PARTY_LICENSES "dist/$name/"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          du -sh "dist/$name"
+
+      - name: Smoke run of the packaged demo (software adapter, not fatal)
+        continue-on-error: true
+        shell: bash
+        run: |
+          name="${{ steps.package.outputs.name }}"
+          out="$PWD/dist/smoke"
+          mkdir -p "$out"
+          script=$(cygpath -m "$PWD/examples/demo/scenarios/smoke.txt")
+          capture=$(cygpath -m "$out/$name-smoke.png")
+          cd "dist/$name"
+          timeout 900 ./quench-demo.exe --window 960x540 --frame-size 960x540 --audio-device null \
+            --script "$script" --capture "$capture" --capture-at 1.5 > "$out/$name-smoke.log" 2>&1 || status=$?
+          cat "$out/$name-smoke.log"
+          grep -E "scenario: .*: [0-9]+ passed, 0 failed" "$out/$name-smoke.log"
+          exit ${status:-0}
+
+      - name: Upload the demo
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/${{ steps.package.outputs.name }}
+          if-no-files-found: error
+
+      - name: Upload logs and the smoke capture
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-logs
+          path: |
+            build-windows.log
+            dist/smoke/
+            build/windows-release/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore

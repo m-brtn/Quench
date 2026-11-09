@@ -4,6 +4,11 @@ function(quench_configure_target target)
     target_include_directories(${target} PUBLIC ${Quench_SOURCE_DIR}/include PRIVATE ${Quench_SOURCE_DIR}/src)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(${target} PRIVATE -Wall -Wextra $<$<BOOL:${QUENCH_WERROR}>:-Werror>)
+    elseif(MSVC)
+        # The sources are UTF-8; /Zc:__cplusplus reports C++20 in __cplusplus; /bigobj for the largest units.
+        target_compile_options(${target} PRIVATE /W4 $<$<BOOL:${QUENCH_WERROR}>:/WX> /utf-8 /Zc:__cplusplus
+                                                 /Zc:preprocessor /bigobj)
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
     endif()
     if(APPLE)
         # Objective-C and Objective-C++ sources compile with ARC (each one stops with #error without it). The Xcode
