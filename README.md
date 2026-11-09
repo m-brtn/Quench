@@ -23,17 +23,28 @@ look and listen.
   at and compares with reference images, and measure frame times.
 
 <p align="center">
-  <img src="docs/images/tunnel.jpg" alt="A tunnel lit by area lights, with a reflecting puddle and brushed metal" width="100%">
+  <img src="docs/images/particles.jpg" alt="Blue and pink ribbons of light above a field of fireflies and a glowing campfire" width="100%">
 </p>
 <p align="center">
-  <img src="docs/images/raytracing.jpg" alt="Ray-traced shadows through a fence, a mirror and gold spheres" width="49%">
-  <img src="docs/images/animation.jpg" alt="A crowd of animated characters on a ramp and a step" width="49%">
+  <img src="docs/images/weather.jpg" alt="Golden sunset light along the edges of towering volumetric clouds" width="49%">
+  <img src="docs/images/raytracing.jpg" alt="Cut-out fence shadows, tinted glass and a row of reflective gold spheres" width="49%">
 </p>
 
 <p align="center"><sub>
-  The engine demo: area lights and brushed metal · ray-traced shadows, reflections and bounced light · animated
-  characters. All content is procedural.
+  Captured in the engine demo: particles and light trails · volumetric clouds at sunset · ray-traced shadows,
+  reflections and bounced light. These demo scenes are procedural.
 </sub></p>
+
+## Made with Quench
+
+[**Cloudsong**](https://github.com/m-brtn/cloudsong) is a calm exploration game among floating islands. Follow
+flower-lined paths, discover old ruins and glide above the clouds, with animated characters and flowing cloth.
+
+<p align="center">
+  <a href="https://github.com/m-brtn/cloudsong">
+    <img src="docs/images/cloudsong.jpg" alt="Cloudsong: a red-caped traveller on a flower-lined path, carved ruins and floating islands beneath a blue sky" width="100%">
+  </a>
+</p>
 
 ## What it can do
 
