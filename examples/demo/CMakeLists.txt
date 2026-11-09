@@ -166,6 +166,16 @@ target_link_libraries(quench_demo PRIVATE quench_render quench_physics quench_an
 target_include_directories(quench_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${demo_build_info_dir})
 target_compile_definitions(quench_demo PRIVATE QUENCH_DEMO_CONFIG="$<CONFIG>")
 add_dependencies(quench_demo quench_demo_build_info)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources(quench_demo PRIVATE PrivacyInfo.xcprivacy)
+    set_source_files_properties(PrivacyInfo.xcprivacy PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    if(CMAKE_GENERATOR STREQUAL "Xcode")
+        # CMake's non-installed executables otherwise produce an empty Xcode archive.
+        set_target_properties(quench_demo PROPERTIES
+            XCODE_ATTRIBUTE_SKIP_INSTALL NO
+            XCODE_ATTRIBUTE_INSTALL_PATH "$(LOCAL_APPS_DIR)")
+    endif()
+endif()
 quench_add_shaders(quench_demo NAME demo_checker SOURCE shaders/checker.hlsl
     ENTRIES surface_vs:vertex surface_fs:fragment surface_basic_fs:fragment surface_local_shadows_fs:fragment)
 quench_add_ray_hits(quench_demo NAME demo_hits SURFACES shaders/checker.hlsl)
