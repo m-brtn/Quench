@@ -125,10 +125,11 @@ public:
         for (int i = 0; i < 6; ++i) {
             const float a = 0.5f + 0.42f * float(i);
             const float h = random.uniform(1.6f, 3.2f);
+            const float width = random.uniform(0.6f, 0.9f);
+            const glm::vec3 size(width, h, random.uniform(0.4f, 0.6f));
             s.addInstance({.mesh = *box,
                            .material = stone,
-                           .transform = placed({5.0f + 6.0f * std::cos(a), h * 0.5f, -7.0f - 5.0f * std::sin(a)},
-                                               glm::vec3(random.uniform(0.6f, 0.9f), h, random.uniform(0.4f, 0.6f)),
+                           .transform = placed({5.0f + 6.0f * std::cos(a), h * 0.5f, -7.0f - 5.0f * std::sin(a)}, size,
                                                random.uniform(-0.6f, 0.6f))});
         }
         for (int i = 0; i < 9; ++i) {

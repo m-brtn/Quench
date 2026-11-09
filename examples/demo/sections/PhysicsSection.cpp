@@ -315,11 +315,13 @@ private:
     // Light balls are put down low on the upwind side: dropped from high up, a strong wind would carry them over the
     // rails before they land.
     void drop(bool ball, float mass = 0.0f) {
-        const glm::vec3 p = mass > 0.0f ? glm::vec3(m_random.uniform(-5.5f, -3.5f), 1.0f + m_random.uniform(0.0f, 0.5f),
-                                                    m_random.uniform(-3.0f, 3.0f))
-                                        : glm::vec3(m_random.uniform(-2.0f, 2.0f), 6.0f + m_random.uniform(0.0f, 1.0f),
-                                                    m_random.uniform(-2.0f, 2.0f));
-        const glm::vec3 axis = glm::normalize(glm::vec3(m_random.uniform(-1, 1), m_random.uniform(-1, 1), 0.3f));
+        const bool low = mass > 0.0f;
+        glm::vec3 p;
+        p.x = low ? m_random.uniform(-5.5f, -3.5f) : m_random.uniform(-2.0f, 2.0f);
+        p.y = low ? 1.0f + m_random.uniform(0.0f, 0.5f) : 6.0f + m_random.uniform(0.0f, 1.0f);
+        p.z = low ? m_random.uniform(-3.0f, 3.0f) : m_random.uniform(-2.0f, 2.0f);
+        const float axisX = m_random.uniform(-1, 1);
+        const glm::vec3 axis = glm::normalize(glm::vec3(axisX, m_random.uniform(-1, 1), 0.3f));
         add(ball, p, glm::angleAxis(m_random.uniform(0.0f, 6.28f), axis), mass);
     }
 

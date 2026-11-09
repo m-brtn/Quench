@@ -111,8 +111,9 @@ jobs:
       # A part of the demo's batch (examples/demo/scenarios/batch.txt) on Direct3D 12 with its debug layer: the sections
       # the GPU tests cover least, to compare by eye with the same scenario's captures on the Mac (there are no golden
       # images for this backend and device, and the batch's own captures need every part before them), and the mix
-      # checks that follow the frame clock. The whole batch does not end in 45 minutes on the software adapter. As in
-      # the batch's CTest runs, no audio device is named: the mix runs offline on the frame clock.
+      # checks that follow the frame clock. On the software adapter the whole batch does not end in 45 minutes, and the
+      # weather's parts take most of that. As in the batch's CTest runs, no audio device is named: the mix runs offline
+      # on the frame clock.
       - name: Demo captures on Direct3D 12 (software adapter, not fatal)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
@@ -123,11 +124,11 @@ jobs:
           out="$PWD/dist/captures"
           mkdir -p "$out"
           scenario=examples/demo/scenarios/windows_runner.txt
-          printf 'include %s.txt\n' weather rain snow wind physics_wind particles navigation audio_music audio_reverb \
+          printf 'include %s.txt\n' navigation audio_music audio_reverb wind physics_wind particles rain snow weather \
             > "$scenario"
           echo quit >> "$scenario"
           start=$(date +%s)
-          timeout 2700 build/windows-release/examples/demo/quench-demo.exe --window 960x540 --gpu-debug \
+          timeout 4500 build/windows-release/examples/demo/quench-demo.exe --window 960x540 --gpu-debug \
             --script "$(cygpath -m "$PWD/$scenario")" --user-dir "$(cygpath -m "$out")" > "$out/batch.log" 2>&1 ||
             status=$?
           echo "batch: $(( $(date +%s) - start )) s, exit ${status:-0}"

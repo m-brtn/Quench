@@ -179,7 +179,8 @@ std::optional<bool> parseBool(std::string_view value);
 std::optional<float> parseFloat(std::string_view value);
 const char* antiAliasingName(quench::render::AntiAliasing mode);
 const char* upscalingName(quench::render::Upscaling mode); // "bilinear", "MetalFX temporal", ...
-// Small deterministic random numbers (the same sequence on every platform).
+// Small deterministic random numbers (the same sequence on every platform). At most one draw per call's arguments:
+// the order in which they are evaluated is unspecified, and Clang and MSVC differ.
 struct Random {
     std::uint32_t state = 0x9e3779b9u;
     std::uint32_t next();

@@ -877,8 +877,8 @@ private:
                 ++m_plants;
             }
         for (int i = 0; i < 12; ++i) {
-            const glm::vec3 at = kMeadow + glm::vec3(random.uniform(-kMeadowHalf, kMeadowHalf), 0.0f,
-                                                     random.uniform(-kMeadowHalf, -2.0f));
+            const float x = random.uniform(-kMeadowHalf, kMeadowHalf);
+            const glm::vec3 at = kMeadow + glm::vec3(x, 0.0f, random.uniform(-kMeadowHalf, -2.0f));
             const float size = random.uniform(0.8f, 1.4f);
             s.addInstance({.mesh = *bush,
                            .material = leaves,
@@ -941,7 +941,8 @@ private:
         constexpr float kStep = 0.7f;
         for (float z = -kPatchSize / 2.0f + kStep / 2.0f; z < kPatchSize / 2.0f; z += kStep)
             for (float x = -kPatchSize / 2.0f + kStep / 2.0f; x < kPatchSize / 2.0f; x += kStep) {
-                const glm::vec3 at(x + random.uniform(-0.3f, 0.3f), 0.0f, z + random.uniform(-0.3f, 0.3f));
+                const float dx = random.uniform(-0.3f, 0.3f);
+                const glm::vec3 at(x + dx, 0.0f, z + random.uniform(-0.3f, 0.3f));
                 const float size = random.uniform(0.7f, 1.3f);
                 const float yaw = random.uniform(0.0f, 6.2831853f);
                 const float shade = random.uniform(0.8f, 1.15f);
@@ -965,9 +966,9 @@ private:
         MeshData m;
         for (int i = 0; i < count; ++i) {
             const MeshData ball = sphereMesh(random.uniform(smallest, largest), 10, 16);
-            const glm::vec3 at = centre + glm::vec3(random.uniform(-1.0f, 1.0f), random.uniform(-1.0f, 1.0f),
-                                                    random.uniform(-1.0f, 1.0f)) *
-                                              spread;
+            glm::vec3 offset;
+            for (int axis = 0; axis < 3; ++axis) offset[axis] = random.uniform(-1.0f, 1.0f);
+            const glm::vec3 at = centre + offset * spread;
             const std::uint32_t first = std::uint32_t(m.vertices.size());
             for (Vertex v : ball.vertices) {
                 v.position += at;
