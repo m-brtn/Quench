@@ -205,8 +205,8 @@ the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github
 particles, navigation and mix checks and the packaged demo's smoke run pass on SDL GPU's Direct3D 12 driver over the
 runner's only adapter, Microsoft's software rasterizer (WARP), with the Direct3D 12 debug layer. Nothing has run on
 real Windows hardware, on Vulkan on Windows or with ray tracing there yet. Next: the user's run on their PC (an
-NVIDIA RTX GPU), then a native Vulkan backend with ray queries and a native Direct3D 12 backend with DXR
-(`docs/platforms.md`, "Windows and Linux").
+NVIDIA RTX GPU), then a native Vulkan backend with ray queries and a native Direct3D 12 backend with DXR (stage 15
+of `docs/roadmap.md`; `docs/platforms.md`, "Windows and Linux").
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,

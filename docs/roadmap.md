@@ -270,7 +270,8 @@ Where ray tracing runs (discussed with the user, 2026-11-05):
 - Later, only for a named need and verified on real hardware: a native D3D12 backend (DXR) on Windows, or a native
   Vulkan backend with the ray tracing extensions on Windows, Linux and the Android devices that have them. WebGPU has
   no ray tracing. Acceleration structures come from the retained scene and the shaders are HLSL (compiled to MSL,
-  SPIR-V and DXIL), so games do not change when a backend gains ray tracing.
+  SPIR-V and DXIL), so games do not change when a backend gains ray tracing. Named by the user on 2026-11-09: both, on
+  Windows ([stage 15](#stage-15-windows-part-1-the-build-on-sdl-gpu-2026-11-09-parts-2-and-3-not-started)).
 
 TODO for stage 9:
 
@@ -702,12 +703,51 @@ budgets per system and per scene; no per-frame allocation once a scene's particl
 - [ ] Runs and costs on a phone; looked at in motion by a person. Not built: sorting within a system, collisions,
   particles in the ray tracing structures, lights cast by particles, GPU-driven trails.
 
+## Stage 15: Windows (part 1, the build on SDL GPU, 2026-11-09; parts 2 and 3 not started)
+
+Requested by the user on 2026-11-09: the engine and its demo on Windows, built on GitHub Actions in the branch
+`windows-build` (merged into `main` once it builds); Direct3D 12 and Vulkan both; hardware ray tracing on Windows is
+required. The user runs the results on their Windows PC (an NVIDIA RTX GPU). The default backend on Windows is chosen
+later from measurements on that PC; SDL GPU stays as the fallback. Status and findings:
+[Platforms](platforms.md#windows-and-linux).
+
+Part 1: the build on SDL GPU (Direct3D 12 by default, Vulkan through `--gpu-driver vulkan`; the ray tracing effects
+on their fallbacks).
+
+- [x] MSVC (`/W4 /WX`), the `windows-release` preset, `.github/workflows/windows.yml`: the build, the headless tests,
+  the GPU, app and demo tests, a part of the demo's batch and the packaged demo's smoke run on the runner's software
+  adapter, the demo as an artifact (2026-11-09).
+- [x] On GitHub's runner, WARP (2026-11-09, `c8fb061`): headless 228 of 228; GPU, app and demo 180 with 33 skipped,
+  0 failed; the demo's weather, particles, navigation and mix checks 211 of 211; the smoke run 22 of 22; no error
+  from the Direct3D 12 debug layer. Fixed on the way: SDL GPU's blit overwriting the engine's fragment uniforms, mip
+  levels of size 0 in SDL GPU (`SdlLevelSize.cmake`), the demo's random numbers in MSVC's argument order.
+- [ ] On the user's PC: the demo on Direct3D 12 and on Vulkan, looked at by the user, with its frame rates.
+
+Part 2: a native Vulkan backend with ray queries (next, the user's order).
+
+- [ ] A Vulkan backend of `quench::gpu` beside SDL GPU and native Metal, with GPU timestamps; its pixels compared with
+  SDL GPU's. Developed on the Mac through MoltenVK, which has no ray query or acceleration structure extensions.
+- [ ] Acceleration structures (`VK_KHR_acceleration_structure`) and ray queries (`VK_KHR_ray_query`) from the
+  retained scene; the stage 11 and 12 effects on it (the ray query shaders are SPIR-V already). MetalFX has no
+  counterpart there: the engine's temporal denoiser and bilinear upscaling.
+- [ ] Verified on the user's PC: the GPU tests, the demo's ray tracing section and its benchmark.
+
+Part 3: a native Direct3D 12 backend with DXR (inline ray tracing, `RayQuery` in DXIL).
+
+- [ ] The backend, acceleration structures and the same effects; whether WARP's ray tracing support is enough to check
+  them on GitHub's runner is to be found out.
+- [ ] Verified on the user's PC; the default backend on Windows from the measurements of parts 1 to 3.
+
 ## What is next
 
 The plan the user left (stages 6 to 10) has been worked through with version 0.8.0, stage 11 with 0.9.0, stage 12
 (area lights, anisotropy, the tunnel) with most of the earlier stages' remaining work with 0.10.0, and the user's
 queue below with stage 13 (weather) with 0.11.0, and stage 14 (particles and trails), asked for the first game on
 2026-11-08, with 0.12.0.
+
+Asked by the user on 2026-11-09: Windows, stage 15 above. Part 1, the build on SDL GPU, is built and runs on GitHub's
+runner (WARP); next the user's run on their PC, then part 2 (a native Vulkan backend with ray queries), then part 3
+(a native Direct3D 12 backend with DXR).
 
 The queue the user set on 2026-11-07, in this order:
 
@@ -776,7 +816,8 @@ ECS module. Tracy profiling, listed here before, was built on 2026-11-07
 
 ## Later platforms
 
-Not scheduled; started only when the user asks. Windows and Linux (SDL GPU D3D12 / Vulkan; need hardware or CI),
+Not scheduled; started only when the user asks. Windows: stage 15 since 2026-11-09. Linux (SDL GPU Vulkan; needs
+hardware or CI),
 Android (Vulkan, ASTC / ETC2 textures through Basis Universal (built; ETC2 needs a backend that offers it), APK
 assets), web (needs SDL GPU's WebGPU backend, WGSL shaders, single-thread jobs; Basis Universal textures are built).
 See [Platforms](platforms.md).
