@@ -46,7 +46,8 @@ jobs:
 
       # Basis Universal's sources, downloaded once per machine into the engine's tool cache (cmake/QuenchBasisu.cmake).
       - name: Restore the tool cache
-        uses: actions/cache@v6
+        id: tool-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~\AppData\Local\Quench
           key: quench-tool-cache-windows-${{ hashFiles('cmake/QuenchBasisu.cmake') }}
@@ -57,6 +58,14 @@ jobs:
         run: |
           cmake --preset windows-release -DQUENCH_WERROR=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      # Right after the configure that filled it, so that a failed build does not lose it.
+      - name: Save the tool cache
+        if: steps.tool-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~\AppData\Local\Quench
+          key: ${{ steps.tool-cache.outputs.cache-primary-key }}
 
       - name: Build
         shell: bash

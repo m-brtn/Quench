@@ -515,10 +515,10 @@ private:
         std::vector<std::vector<std::uint32_t>> lods{lod0};
         std::vector<float> errors{0.0f};
         const float* positions = &vertices[0].position.x;
-        float target = float(indexCount);
+        float lodTarget = float(indexCount);
         for (std::uint32_t level = 1; level < m_options.lods; ++level) {
-            target *= m_options.lodRatio;
-            const std::size_t targetCount = std::size_t(target) / 3 * 3;
+            lodTarget *= m_options.lodRatio;
+            const std::size_t targetCount = std::size_t(lodTarget) / 3 * 3;
             if (targetCount < 3) break;
             std::vector<std::uint32_t> lod(indexCount);
             float error = 0.0f;

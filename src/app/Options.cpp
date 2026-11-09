@@ -212,10 +212,10 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
         } else if (flag == "--asset-latency") {
             Result<std::string_view> v = value();
             if (!v) return Error{v.error()};
-            const auto seconds = parseDouble(*v);
-            if (!seconds || *seconds < 0.0 || *seconds > 60.0)
+            const auto latency = parseDouble(*v);
+            if (!latency || *latency < 0.0 || *latency > 60.0)
                 return Error{std::format("--asset-latency: '{}' is not a number of seconds from 0 to 60", *v)};
-            options.assetLatency = *seconds;
+            options.assetLatency = *latency;
         } else if (flag == "--hot-reload" && !inlineValue) {
             options.hotReload = true;
         } else if ((flag == "--offscreen" || flag == "--onscreen") && !inlineValue) {

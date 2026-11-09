@@ -155,8 +155,8 @@ QUENCH_TEST(model_round_trip) {
 
 QUENCH_TEST(model_rejects_versions_without_tangents) {
     std::vector<std::uint8_t> file = writeModel(sampleModel()).value();
-    for (const std::uint8_t version : {1, 2}) {
-        file[4] = version;
+    for (const int version : {1, 2}) {
+        file[4] = std::uint8_t(version);
         const Result<ModelData> read = readModel(file);
         CHECK(!read && read.error().find("cook its source again") != std::string::npos, "version %u: %s", version,
               read ? "accepted" : read.error().c_str());

@@ -93,9 +93,9 @@ void JobState::Releaser::OnDependenciesComplete(enki::TaskScheduler* scheduler, 
         if (job->waitingOn.fetch_sub(1, std::memory_order_acq_rel) == 1) launch(job);
     }
     state->done.store(true, std::memory_order_release);
-    JobCounters& counters = state->counters;
+    JobCounters& jobCounters = state->counters;
     std::shared_ptr<JobState> keep = std::move(state->self);
-    counters.pending.fetch_sub(1, std::memory_order_acq_rel);
+    jobCounters.pending.fetch_sub(1, std::memory_order_acq_rel);
     state->released.store(true, std::memory_order_release);
     // May destroy the job and this releaser with it: nothing is touched after this line.
     keep.reset();

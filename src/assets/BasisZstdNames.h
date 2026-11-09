@@ -3,8 +3,13 @@
 // The external symbols of Basis Universal's Zstandard decoder (its zstd/zstddeclib.c, Zstandard 1.5.7) under names of
 // their own, for BasisZstd.c, which defines them, and BasisTranscoder.cpp, which calls three of them: the cook links
 // the full Zstandard (zstd/zstd.c) for the encoder beside this decoder, and a game may link its own. A pragma, not a
-// macro: the decoder defines and undefines some of these names as macros itself. Clang and GCC; the list is that of
-// `nm -gU` on the compiled decoder and changes only with the Basis Universal pin.
+// macro: the decoder defines and undefines some of these names as macros itself. Clang and GCC; MSVC has no such
+// pragma and gets macros written from these lines by cmake/QuenchBasisu.cmake, with a copy of the decoder that names
+// the one it #undefs (ZSTD_isError) again. The list is that of `nm -gU` on the compiled decoder and changes only with
+// the Basis Universal pin.
+#if defined(_MSC_VER) && !defined(__clang__)
+#include "BasisZstdNamesMsvc.h"
+#else
 #pragma redefine_extname ERR_getErrorString quench_basisu_ERR_getErrorString
 #pragma redefine_extname FSE_buildDTable_wksp quench_basisu_FSE_buildDTable_wksp
 #pragma redefine_extname FSE_decompress_wksp_bmi2 quench_basisu_FSE_decompress_wksp_bmi2
@@ -113,3 +118,4 @@
 #pragma redefine_extname ZSTD_versionNumber quench_basisu_ZSTD_versionNumber
 #pragma redefine_extname ZSTD_versionString quench_basisu_ZSTD_versionString
 #pragma redefine_extname g_debuglevel quench_basisu_g_debuglevel
+#endif

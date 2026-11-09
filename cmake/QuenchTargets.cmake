@@ -5,9 +5,10 @@ function(quench_configure_target target)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(${target} PRIVATE -Wall -Wextra $<$<BOOL:${QUENCH_WERROR}>:-Werror>)
     elseif(MSVC)
-        # The sources are UTF-8; /Zc:__cplusplus reports C++20 in __cplusplus; /bigobj for the largest units.
-        target_compile_options(${target} PRIVATE /W4 $<$<BOOL:${QUENCH_WERROR}>:/WX> /utf-8 /Zc:__cplusplus
-                                                 /Zc:preprocessor /bigobj)
+        # The sources are UTF-8; /Zc:__cplusplus reports C++20 in __cplusplus; /bigobj for the largest units. C4324
+        # (a structure padded for an alignas member) is what alignas is there for: cache lines, uniform blocks.
+        target_compile_options(${target} PRIVATE /W4 $<$<BOOL:${QUENCH_WERROR}>:/WX> /wd4324 /utf-8
+                                                 /Zc:__cplusplus /Zc:preprocessor /bigobj)
         target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
     endif()
     if(APPLE)

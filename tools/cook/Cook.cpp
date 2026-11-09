@@ -240,7 +240,7 @@ int cookModel(const Options& o, JobSystem& jobs) {
     const fs::path root = o.assetRoot.empty() ? o.output.parent_path() : o.assetRoot;
     const fs::path relative =
         fs::absolute(o.output).lexically_normal().lexically_relative(fs::absolute(root).lexically_normal());
-    if (relative.empty() || relative.native().starts_with(".."))
+    if (relative.empty() || *relative.begin() == "..")
         return fail(std::format("{} is not inside the asset root {}", o.output.string(), root.string()));
     const std::string prefix = fs::path(relative).replace_extension().generic_string();
 

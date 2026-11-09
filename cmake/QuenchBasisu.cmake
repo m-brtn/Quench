@@ -67,6 +67,30 @@ function(_quench_basisu_sources out)
     set(${out} ${dir} PARENT_SCOPE)
 endfunction()
 
+# _quench_basisu_msvc_names(<target>): MSVC has no #pragma redefine_extname. The names of BasisZstdNames.h become
+# macros (BasisZstdNamesMsvc.h), and a copy of the decoder names ZSTD_isError again after the #undef that comes right
+# before its definition.
+function(_quench_basisu_msvc_names target)
+    set(dir ${CMAKE_CURRENT_BINARY_DIR}/quench_basisu_zstd)
+    set(header ${CMAKE_CURRENT_LIST_DIR}/../src/assets/BasisZstdNames.h)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${header})
+    file(STRINGS ${header} names REGEX "^#pragma redefine_extname ")
+    list(TRANSFORM names REPLACE "^#pragma redefine_extname " "#define ")
+    list(JOIN names "\n" names)
+    file(CONFIGURE OUTPUT ${dir}/BasisZstdNamesMsvc.h CONTENT "#pragma once\n\n${names}\n" @ONLY)
+    file(READ ${QUENCH_BASISU_SOURCE_DIR}/zstd/zstddeclib.c decoder)
+    string(FIND "${decoder}" "\n#undef ZSTD_isError" at)
+    if(at EQUAL -1)
+        message(FATAL_ERROR "Quench: Basis Universal's zstddeclib.c no longer #undefs ZSTD_isError (BasisZstdNames.h)")
+    endif()
+    string(REGEX REPLACE "(\n#undef ZSTD_isError[^\n]*)" "\\1\n#define ZSTD_isError quench_basisu_ZSTD_isError"
+                         decoder "${decoder}")
+    file(WRITE ${dir}/zstddeclib.c.new "${decoder}")
+    file(COPY_FILE ${dir}/zstddeclib.c.new ${dir}/zstddeclib.c ONLY_IF_DIFFERENT)
+    file(REMOVE ${dir}/zstddeclib.c.new)
+    target_include_directories(${target} BEFORE PRIVATE ${dir})
+endfunction()
+
 _quench_basisu_sources(QUENCH_BASISU_SOURCE_DIR)
 message(STATUS "Quench: Basis Universal sources: ${QUENCH_BASISU_SOURCE_DIR}")
 
@@ -84,4 +108,7 @@ target_compile_features(quench_basisu_transcoder PUBLIC cxx_std_17)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     # Upstream builds with -fno-strict-aliasing.
     target_compile_options(quench_basisu_transcoder PRIVATE -w -fno-strict-aliasing)
+elseif(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(quench_basisu_transcoder PRIVATE /w)
+    _quench_basisu_msvc_names(quench_basisu_transcoder)
 endif()

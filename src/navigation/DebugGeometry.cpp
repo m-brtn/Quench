@@ -58,8 +58,8 @@ glm::vec4 areaColor(AreaId area) {
 void addNavMesh(DebugGeometry& out, const NavMesh& mesh, float lift) {
     const dtNavMesh* nav = detail::NavMeshAccess::mesh(mesh);
     const glm::vec3 up(0.0f, lift, 0.0f);
-    for (int t = 0; t < nav->getMaxTiles(); ++t) {
-        const dtMeshTile* tile = nav->getTile(t);
+    for (int tileIndex = 0; tileIndex < nav->getMaxTiles(); ++tileIndex) {
+        const dtMeshTile* tile = nav->getTile(tileIndex);
         if (!tile->header) continue;
         for (int p = 0; p < tile->header->polyCount; ++p) {
             const dtPoly& poly = tile->polys[p];

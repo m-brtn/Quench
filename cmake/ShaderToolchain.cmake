@@ -57,6 +57,7 @@ add_executable(quench_shaderc ${Quench_SOURCE_DIR}/tools/shaderc/ShaderCompiler.
 target_link_libraries(quench_shaderc PRIVATE glslang glslang-default-resource-limits SPIRV-Tools-opt
                                              SPIRV-Tools-static spirv-cross-msl)
 target_compile_features(quench_shaderc PRIVATE cxx_std_20)
+target_include_directories(quench_shaderc PRIVATE ${Quench_SOURCE_DIR}/src)
 # glslang's public header hides the HLSL options unless the consumer defines ENABLE_HLSL as well.
 target_compile_definitions(quench_shaderc PRIVATE ENABLE_HLSL=1)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

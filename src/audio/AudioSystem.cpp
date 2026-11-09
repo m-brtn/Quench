@@ -37,9 +37,9 @@ struct Stream {
     void open(std::uint32_t mixRate) {
         Result<std::unique_ptr<fs::Reader>> reader = fs::openAsset(path);
         if (!reader) return fail(reader.error());
-        Result<std::unique_ptr<detail::Decoder>> opened = detail::Decoder::fromReader(std::move(reader).value(), path);
-        if (!opened) return fail(opened.error());
-        decoder = std::move(opened).value();
+        Result<std::unique_ptr<detail::Decoder>> made = detail::Decoder::fromReader(std::move(reader).value(), path);
+        if (!made) return fail(made.error());
+        decoder = std::move(made).value();
         const Format format = decoder->format();
         const auto capacity =
             std::max<std::uint32_t>(4096, std::uint32_t(bufferSeconds * std::max(format.sampleRate, mixRate) + 0.5));

@@ -25,6 +25,8 @@
 //                       [--reflect OUT] [--msl OUT.metal] [--msl-platform macos|ios] [--include-dir DIR]...
 //                       [--depfile OUT.d] [--dxc PATH]
 
+#include "core/Platform.h"
+
 #include <SPIRV/GlslangToSpv.h>
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
@@ -213,10 +215,12 @@ bool preprocessIncludes(const Args& a, const std::string& source, Includer& incl
     return true;
 }
 
+// An argument for std::system's shell: sh on POSIX hosts; on Windows cmd.exe, which hands the line to the program,
+// whose C runtime splits it (only a quote is escaped there; backslashes in paths stay as they are).
 std::string quoteArg(const std::string& arg) {
     std::string out = "\"";
     for (const char c : arg) {
-        if (c == '"' || c == '\\' || c == '$' || c == '`') out += '\\';
+        if (QUENCH_PLATFORM_WINDOWS ? c == '"' : c == '"' || c == '\\' || c == '$' || c == '`') out += '\\';
         out += c;
     }
     return out + "\"";
@@ -234,6 +238,8 @@ bool compileDxc(const Args& a, std::vector<std::uint32_t>& spirv, std::string& l
                           stageName + "=1";
     for (const std::string& dir : a.includeDirs) command += " -I " + quoteArg(dir);
     command += " -Fo " + quoteArg(out) + " " + quoteArg(a.input) + " > " + quoteArg(errors) + " 2>&1";
+    // cmd.exe /c drops the first and the last quote of a line that starts with one.
+    if (QUENCH_PLATFORM_WINDOWS) command = "\"" + command + "\"";
     const int status = std::system(command.c_str());
     std::string text;
     readText(errors, text);
