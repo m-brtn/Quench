@@ -52,11 +52,11 @@ jobs:
           path: ~\AppData\Local\Quench
           key: quench-tool-cache-windows-${{ hashFiles('cmake/QuenchBasisu.cmake') }}
 
-      # QUENCH_WERROR stays off until the first MSVC builds have no warnings left (/W4 /WX is the goal, AGENTS.md).
+      # Engine targets build with /W4 /WX (QUENCH_WERROR, on for the top-level project).
       - name: Configure
         shell: bash
         run: |
-          cmake --preset windows-release -DQUENCH_WERROR=OFF \
+          cmake --preset windows-release \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
 
       # Right after the configure that filled it, so that a failed build does not lose it.
@@ -84,13 +84,49 @@ jobs:
           ctest --preset windows-release -j4 --timeout 600 \
             -L "^(core|physics|assets|audio|animation|navigation|weather|particles|cook)$"
 
-      # SDL GPU's default driver on Windows is Direct3D 12; on the runner the only adapter is a software one.
+      # The Direct3D 12 debug layer (Windows' Graphics Tools), which SDL GPU's debug mode turns on in the GPU tests and
+      # in --gpu-debug runs; its messages come through SDL's log (SDL_LOGGING below).
       # The steps after the build run also when the headless tests fail.
+      - name: Direct3D 12 debug layer
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $name = "Tools.Graphics.DirectX~~~~0.0.1.0"
+          if ((Get-WindowsCapability -Online -Name $name).State -ne "Installed") {
+            Add-WindowsCapability -Online -Name $name | Out-Null
+          }
+          Get-WindowsCapability -Online -Name $name | Select-Object Name, State
+          Test-Path "$env:WINDIR\System32\d3d12SDKLayers.dll"
+
+      # SDL GPU's default driver on Windows is Direct3D 12; on the runner the only adapter is a software one.
       - name: GPU, app and demo tests (software adapter, not fatal)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
         shell: bash
+        env:
+          SDL_LOGGING: gpu=warn
         run: ctest --preset windows-release -j2 --timeout 900 -L "^(gpu|render|app|hello|demo)$"
+
+      # The demo's batch of section captures (tests/CMakeLists.txt, demo_batch_*) on Direct3D 12, to compare with the
+      # Mac's golden images by eye: there are no golden images for this backend and device.
+      - name: Demo captures on Direct3D 12 (software adapter, not fatal)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        env:
+          SDL_LOGGING: gpu=warn
+        run: |
+          out="$PWD/dist/captures"
+          mkdir -p "$out"
+          script=$(cygpath -m "$PWD/examples/demo/scenarios/batch.txt")
+          start=$(date +%s)
+          timeout 2700 build/windows-release/examples/demo/quench-demo.exe --window 960x540 --gpu-debug \
+            --hdr-headroom 4 --audio-device null --script "$script" --user-dir "$(cygpath -m "$out")" \
+            > "$out/batch.log" 2>&1 || status=$?
+          echo "batch: $(( $(date +%s) - start )) s, exit ${status:-0}"
+          grep -E "FAIL|ERROR|scenario: .*batch\.txt" "$out/batch.log" | head -60 || true
+          exit ${status:-0}
 
       - name: Package the demo
         id: package
@@ -139,5 +175,6 @@ jobs:
           path: |
             build-windows.log
             dist/smoke/
+            dist/captures/
             build/windows-release/Testing/Temporary/LastTest.log
           if-no-files-found: ignore

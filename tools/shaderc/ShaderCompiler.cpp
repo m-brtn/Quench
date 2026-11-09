@@ -516,9 +516,9 @@ int main(int argc, char** argv) {
     }
     if (!a.depfileOut.empty()) {
         std::error_code ec;
-        std::string deps = makeEscape(fs::absolute(a.spirvOut, ec).lexically_normal().string()) + ":";
-        deps += " " + makeEscape(fs::absolute(a.input, ec).lexically_normal().string());
-        for (const std::string& file : includer.files()) deps += " " + makeEscape(file);
+        std::string deps = makeEscape(fs::absolute(a.spirvOut, ec).lexically_normal().generic_string()) + ":";
+        deps += " " + makeEscape(fs::absolute(a.input, ec).lexically_normal().generic_string());
+        for (const std::string& file : includer.files()) deps += " " + makeEscape(fs::path(file).generic_string());
         if (!writeText(a.depfileOut, deps + "\n")) return fail(a, "cannot write " + a.depfileOut);
     }
     return 0;

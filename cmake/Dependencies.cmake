@@ -309,8 +309,10 @@ FetchContent_Declare(SDL3
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     # iOS Simulator only (TARGET_OS_SIMULATOR): accept the Simulator's Metal device in SDL GPU. Vulkan: 3D textures
     # are 2D-array compatible only as color targets (MoltenVK's portability subset has no 2D views of 3D images).
+    # The shader blit (Direct3D 12's mipmaps): a level at least 1 x 1 (the last levels of a non-square texture).
     PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlIosSimulator.cmake
           COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlVulkan3d.cmake
+          COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlBlitLevelSize.cmake
     SYSTEM
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(SDL3)

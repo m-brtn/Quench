@@ -631,7 +631,8 @@ cmake/                 Dependencies (runtime pins), ShaderToolchain (shader comp
                        and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator;
                        MikkTSpaceRotate: a shift by 32 in MikkTSpace masked; DetourAlign8: Detour's tile sections
                        aligned to 8 bytes with 64-bit references; TracyPpqsort: Tracy's changes to PPQSort;
-                       SdlVulkan3d: SDL GPU's 3D textures 2D-array compatible only as color targets, for MoltenVK)
+                       SdlVulkan3d: SDL GPU's 3D textures 2D-array compatible only as color targets, for MoltenVK;
+                       SdlBlitLevelSize: SDL GPU's shader blit with levels at least 1 x 1, for Direct3D 12's mipmaps)
 include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, navigation/,
                        weather/, particles/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
