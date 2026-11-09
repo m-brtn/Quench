@@ -374,10 +374,10 @@ void RainRenderer::updateMaps(gpu::CommandBuffer& commands, const gpu::Texture& 
         pass.draw(3);
         pass.end();
     }
-    const glm::vec4 c = m_viewProj * glm::vec4(m_camera, 1.0f);
-    m_lastCameraTexel = glm::uvec2(glm::clamp(glm::vec2(c.x * 0.5f + 0.5f, 0.5f - c.y * 0.5f) * float(kMapSize),
+    const glm::vec4 clip = m_viewProj * glm::vec4(m_camera, 1.0f);
+    m_lastCameraTexel = glm::uvec2(glm::clamp(glm::vec2(clip.x * 0.5f + 0.5f, 0.5f - clip.y * 0.5f) * float(kMapSize),
                                               glm::vec2(0.0f), glm::vec2(float(kMapSize - 1))));
-    m_lastCameraDepth = c.z;
+    m_lastCameraDepth = clip.z;
     m_lastMapValid = true;
 
     // The wetness grid and the snow cover beside it into their region when the weather has changed them: rows of

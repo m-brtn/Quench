@@ -68,6 +68,7 @@ jobs:
           key: ${{ steps.tool-cache.outputs.cache-primary-key }}
 
       - name: Build
+        id: build
         shell: bash
         run: |
           status=0
@@ -84,13 +85,16 @@ jobs:
             -L "^(core|physics|assets|audio|animation|navigation|weather|particles|cook)$"
 
       # SDL GPU's default driver on Windows is Direct3D 12; on the runner the only adapter is a software one.
+      # The steps after the build run also when the headless tests fail.
       - name: GPU, app and demo tests (software adapter, not fatal)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: ctest --preset windows-release -j2 --timeout 900 -L "^(gpu|render|app|hello|demo)$"
 
       - name: Package the demo
         id: package
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           version=$(sed -n 's/^project(Quench VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
@@ -103,6 +107,7 @@ jobs:
           du -sh "dist/$name"
 
       - name: Smoke run of the packaged demo (software adapter, not fatal)
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -119,6 +124,7 @@ jobs:
           exit ${status:-0}
 
       - name: Upload the demo
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.package.outputs.name }}

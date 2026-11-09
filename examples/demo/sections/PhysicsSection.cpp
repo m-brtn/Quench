@@ -257,19 +257,19 @@ private:
     // mass > 0: the body's mass (kg) instead of its density's.
     void add(bool ball, const glm::vec3& position, const glm::quat& rotation, float mass = 0.0f) {
         if (m_bodies.size() >= kMaxBodies) removeOldest();
-        JPH::BodyCreationSettings settings(
+        JPH::BodyCreationSettings creation(
             ball ? static_cast<const JPH::ShapeSettings*>(new JPH::SphereShapeSettings(kBallRadius))
                  : static_cast<const JPH::ShapeSettings*>(new JPH::BoxShapeSettings(JPH::Vec3::sReplicate(kBoxHalf))),
             JPH::RVec3(position.x, position.y, position.z), JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w),
             JPH::EMotionType::Dynamic, PhysicsLayers::kMoving);
-        settings.mRestitution = ball ? 0.4f : 0.1f;
-        settings.mFriction = 0.6f;
+        creation.mRestitution = ball ? 0.4f : 0.1f;
+        creation.mFriction = 0.6f;
         if (mass > 0.0f) {
-            settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
-            settings.mMassPropertiesOverride.mMass = mass;
+            creation.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+            creation.mMassPropertiesOverride.mMass = mass;
         }
         Body b;
-        b.id = m_world->bodies().CreateAndAddBody(settings, JPH::EActivation::Activate);
+        b.id = m_world->bodies().CreateAndAddBody(creation, JPH::EActivation::Activate);
         if (b.id.IsInvalid()) return; // the world is full
         b.lightBall = mass > 0.0f;
         m_drag.add(b.id, ball ? kBallArea : kBoxArea, ball ? kBallDrag : kBoxDrag);

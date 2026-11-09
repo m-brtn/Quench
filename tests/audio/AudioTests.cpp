@@ -643,7 +643,8 @@ QUENCH_TEST(mixer_thread_stress) {
     const auto start = std::chrono::steady_clock::now();
     std::vector<SoundHandle> handles;
     int i = 0;
-    while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(300)) {
+    // At least 100 rounds: the 1 ms sleep below takes about 15 ms on Windows.
+    while (i < 100 || std::chrono::steady_clock::now() - start < std::chrono::milliseconds(300)) {
         if (i % 5 == 0) handles.push_back(audio.play(data, {.spatial = true, .sendBus = reverb, .sendLevel = 0.5f}));
         if (i % 17 == 0) handles.push_back(audio.playGenerator(std::make_shared<Sine>(500.0f + float(i))));
         if (i % 41 == 0) handles.push_back(audio.playStream("loop.wav", {.loop = true}));

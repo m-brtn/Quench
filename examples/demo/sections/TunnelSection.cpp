@@ -365,8 +365,9 @@ public:
             s.addInstance({.mesh = *rail,
                            .material = m_aluminiumMaterial,
                            .transform = placed({side * kRailX, kRailY, 0.5f * (kRailNear + kRailFar)})});
-        for (const float y : {0.6f, 2.6f})
-            s.addInstance({.mesh = *track, .material = dark, .transform = placed({kHalfWidth - 0.015f, y, -6.75f})});
+        for (const float trackY : {0.6f, 2.6f})
+            s.addInstance(
+                {.mesh = *track, .material = dark, .transform = placed({kHalfWidth - 0.015f, trackY, -6.75f})});
         for (InstanceId& h : m_hangers) h = s.addInstance({.mesh = *hanger, .material = dark});
         for (InstanceId& b : m_brackets) b = s.addInstance({.mesh = *bracket, .material = dark});
         for (InstanceId& h : m_housings) h = s.addInstance({.mesh = *spotHousing, .material = dark});

@@ -430,8 +430,9 @@ struct RendererImpl {
     void applySettings();
     Result<gpu::GraphicsPipeline> createPipeline(const gpu::GraphicsPipelineDesc& desc);
     const gpu::GraphicsPipeline* surfacePipeline(SurfaceEntry& surface, std::uint32_t variant);
-    const gpu::GraphicsPipeline* surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided, bool rain = false);
-    const gpu::GraphicsPipeline* surfaceMaskPipeline(SurfaceEntry& surface, bool rain = false);
+    const gpu::GraphicsPipeline* surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided,
+                                                       bool rainOccluder = false);
+    const gpu::GraphicsPipeline* surfaceMaskPipeline(SurfaceEntry& surface, bool rainOccluder = false);
     const gpu::GraphicsPipeline* surfaceTransmittancePipeline(SurfaceEntry& surface, bool doubleSided);
     const gpu::GraphicsPipeline* surfaceDepthPipeline(SurfaceEntry& surface, bool doubleSided, bool cutOut);
     const gpu::GraphicsPipeline* surfaceGbufferPipeline(SurfaceEntry& surface, bool doubleSided);
@@ -901,19 +902,20 @@ const gpu::GraphicsPipeline* RendererImpl::surfacePipeline(SurfaceEntry& surface
     return &surface.pipelines[variant];
 }
 
-const gpu::GraphicsPipeline* RendererImpl::surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided, bool rain) {
-    if (!surface.shadowVertex) return rain ? &rainOccluderPipeline : &shadowPipeline;
-    const int i = (rain ? 2 : 0) + (doubleSided ? 1 : 0);
+const gpu::GraphicsPipeline* RendererImpl::surfaceShadowPipeline(SurfaceEntry& surface, bool doubleSided,
+                                                                 bool rainOccluder) {
+    if (!surface.shadowVertex) return rainOccluder ? &rainOccluderPipeline : &shadowPipeline;
+    const int i = (rainOccluder ? 2 : 0) + (doubleSided ? 1 : 0);
     if (surface.shadowPipelines[std::size_t(i)]) return &surface.shadowPipelines[std::size_t(i)];
     if (surface.shadowFailed[std::size_t(i)]) return nullptr;
     const gpu::Caps& caps = device->caps();
-    const std::string name = std::format("surface {} {}", surface.name, rain ? "rain occluder" : "shadow");
+    const std::string name = std::format("surface {} {}", surface.name, rainOccluder ? "rain occluder" : "shadow");
     Result<gpu::GraphicsPipeline> p = createPipeline({
         .vertexShader = surface.shadowVertex,
         .fragmentShader = shaders::render_frame.find("shadow_fs"),
         .vertexBuffers = {&kVertexLayout, 1},
         .vertexAttributes = kVertexAttributes,
-        .rasterizer = shadowRasterizer(caps, !rain),
+        .rasterizer = shadowRasterizer(caps, !rainOccluder),
         .depth = {.test = true, .write = true, .compare = gpu::CompareOp::LessOrEqual},
         .depthFormat = shadowFormat,
         .name = name,
@@ -928,17 +930,17 @@ const gpu::GraphicsPipeline* RendererImpl::surfaceShadowPipeline(SurfaceEntry& s
 }
 
 // Cut-out and dithered casters: the surface function runs to discard, so they take the full vertex and the material.
-const gpu::GraphicsPipeline* RendererImpl::surfaceMaskPipeline(SurfaceEntry& surface, bool rain) {
-    const std::size_t i = rain ? 1 : 0;
+const gpu::GraphicsPipeline* RendererImpl::surfaceMaskPipeline(SurfaceEntry& surface, bool rainOccluder) {
+    const std::size_t i = rainOccluder ? 1 : 0;
     if (surface.maskPipelines[i]) return &surface.maskPipelines[i];
     if (surface.maskFailed[i]) return nullptr;
-    const std::string name = std::format("surface {} {} mask", surface.name, rain ? "rain occluder" : "shadow");
+    const std::string name = std::format("surface {} {} mask", surface.name, rainOccluder ? "rain occluder" : "shadow");
     Result<gpu::GraphicsPipeline> p = createPipeline({
         .vertexShader = surface.vertex,
         .fragmentShader = surface.shadowFragment ? surface.shadowFragment : standard.shadowFragment,
         .vertexBuffers = {&kVertexLayout, 1},
         .vertexAttributes = kVertexAttributes,
-        .rasterizer = shadowRasterizer(device->caps(), !rain),
+        .rasterizer = shadowRasterizer(device->caps(), !rainOccluder),
         .depth = {.test = true, .write = true, .compare = gpu::CompareOp::LessOrEqual},
         .depthFormat = shadowFormat,
         .name = name,

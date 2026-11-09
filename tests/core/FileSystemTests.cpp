@@ -101,8 +101,11 @@ QUENCH_TEST(fs_asset_overlay) {
     CHECK(fs::assetModifiedTime("models/rock.txt") != bundled, "the overlay's time not reported");
     const Result<std::string> added = fs::readAssetText("models/new.txt");
     CHECK(fs::assetExists("models/new.txt") && added.ok() && *added == "pumice\n", "a file only in the overlay");
-    Result<std::unique_ptr<fs::Reader>> reader = fs::openAsset("models/rock.txt");
-    CHECK(reader && (*reader)->size() == 7, "open reads the overlay");
+    {
+        // Closed before the file is removed below: Windows does not delete an open file.
+        Result<std::unique_ptr<fs::Reader>> reader = fs::openAsset("models/rock.txt");
+        CHECK(reader && (*reader)->size() == 7, "open reads the overlay");
+    }
     CHECK(!fs::readAsset("../overlay/models/rock.txt"), "'..' accepted");
     CHECK(fs::writeUserText("saves/a.txt", "1").ok(), "user write");
     const Result<std::string> saved = fs::readUserText("saves/a.txt");
