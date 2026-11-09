@@ -65,7 +65,7 @@ tunnel phone scenarios, with the same numbers as before ([Performance](performan
 |---|---|---|---|---|
 | macOS | Metal | metallib | tests, hello and the demo (also Vulkan through MoltenVK) | TrailForge and Ashfall |
 | iOS | Metal | metallib (iOS SDK) | tests, hello, the render module and the demo in the Simulator and on the user's iPhone (signed by the user's paid team) | TrailForge in the iOS Simulator; on the user's iPhone (user reports 2026-11-02 and 2026-11-04; on the engine's app shell 2026-11-05) |
-| Windows | D3D12 or Vulkan | DXIL or SPIR-V | nothing | TrailForge builds and passes headless tests in CI; never run on real hardware |
+| Windows | D3D12 or Vulkan | DXIL or SPIR-V | builds with MSVC on GitHub's runner; tests and the demo's checks on D3D12 over WARP (software); never on real hardware | TrailForge builds and passes headless tests in CI; never run on real hardware |
 | Linux | Vulkan | SPIR-V | nothing | TrailForge builds in CI and starts on Mesa lavapipe under Xvfb; never run on real hardware |
 | Android | Vulkan | SPIR-V | nothing | nothing |
 | Web | WebGPU (not in SDL yet) | WGSL | headless tests under Node.js | nothing |
@@ -103,7 +103,8 @@ its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewh
 - Shader hot reload (2026-11-07, [App shell](app.md#shader-hot-reload)) runs the build's compilers through
   `SDL_CreateProcess` (`posix_spawnp` with non-blocking pipes in SDL 3.4.18): checked on the Mac on SDL GPU's Metal
   driver, Vulkan through MoltenVK and the native Metal backend. Not on iOS (no processes, and the app has no build
-  tree) and not on Windows or Linux (no builds there yet; the code takes `\` as a separator too).
+  tree) and not on Windows (it builds there, but hot reload has not been run) or Linux (no builds there yet; the
+  code takes `\` as a separator too).
 
 ## iOS
 
@@ -298,7 +299,29 @@ step by compute, the CPU fallback and the draws are `quench_render`'s, chosen by
   because only the Windows build of DXC is downloaded for it. Since stage 9 DXC is built from source on macOS for
   the ray query entries (SPIR-V; [Dependencies](dependencies.md#added-in-stage-9)), so all formats could be
   produced on a Mac; DXIL from the Mac is not set up.
-- No hardware to run them; CI only builds and runs headless tests.
+- Windows (since 2026-11-09, the user's request): `.github/workflows/windows.yml` builds the engine, the sample, the
+  demo and the tests with MSVC 14.51 (`/W4 /WX`, Ninja, the static runtime; the `windows-release` preset) on
+  GitHub's `windows-2025` runner, on a push to the branch `windows-build` or by hand, in about an hour. It is a
+  build, not a gate: the engine's gates stay local. On that runner (2026-11-09, commit `c8fb061`): the headless
+  tests 228 of 228; the GPU, app and demo tests 180 of 180 with 33 skipped (ray query, MetalFX, window cases); the
+  demo's weather, rain, snow, wind, particles, navigation and mix checks, 211 of 211; the packaged demo's smoke run
+  22 of 22. Everything graphical ran on SDL GPU's Direct3D 12 driver over the runner's only adapter, Microsoft
+  Basic Render Driver (WARP, a software rasterizer), with the Direct3D 12 debug layer (no errors; warnings about
+  clear values and comparison samplers). Captures on WARP against the Mac's Metal ones: within the golden image
+  thresholds, except the panel width in `demo_ui` (the adapter's longer name) and the rain's splashes and ripples
+  (0.1 to 0.45% of the pixels: some land elsewhere). The demo, packaged, is the run's artifact. Not yet run on
+  real Windows hardware, on Vulkan on Windows, with ray tracing or with sound.
+- What Windows found (2026-11-09): SDL GPU's shader blit, which its Direct3D 12 driver uses for blits and mipmaps,
+  pushes uniforms of its own into fragment slot 0 (the SDL GPU backend pushes the engine's again after it); SDL
+  GPU took a mip level's size as `size >> level`, 0 for the last levels of a non-square texture (the patch
+  `SdlLevelSize.cmake`, [Dependencies](dependencies.md)); `std::this_thread::sleep_for(1 ms)` takes about 15 ms;
+  a file still open cannot be removed; MSVC evaluates a call's arguments in another order than Clang (the demo drew
+  several random numbers in one call and built other scenes).
+- The plan (the user's decisions of 2026-11-09): the build on SDL GPU first (Direct3D 12 by default, Vulkan
+  through `--gpu-driver vulkan`, the ray tracing effects on their fallbacks); then a native Vulkan backend with
+  ray queries, developed on the Mac through MoltenVK and checked on the user's PC (an NVIDIA RTX GPU); then a
+  native Direct3D 12 backend with DXR. The default backend on Windows is chosen later from measurements on that PC.
+- Linux: no builds yet.
 
 ## Android
 

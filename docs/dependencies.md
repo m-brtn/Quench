@@ -35,10 +35,14 @@ carries `SdlVulkan3d.cmake`: SDL GPU's Vulkan driver creates every 3D texture 2D
 (`VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT`, which only rendering into its slices needs), and MoltenVK's portability
 subset has no 2D views of 3D images (`imageView2DOn3DImage`), so the Khronos validation layer reported an error for
 any 3D texture, also one that is only sampled; the patch sets the flag for 3D color targets only (the engine renders
-into 2D arrays and copies into sampled 3D textures). The games are not affected: TrailForge declares SDL itself
-(with `SdlIosSimulator.cmake` only) before it fetches the engine, so its SDL is unchanged (its sampled 3D colour LUT
-would be valid on Vulkan through MoltenVK with the patch); Ashfall creates no 3D textures and does not build on the
-engine. Ashfall has no iOS build and no
+into 2D arrays and copies into sampled 3D textures). Since 2026-11-09 (the Windows build) the engine also carries
+`SdlLevelSize.cmake`: SDL GPU takes a mip level's size as `size >> level`, 0 for the last levels of a non-square
+texture, so its shader blit (Direct3D 12's blits and mipmaps, Metal's blits) divided by 0 and a render pass into such
+a level had an empty viewport and scissor (Direct3D 12, Metal) or framebuffer (Vulkan); the patch keeps both at least
+1 (`gpu_device.generate_mipmaps` with an 8 x 2 texture failed on Direct3D 12 before it). The games are not affected:
+TrailForge declares SDL itself (with `SdlIosSimulator.cmake` only) before it fetches the engine, so its SDL is
+unchanged (its sampled 3D colour LUT would be valid on Vulkan through MoltenVK with the patch); Ashfall creates no 3D
+textures and does not build on the engine. Ashfall has no iOS build and no
 patches. Ashfall plays audio through an SDL3 audio stream with sounds synthesized at startup, without miniaudio.
 
 Build-time shader toolchain (host tools, not shipped in the binary):

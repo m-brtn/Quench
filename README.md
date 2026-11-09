@@ -64,8 +64,8 @@ flower-lined paths, discover old ruins and glide above the clouds, with animated
 - **Testing:** scripted scenarios, runs without a window, screenshot comparison, frame time and memory measurements.
 - **Profiling:** Tracy zones on the CPU and the GPU for the engine and your game, recorded from a scripted run into
   a table of where the frame's time goes.
-- **Platforms:** macOS and iOS, where a game can lower its frame rate and resolution as the phone heats up;
-  Windows, Linux, Android and the web are planned.
+- **Platforms:** macOS and iOS, where a game can lower its frame rate and resolution as the phone heats up; an early
+  Windows build on Direct3D 12, not yet tried on a Windows PC; Linux, Android and the web are planned.
 
 ## Getting started
 

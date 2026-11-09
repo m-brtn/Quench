@@ -199,6 +199,15 @@ measurement limits are in
 `devlog/2026-11-09.md` and `docs/releases/v0.12.1.md`; no phone run or onscreen performance claim for this patch.
 The earlier platform claims above describe 0.12.0.
 
+Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
+the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the
+`windows-release` preset). There the headless tests pass, and the GPU, app and demo tests, the demo's weather,
+particles, navigation and mix checks and the packaged demo's smoke run pass on SDL GPU's Direct3D 12 driver over the
+runner's only adapter, Microsoft's software rasterizer (WARP), with the Direct3D 12 debug layer. Nothing has run on
+real Windows hardware, on Vulkan on Windows or with ray tracing there yet. Next: the user's run on their PC (an
+NVIDIA RTX GPU), then a native Vulkan backend with ray queries and a native Direct3D 12 backend with DXR
+(`docs/platforms.md`, "Windows and Linux").
+
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
 with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,
 Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer, bc7enc_rdo's BC7 decoder,
@@ -213,7 +222,8 @@ their licences: `docs/dependencies.md`.
 
 macOS and iOS come first: the available hardware is a Mac with an Apple M4 Pro and an iPhone 18 Pro Max. Windows,
 Linux, Android and the web (WebAssembly) are later targets. Their foundations are laid now (see "Portability rules"),
-but they are not worked on until the user asks.
+but they are not worked on until the user asks. The user asked for Windows on 2026-11-09 (Direct3D 12 and Vulkan,
+hardware ray tracing required; the user has a Windows PC with an NVIDIA RTX GPU).
 
 Claim only platforms that were actually run, and say how (for example "iOS Simulator only" or "Vulkan through MoltenVK
 on the Mac"). Status, constraints and open questions per platform: `docs/platforms.md`.
@@ -230,6 +240,9 @@ How each backend is verified:
   libsdl-org/SDL#16020). Until one is usable, web compatibility is verified only for headless modules, built with
   Emscripten and run as CTest under Node.js on the Mac (the `wasm-node` preset, single-threaded, with stack overflow
   checks). Node.js is not a browser: say "under Node.js" whenever web results are mentioned.
+- **Direct3D 12**: on GitHub's Windows runner only (`.github/workflows/windows.yml`), whose only adapter is WARP, a
+  software rasterizer, with the Direct3D 12 debug layer; on real hardware only by the user, on their PC. Say "on
+  GitHub's runner, WARP" whenever these results are mentioned.
 
 ## Build and test
 
@@ -318,7 +331,10 @@ section captures show the scene without the demo's windows; `demo_ui` and the co
 and captures run in Release builds only (`QUENCH_TEST_CAPTURES`); Debug and the sanitizer builds run the unit and
 headless tests and one demo smoke run. The renderer's own cases are `render.*` and `render_vulkan.*`.
 
-All checks run locally; there is no CI (user decision, 2026-11-05). The gates are proportional to the change (user
+All checks run locally; there is no CI (user decision, 2026-11-05). The one workflow on GitHub,
+`.github/workflows/windows.yml` (on a push to `windows-build` or by hand; about an hour), builds the Windows
+version and tries it on the runner's software adapter, with the demo as an artifact: a build, not a gate (user
+decision, 2026-11-09). The gates are proportional to the change (user
 decision, 2026-11-06); `tools/check.sh` runs them, offscreen:
 
 - **A change inside a module, an example or a test (the default): `tools/check.sh quick`.** The format of the
@@ -444,7 +460,8 @@ are built:
 - Headers use `#pragma once`. Include order, separated by blank lines: the file's own header, engine headers,
   third-party headers, the standard library.
 - Engine targets build with `-Wall -Wextra`, plus `-Werror` when the engine is the top-level project (`QUENCH_WERROR`;
-  inside a game, a warning from a newer compiler must not break the game's build). `/W4 /WX` when MSVC is added.
+  inside a game, a warning from a newer compiler must not break the game's build). `/W4 /WX` under MSVC
+  (`cmake/QuenchTargets.cmake`).
   Public headers must also compile without warnings under the games' flags (both use `-Wall -Wextra` today).
   Third-party code is built without `-Werror`.
 
@@ -615,6 +632,8 @@ LFS only when unavoidable and keep it small.
 
 ```
 AGENTS.md              these rules
+.github/workflows/     windows.yml: the Windows build on GitHub's runner (MSVC, Ninja), its tries on the software
+                       adapter and the demo as an artifact
 .agents/skills/        quench-game/: the agent skill on building a game on the engine (SKILL.md, reference.md),
                        copied into every new game by tools/new_game.py
 README.md              short overview
