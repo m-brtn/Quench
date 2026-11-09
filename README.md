@@ -29,7 +29,7 @@ flower-lined paths, discover old ruins and glide above the clouds, with animated
 
 <p align="center">
   <a href="https://github.com/m-brtn/cloudsong">
-    <img src="docs/images/cloudsong.jpg" alt="Cloudsong: a red-caped traveller on a flower-lined path, carved ruins and floating islands beneath a blue sky" width="100%">
+    <img src="docs/images/cloudsong.jpg" alt="Cloudsong: a red-caped traveller in a flower meadow, winding paths and a hilltop pavilion above sunlit clouds at sunset" width="100%">
   </a>
 </p>
 
