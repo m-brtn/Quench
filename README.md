@@ -22,19 +22,6 @@ look and listen.
 - **The agent sees its own game.** Scripted scenarios run the game without a window, take screenshots the agent looks
   at and compares with reference images, and measure frame times.
 
-<p align="center">
-  <img src="docs/images/particles.jpg" alt="Blue and pink ribbons of light above a field of fireflies and a glowing campfire" width="100%">
-</p>
-<p align="center">
-  <img src="docs/images/weather.jpg" alt="Golden sunset light along the edges of towering volumetric clouds" width="49%">
-  <img src="docs/images/raytracing.jpg" alt="Cut-out fence shadows, tinted glass and a row of reflective gold spheres" width="49%">
-</p>
-
-<p align="center"><sub>
-  Captured in the engine demo: particles and light trails · volumetric clouds at sunset · ray-traced shadows,
-  reflections and bounced light. These demo scenes are procedural.
-</sub></p>
-
 ## Made with Quench
 
 [**Cloudsong**](https://github.com/m-brtn/cloudsong) is a calm exploration game among floating islands. Follow
