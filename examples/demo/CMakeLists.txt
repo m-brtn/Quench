@@ -169,6 +169,22 @@ add_dependencies(quench_demo quench_demo_build_info)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(quench_demo PRIVATE PrivacyInfo.xcprivacy)
     set_source_files_properties(PrivacyInfo.xcprivacy PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    # The store's delivery number is independent of the engine's public version. Apply this during configure,
+    # so Xcode's automatic CMake regeneration cannot discard a local plist edit before archiving.
+    set(QUENCH_DEMO_IOS_BUILD_NUMBER "${PROJECT_VERSION}" CACHE STRING "App Store delivery number for the iOS demo")
+    if(NOT QUENCH_DEMO_IOS_BUILD_NUMBER MATCHES "^[0-9]+(\\.[0-9]+)?(\\.[0-9]+)?$")
+        message(FATAL_ERROR "QUENCH_DEMO_IOS_BUILD_NUMBER must contain one to three numeric components")
+    endif()
+    set(demo_plist ${CMAKE_CURRENT_BINARY_DIR}/quench_game/quench_demo/Info.plist)
+    file(READ ${demo_plist} demo_plist_content)
+    string(REPLACE "<key>CFBundleVersion</key>\n    <string>${PROJECT_VERSION}</string>"
+        "<key>CFBundleVersion</key>\n    <string>${QUENCH_DEMO_IOS_BUILD_NUMBER}</string>"
+        demo_plist_content "${demo_plist_content}")
+    # The standalone demo contains no non-exempt encryption.
+    string(REPLACE "<key>LSRequiresIPhoneOS</key>"
+        "<key>ITSAppUsesNonExemptEncryption</key>\n    <false/>\n    <key>LSRequiresIPhoneOS</key>"
+        demo_plist_content "${demo_plist_content}")
+    file(WRITE ${demo_plist} "${demo_plist_content}")
     if(CMAKE_GENERATOR STREQUAL "Xcode")
         # CMake's non-installed executables otherwise produce an empty Xcode archive.
         set_target_properties(quench_demo PROPERTIES

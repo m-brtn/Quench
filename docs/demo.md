@@ -720,3 +720,5 @@ demo's tests (`ctest -L demo`: the batches and the runs with files of their own;
   signature, the profile's name, expiry and device count. Nothing is installed on a device by the script.
 
 `dist/` is git-ignored.
+
+App Store archives and submission checks are described in [Distributing the demo through the App Store](demo-app-store.md).
