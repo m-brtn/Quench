@@ -108,8 +108,10 @@ jobs:
           SDL_LOGGING: gpu=warn
         run: ctest --preset windows-release -j2 --timeout 900 -L "^(gpu|render|app|hello|demo)$"
 
-      # The demo's batch of section captures (tests/CMakeLists.txt, demo_batch_*) on Direct3D 12, to compare with the
-      # Mac's golden images by eye: there are no golden images for this backend and device.
+      # A part of the demo's batch (examples/demo/scenarios/batch.txt) on Direct3D 12 with its debug layer: the sections
+      # the GPU tests cover least, to compare by eye with the same scenario's captures on the Mac (there are no golden
+      # images for this backend and device, and the batch's own captures need every part before them). The whole batch
+      # does not end in 45 minutes on the software adapter.
       - name: Demo captures on Direct3D 12 (software adapter, not fatal)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         continue-on-error: true
@@ -119,13 +121,15 @@ jobs:
         run: |
           out="$PWD/dist/captures"
           mkdir -p "$out"
-          script=$(cygpath -m "$PWD/examples/demo/scenarios/batch.txt")
+          scenario=examples/demo/scenarios/windows_runner.txt
+          printf 'include %s.txt\n' weather rain snow wind physics_wind particles navigation > "$scenario"
+          echo quit >> "$scenario"
           start=$(date +%s)
           timeout 2700 build/windows-release/examples/demo/quench-demo.exe --window 960x540 --gpu-debug \
-            --hdr-headroom 4 --audio-device null --script "$script" --user-dir "$(cygpath -m "$out")" \
+            --audio-device null --script "$(cygpath -m "$PWD/$scenario")" --user-dir "$(cygpath -m "$out")" \
             > "$out/batch.log" 2>&1 || status=$?
           echo "batch: $(( $(date +%s) - start )) s, exit ${status:-0}"
-          grep -E "FAIL|ERROR|scenario: .*batch\.txt" "$out/batch.log" | head -60 || true
+          grep -E "FAIL|ERROR|scenario: " "$out/batch.log" | head -60 || true
           exit ${status:-0}
 
       - name: Package the demo

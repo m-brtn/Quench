@@ -7,7 +7,11 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
 
 namespace quench::gpu::detail {
 
@@ -105,9 +109,16 @@ public:
 
 private:
     Result<SDL_GPUShader*> createShader(const ShaderBlob& blob);
+    // SDL GPU's shader blit (SDL_GPU_BlitCommon: the Metal and Direct3D 12 drivers' blits, Direct3D 12's mipmaps)
+    // pushes uniforms of its own into fragment slot 0 of the command buffer, where the engine's stay for later passes
+    // (CommandBuffer::pushUniforms): the last ones pushed there are pushed again after it.
+    void restoreFragmentUniforms(void* commands);
+    void forgetCommandBuffer(void* commands);
 
     SDL_GPUDevice* m_device = nullptr;
     SDL_GPUShaderFormat m_shaderFormat = SDL_GPU_SHADERFORMAT_INVALID;
+    std::mutex m_uniformsMutex;
+    std::unordered_map<void*, std::vector<std::byte>> m_fragmentUniforms; // by command buffer, until its submission
 };
 
 } // namespace quench::gpu::detail

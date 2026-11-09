@@ -140,6 +140,37 @@ QUENCH_TEST(uniforms_and_viewports) {
     CHECK_PIXEL(p, 8, 7, 3, kRed, 0);
 }
 
+// Uniforms pushed outside a pass stay for the passes after a blit and mipmap generation (SDL GPU draws both with a
+// shader of its own on some drivers, with uniforms of its own in fragment slot 0).
+QUENCH_TEST(uniforms_outlive_blits) {
+    QUENCH_GPU_DEVICE(device);
+    const TextureUsage usage = TextureUsage::Sampled | TextureUsage::ColorTarget;
+    Result<Texture> target = colorTarget(device, 4, 4);
+    Result<Texture> source = device.createTexture({.usage = usage, .width = 4, .height = 4, .name = "blit source"});
+    Result<Texture> copy = device.createTexture({.usage = usage, .width = 8, .height = 8, .name = "blit copy"});
+    Result<Texture> mips = device.createTexture(
+        {.usage = usage, .width = 8, .height = 8, .mipLevels = fullMipCount(8, 8), .name = "mips"});
+    Result<GraphicsPipeline> pipeline = device.createPipeline({.vertexShader = shaders::render.find("fullscreen_vs"),
+                                                               .fragmentShader = shaders::render.find("uniform_fs"),
+                                                               .colorTargets = {&kRgba8, 1}});
+    REQUIRE(target && source && copy && mips && pipeline, "creation failed");
+
+    CommandBuffer commands = device.acquireCommandBuffer();
+    commands.pushUniforms(ShaderStage::Fragment, 0, Color{1.0f, 0.0f, 0.0f, 1.0f});
+    commands.blit({.source = {.texture = *source}, .destination = {.texture = *copy}});
+    commands.generateMipmaps(*mips);
+    {
+        RenderPass pass = commands.beginRenderPass(ColorTarget{.texture = *target});
+        pass.bindPipeline(*pipeline);
+        pass.draw(3);
+    }
+    REQUIRE(commands.submit(), "submit");
+    const std::vector<Rgba8> p = test::readRgba8(device, *target);
+    REQUIRE(p.size() == 16, "%zu pixels", p.size());
+    CHECK_PIXEL(p, 4, 0, 0, kRed, 0);
+    CHECK_PIXEL(p, 4, 3, 3, kRed, 0);
+}
+
 // A nearest-filtered texture drawn 1:1 comes back unchanged: uploads, sampling and downloads agree on the origin.
 QUENCH_TEST(texture_sampling) {
     QUENCH_GPU_DEVICE(device);

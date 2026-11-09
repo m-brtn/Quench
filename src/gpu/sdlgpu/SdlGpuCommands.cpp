@@ -93,12 +93,31 @@ void SdlGpuDevice::endComputePass(void*, void* pass) { SDL_EndGPUComputePass(nat
 
 void SdlGpuDevice::pushUniforms(void* commands, ShaderStage stage, std::uint32_t slot, const void* data,
                                 std::uint32_t size) {
-    if (stage == ShaderStage::Vertex)
+    if (stage == ShaderStage::Vertex) {
         SDL_PushGPUVertexUniformData(nativeCommands(commands), slot, data, size);
-    else if (stage == ShaderStage::Fragment)
+    } else if (stage == ShaderStage::Fragment) {
         SDL_PushGPUFragmentUniformData(nativeCommands(commands), slot, data, size);
-    else
+        if (slot == 0) {
+            const auto* bytes = static_cast<const std::byte*>(data);
+            const std::lock_guard lock(m_uniformsMutex);
+            m_fragmentUniforms[commands].assign(bytes, bytes + size);
+        }
+    } else {
         SDL_PushGPUComputeUniformData(nativeCommands(commands), slot, data, size);
+    }
+}
+
+void SdlGpuDevice::restoreFragmentUniforms(void* commands) {
+    const std::lock_guard lock(m_uniformsMutex);
+    const auto it = m_fragmentUniforms.find(commands);
+    if (it != m_fragmentUniforms.end())
+        SDL_PushGPUFragmentUniformData(nativeCommands(commands), 0, it->second.data(),
+                                       std::uint32_t(it->second.size()));
+}
+
+void SdlGpuDevice::forgetCommandBuffer(void* commands) {
+    const std::lock_guard lock(m_uniformsMutex);
+    m_fragmentUniforms.erase(commands);
 }
 
 void SdlGpuDevice::generateMipmaps(void* commands, const TextureRef& texture) {
@@ -128,9 +147,10 @@ void SdlGpuDevice::generateMipmaps(void* commands, const TextureRef& texture) {
                 info.filter = SDL_GPU_FILTER_LINEAR;
                 SDL_BlitGPUTexture(nativeCommands(commands), &info);
             }
-        return;
+    } else {
+        SDL_GenerateMipmapsForGPUTexture(nativeCommands(commands), sdl::texture(texture));
     }
-    SDL_GenerateMipmapsForGPUTexture(nativeCommands(commands), sdl::texture(texture));
+    restoreFragmentUniforms(commands);
 }
 
 void SdlGpuDevice::blit(void* commands, const BlitDesc& blit) {
@@ -145,6 +165,7 @@ void SdlGpuDevice::blit(void* commands, const BlitDesc& blit) {
     info.filter = sdl::toSdl(blit.filter);
     info.cycle = blit.cycle;
     SDL_BlitGPUTexture(nativeCommands(commands), &info);
+    restoreFragmentUniforms(commands);
 }
 
 TextureRef SdlGpuDevice::acquireSwapchainTexture(void* commands, SDL_Window* window) {
@@ -176,18 +197,23 @@ void SdlGpuDevice::insertDebugLabel(void* commands, const char* text) {
 }
 
 Result<void> SdlGpuDevice::submit(void* commands) {
+    forgetCommandBuffer(commands);
     if (!SDL_SubmitGPUCommandBuffer(nativeCommands(commands)))
         return Error{std::string("SDL_SubmitGPUCommandBuffer: ") + SDL_GetError()};
     return {};
 }
 
 Result<void*> SdlGpuDevice::submitWithFence(void* commands) {
+    forgetCommandBuffer(commands);
     SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(nativeCommands(commands));
     if (!fence) return Error{std::string("SDL_SubmitGPUCommandBufferAndAcquireFence: ") + SDL_GetError()};
     return static_cast<void*>(fence);
 }
 
-void SdlGpuDevice::cancel(void* commands) { SDL_CancelGPUCommandBuffer(nativeCommands(commands)); }
+void SdlGpuDevice::cancel(void* commands) {
+    forgetCommandBuffer(commands);
+    SDL_CancelGPUCommandBuffer(nativeCommands(commands));
+}
 
 // ------------------------------------------------------------------ render passes
 
