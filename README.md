@@ -10,7 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://m-brtn.github.io/Quench/"><b>Try the demo in your browser</b></a><br>
+  <a href="https://m-brtn.github.io/Quench/"><b>Try the demo in your browser</b></a> ·
+  <a href="https://m-brtn.github.io/Quench/games/outpost/"><b>Play Outpost, a micro game made on it</b></a><br>
   Experimental: needs WebGPU; run in Chrome and Safari on a Mac so far.
 </p>
 

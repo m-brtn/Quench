@@ -14,8 +14,8 @@
 #
 # --push needs a clean working tree (the site is then that commit's build) and refuses otherwise. It checks the
 # gh-pages branch out into a temporary worktree (an orphan branch the first time), replaces its content with the
-# site, commits and pushes: no history is rewritten, so every publication adds its files (about 22 MB before git's
-# compression) to that branch. Pages is turned on once per repository: Settings, Pages, "Deploy from a branch",
+# site (all but games/, where games publish their own pages: games/outpost/), commits and pushes: no history is
+# rewritten, so every publication adds its files (about 22 MB before git's compression) to that branch. Pages is turned on once per repository: Settings, Pages, "Deploy from a branch",
 # gh-pages, / (root); or
 #   gh api -X POST repos/<owner>/<repo>/pages -f 'source[branch]=gh-pages' -f 'source[path]=/'
 set -euo pipefail
@@ -114,6 +114,10 @@ else
 fi
 git -C "$WORK/site" rm -rf --quiet . >/dev/null 2>&1 || true
 git -C "$WORK/site" clean -fdxq
+# The pages of games published beside the demo (games/<name>/, by their own scripts) stay as they are.
+if git cat-file -e origin/gh-pages:games 2>/dev/null; then
+    git -C "$WORK/site" checkout --quiet origin/gh-pages -- games
+fi
 cp -R "$SITE"/. "$WORK/site/"
 git -C "$WORK/site" add -A
 if git -C "$WORK/site" rev-parse --verify --quiet HEAD >/dev/null && git -C "$WORK/site" diff --cached --quiet; then

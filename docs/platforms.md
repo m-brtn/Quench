@@ -406,7 +406,12 @@ WebAssembly on the browser's WebGPU. Run so far only in Chromium on the Mac (Web
   `index.html` is the demo's page, `hello.html` the sample; `LICENSE`, `THIRD_PARTY_LICENSES` and Emscripten's
   licences beside them), runs the demo's smoke scenario on it in headless Chrome and, with `--push`, commits it
   to the `gh-pages` branch, which GitHub Pages serves: <https://m-brtn.github.io/Quench/>. What is published is
-  the local build of a commit (`version.txt` names it), not a build made on GitHub.
+  the local build of a commit (`version.txt` names it), not a build made on GitHub. Beside it, under
+  `games/outpost/`, is the page of Outpost, a small experimental game on the engine (the user's request,
+  2026-11-10; its source is not in this repository: the untracked `games/outpost` of the user's checkout, published
+  by its own `tools/publish_web.sh`): <https://m-brtn.github.io/Quench/games/outpost/>. Its smoke scenario passed
+  in headless Chrome on the Mac (16 checks); no report of how it plays in a browser is recorded. The engine's
+  script keeps `games/` when it replaces the site.
 - **Not checked.** Firefox, Chrome and Safari on other systems and on phones; touch input and the compact layout in
   a browser; sound by ear; long runs, memory growth, a lost device; resizing and fullscreen beyond the page's size
   at load.

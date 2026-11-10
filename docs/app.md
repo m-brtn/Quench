@@ -590,6 +590,7 @@ over HTTPS by any host. `tools/publish_web.sh` does it for the engine's demo and
 (`index.html` is the demo's page, `hello.html` the sample, the licences, `version.txt`), checks it in headless Chrome
 (the demo's smoke scenario with `--onscreen`) and, with `--push` and a clean working tree, commits it to the
 `gh-pages` branch that GitHub Pages serves (<https://m-brtn.github.io/Quench/>; a normal push, so the branch keeps
-every publication). Every engine release is deployed this way from its tagged commit ([AGENTS.md](../AGENTS.md),
+every publication; it replaces the site except `games/`, where a game's own script publishes its page, today
+`games/outpost/`). Every engine release is deployed this way from its tagged commit ([AGENTS.md](../AGENTS.md),
 "Versioning and releases"). A game's site needs the same files and the licence texts of what it ships
 (`THIRD_PARTY_LICENSES`, Emscripten's `LICENSE` and those in its `system/lib`).

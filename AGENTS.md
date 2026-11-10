@@ -213,7 +213,9 @@ NVIDIA RTX GPU), then a native Vulkan backend with ray queries and a native Dire
 of `docs/roadmap.md`; `docs/platforms.md`, "Windows and Linux").
 
 The web (since 2026-11-10, the user's request; experimental; published at <https://m-brtn.github.io/Quench/> by
-`tools/publish_web.sh`, at every release): the `web` preset builds
+`tools/publish_web.sh`, at every release; the site's `games/outpost/` is the page of Outpost, an experimental
+micro game whose source is the untracked `games/outpost` of the user's checkout, published by its own
+`tools/publish_web.sh` and kept by the engine's script): the `web` preset builds
 the engine, the sample and the demo as single-threaded WebAssembly for a browser, on a WebGPU backend of the
 engine's own (`src/gpu/webgpu`, on Emscripten's `emdawnwebgpu` port; SDL GPU has no WebGPU driver, and the open pull
 request libsdl-org/SDL#16020 was tried and dropped), with WGSL shaders translated from the SPIR-V by Tint at build
