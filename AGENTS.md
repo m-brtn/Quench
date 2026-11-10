@@ -128,8 +128,8 @@ the user; on 2026-11-10 the user found the rain's sound synthetic and melodic un
 unrealistic, the sky brown during snow and the clouds not realistic enough: the default rain sounds (noise only),
 the clouds' light and the light under them (the scene's units), the rings (capillary wave packets) and the clouds'
 shapes and light steps (level lines gone, bumps, shadow sides) were changed after 0.13.2, checked by measurement
-and in still offscreen captures on the Mac's native Metal backend only, without CTest (the user's decision): the
-weather section's golden captures are stale, nobody has heard the sound or seen any of it in motion; the same
+and in still offscreen captures on the Mac's native Metal backend only, without CTest (the user's decision):
+nobody has heard the sound or seen any of it in motion; the same
 evening (0.14.0) the clouds are drawn in front of surfaces where the camera or the scene reaches the cloud base
 (the HDR pass cut in two: the opaque surfaces and the sky, the clouds over the surfaces by where the march found
 them along each ray, then the transparent surfaces; `RenderStats::cloudsOverScene`), a surface above its column's
@@ -220,11 +220,14 @@ model); released without the full gates (user decision, 2026-11-10: the render a
 backends only; `docs/releases/v0.13.2.md`), seen by nobody in motion on a screen at the time of the release.
 Version 0.14.0 (2026-11-10) is the weather's look and sound described above (the rain's sound, the light under the
 clouds, the rings, the clouds' shapes, the clouds in front of the scene, no rain above the clouds), released
-without any gate (the user's decision; `docs/releases/v0.14.0.md`): the golden captures of the demo's Weather
-section (the weather, rain, snow and wind parts, 14 images per backend) are stale until they are renewed, so those
-capture checks and `tools/check.sh step web` fail on them (in headless Chrome on the Mac the demo's batch itself
-passed, 762 passed, 0 failed, no WebGPU error, and the 14 captures match the same build's captures on SDL GPU's
-Metal driver).
+without any gate (the user's decision; `docs/releases/v0.14.0.md`): at the tag the golden captures of the demo's
+Weather section (the weather, rain, snow and wind parts, 14 images per backend) are stale and the render case
+`renderer_cloud_shadow_height` still expects the old shadow above the clouds, so those checks and
+`tools/check.sh step web` fail there. Both were put right after the tag (2026-11-10 evening, on `main`): the 28
+golden images renewed (each pair looked at), the case updated; since then the Release CTest passes on the Mac's
+three backends (818 tests, 69 skipped) and `step web` passes in headless Chrome on the Mac (the demo's batch 762
+passed, 0 failed, 41 captures within the thresholds). Debug, the sanitizers, `wasm-node` and the iOS Simulator
+have not run since 0.13.1.
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the

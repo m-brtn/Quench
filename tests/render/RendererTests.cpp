@@ -955,10 +955,10 @@ QUENCH_TEST(renderer_clouds_shadow_the_ground) {
     CHECK(renderer->stats().clouds == Clouds::Off, "clouds without a weather: %d", int(renderer->stats().clouds));
 }
 
-// RenderSettings::cloudShadowHeight: the shadow map lies on a plane at that height and holds the clouds above it only.
-// Ground over every cloud top, under the same storm cell, takes the shadow of the whole layer below it with the plane
-// at y = 0 (the default) and is in the sun with the plane at its own height; ground under the cloud base is shaded
-// with the plane at its height too.
+// RenderSettings::cloudShadowHeight: the shadow map lies on a plane at that height and holds the clouds above it only,
+// with their height. Ground over every cloud top, over a storm cell, is in the sun with the plane at its own height
+// and, since 0.14.0, with the plane at y = 0 too (the default: until then it took the shadow of the whole layer below
+// it); ground under the cloud base is shaded with the plane at its height and at 0.
 QUENCH_TEST(renderer_cloud_shadow_height) {
     QUENCH_GPU_DEVICE(device);
     RenderSettings settings = plainSettings();
@@ -995,17 +995,21 @@ QUENCH_TEST(renderer_cloud_shadow_height) {
     std::printf("  ground at %.0f m: %.3f in the sun, %.3f with the plane at 0, %.3f with the plane at its height\n",
                 double(top), double(sunlitTop), double(underLayer), double(overClouds));
     CHECK(sunlitTop > 0.0f, "ground in the sun %.3f", double(sunlitTop));
-    CHECK(underLayer < sunlitTop * 0.5f, "the plane at 0: the layer below shades the ground %.3f (sun %.3f)",
-          double(underLayer), double(sunlitTop));
+    CHECK(std::abs(underLayer - sunlitTop) <= 0.02f * sunlitTop + 0.004f,
+          "the plane at 0: in the sun over the tops %.3f (sun %.3f)", double(underLayer), double(sunlitTop));
     CHECK(std::abs(overClouds - sunlitTop) <= 0.02f * sunlitTop + 0.004f,
           "the plane at the ground: in the sun over the tops %.3f (sun %.3f)", double(overClouds), double(sunlitTop));
     const float low = 300.0f;
     const float sunlitLow = groundAt(low, false, low);
     const float shadedLow = groundAt(low, true, low);
-    std::printf("  ground at %.0f m: %.3f in the sun, %.3f under the cell with the plane at its height\n", double(low),
-                double(sunlitLow), double(shadedLow));
+    const float shadedLowFromZero = groundAt(low, true, 0.0f);
+    std::printf("  ground at %.0f m: %.3f in the sun, %.3f under the cell with the plane at its height, %.3f at 0\n",
+                double(low), double(sunlitLow), double(shadedLow), double(shadedLowFromZero));
     CHECK(shadedLow < sunlitLow * 0.5f && shadedLow > 0.0f, "the plane at %.0f m: under the cell %.3f (sun %.3f)",
           double(low), double(shadedLow), double(sunlitLow));
+    CHECK(shadedLowFromZero < sunlitLow * 0.5f && shadedLowFromZero > 0.0f,
+          "the plane at 0: under the cell at %.0f m %.3f (sun %.3f)", double(low), double(shadedLowFromZero),
+          double(sunlitLow));
 }
 
 // Lightning (RenderSettings::lightning) under a raining cumulonimbus: at a flash the ground under it and the cloud

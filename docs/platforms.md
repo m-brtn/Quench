@@ -14,8 +14,9 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 The engine (version 0.14.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases (those
 of 0.13.1: 0.13.2, a patch of the renderer, ran the render and demo tests only, [its notes](releases/v0.13.2.md);
-0.14.0, the weather's look and sound, ran no gate, and the golden captures of the demo's Weather section are stale
-since then, [its notes](releases/v0.14.0.md)).
+0.14.0, the weather's look and sound, ran no gate, [its notes](releases/v0.14.0.md); after its tag the golden
+captures of the demo's Weather section were renewed, and the Release tests of the Mac's three backends, 818 with 69
+skipped, and the web check in headless Chrome on the Mac pass again).
 Its GPU tests render offscreen and check the
 pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
 Mac (with the Khronos validation layer; a test of
