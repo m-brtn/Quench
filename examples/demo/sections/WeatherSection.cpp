@@ -20,6 +20,7 @@
 #include <quench/render/Daylight.h>
 #include <quench/weather/Weather.h>
 
+#include <glm/common.hpp>
 #include <glm/geometric.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/trigonometric.hpp>
@@ -50,10 +51,12 @@ constexpr std::array<const char*, 13> kPresets{"fair",   "shower",       "toweri
 constexpr std::array<const char*, 13> kPresetNames{
     "Fair weather", "Sun shower",     "Towering", "Storm", "Overcast",     "Cirrus",     "Rain here",
     "Downpour",     "Passing shower", "Snowfall", "Thaw",  "Snow showers", "Windy storm"};
-enum class View : int { Sky, Ground, Cloud, Shelter, Above, Meadow };
-constexpr std::array<const char*, 6> kViewNames{"From the air",   "On the ground",    "Toward the cloud",
-                                                "Under the roof", "Over the shelter", "In the meadow"};
-constexpr std::array<const char*, 6> kViewIds{"sky", "ground", "cloud", "shelter", "above", "meadow"};
+enum class View : int { Sky, Ground, Cloud, Shelter, Above, Meadow, Mountain, Summit };
+constexpr std::array<const char*, 8> kViewNames{"From the air",        "On the ground",    "Toward the cloud",
+                                                "Under the roof",      "Over the shelter", "In the meadow",
+                                                "Toward the mountain", "Over the clouds"};
+constexpr std::array<const char*, 8> kViewIds{"sky",   "ground", "cloud",    "shelter",
+                                              "above", "meadow", "mountain", "summit"};
 constexpr std::array<const char*, 4> kRainNames{"Off", "Low", "Medium", "High"};
 constexpr std::array<const char*, 4> kRainIds{"off", "low", "medium", "high"};
 // The weather's temperature at the ground in the rain and cloud presets (the standard atmosphere's), and in the snow
@@ -68,6 +71,86 @@ constexpr float kSnowWindSpeed = 2.0f;
 constexpr double kStartTime = 1200.0;
 // The single raining cloud: ahead of the camera, right of the view's centre; its shadow falls ahead on the left.
 constexpr glm::vec2 kShowerAt{2600.0f, -10500.0f};
+// The mountain: far to the left of the sky view, out of its picture and of the views on the ground. A cone 5.5 km
+// wide at its foot with ridges and gullies, higher than the fair-weather cumulus and the overcast deck: its flanks
+// stand in the clouds and their shadows, its summit above them.
+constexpr glm::vec3 kMountain{-13000.0f, 0.0f, 2000.0f};
+constexpr float kMountainRadius = 5500.0f;
+constexpr float kMountainHeight = 3400.0f;
+constexpr int kMountainGrid = 192; // cells per side
+
+float gridNoise(glm::ivec2 p) {
+    std::uint32_t h = std::uint32_t(p.x) * 0x9e3779b1u ^ std::uint32_t(p.y) * 0x85ebca77u;
+    h ^= h >> 15;
+    h *= 0x2c1b3c6du;
+    h ^= h >> 12;
+    h *= 0x297a2d39u;
+    h ^= h >> 15;
+    return float(h & 0xffffffu) / float(0x1000000);
+}
+
+// Value noise, 0..1, one cell per unit.
+float valueNoise(glm::vec2 p) {
+    const glm::vec2 cell = glm::floor(p);
+    const glm::vec2 f = p - cell;
+    const glm::vec2 u = f * f * (3.0f - 2.0f * f);
+    const glm::ivec2 i(cell);
+    const float a = gridNoise(i), b = gridNoise(i + glm::ivec2(1, 0));
+    const float c = gridNoise(i + glm::ivec2(0, 1)), d = gridNoise(i + glm::ivec2(1, 1));
+    return glm::mix(glm::mix(a, b, u.x), glm::mix(c, d, u.x), u.y);
+}
+
+// The mountain's height over a point of its foot (m, from its centre): a cone under ridged noise.
+float mountainHeight(glm::vec2 p) {
+    const float r = glm::length(p) / kMountainRadius;
+    if (r >= 1.0f) return -30.0f;
+    float ridges = 0.0f, amplitude = 0.5f, scale = 1.0f / 2600.0f;
+    for (int i = 0; i < 5; ++i) {
+        const float n = valueNoise(p * scale + glm::vec2(17.3f, 5.9f) * float(i + 1));
+        ridges += amplitude * (1.0f - std::abs(2.0f * n - 1.0f));
+        amplitude *= 0.5f;
+        scale *= 2.1f;
+    }
+    const float cone = std::pow(1.0f - r, 1.35f);
+    return kMountainHeight * cone * (0.6f + 0.42f * ridges) - 30.0f * (1.0f - cone);
+}
+
+// Rock, grass on its foot and snow on what is not too steep above about 2.3 km, in the vertex colors.
+MeshData mountainMesh() {
+    MeshData mesh;
+    const int n = kMountainGrid;
+    const float cell = 2.0f * kMountainRadius / float(n);
+    mesh.vertices.reserve(std::size_t(n + 1) * std::size_t(n + 1));
+    for (int j = 0; j <= n; ++j)
+        for (int i = 0; i <= n; ++i) {
+            const glm::vec2 p(float(i) * cell - kMountainRadius, float(j) * cell - kMountainRadius);
+            const float h = mountainHeight(p);
+            const float dx = mountainHeight(p + glm::vec2(cell, 0.0f)) - mountainHeight(p - glm::vec2(cell, 0.0f));
+            const float dz = mountainHeight(p + glm::vec2(0.0f, cell)) - mountainHeight(p - glm::vec2(0.0f, cell));
+            const glm::vec3 normal = glm::normalize(glm::vec3(-dx, 2.0f * cell, -dz));
+            const float mottle = valueNoise(p / 140.0f);
+            const glm::vec3 rock = glm::mix(glm::vec3(0.2f, 0.19f, 0.18f), glm::vec3(0.34f, 0.32f, 0.3f), mottle);
+            const glm::vec3 grass(0.25f, 0.32f, 0.17f);
+            glm::vec3 color = glm::mix(grass, rock, glm::smoothstep(250.0f, 900.0f, h + 300.0f * mottle));
+            const float snowLine = 2300.0f + 260.0f * (valueNoise(p / 600.0f) - 0.5f);
+            const float snow = glm::smoothstep(snowLine - 120.0f, snowLine + 120.0f, h) *
+                               glm::smoothstep(0.45f, 0.7f, normal.y + 0.15f * mottle);
+            color = glm::mix(color, glm::vec3(0.9f, 0.92f, 0.95f), snow);
+            mesh.vertices.push_back({{p.x, h, p.y},
+                                     normal,
+                                     {float(i) / float(n), float(j) / float(n)},
+                                     glm::vec4(color, 1.0f),
+                                     glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)});
+        }
+    mesh.indices.reserve(std::size_t(n) * std::size_t(n) * 6);
+    for (int j = 0; j < n; ++j)
+        for (int i = 0; i < n; ++i) {
+            const auto a = std::uint32_t(j * (n + 1) + i), b = a + 1, c = a + std::uint32_t(n + 1), d = c + 1;
+            mesh.indices.insert(mesh.indices.end(), {a, c, b, b, c, d});
+        }
+    return mesh;
+}
+
 // The place on the ground for the rain: behind the sky view's camera, out of its picture.
 constexpr glm::vec3 kPlace{0.0f, 0.0f, 300.0f};
 constexpr glm::vec3 kShelter = kPlace + glm::vec3(5.0f, 0.0f, -12.0f);
@@ -143,7 +226,9 @@ public:
         const Result<MeshId> roof = addMesh(s, boxMesh(glm::vec3(2.6f, 0.06f, 2.0f)));
         const Result<MeshId> crate = addMesh(s, boxMesh(glm::vec3(0.4f)));
         const Result<MeshId> block = addMesh(s, boxMesh(glm::vec3(14.0f, 6.0f, 5.0f)));
-        for (const Result<MeshId>* m : {&ground, &lake, &hill, &tower, &paving, &pond, &post, &roof, &crate, &block})
+        const Result<MeshId> mountain = addMesh(s, mountainMesh());
+        for (const Result<MeshId>* m :
+             {&ground, &lake, &hill, &tower, &paving, &pond, &post, &roof, &crate, &block, &mountain})
             if (!*m) return Error{m->error()};
         // Grass: half as wet as bare ground (the rain darkens it, its blades do not turn glossy).
         MaterialDesc turf{.surface = c.checker,
@@ -170,6 +255,11 @@ public:
                            .material = i % 3 == 0 ? rock : grass,
                            .transform = placed(at, glm::vec3(r, r * random.uniform(0.6f, 0.9f), r))});
         }
+        // The mountain casts no shadow: it stands far beyond the sun's shadow maps.
+        s.addInstance({.mesh = *mountain,
+                       .material = s.addMaterial({.roughness = 0.9f, .name = "mountain"}),
+                       .transform = placed(kMountain),
+                       .castsShadows = false});
         const MaterialId concrete =
             s.addMaterial({.baseColor = glm::vec4(0.62f, 0.6f, 0.56f, 1.0f), .roughness = 0.8f});
         for (int i = 0; i < 6; ++i)
@@ -376,6 +466,7 @@ public:
         if (name == "cloud_width") return double(m_stats.cloudWidth);
         if (name == "cloud_height") return double(m_stats.cloudHeight);
         if (name == "cloud_cover") return double(m_stats.cloudCover);
+        if (name == "clouds_over") return m_stats.cloudsOverScene ? 1.0 : 0.0;
         if (name == "sky_cube_faces") return double(m_stats.skyCubeFaces);
         if (name == "coverage") return double(m_weather.settings().coverage);
         if (name == "cloud_type") return double(int(m_weather.settings().type));
@@ -780,6 +871,27 @@ private:
             camera.minDistance = 1.5f;
             camera.maxDistance = 400.0f;
             settings.shadowDistance = 120.0f;
+            break;
+        case View::Mountain:
+            // Under the cloud base, a few kilometres from the mountain: its flanks behind and inside the clouds, in
+            // their shadows, the summit over the fair-weather cumulus.
+            camera.target = kMountain + glm::vec3(0.0f, 1900.0f, 0.0f);
+            camera.distance = 6500.0f;
+            camera.yaw = glm::radians(100.0f);
+            camera.pitch = glm::radians(-6.0f);
+            camera.minDistance = 500.0f;
+            camera.maxDistance = 20000.0f;
+            settings.shadowDistance = 2500.0f;
+            break;
+        case View::Summit:
+            // Over the clouds, level with the summit: it stands out of them, the plain shows through their gaps.
+            camera.target = kMountain + glm::vec3(0.0f, 2900.0f, 0.0f);
+            camera.distance = 7000.0f;
+            camera.yaw = glm::radians(100.0f);
+            camera.pitch = glm::radians(5.0f);
+            camera.minDistance = 500.0f;
+            camera.maxDistance = 20000.0f;
+            settings.shadowDistance = 2500.0f;
             break;
         }
         cameraCut = true;

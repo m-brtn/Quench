@@ -55,6 +55,13 @@ public:
     // In the HDR pass in place of the plain sky (after render() drew this frame's clouds).
     bool drawsSky() const { return m_skyMode != Clouds::Off; }
     void drawSky(gpu::RenderPass& pass);
+    // Whether this frame's clouds can lie in front of the scene's surfaces: a camera at `cameraHeight` (m) over the
+    // cloud base, or surfaces up to `sceneTop` (m) that reach it.
+    bool drawsOver(float cameraHeight, float sceneTop) const;
+    // After the HDR pass's opaque surfaces and sky, in a pass of its own over `hdr`: the clouds in front of the
+    // surfaces, by the scene's `depth` (sampled).
+    void drawOver(gpu::CommandBuffer& commands, const gpu::Texture& hdr, const gpu::Texture& depth,
+                  const shader::FrameUniforms& fu);
     // This frame's shadow is in the weather maps (surface sampler 14).
     bool shadows() const { return m_shadows; }
     // Surface sampler 15 (the sky cube); a placeholder when there is none.
@@ -64,6 +71,9 @@ public:
     gpu::TextureSamplerBinding weatherMap() const { return {m_weatherMap, m_weatherSampler}; }
     glm::vec4 weatherMapPlace() const;
     float cloudBase() const { return m_uniforms.layer.x; }
+    // The volumetric clouds drawn this frame along each view ray (premultiplied radiance, transmittance in a); no
+    // texture without them.
+    gpu::TextureSamplerBinding marched() const;
     // Frees the targets and the 3D noise (clouds off).
     void release();
 
@@ -74,10 +84,10 @@ private:
     bool createTexture(gpu::Texture& out, const gpu::TextureDesc& desc);
 
     gpu::Device* m_device = nullptr;
-    gpu::TextureFormat m_depthFormat = gpu::TextureFormat::Invalid;
     gpu::Sampler m_weatherSampler, m_noiseSampler, m_cubeSampler, m_pointSampler, m_linearSampler;
     gpu::GraphicsPipeline m_noisePipeline, m_weatherPipeline, m_shadowPipeline, m_shadowLayerPipeline, m_marchPipeline,
-        m_temporalPipeline, m_skyPipeline, m_skyLayerPipeline, m_cubePipeline, m_cubeLayerPipeline;
+        m_temporalPipeline, m_skyPipeline, m_skyLayerPipeline, m_overPipeline, m_overLayerPipeline, m_cubePipeline,
+        m_cubeLayerPipeline;
     gpu::Texture m_layerNoise, m_shapeNoise, m_detailNoise;
     bool m_noiseFailed = false;
     gpu::Texture m_weatherMap;
@@ -85,8 +95,9 @@ private:
     float m_shadowHeight = 0.0f;                           // the plane the shadow map lies on
     bool m_weatherValid = false, m_shadowValid = false;
     std::uint64_t m_frame = 0; // the maps are drawn in turns
-    gpu::Texture m_march, m_marchDepth;
-    std::array<gpu::Texture, 2> m_history;
+    // The march and where its clouds are along each ray (clouds.hlsl, CloudMarchOut), and both over the frames.
+    gpu::Texture m_march, m_marchWhere;
+    std::array<gpu::Texture, 2> m_history, m_whereHistory;
     int m_historyIndex = 0;
     bool m_historyValid = false;
     std::uint32_t m_width = 0, m_height = 0;

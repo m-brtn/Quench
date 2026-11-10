@@ -265,8 +265,9 @@ bool RainRenderer::prepare(const Frame& frame, shader::FrameUniforms& fu, Render
     fu.rainViewProj = m_viewProj;
     const float precipitation = weather.precipitation(camera);
     fu.rain = glm::vec4(1.0f, kMapDepth, precipitation, m_quality != Rain::Off ? 1.0f : 0.0f);
-    fu.rainGrid = glm::vec4(weather.wetnessOrigin(),
-                            1.0f / (float(weather::Weather::kWetnessGrid) * weather::Weather::kWetnessCell), 0.0f);
+    fu.rainGrid =
+        glm::vec4(weather.wetnessOrigin(),
+                  1.0f / (float(weather::Weather::kWetnessGrid) * weather::Weather::kWetnessCell), m_field.layer.x);
     fu.snow = glm::vec4(m_snow != Snow::Off ? 1.0f : 0.0f, share, 0.0f, 0.0f);
 
     const Quality& q = qualityOf(frame.quality);
@@ -475,7 +476,12 @@ void RainRenderer::drawShafts(gpu::CommandBuffer& commands, const Shafts& shafts
     }
     if (gpu::RenderPass pass =
             commands.beginRenderPass(gpu::ColorTarget{.texture = shafts.hdr, .load = gpu::LoadOp::Load})) {
-        const gpu::TextureSamplerBinding bindings[] = {{*shafts.depth, pointSampler}, {m_shaftsSmooth, pointSampler}};
+        const bool behind = bool(shafts.cloudsInFront.texture);
+        const gpu::TextureSamplerBinding bindings[] = {
+            {*shafts.depth, pointSampler},
+            {m_shaftsSmooth, pointSampler},
+            behind ? shafts.cloudsInFront : gpu::TextureSamplerBinding{m_shaftsSmooth, pointSampler}};
+        m_uniforms.behind = glm::vec4(behind ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
         pass.bindPipeline(m_shaftsUpPipeline);
         pass.pushUniforms(kFragment, 0, fu);
         pass.pushUniforms(kFragment, 1, m_uniforms);

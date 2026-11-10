@@ -150,7 +150,12 @@ moves toward a deck's grey, the ground's ambient light and the fog follow. The t
 blended toward that grey by the cover, not single clouds. Timed ranges `cloud_noise` (once), `weather` (the weather
 and shadow maps, drawn in turns), `clouds` (the march and its accumulation) and `sky_cube`. `FrameUniforms`
 `cloudShadow`, `skyCube` and `overcast`, surface samplers 14 (the shadow map) and 15 (the cube); both are bound in
-the HDR pass (placeholders without clouds), and `quench/Clouds.hlsli` reads them. Test
+the HDR pass (placeholders without clouds), and `quench/Clouds.hlsli` reads them. Since 0.14.0 the clouds are also
+drawn in front of surfaces when the camera or the scene's top reaches the cloud base
+(`RenderStats::cloudsOverScene`): the HDR pass is then cut in two, the opaque surfaces and the sky, a fullscreen
+pass that blends the clouds over the surfaces by where the march found them along each ray, then the transparent
+surfaces and the Transparent-stage game passes in a second half that loads the image and the depth; the shadow map
+also holds the clouds' height, so a surface above them is in the sun ([Weather](weather.md#clouds-in-front-of-the-scene)). Test
 `renderer_clouds_shadow_the_ground` on every backend variant; the costs in [Weather](weather.md#cost).
 
 ### Rain

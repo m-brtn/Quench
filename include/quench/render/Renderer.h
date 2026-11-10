@@ -440,6 +440,10 @@ struct RenderStats {
     std::uint32_t cloudHeight = 0;
     float cloudCover = 0.0f;
     std::uint32_t skyCubeFaces = 0;
+    // The clouds were also drawn over the scene's surfaces this frame (a camera or surfaces at the cloud base or
+    // higher: a mountain in its clouds, the ground under a camera above them), in a pass between the opaque surfaces
+    // with the sky and the transparent ones.
+    bool cloudsOverScene = false;
     // The lightning's light this frame (RenderSettings::lightning): the flashes' sum at the camera, each by its
     // distance (0: none; about 1.3 at the peak of a bright flash within a kilometre), and the flashes lit.
     float lightning = 0.0f;

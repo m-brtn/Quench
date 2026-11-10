@@ -1,6 +1,6 @@
 // The scene's clouds (src/render/Clouds.cpp, docs/weather.md): the weather map, the clouds' shadow on the ground, the
-// raymarched clouds and their temporal accumulation, the sky with the clouds in the HDR pass, the 2D cloud layer (the
-// fallback) and the faces of the sky cube for reflections.
+// raymarched clouds and their temporal accumulation, the sky with the clouds in the HDR pass, the clouds over the
+// scene's surfaces after it, the 2D cloud layer (the fallback) and the faces of the sky cube for reflections.
 //
 // The volumetric clouds follow Schneider's cloudscapes for Horizon Zero Dawn ("The real-time volumetric cloudscapes
 // of Horizon Zero Dawn", SIGGRAPH 2015; "Nubis: authoring real-time volumetric cloudscapes with the Decima engine",
@@ -42,35 +42,7 @@ float4 weather_map_fs(FullscreenOut vin) : SV_Target0 {
 }
 #endif
 
-// ---------------------------------------------------------------- resources of the cloud entries
-
-#if defined(QUENCH_ENTRY_cloud_march_fs) || defined(QUENCH_ENTRY_sky_cube_fs) || defined(QUENCH_ENTRY_cloud_shadow_fs)
-#define QUENCH_CLOUD_VOLUME 1
-#endif
-#if defined(QUENCH_ENTRY_sky_layer_fs) || defined(QUENCH_ENTRY_sky_cube_layer_fs) || \
-    defined(QUENCH_ENTRY_cloud_shadow_layer_fs)
-#define QUENCH_CLOUD_LAYER 1
-#endif
-
-#if defined(QUENCH_CLOUD_VOLUME) || defined(QUENCH_CLOUD_LAYER)
-Texture2D<float4> weatherTex : QUENCH_TEXTURE(0);
-SamplerState weatherSampler : QUENCH_SAMPLER(0);
-#endif
-#if defined(QUENCH_CLOUD_VOLUME)
-Texture3D<float4> shapeTex : QUENCH_TEXTURE(1);
-SamplerState shapeSampler : QUENCH_SAMPLER(1);
-Texture3D<float4> detailTex : QUENCH_TEXTURE(2);
-SamplerState detailSampler : QUENCH_SAMPLER(2);
-Texture2D<float4> layerTex : QUENCH_TEXTURE(3);
-SamplerState layerSampler : QUENCH_SAMPLER(3);
-#elif defined(QUENCH_CLOUD_LAYER)
-Texture2D<float4> layerTex : QUENCH_TEXTURE(1);
-SamplerState layerSampler : QUENCH_SAMPLER(1);
-#endif
-
-#if defined(QUENCH_CLOUD_VOLUME) || defined(QUENCH_CLOUD_LAYER)
-
-static const float kInvFourPi = 0.0795775;
+// ---------------------------------------------------------------- the planet's curve
 
 // Distances (near, far) along d to the sphere at height h above the planet from a point at height y on the vertical
 // of the planet's centre (the camera: x = z = 0 in its own frame); (-1, -1) without a hit. Written without the
@@ -93,6 +65,39 @@ float cloudAltitude(float r2, float y) {
     const float R = cloud.layer.w;
     return (r2 + y * (y + 2.0 * R)) / (sqrt(r2 + (y + R) * (y + R)) + R);
 }
+
+// ---------------------------------------------------------------- resources of the cloud entries
+
+#if defined(QUENCH_ENTRY_cloud_march_fs) || defined(QUENCH_ENTRY_sky_cube_fs) || defined(QUENCH_ENTRY_cloud_shadow_fs)
+#define QUENCH_CLOUD_VOLUME 1
+#endif
+// The sky with the volumetric clouds and the 2D layer over the scene read the layer's resources too (the cirrus, the
+// layer), with their own textures after them.
+#if defined(QUENCH_ENTRY_sky_layer_fs) || defined(QUENCH_ENTRY_sky_cube_layer_fs) || \
+    defined(QUENCH_ENTRY_cloud_shadow_layer_fs) || defined(QUENCH_ENTRY_sky_clouds_fs) || \
+    defined(QUENCH_ENTRY_clouds_over_layer_fs)
+#define QUENCH_CLOUD_LAYER 1
+#endif
+
+#if defined(QUENCH_CLOUD_VOLUME) || defined(QUENCH_CLOUD_LAYER)
+Texture2D<float4> weatherTex : QUENCH_TEXTURE(0);
+SamplerState weatherSampler : QUENCH_SAMPLER(0);
+#endif
+#if defined(QUENCH_CLOUD_VOLUME)
+Texture3D<float4> shapeTex : QUENCH_TEXTURE(1);
+SamplerState shapeSampler : QUENCH_SAMPLER(1);
+Texture3D<float4> detailTex : QUENCH_TEXTURE(2);
+SamplerState detailSampler : QUENCH_SAMPLER(2);
+Texture2D<float4> layerTex : QUENCH_TEXTURE(3);
+SamplerState layerSampler : QUENCH_SAMPLER(3);
+#elif defined(QUENCH_CLOUD_LAYER)
+Texture2D<float4> layerTex : QUENCH_TEXTURE(1);
+SamplerState layerSampler : QUENCH_SAMPLER(1);
+#endif
+
+#if defined(QUENCH_CLOUD_VOLUME) || defined(QUENCH_CLOUD_LAYER)
+
+static const float kInvFourPi = 0.0795775;
 
 // 1 inside the weather map, falling to 0 over the outer eighth of its half width: where the clouds drawn end.
 float cloudEdgeFade(float2 xz) {
@@ -374,15 +379,16 @@ float2 cloudSegment(float3 dir) {
     return seg;
 }
 
-// Marches the clouds along a view ray: premultiplied radiance and transmittance (behind the clouds: the cirrus);
-// `depth` is the distance of the clouds' weight along the ray (for the reprojection). Without `detail` the shapes are
-// not eroded (the sky cube's blurred reflections).
+// Marches the clouds along a view ray: premultiplied radiance and transmittance, without the cirrus behind them.
+// `where` says where along the ray they are, by the light each step takes out of the ray: x the mean distance (km),
+// y the deviation about it (km; a step's share spread evenly over its length), z the weight (1 - transmittance).
+// The reprojection follows the mean, and the scene's surfaces take the share of the clouds in front of them from it
+// (cloudsInFront). Without `detail` the shapes are not eroded (the sky cube's blurred reflections).
 float4 marchClouds(float3 dir, float jitter, float lightJitter, int steps, int lightSteps, bool detail,
-                   out float depth) {
+                   out float3 where) {
     const float2 seg = cloudSegment(dir);
-    const float4 cirrus = cloudCirrus(dir);
-    depth = 60000.0;
-    if (seg.y <= seg.x) return cirrus;
+    where = float3(60.0, 0.0, 0.0);
+    if (seg.y <= seg.x) return float4(0.0, 0.0, 0.0, 1.0);
     // Steps that grow with the distance, each a constant share of it: fine steps through near clouds, coarse ones
     // through far clouds, which are smaller on the screen. The jitter moves the whole row of steps along the ray, not
     // each sample inside a cell that stays where it is: with fixed cells the light of the first sample inside a cloud
@@ -397,6 +403,7 @@ float4 marchClouds(float3 dir, float jitter, float lightJitter, int steps, int l
     float T = 1.0;
     float3 L = float3(0.0, 0.0, 0.0);
     float depthSum = 0.0;
+    float squareSum = 0.0;
     float weight = 0.0;
     float3 last = float3(0.0, 0.0, 0.0);
     for (int i = 0; i < steps; ++i) {
@@ -431,13 +438,18 @@ float4 marchClouds(float3 dir, float jitter, float lightJitter, int steps, int l
             const float absorbed = T * (1.0 - Tr);
             last = S;
             L += absorbed * S;
-            depthSum += t * absorbed;
+            const float km = t * 0.001;
+            const float stepKm = dt * 0.001;
+            depthSum += km * absorbed;
+            squareSum += (km * km + stepKm * stepKm / 12.0) * absorbed;
             weight += absorbed;
             T *= Tr;
         }
     }
-    depth = weight > 1e-4 ? depthSum / weight : seg.y;
-    return cloudOver(cloudAerial(L, T, depth, dir), cirrus);
+    const float mean = weight > 1e-4 ? depthSum / weight : seg.y * 0.001;
+    const float deviation = weight > 1e-4 ? sqrt(max(squareSum / weight - mean * mean, 0.0)) : 0.0;
+    where = float3(mean, deviation, 1.0 - T);
+    return cloudAerial(L, T, mean * 1000.0, dir);
 }
 
 #endif
@@ -464,21 +476,23 @@ float layerDensity(float2 xz, float4 w) {
     return saturate((c - fray) / (1.0 - fray));
 }
 
-float4 cloudLayer(float3 dir) {
+// The layer along a view ray without the cirrus behind it, and its distance `t` (m; <= 0: the ray does not meet it).
+float4 cloudLayerAlone(float3 dir, out float t) {
     // Seen from under the layer above the horizon; from over it (a camera flying over a sea of clouds) below it,
     // lit on its tops.
     const float height = cloud.layer.x + kLayerHeight;
     const bool over = quenchFrame.cameraPos.y > height;
-    const float4 cirrus = cloudCirrus(dir);
-    if (over ? dir.y >= 0.0 : dir.y < 0.0) return cirrus;
+    const float4 none = float4(0.0, 0.0, 0.0, 1.0);
+    t = 0.0;
+    if (over ? dir.y >= 0.0 : dir.y < 0.0) return none;
     const float2 hit = cloudSphere(quenchFrame.cameraPos.y, dir, height);
-    const float t = over ? hit.x : hit.y;
-    if (t <= 0.0) return cirrus;
+    t = over ? hit.x : hit.y;
+    if (t <= 0.0) return none;
     const float2 xz = quenchFrame.cameraPos.xz + dir.xz * t;
     float4 w = cloudWeather(xz, 0.0);
     w.x *= cloudEdgeFade(xz);
     const float d = layerDensity(xz, w);
-    if (d <= 0.002) return cirrus;
+    if (d <= 0.002) return none;
     const float thickness = byType(w.y, 300.0, 1200.0, 2500.0, 4000.0);
     const float od = d * thickness * cloud.shape.w * 0.25;
     const float T = exp(-od);
@@ -497,45 +511,62 @@ float4 cloudLayer(float3 dir) {
         S += cloud.sun.rgb * (cloudPhase(mu, 1.0) * exp(-lightOd * 0.5) + 0.06 * exp(-lightOd * 0.08)) *
              QUENCH_CLOUD_SUN;
     }
-    return cloudOver(cloudAerial(S * (1.0 - T), T, t, dir), cirrus);
+    return cloudAerial(S * (1.0 - T), T, t, dir);
+}
+
+float4 cloudLayer(float3 dir) {
+    float t;
+    const float4 layer = cloudLayerAlone(dir, t);
+    return cloudOver(layer, cloudCirrus(dir));
 }
 
 #endif
 
 // ---------------------------------------------------------------- cloud shadows
 
-// The transmittance of the cloud layer above a point of the ground plane y = 0 along the sun's direction (the map is
-// read by quenchCloudShadow in quench/Clouds.hlsli).
+// The transmittance of the cloud layer above a point of the map's plane along the sun's direction, and at what
+// height those clouds are: g their mean height and b its deviation (km, by their optical depth), both times
+// 1 - transmittance so that texels blend by it. A surface above the plane takes the share of them that is above it
+// (quenchCloudShadow in quench/Clouds.hlsli): a summit over the clouds stands in the sun.
 #if defined(QUENCH_ENTRY_cloud_shadow_fs) || defined(QUENCH_ENTRY_cloud_shadow_layer_fs)
 float4 cloudShadowTexel(float2 uv) {
     // The texel's point on the map's plane (y = shadowMap.w); only the clouds above it count.
     const float plane = cloud.shadowMap.w;
     const float2 xz = cloud.shadowMap.xy + uv / cloud.shadowMap.z;
     const float3 sun = quenchFrame.sunDir.xyz;
-    if (quenchFrame.sunDir.w <= 0.0 || sun.y <= 0.0) return float4(1.0, 1.0, 1.0, 1.0);
+    if (quenchFrame.sunDir.w <= 0.0 || sun.y <= 0.0) return float4(1.0, 0.0, 0.0, 1.0);
     const float sy = max(sun.y, 0.05);
     const float2 slope = sun.xz / sy; // xz per metre of height
 #if defined(QUENCH_ENTRY_cloud_shadow_fs)
     const float base = max(cloud.layer.x, plane);
     const float top = cloud.params.w;
-    if (top <= base) return float4(1.0, 1.0, 1.0, 1.0);
+    if (top <= base) return float4(1.0, 0.0, 0.0, 1.0);
     const int steps = 16;
     const float dh = (top - base) / float(steps);
     float od = 0.0;
+    float heightSum = 0.0;
+    float squareSum = 0.0;
     for (int i = 0; i < steps; ++i) {
         const float h = base + (float(i) + 0.5) * dh;
-        od += cloudDensity(xz + slope * (h - plane), h, false, 0.0) * dh / sy;
+        const float d = cloudDensity(xz + slope * (h - plane), h, false, 0.0) * dh / sy;
+        od += d;
+        heightSum += d * h * 0.001;
+        squareSum += d * (h * h + dh * dh / 12.0) * 1e-6;
     }
     const float T = exp(-od * cloud.shape.w);
+    const float mean = od > 0.0 ? heightSum / od : base * 0.001;
+    const float deviation = od > 0.0 ? sqrt(max(squareSum / od - mean * mean, 0.0)) : 0.0;
 #else
     const float h = cloud.layer.x + kLayerHeight;
-    if (h <= plane) return float4(1.0, 1.0, 1.0, 1.0);
+    if (h <= plane) return float4(1.0, 0.0, 0.0, 1.0);
     const float2 p = xz + slope * (h - plane);
     const float4 w = cloudWeather(p, 0.0);
     const float d = layerDensity(p, w);
     const float T = exp(-d * byType(w.y, 300.0, 1200.0, 2500.0, 4000.0) * cloud.shape.w * 0.25 / sy);
+    const float mean = h * 0.001;
+    const float deviation = 0.1;
 #endif
-    return float4(T, T, T, 1.0);
+    return float4(T, mean * (1.0 - T), deviation * (1.0 - T), 1.0);
 }
 #endif
 
@@ -555,9 +586,12 @@ float3 cloudViewRay(float2 uv) {
 }
 
 #if defined(QUENCH_ENTRY_cloud_march_fs)
+// Where the clouds are along the ray (marchClouds' `where`), premultiplied by the weight so that texels blend by it
+// (in space and over the frames): r the mean distance times the weight, g the deviation times the weight, b the
+// weight, a the mean distance itself (km; the reprojection's, also where the ray meets no cloud).
 struct CloudMarchOut {
     float4 color : SV_Target0; // premultiplied radiance, transmittance
-    float4 depth : SV_Target1; // r: the clouds' distance (m)
+    float4 where : SV_Target1;
 };
 
 CloudMarchOut cloud_march_fs(FullscreenOut vin) {
@@ -571,10 +605,10 @@ CloudMarchOut cloud_march_fs(FullscreenOut vin) {
     // far behind the cloud's surface the march's first sample fell, differently for every place of the surface in
     // the row of steps, and the frames' mean kept the steps' shells as level lines over the clouds (2026-11-10).
     const float lightJitter = frac(hash12(vin.position.xy) + cloud.temporal.z / 256.0);
-    float depth;
+    float3 where;
     CloudMarchOut o;
-    o.color = marchClouds(dir, jitter, lightJitter, int(cloud.march.x), int(cloud.march.y), true, depth);
-    o.depth = float4(depth, 0.0, 0.0, 1.0);
+    o.color = marchClouds(dir, jitter, lightJitter, int(cloud.march.x), int(cloud.march.y), true, where);
+    o.where = float4(where.x * where.z, where.y * where.z, where.z, where.x);
     return o;
 }
 #endif
@@ -582,10 +616,17 @@ CloudMarchOut cloud_march_fs(FullscreenOut vin) {
 #if defined(QUENCH_ENTRY_cloud_temporal_fs)
 Texture2D<float4> currentTex : QUENCH_TEXTURE(0);
 SamplerState currentSampler : QUENCH_SAMPLER(0);
-Texture2D<float4> depthTex : QUENCH_TEXTURE(1);
-SamplerState depthSampler : QUENCH_SAMPLER(1);
+Texture2D<float4> whereTex : QUENCH_TEXTURE(1);
+SamplerState whereSampler : QUENCH_SAMPLER(1);
 Texture2D<float4> historyTex : QUENCH_TEXTURE(2);
 SamplerState historySampler : QUENCH_SAMPLER(2);
+Texture2D<float4> whereHistoryTex : QUENCH_TEXTURE(3);
+SamplerState whereHistorySampler : QUENCH_SAMPLER(3);
+
+struct CloudTemporalOut {
+    float4 color : SV_Target0;
+    float4 where : SV_Target1; // as the march's (CloudMarchOut)
+};
 
 // The history at a uv, Catmull-Rom filtered from nine bilinear reads, so that it stays sharp when the view moves:
 // a bilinear read blurs the history a little in every frame it moves by a fraction of a texel, and the blur builds up
@@ -619,7 +660,9 @@ float4 cloudHistoryAt(float2 uv) {
 // (the march's jitter) is mostly of the finest scale, which the tent takes out, while the clouds' shapes are wider;
 // what the accumulation leaves of it would otherwise show as a fine hatching that TAA's clamp brings out when the
 // view moves. Where there is no history (the edge a turning view reveals, the first frame) the tent alone is used.
-float4 cloud_temporal_fs(FullscreenOut vin) : SV_Target0 {
+// Where the clouds are along the ray is blended over the frames the same way, without the tent and the range: each
+// frame's row of steps lies elsewhere along the ray, and the frames' mean places a cloud's front finer than a step.
+CloudTemporalOut cloud_temporal_fs(FullscreenOut vin) {
     const int2 p = int2(vin.position.xy);
     float4 lo = float4(1e9, 1e9, 1e9, 1e9);
     float4 hi = float4(-1e9, -1e9, -1e9, -1e9);
@@ -631,15 +674,19 @@ float4 cloud_temporal_fs(FullscreenOut vin) : SV_Target0 {
             hi = max(hi, n);
             current += n * ((x == 0 ? 2.0 : 1.0) * (y == 0 ? 2.0 : 1.0) / 16.0);
         }
-    if (cloud.temporal.y <= 0.0) return current;
-    const float depth = depthTex.Load(int3(p, 0)).r;
-    const float3 world = quenchFrame.cameraPos.xyz + cloudViewRay(vin.uv) * depth;
+    CloudTemporalOut o;
+    o.color = current;
+    o.where = whereTex.Load(int3(p, 0));
+    if (cloud.temporal.y <= 0.0) return o;
+    const float3 world = quenchFrame.cameraPos.xyz + cloudViewRay(vin.uv) * (o.where.a * 1000.0);
     const float4 clip = mul(cloud.prevViewProjStable, float4(world, 1.0));
     const float2 ndc = clip.xy / max(clip.w, 1e-6);
     const float2 prevUv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-    if (clip.w <= 0.0 || any(prevUv < 0.0) || any(prevUv > 1.0)) return current;
+    if (clip.w <= 0.0 || any(prevUv < 0.0) || any(prevUv > 1.0)) return o;
     const float4 history = clamp(cloudHistoryAt(prevUv), lo, hi);
-    return lerp(history, current, cloud.temporal.x);
+    o.color = lerp(history, current, cloud.temporal.x);
+    o.where = lerp(whereHistoryTex.SampleLevel(whereHistorySampler, prevUv, 0.0), o.where, cloud.temporal.x);
+    return o;
 }
 #endif
 
@@ -669,13 +716,88 @@ float3 cloudySkyColor(float3 dir, float4 clouds, bool sunDisc) {
 }
 
 #if defined(QUENCH_ENTRY_sky_clouds_fs)
-Texture2D<float4> cloudTex : QUENCH_TEXTURE(0);
-SamplerState cloudSampler : QUENCH_SAMPLER(0);
+Texture2D<float4> cloudTex : QUENCH_TEXTURE(2);
+SamplerState cloudSampler : QUENCH_SAMPLER(2);
 
-// The sky pass with the volumetric clouds: their accumulated march, upsampled.
+// The sky pass with the volumetric clouds: their accumulated march, upsampled, with the cirrus behind them.
 float4 sky_clouds_fs(FullscreenOut vin) : SV_Target0 {
     const float3 dir = quenchViewRay(vin.uv);
-    return float4(cloudySkyColor(dir, cloudTex.SampleLevel(cloudSampler, vin.uv, 0.0), true), 1.0);
+    const float4 clouds = cloudOver(cloudTex.SampleLevel(cloudSampler, vin.uv, 0.0), cloudCirrus(dir));
+    return float4(cloudySkyColor(dir, clouds, true), 1.0);
+}
+#endif
+
+// ---------------------------------------------------------------- the clouds over the scene
+
+// The clouds in front of the scene's surfaces, drawn over the HDR image after the opaque surfaces and the sky (the
+// sky's own pixels have their clouds already) as color + destination * alpha: a mountain stands in its clouds, a
+// camera above the layer sees the ground through the gaps only.
+#if defined(QUENCH_ENTRY_clouds_over_fs) || defined(QUENCH_ENTRY_clouds_over_layer_fs)
+Texture2D<float> sceneDepthTex : QUENCH_TEXTURE(2);
+SamplerState sceneDepthSampler : QUENCH_SAMPLER(2);
+
+// The scene's surface at a uv: xyz the way from the camera to it (m), w its distance (0: none, the sky).
+float4 cloudScenePoint(float2 uv) {
+    const float depth = sceneDepthTex.SampleLevel(sceneDepthSampler, uv, 0.0);
+    if (depth <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    const float4 w = mul(quenchFrame.invViewProj, float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0));
+    const float3 way = w.xyz / w.w - quenchFrame.cameraPos.xyz;
+    return float4(way, length(way));
+}
+
+// The share `front` of the clouds `c` along a ray, for the blend, with the horizon's haze as the sky pass lays it
+// over its clouds (cloudySkyColor), so that a cloud looks the same before a ridge and beside it.
+float4 cloudsOverScene(float4 c, float front, float3 dir) {
+    const float taken = (1.0 - c.a) * front;
+    float3 L = c.rgb * front;
+    if (quenchFrame.fogParams.x > 0.0) {
+        const float haze = pow(1.0 - saturate(abs(dir.y)), 6.0) * 0.6 * quenchFrame.fogColor.w;
+        L = lerp(L, hazeColor(dir) * taken, haze);
+    }
+    return float4(L, 1.0 - taken);
+}
+#endif
+
+#if defined(QUENCH_ENTRY_clouds_over_fs)
+Texture2D<float4> cloudTex : QUENCH_TEXTURE(0);
+SamplerState cloudSampler : QUENCH_SAMPLER(0);
+Texture2D<float4> whereTex : QUENCH_TEXTURE(1);
+SamplerState whereSampler : QUENCH_SAMPLER(1);
+
+// The volumetric clouds: the march does not know the scene (it runs before it, and its history would have to follow
+// every moving silhouette), so a surface takes the share of the ray's clouds in front of it from where they are
+// along the ray (CloudMarchOut::where): none before mean - 1.73 deviations, all past mean + 1.73 (the ends of an
+// even spread with that mean and deviation), in proportion between. Right where the ray's clouds lie together, in
+// front of the surface or behind it; where a thin cloud before a ridge and a thick one far behind it share a ray,
+// the near one is drawn thinner than it is. A surface inside a cloud fades into it over about a step of the march.
+float4 clouds_over_fs(FullscreenOut vin) : SV_Target0 {
+    const float4 scene = cloudScenePoint(vin.uv);
+    if (scene.w <= 0.0) discard;
+    // Nothing of the layer between the camera and the surface: most of a scene seen from the ground.
+    const float y = quenchFrame.cameraPos.y;
+    const float alt = cloudAltitude(dot(scene.xz, scene.xz), y + scene.y);
+    if (max(y, alt) < cloud.layer.x || min(y, alt) > cloud.params.w) discard;
+    const float4 where = whereTex.SampleLevel(whereSampler, vin.uv, 0.0);
+    if (where.b <= 0.002) discard;
+    const float mean = where.r / where.b;
+    const float spread = max(where.g / where.b, 0.005) * 1.73;
+    const float front = saturate((scene.w * 0.001 - (mean - spread)) / (2.0 * spread));
+    if (front <= 0.0) discard;
+    return cloudsOverScene(cloudTex.SampleLevel(cloudSampler, vin.uv, 0.0), front, scene.xyz / scene.w);
+}
+#endif
+
+#if defined(QUENCH_ENTRY_clouds_over_layer_fs)
+// The 2D layer: where a ray meets it before the surface, fading in over the 200 m behind it.
+float4 clouds_over_layer_fs(FullscreenOut vin) : SV_Target0 {
+    const float4 scene = cloudScenePoint(vin.uv);
+    if (scene.w <= 0.0) discard;
+    const float3 dir = scene.xyz / scene.w;
+    float t;
+    const float4 layer = cloudLayerAlone(dir, t);
+    const float front = saturate((scene.w - t) / 200.0);
+    if (t <= 0.0 || front <= 0.0 || layer.a >= 0.998) discard;
+    return cloudsOverScene(layer, front, dir);
 }
 #endif
 
@@ -691,9 +813,9 @@ float4 sky_layer_fs(FullscreenOut vin) : SV_Target0 {
 // A face of the sky cube: the sky and the volumetric clouds without the sun disc (surfaces add the sun themselves).
 float4 sky_cube_fs(FullscreenOut vin) : SV_Target0 {
     const float3 dir = quenchCubeDirection(int(cloud.params.y), vin.uv);
-    float depth;
-    const float4 clouds = marchClouds(dir, 0.5, 0.5, int(cloud.march.x), int(cloud.march.y), false, depth);
-    return float4(cloudySkyColor(dir, clouds, false), 1.0);
+    float3 where;
+    const float4 clouds = marchClouds(dir, 0.5, 0.5, int(cloud.march.x), int(cloud.march.y), false, where);
+    return float4(cloudySkyColor(dir, cloudOver(clouds, cloudCirrus(dir)), false), 1.0);
 }
 #endif
 

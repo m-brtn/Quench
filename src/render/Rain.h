@@ -66,6 +66,9 @@ public:
         float cloudBase = 1500.0f;
         bool rainbow = false;
         std::uint64_t sequence = 0;
+        // The volumetric clouds' march (transmittance in a) when the camera is at the cloud base or higher: the
+        // shafts lie behind the clouds and are dimmed by it. No texture: not dimmed.
+        gpu::TextureSamplerBinding cloudsInFront{};
     };
     // Outside passes, after the HDR pass: the shafts and the rainbow, marched at a reduced size and blended over the
     // HDR image.

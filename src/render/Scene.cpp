@@ -76,6 +76,7 @@ Result<MeshId> Scene::addMesh(const MeshDesc& desc) {
         hi = glm::max(hi, v.position);
     }
     mesh.center = (lo + hi) * 0.5f;
+    mesh.halfExtent = (hi - lo) * 0.5f;
     for (const Vertex& v : desc.vertices) mesh.radius = std::max(mesh.radius, glm::length(v.position - mesh.center));
 
     // Joints of zero weight are moved to joint 0, so the shader reads only valid matrices.

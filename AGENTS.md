@@ -129,7 +129,13 @@ unrealistic, the sky brown during snow and the clouds not realistic enough: the 
 the clouds' light and the light under them (the scene's units), the rings (capillary wave packets) and the clouds'
 shapes and light steps (level lines gone, bumps, shadow sides) were changed after 0.13.2, checked by measurement
 and in still offscreen captures on the Mac's native Metal backend only, without CTest (the user's decision): the
-weather section's golden captures are stale, nobody has heard the sound or seen any of it in motion;
+weather section's golden captures are stale, nobody has heard the sound or seen any of it in motion; the same
+evening (0.14.0) the clouds are drawn in front of surfaces where the camera or the scene reaches the cloud base
+(the HDR pass cut in two: the opaque surfaces and the sky, the clouds over the surfaces by where the march found
+them along each ray, then the transparent surfaces; `RenderStats::cloudsOverScene`), a surface above its column's
+clouds is in the sun, and no rain or snow falls or lies at or above the cloud base; the demo's Weather section has
+a mountain for it: still offscreen captures on the Mac's native Metal backend, one view also on SDL GPU's Metal
+driver and on Vulkan through MoltenVK with validation, the weather scenarios, no CTest;
 its tests and costs not run on a phone, nothing on the iPhone 18 Pro Max), `quench_particles` (headless, 2026-11-08, stage 14: particle system
 descs, spawns by rate, distance, bursts and the game's points in a point, sphere, box, disc or along a path,
 deterministic and frame-rate independent, the CPU simulation of gravity, drag, curl noise and the weather's wind

@@ -102,7 +102,8 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // map's edge stay inside it).
     float4 localShadows;
     // The clouds (render::RenderSettings::clouds; quench/Clouds.hlsli). Their shadow (sampler 14: the share of the
-    // sun's light the clouds above RenderSettings::cloudShadowHeight let through, a top-down map on that plane): xy:
+    // sun's light the clouds above RenderSettings::cloudShadowHeight let through, a top-down map on that plane, with
+    // the height of those clouds): xy:
     // the map's corner (world x and z, m) followed along the sun's direction from that plane down to y = 0, where
     // quenchCloudShadow meets a point's line toward the sun, z: 1 / its size (m), w: 1 when it is read.
     float4 cloudShadow;
@@ -119,7 +120,8 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // x: 1 when the rain's maps are read (sampler 14: with rain or snow), y: the occlusion map's depth range (m), z:
     // the precipitation at the camera (0..1), w: 1 when the rain is drawn (wet surfaces and their ripples)
     float4 rain;
-    // The wetness grid (sampler 14's last rows): xy its corner (world xz, m), z: 1 / its size (m), w: unused.
+    // The wetness grid (sampler 14's last rows): xy its corner (world xz, m), z: 1 / its size (m), w: the cloud base
+    // (m): nothing falls at or above it (quenchFallReach; 0: no limit).
     float4 rainGrid;
     // The snow (render::RenderSettings::snow): x: 1 when it is drawn (the snow cover on surfaces), y: the share of the
     // precipitation at the camera that falls as snow, zw: unused.

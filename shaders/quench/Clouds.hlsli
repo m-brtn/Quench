@@ -13,7 +13,10 @@
 // the clouds above a plane (render::RenderSettings::cloudShadowHeight); a point reads it where its line toward the
 // sun meets that plane (here: y = 0, the map's corner in FrameUniforms::cloudShadow moved to match). Over the outer
 // twentieth of the map's width it fades to `outside`: past the map there are only its edge texels drawn out, which
-// show as stripes along its axes in the distance (the shafts of rain and snow reach farther than the map).
+// show as stripes along its axes in the distance (the shafts of rain and snow reach farther than the map). The map
+// also says at what height the clouds on that line are (g their mean height, b its deviation, km, each times
+// 1 - r): a point takes the share of them above it, none before mean - 1.73 deviations, all past mean + 1.73 (the
+// ends of an even spread), so a mountain is in the clouds' shadow below them and in the sun above them.
 float quenchCloudShadow(Texture2D<float4> maps, SamplerState s, float3 P, float outside) {
     if (quenchFrame.cloudShadow.w <= 0.0) return 1.0;
     const float3 sun = quenchFrame.sunDir.xyz;
@@ -25,7 +28,16 @@ float quenchCloudShadow(Texture2D<float4> maps, SamplerState s, float3 P, float 
     // Clamped to the region's edge texels, as a texture of its own would be.
     const float edge = 0.5 / float(QUENCH_RAIN_MAP_ROW);
     const float v = clamp(uv.y, edge, 1.0 - edge) * (float(QUENCH_RAIN_MAP_ROW) / float(QUENCH_WEATHER_MAPS_HEIGHT));
-    return lerp(maps.SampleLevel(s, float2(uv.x, v), 0.0).r, outside, beyond);
+    const float3 m = maps.SampleLevel(s, float2(uv.x, v), 0.0).rgb;
+    float through = m.r;
+    const float taken = 1.0 - m.r;
+    [branch] if (taken > 0.004) {
+        const float mean = m.g / taken;
+        const float spread = max(m.b / taken, 0.02) * 1.73;
+        const float below = saturate((P.y * 0.001 - (mean - spread)) / (2.0 * spread));
+        if (below > 0.0) through = below >= 1.0 ? 1.0 : pow(max(through, 1e-5), 1.0 - below);
+    }
+    return lerp(through, outside, beyond);
 }
 
 // The same, fading to the share of the sun's light that the cover around the camera lets through.

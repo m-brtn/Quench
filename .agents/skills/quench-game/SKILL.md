@@ -134,7 +134,10 @@ Link what the game uses beside `quench_add_game()`:
   asks the weather what is above a point: `precipitation`, `distanceToPrecipitation`, `cover` (`coverAbove`: only the
   clouds above it), `windAt`. A world above the clouds (a sea of clouds below the camera): cloud bases are at y >= 0,
   so put the ground higher (bases at 700 m, the ground at 2.2 km), and set `cloudShadowHeight` to the ground's
-  height (the clouds below it then cast no shadow; with the default 0 they shade the ground from below). Rain is off
+  height (the clouds below it then cast no shadow). Mountains that reach into the clouds need nothing: the clouds
+  are drawn in front of surfaces where the camera or the scene reaches the cloud base
+  (`RenderStats::cloudsOverScene`), a summit above them is in the sun, and no rain or snow falls or lies at or above
+  the base. Rain is off
   by default too: `RenderSettings::rain = render::Rain::Medium` (`Low` on phones) draws streaks, splashes, wet
   surfaces with puddles (`MaterialDesc::puddles`, `water`; `wetness = 0` or `QUENCH_SURFACE_NO_RAIN` keeps one dry)
   and, with clouds, shafts from afar; call `weather.setWetnessFocus(...)` with the camera's ground point. Its sound:

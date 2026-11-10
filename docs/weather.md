@@ -148,7 +148,8 @@ sample costs about 0.2 µs with 16 cells (M4 Pro, Release).
 | `skyCubeSize`, `skyCubeFacesPerFrame` | the sky cube with the clouds that surfaces reflect: texels per side (64; 0: none) and faces drawn again per frame (6) |
 
 `Renderer::effects().clouds` and `.skyCube` say what runs after the fallbacks; `RenderStats::clouds`, `cloudWidth`,
-`cloudHeight`, `cloudCover` and `skyCubeFaces` what a frame drew.
+`cloudHeight`, `cloudCover`, `skyCubeFaces` and `cloudsOverScene` (the clouds were also drawn over the scene's
+surfaces, [below](#clouds-in-front-of-the-scene)) what a frame drew.
 
 **Fallbacks by `gpu::Caps` and formats**, never by platform: `Volumetric` needs sampled Rgba8Unorm 3D textures
 (drawn as the layers of a 2D array and copied in: MoltenVK's portability subset has no 2D views of a 3D image),
@@ -168,10 +169,14 @@ today (SDL GPU's Metal and Vulkan through MoltenVK, the native Metal backend, th
 2. **The weather map:** the field drawn by the GPU into a 512² Rgba8Unorm texture, 250 m texels over 128 km around
    the camera (on its texel grid, so it does not swim), with mips. **The cloud shadow map:** a 512² map over 24 km
    (47 m texels): the clouds' transmittance along the sun's direction above the plane y = `cloudShadowHeight` (16
-   steps through the shape above it), or the layer's where the layer is above it. The two maps change slowly: each is drawn every other frame, in turns, and at once when
+   steps through the shape above it), or the layer's where the layer is above it, and, since 0.14.0, the height of
+   those clouds (their mean height and its deviation, weighed by what each step takes), so that a surface among or
+   above them is shaded by the share over it only. The two maps change slowly: each is drawn every other frame, in turns, and at once when
    it moved with the camera, after a cut or a change of mode.
 3. **The march** (Volumetric) at `cloudResolution` into an Rgba16Float target (premultiplied radiance and
-   transmittance) and its depth: the layer is a shell on a sphere of the planet's radius (6360 km), so the clouds
+   transmittance) and a second one that says where along the ray its clouds are (since 0.14.0: their mean distance
+   and its deviation, weighed by what each step takes and stored premultiplied by that weight; before, a depth
+   target with the mean distance): the layer is a shell on a sphere of the planet's radius (6360 km), so the clouds
    meet the horizon; the march ends at the highest top on the map (a stratus deck is marched through its few hundred
    metres, a storm through 7.5 km), at most 60 km of path, in steps that grow with the distance (each a constant
    share of it) and stop when the ray is opaque (the last hundredth takes the light of the last step: left open, it
@@ -186,7 +191,8 @@ today (SDL GPU's Metal and Vulkan through MoltenVK, the native Metal backend, th
    weather map's half width what is drawn thins out (the density a view ray meets, since 2026-11-10; before, the
    coverage, which broke a deck's rim into sunlit bits); nothing is read past the map. **The accumulation** (`cloudTemporal`): each frame's march,
    smoothed by a 3x3 tent (the jitter's noise is finer than the clouds' shapes), blended at 0.1 with the previous
-   result reprojected by its depth, read Catmull-Rom (a bilinear read blurs it a little every frame the view moves,
+   result reprojected by its clouds' mean distance (the distances are blended the same way, read bilinearly), read
+   Catmull-Rom (a bilinear read blurs it a little every frame the view moves,
    and the blur builds up: smeared clouds while the camera turns) and kept within the range of this frame's 3x3
    neighbourhood; a cut or a change of mode starts it again.
 4. **The sky cube** (with `skyCubeSize`): the sky with its clouds (24 steps, three light steps, no detail)
@@ -194,7 +200,36 @@ today (SDL GPU's Metal and Vulkan through MoltenVK, the native Metal backend, th
    cube, `skyCubeFacesPerFrame` faces per frame in turns (all six on the first frame, a cut or a change of mode),
    with mips for rough reflections.
 5. **In the HDR pass** the sky with the clouds over it replaces the plain sky: the march's result upsampled (or the
-   layer drawn per pixel), the cirrus above, haze toward the horizon.
+   layer drawn per pixel), the cirrus behind it (drawn per pixel in this pass since 0.14.0, no longer a part of the
+   march's result), haze toward the horizon.
+6. **Over the scene's surfaces** when the camera or the scene reaches the clouds: the next section.
+
+### Clouds in front of the scene
+
+Since 0.14.0 (2026-11-10) the clouds are also drawn in front of surfaces: a mountain stands in the clouds, a camera
+above them sees the ground through their gaps only. Before, they were a part of the sky, behind everything.
+
+- **When:** in a frame whose camera or whose highest opaque surface in view is at or above the cloud base
+  (`RenderStats::cloudsOverScene`; rigid meshes count by their box, skinned ones by their sphere), where the depth
+  can be sampled, not in the path tracer's frames. Other frames are drawn as before, at the same cost.
+- **Where in the frame:** the HDR pass is cut in two. The opaque surfaces and the sky first; then a fullscreen pass
+  blends the clouds over the surfaces (`clouds_over_fs`; the sky's pixels are left alone); then, if there are any,
+  the transparent surfaces and the game's Transparent-stage passes in a second half that loads the image and the
+  depth (the frame's bindings are bound again for it). Transparent surfaces are never behind a cloud, as they are
+  never behind the fog's shafts: a glass pane inside a cloud bank is drawn over it.
+- **How much of a ray's clouds a surface is behind:** the march does not know the scene (its accumulated result
+  never has to follow a moving silhouette, and the sky's pixels are what they were). It says where its clouds are
+  along each ray: a mean distance and a deviation. A surface at the distance z takes the share
+  `saturate((z - (mean - 1.73 dev)) / (3.46 dev))` of the ray's light and of what it hides (the clouds taken as
+  spread evenly over mean +- 1.73 deviations, a uniform spread of that deviation). **A simplification:** a thin
+  cloud in front of a ridge that shares its ray with a thick one far behind the ridge is drawn thinner than it is,
+  and the edge of a surface inside a cloud is as soft as the march's size allows (half size by default).
+- **The 2D layer** has one distance per ray: a surface beyond it gets the layer over it (`clouds_over_layer_fs`,
+  over 200 m), also from above, where the layer was not drawn at all before.
+- **Shadows by height:** `quenchCloudShadow` takes the height of the surface: under the clouds of its column it
+  reads the map as before, above them it is in the sun, in between it takes the share over it (the transmittance
+  to the power of that share). A summit over a closed deck is sunlit with `cloudShadowHeight` left at 0.
+- **Rain and snow end at the cloud base:** see [Rain](#rain).
 
 **Shapes** (after Schneider's cloudscapes for Horizon Zero Dawn, "The real-time volumetric cloudscapes of Horizon
 Zero Dawn", SIGGRAPH 2015, and Nubis, 2017): the weather map's coverage and type at a point; a height profile per
@@ -243,7 +278,8 @@ ones would be.
 - **Cloud shadows:** surfaces read the cloud shadow map (surface sampler 14, `quench/Clouds.hlsli`:
   `quenchCloudShadow`) where the sun's ray through them meets the plane y = `cloudShadowHeight` (0 by default; the
   clouds below the plane cast no shadow, since 2026-11-08), and multiply the sun's light by it,
-  with shadow maps and with ray-traced sun shadows alike. Beyond its 24 km the map's edge holds.
+  with shadow maps and with ray-traced sun shadows alike; a surface above a part of its column's clouds is shaded
+  by the part over it only (since 0.14.0, [above](#clouds-in-front-of-the-scene)). Beyond its 24 km the map's edge holds.
 - **How overcast it is:** `Weather::coverAbove` within 6 km of the camera (`RenderStats::cloudCover`): the cover of
   the clouds above it, all of it under the cloud base and none over the tops, so a camera flying over a sea of
   clouds sees the sun and the clear sky (since 2026-11-08; before, the clouds below dimmed them too). As the cover
@@ -322,7 +358,9 @@ off with a line; the path tracer's frame has no rain (a line). Every backend has
    blends the steps); smoothed at the reduced size by a 3x3 tent weighed by depth (in motion TAA keeps less history,
    and the jitter, upsampled into blocks, read as a screen-door over the rays); blended into the HDR image by a
    depth-aware upsample (the four nearest texels' bilinear weights divided by how far their depth is from the
-   pixel's), so a near edge does not take the veil of the distance behind it.
+   pixel's), so a near edge does not take the veil of the distance behind it. For a camera at or above the cloud
+   base the shafts lie under the clouds it looks down on: they are dimmed by the march's transmittance there (since
+   0.14.0; before, they veiled the ground under an opaque deck but not a summit standing out of it).
 5. **The streaks and splashes**, after TAA and upscaling in the output-size image (TAA would smear them), tested
    against the scene's depth in the shader. Procedural: a fixed set of drops in a box around the camera, each falling
    with the rain's velocity from a place of its own and wrapped around the box, so nothing is simulated or stored; a
@@ -383,8 +421,12 @@ the clouds, drawn behind it, do not).
   keeps its surface as its function makes it, or calls `quenchApplyRain` itself and changes what it gets; a material
   with wetness 0, no puddles and not water costs a branch.
 - `FrameUniforms` has three members for it (`rainViewProj`; `rain`: the maps on, the occlusion map's depth range, the
-  precipitation at the camera, the ripples; `rainGrid`: the wetness grid's place) and `MaterialUniforms` one
-  (`weather`).
+  precipitation at the camera, the ripples; `rainGrid`: the wetness grid's place and, in w, the cloud base) and
+  `MaterialUniforms` one (`weather`).
+- **Nothing falls above the clouds** (since 0.14.0): at or above the cloud base, as in
+  `Weather::precipitation(point)`, there are no streaks, splashes or flakes, and surfaces neither get wet nor
+  whiten there, fading in over the 100 m below it (`quenchFallReach` in `quench/Rain.hlsli`). A summit above a
+  raining deck stays dry and bare; a camera that climbs through the base leaves the rain behind.
 
 ## The rain's sound
 
@@ -590,6 +632,17 @@ and 5.56 to 5.79, the storm 1.26 to 1.27 and 1.22 to 1.30 and 3.46 to 3.48 and 3
 1.27 and 1.35 to 1.48: about a tenth more in fair weather at half size, a sixth at full size, next to nothing in
 a storm. The table above is from before both.
 
+**The clouds in front of the scene** (0.14.0, 2026-11-10; two runs each, 1920 x 1080, the fair preset): a frame
+that does not need them is drawn as before; `weather_cost.txt` after the change gave clouds 1.72 ms at half size
+and 4.83 to 4.84 at full size, the storm 1.19 and 3.30 to 3.31, the phone defaults 1.27, the HDR pass 0.55 to 0.56
+(with the cirrus now drawn in it per pixel), against 1.87, 5.80, 1.25, 3.63 and 1.36 an hour earlier the same
+evening in another session (not a same-session comparison; the march no longer writes a depth and no longer draws
+the cirrus). With them, the view over the clouds toward the demo's mountain against the view from the plain: the
+HDR range 0.64 against 0.55 ms at half size (0.68 against 0.61 with the 2D layer), which also holds the mountain's
+pixels in other places, so the fullscreen pass and the cut of the pass cost at most about 0.1 ms; the march itself
+1.68 against 1.72 ms at half size and 5.94 against 4.83 at full size (another view of the clouds, not the pass).
+Not measured on a phone.
+
 **The rain** (`scenarios/rain_cost.txt`, the same way: the Rain here preset from the ground and the storm preset
 from the air, half-size clouds, the snow off, 3 s per setting; 2026-11-08 00:57, with the splashes of part 3's
 polish): `rain_map`, `rain_shafts` and `rain`, and the HDR pass's growth over rain off (the wet surfaces); "added" is
@@ -678,7 +731,9 @@ the next preset without a sun of its own puts it back where it was, unless the p
 size, half size, 2D layer, off),
 steps, cloud shadows, the sky cube and its faces per frame, 60 Hz; the rain's and the snow's levels, shafts,
 rainbow, lightning and its rate, sound and its volume; views from the air, from the ground, toward the cloud, from
-the shelter, over the shelter and in the meadow. On the ground: wet paving with puddles, a pond, a shelter with a
+the shelter, over the shelter, in the meadow, toward the mountain and over the clouds (since 0.14.0: a 3.4 km
+mountain 13 km from the place, a cone under ridged noise with a snow cap, its summit above the cumulus; the view
+over the clouds looks at it from 2.9 km up). On the ground: wet paving with puddles, a pond, a shelter with a
 crate under it and one in the open, a dark block that the rain shows against; beside it a meadow of grass, bushes
 and trees on the demo's plant surface (`examples/demo/shaders/plants.hlsl`, `quenchWindSway` and
 `quenchWindSwayAbout`). The windy storm: a gale of 22 m/s from the west-southwest (about 10.5 m/s at 10 m) with
@@ -775,7 +830,9 @@ without missed intervals with the thermal reaction on.
 - The traced effects see an overcast amount, not the clouds (above); the probe grid does not pick up single clouds.
 - Cloud shadows are a 24 km map on one plane (`cloudShadowHeight`, 0 by default): a surface far above or below it
   reads the shadow of the column its sun ray crosses at that height, so ground at very different heights (a valley
-  and a mountain top, isles at several heights) shares one plane; over the outer twentieth of the map and beyond
+  and a mountain top, isles at several heights) shares one plane; since 0.14.0 the map also holds one mean height
+  and deviation of each column's clouds, by which a surface above them is left in the sun (two decks over each
+  other count as one thick one); over the outer twentieth of the map and beyond
   it (since 2026-11-08) a point takes the share of the sun the cover around the camera lets through (the shafts:
   the cover over the step), not the shadow of its clouds.
 - The storm's bases are somewhat smooth and sheet-like. Inside a storm's rain (the Storm preset from the air) the
@@ -796,9 +853,14 @@ without missed intervals with the thermal reaction on.
 - Clouds beyond 64 km fade out (the weather map's reach). A camera above the cloud base (since 2026-11-08): its
   light counts only the clouds above it (`Weather::coverAbove`) and the volumetric clouds below the horizon are
   drawn (a sea of clouds under the camera); the 2D layer is still drawn only above the horizon. The clouds' shadow
-  map lies on the plane y = 0 unless the game sets `cloudShadowHeight` (since 2026-11-08): with 0, surfaces above
-  the clouds are shaded as if the clouds were above them, so a game over a sea of clouds sets it to its ground's
-  height.
+  map lies on the plane y = 0 unless the game sets `cloudShadowHeight` (since 2026-11-08); since 0.14.0 a surface
+  above the clouds is in the sun whatever the plane, and the 2D layer is drawn over the ground from above.
+- Clouds in front of the scene (0.14.0): one mean distance and deviation per ray, so two clouds on a ray with a
+  surface between them are split by that estimate, not exactly (above); at the march's size, so a ridge inside a
+  cloud has a soft edge; transparent surfaces are drawn over the clouds; the traced effects, the sky cube and the
+  path tracer do not know of it. Looked at in still offscreen captures only (the demo's mountain on the Mac: native
+  Metal; one view on SDL GPU's Metal driver and on Vulkan through MoltenVK with their validation layers), never in
+  motion: how the clouds' edge on a ridge behaves while the camera moves, nobody has seen.
 - Phone costs are estimates from the Mac; the phone defaults wait for a measured run on the iPhone 17.
 - The rain: no roofs beyond 64 m of the camera (the occlusion map's reach: farther surfaces count as open) and
   nothing above 100 m over the camera counts as a roof; the wetness grid covers 1 km around its focus (beyond it an

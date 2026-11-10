@@ -256,7 +256,11 @@ const float far = m_weather.distanceToPrecipitation({playerPosition.x, playerPos
 `m_renderer->effects().clouds` says what is drawn (Volumetric falls back to Layer by `gpu::Caps`; clouds need
 `RenderSettings::sky`), `stats().cloudCover` how overcast it is above the camera. The sun's light on surfaces goes
 through the clouds' shadow (`cloudShadows`; `cloudShadowHeight`: the plane its map lies on, the ground's height
-for a world above the clouds), the sky's ambient light and the fog grey with the cover, and surfaces
+for a world above the clouds; a surface above its column's clouds is in the sun either way), the clouds are drawn
+in front of surfaces that reach into them or lie under a camera above them (`stats().cloudsOverScene`; transparent
+surfaces are drawn over the clouds, and a game's Transparent-stage pass then runs in a render pass of its own
+after them, with the frame's bindings bound as before), no rain or snow falls at or above the cloud base, the
+sky's ambient light and the fog grey with the cover, and surfaces
 reflect a cube of the sky with its clouds (`skyCubeSize`, `skyCubeFacesPerFrame`). Costs and phone settings:
 `docs/weather.md`, "Phones and fallbacks"; `examples/demo/sections/WeatherSection.cpp` (presets, a shower cell, the
 sun's day).

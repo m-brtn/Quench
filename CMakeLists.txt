@@ -320,11 +320,13 @@ if(NOT QUENCH_HEADLESS)
     quench_add_shaders(quench_render NAME render_localshadow SOURCE src/render/shaders/localshadow.hlsl
         ENTRIES local_shadow_fs:fragment local_shadow_blur_fs:fragment)
     # The clouds (RenderSettings::clouds, docs/weather.md): the weather map, their shadow, the volumetric march and
-    # its accumulation, the sky with the clouds, the 2D layer, the sky cube's faces; their noise, drawn once.
+    # its accumulation, the sky with the clouds, the clouds over the scene's surfaces, the 2D layer, the sky cube's
+    # faces; their noise, drawn once.
     quench_add_shaders(quench_render NAME render_clouds SOURCE src/render/shaders/clouds.hlsl
         ENTRIES weather_map_fs:fragment cloud_shadow_fs:fragment cloud_shadow_layer_fs:fragment
                 cloud_march_fs:fragment cloud_temporal_fs:fragment sky_clouds_fs:fragment sky_layer_fs:fragment
-                sky_cube_fs:fragment sky_cube_layer_fs:fragment)
+                sky_cube_fs:fragment sky_cube_layer_fs:fragment clouds_over_fs:fragment
+                clouds_over_layer_fs:fragment)
     quench_add_shaders(quench_render NAME render_cloudnoise SOURCE src/render/shaders/cloudnoise.hlsl
         ENTRIES cloud_noise_fs:fragment)
     # The rain and snow (RenderSettings::rain, snow): their occlusion map into the weather maps, the drops' streaks

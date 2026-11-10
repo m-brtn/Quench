@@ -35,6 +35,8 @@ struct QUENCH_ALIGN16 RainUniforms {
                        // share of the sun's irradiance a flake sends toward the camera
     float4 flakeLight; // rgb: the sky's and the ground's light a flake sends toward the camera, w: 1 when the rain is
                        // drawn
+    float4 behind;     // x: 1 when the shafts lie behind the clouds along every ray (a camera at the cloud base or
+                       // higher): rain_shafts_up_fs dims them by the clouds' transmittance; yzw: unused
 };
 
 QUENCH_SHARED_END

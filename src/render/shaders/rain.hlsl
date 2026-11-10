@@ -111,7 +111,7 @@ RainDropOut rain_streak_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     const float fade = saturate(1.0 - dist * dist / (box.w * box.w)) * smoothstep(0.3, rain.lens.w, dist);
     if (fade <= 0.0) return rainCulled();
     const float4 weather = quenchWetnessAt(mapsTex, mapsSampler, head.xz);
-    const float intensity = weather.b * weather.a;
+    const float intensity = weather.b * weather.a * quenchFallReach(head.y);
     if (rainRandom(id + 4u) >= intensity) return rainCulled();
     if (quenchRainExposure(mapsTex, mapsSampler, head) < 0.5) return rainCulled();
 
@@ -177,7 +177,7 @@ RainDropOut rain_splash_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     const float4 h = mul(rain.invRainViewProj, float4(m.x * 2.0 - 1.0, 1.0 - m.y * 2.0, top, 1.0));
     const float3 ground = h.xyz / h.w;
     const float4 weather = quenchWetnessAt(mapsTex, mapsSampler, ground.xz);
-    if (rainRandom(seed + 2u) >= weather.b * weather.a) return rainCulled();
+    if (rainRandom(seed + 2u) >= weather.b * weather.a * quenchFallReach(ground.y)) return rainCulled();
     const float3 toCamera = quenchFrame.cameraPos.xyz - ground;
     const float dist = length(toCamera);
     const float fade = saturate(1.0 - dist / rain.splashes.y) * saturate(dist - 0.5);
@@ -231,7 +231,7 @@ RainDropOut rain_flake_vs(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     const float fade = saturate(1.0 - dist * dist / (extent * extent)) * saturate((dist - 0.2) * 3.0);
     if (fade <= 0.0) return rainCulled();
     const float4 weather = quenchWetnessAt(mapsTex, mapsSampler, P.xz);
-    if (rainRandom(id + 4u) >= weather.b * (1.0 - weather.a)) return rainCulled();
+    if (rainRandom(id + 4u) >= weather.b * (1.0 - weather.a) * quenchFallReach(P.y)) return rainCulled();
     if (quenchRainExposure(mapsTex, mapsSampler, P) < 0.5) return rainCulled();
 
     // Its motion now (the fall, the wind with its gusts and the flutter's) over the exposure, in pixels on the screen.
@@ -534,8 +534,13 @@ float4 rain_shafts_blur_fs(FullscreenOut vin) : SV_Target0 {
 #endif
 
 #if defined(QUENCH_ENTRY_rain_shafts_up_fs)
+Texture2D<float4> cloudsTex : QUENCH_TEXTURE(2);
+SamplerState cloudsSampler : QUENCH_SAMPLER(2);
+
 // The shafts at the target's size: the four nearest shaft texels, bilinear, each weighed by its depth. Blended as
-// color + destination * transmittance.
+// color + destination * transmittance. The rain falls under the cloud base: seen from the base or higher it lies
+// behind the clouds along the ray, whose transmittance (the volumetric clouds' march, a) dims it; without that the
+// rain under a closed deck veiled the deck from above.
 float4 rain_shafts_up_fs(FullscreenOut vin) : SV_Target0 {
     const float scale = rain.rainbow.w;
     const float2 shaftSize = ceil(rain.target.xy / scale);
@@ -551,6 +556,11 @@ float4 rain_shafts_up_fs(FullscreenOut vin) : SV_Target0 {
         sum += shaftsTex.SampleLevel(shaftsSampler, (texel + 0.5) / shaftSize, 0.0) * w;
         weights += w;
     }
-    return weights > 0.0 ? sum / weights : float4(0.0, 0.0, 0.0, 1.0);
+    float4 shafts = weights > 0.0 ? sum / weights : float4(0.0, 0.0, 0.0, 1.0);
+    [branch] if (rain.behind.x > 0.0) {
+        const float through = cloudsTex.SampleLevel(cloudsSampler, vin.uv, 0.0).a;
+        shafts = float4(shafts.rgb * through, 1.0 - (1.0 - shafts.a) * through);
+    }
+    return shafts;
 }
 #endif

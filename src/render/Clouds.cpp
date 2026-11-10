@@ -111,10 +111,6 @@ bool CloudRenderer::createTexture(gpu::Texture& out, const gpu::TextureDesc& des
 bool CloudRenderer::init(gpu::Device& device, TextureFormat hdrFormat, TextureFormat sceneDepthFormat,
                          std::uint32_t& pipelines) {
     m_device = &device;
-    const auto supports = [&](TextureFormat f) {
-        return device.supportsFormat(f, TextureType::Texture2D, kTargetSampled);
-    };
-    m_depthFormat = supports(TextureFormat::R16Float) ? TextureFormat::R16Float : TextureFormat::Rgba16Float;
     const bool volume = volumeSupported(device);
 
     struct SamplerSpec {
@@ -185,7 +181,12 @@ bool CloudRenderer::init(gpu::Device& device, TextureFormat hdrFormat, TextureFo
     const auto& clouds = shaders::render_clouds;
     const gpu::ColorTargetDesc noiseTarget{kNoiseFormat}, weatherTarget{kWeatherFormat},
         shadowTarget{kWeatherMapsFormat}, cloudTarget{kCloudFormat}, hdrTarget{hdrFormat};
-    const gpu::ColorTargetDesc marchTargets[] = {{kCloudFormat}, {m_depthFormat}};
+    const gpu::ColorTargetDesc marchTargets[] = {{kCloudFormat}, {kCloudFormat}};
+    // The clouds over the scene's surfaces: color + destination * transmittance, the image's alpha as it is.
+    const gpu::ColorTargetDesc overTarget{hdrFormat,
+                                          {true, gpu::BlendFactor::One, gpu::BlendFactor::SrcAlpha, gpu::BlendOp::Add,
+                                           gpu::BlendFactor::Zero, gpu::BlendFactor::One, gpu::BlendOp::Add,
+                                           gpu::ColorWrite::R | gpu::ColorWrite::G | gpu::ColorWrite::B}};
     bool ok =
         make(m_noisePipeline, shaders::render_cloudnoise, "cloud_noise_fs", {&noiseTarget, 1}, false,
              "render cloud noise") &&
@@ -193,12 +194,14 @@ bool CloudRenderer::init(gpu::Device& device, TextureFormat hdrFormat, TextureFo
         make(m_shadowLayerPipeline, clouds, "cloud_shadow_layer_fs", {&shadowTarget, 1}, false,
              "render cloud shadows (layer)") &&
         make(m_cubeLayerPipeline, clouds, "sky_cube_layer_fs", {&cloudTarget, 1}, false, "render sky cube (layer)") &&
-        make(m_skyLayerPipeline, clouds, "sky_layer_fs", {&hdrTarget, 1}, true, "render sky (cloud layer)");
+        make(m_skyLayerPipeline, clouds, "sky_layer_fs", {&hdrTarget, 1}, true, "render sky (cloud layer)") &&
+        make(m_overLayerPipeline, clouds, "clouds_over_layer_fs", {&overTarget, 1}, false,
+             "render cloud layer over the scene");
     if (ok && volume)
         ok = make(m_shadowPipeline, clouds, "cloud_shadow_fs", {&shadowTarget, 1}, false, "render cloud shadows") &&
              make(m_marchPipeline, clouds, "cloud_march_fs", marchTargets, false, "render clouds") &&
-             make(m_temporalPipeline, clouds, "cloud_temporal_fs", {&cloudTarget, 1}, false,
-                  "render clouds accumulation") &&
+             make(m_temporalPipeline, clouds, "cloud_temporal_fs", marchTargets, false, "render clouds accumulation") &&
+             make(m_overPipeline, clouds, "clouds_over_fs", {&overTarget, 1}, false, "render clouds over the scene") &&
              make(m_cubePipeline, clouds, "sky_cube_fs", {&cloudTarget, 1}, false, "render sky cube") &&
              make(m_skyPipeline, clouds, "sky_clouds_fs", {&hdrTarget, 1}, true, "render sky (clouds)");
     // The 2D noise of the layer and the cirrus, drawn once.
@@ -290,21 +293,23 @@ bool CloudRenderer::ensureNoise(gpu::CommandBuffer& commands) {
 bool CloudRenderer::ensureTargets(std::uint32_t width, std::uint32_t height) {
     if (m_march && m_width == width && m_height == height) return true;
     m_march = {};
-    m_marchDepth = {};
+    m_marchWhere = {};
     m_history = {};
+    m_whereHistory = {};
     m_historyValid = false;
     m_width = m_height = 0;
-    const auto target = [&](gpu::Texture& out, TextureFormat format, const char* name) {
+    const auto target = [&](gpu::Texture& out, const char* name) {
         return createTexture(
-            out, {.format = format, .usage = kTargetSampled, .width = width, .height = height, .name = name});
+            out, {.format = kCloudFormat, .usage = kTargetSampled, .width = width, .height = height, .name = name});
     };
-    if (!target(m_march, kCloudFormat, "render clouds") ||
-        !target(m_marchDepth, m_depthFormat, "render clouds depth") ||
-        !target(m_history[0], kCloudFormat, "render clouds history 0") ||
-        !target(m_history[1], kCloudFormat, "render clouds history 1")) {
+    if (!target(m_march, "render clouds") || !target(m_marchWhere, "render clouds where") ||
+        !target(m_history[0], "render clouds history 0") || !target(m_history[1], "render clouds history 1") ||
+        !target(m_whereHistory[0], "render clouds where history 0") ||
+        !target(m_whereHistory[1], "render clouds where history 1")) {
         m_march = {};
-        m_marchDepth = {};
+        m_marchWhere = {};
         m_history = {};
+        m_whereHistory = {};
         return false;
     }
     m_width = width;
@@ -336,8 +341,9 @@ void CloudRenderer::release() {
     m_detailNoise = {};
     m_weatherMap = {};
     m_march = {};
-    m_marchDepth = {};
+    m_marchWhere = {};
     m_history = {};
+    m_whereHistory = {};
     m_historyValid = false;
     m_width = m_height = 0;
     m_cube = {};
@@ -506,7 +512,7 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
             commands.beginTiming("clouds");
             u.target = glm::vec4(float(w), float(h), 1.0f / float(w), 1.0f / float(h));
             const gpu::ColorTarget colors[] = {{.texture = m_march, .load = gpu::LoadOp::DontCare, .cycle = true},
-                                               {.texture = m_marchDepth, .load = gpu::LoadOp::DontCare, .cycle = true}};
+                                               {.texture = m_marchWhere, .load = gpu::LoadOp::DontCare, .cycle = true}};
             if (gpu::RenderPass pass = commands.beginRenderPass(colors)) {
                 const gpu::TextureSamplerBinding bindings[] = {weatherBinding,
                                                                {m_shapeNoise, m_noiseSampler},
@@ -523,12 +529,15 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
                 u.temporal.x = kCurrentWeight;
                 u.temporal.y = valid ? 1.0f : 0.0f;
                 const int next = m_historyIndex ^ 1;
-                if (gpu::RenderPass pass = commands.beginRenderPass(gpu::ColorTarget{
-                        .texture = m_history[std::size_t(next)], .load = gpu::LoadOp::DontCare, .cycle = true})) {
+                const gpu::ColorTarget blended[] = {
+                    {.texture = m_history[std::size_t(next)], .load = gpu::LoadOp::DontCare, .cycle = true},
+                    {.texture = m_whereHistory[std::size_t(next)], .load = gpu::LoadOp::DontCare, .cycle = true}};
+                if (gpu::RenderPass pass = commands.beginRenderPass(blended)) {
                     const gpu::TextureSamplerBinding bindings[] = {
                         {m_march, m_pointSampler},
-                        {m_marchDepth, m_pointSampler},
-                        {m_history[std::size_t(m_historyIndex)], m_linearSampler}};
+                        {m_marchWhere, m_pointSampler},
+                        {m_history[std::size_t(m_historyIndex)], m_linearSampler},
+                        {m_whereHistory[std::size_t(m_historyIndex)], m_linearSampler}};
                     pass.bindPipeline(m_temporalPipeline);
                     pass.bindSamplers(kFragment, 0, bindings);
                     pass.pushUniforms(kFragment, 1, u);
@@ -637,8 +646,10 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
 void CloudRenderer::drawSky(gpu::RenderPass& pass) {
     if (m_skyMode == Clouds::Volumetric) {
         const gpu::Texture& result = m_historyValid ? m_history[std::size_t(m_historyIndex)] : m_march;
+        const gpu::TextureSamplerBinding bindings[] = {
+            {m_weatherMap, m_weatherSampler}, {m_layerNoise, m_noiseSampler}, {result, m_linearSampler}};
         pass.bindPipeline(m_skyPipeline);
-        pass.bindSampler(kFragment, 0, {result, m_linearSampler});
+        pass.bindSamplers(kFragment, 0, bindings);
     } else {
         const gpu::TextureSamplerBinding bindings[] = {{m_weatherMap, m_weatherSampler},
                                                        {m_layerNoise, m_noiseSampler}};
@@ -647,6 +658,40 @@ void CloudRenderer::drawSky(gpu::RenderPass& pass) {
     }
     pass.pushUniforms(kFragment, 1, m_uniforms);
     pass.draw(3);
+}
+
+bool CloudRenderer::drawsOver(float cameraHeight, float sceneTop) const {
+    if (m_skyMode == Clouds::Off) return false;
+    return std::max(cameraHeight, sceneTop) >= m_uniforms.layer.x;
+}
+
+void CloudRenderer::drawOver(gpu::CommandBuffer& commands, const gpu::Texture& hdr, const gpu::Texture& depth,
+                             const shader::FrameUniforms& fu) {
+    gpu::RenderPass pass = commands.beginRenderPass(gpu::ColorTarget{.texture = hdr, .load = gpu::LoadOp::Load});
+    if (!pass) return;
+    if (m_skyMode == Clouds::Volumetric) {
+        const bool blended = m_historyValid;
+        const gpu::TextureSamplerBinding bindings[] = {
+            {blended ? m_history[std::size_t(m_historyIndex)] : m_march, m_linearSampler},
+            {blended ? m_whereHistory[std::size_t(m_historyIndex)] : m_marchWhere, m_linearSampler},
+            {depth, m_pointSampler}};
+        pass.bindPipeline(m_overPipeline);
+        pass.bindSamplers(kFragment, 0, bindings);
+    } else {
+        const gpu::TextureSamplerBinding bindings[] = {
+            {m_weatherMap, m_weatherSampler}, {m_layerNoise, m_noiseSampler}, {depth, m_pointSampler}};
+        pass.bindPipeline(m_overLayerPipeline);
+        pass.bindSamplers(kFragment, 0, bindings);
+    }
+    pass.pushUniforms(kFragment, 0, fu);
+    pass.pushUniforms(kFragment, 1, m_uniforms);
+    pass.draw(3);
+    pass.end();
+}
+
+gpu::TextureSamplerBinding CloudRenderer::marched() const {
+    if (m_skyMode != Clouds::Volumetric) return {};
+    return {m_historyValid ? m_history[std::size_t(m_historyIndex)] : m_march, m_linearSampler};
 }
 
 glm::vec4 CloudRenderer::weatherMapPlace() const {

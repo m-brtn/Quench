@@ -29,7 +29,8 @@ struct MeshEntry {
     std::uint32_t indexCount = 0;
     glm::vec3 center{0.0f}; // bounding sphere in object space (skinned: of the bind pose)
     float radius = 0.0f;
-    std::uint32_t users = 0; // instances
+    glm::vec3 halfExtent{0.0f}; // of the box around `center` that holds the vertices
+    std::uint32_t users = 0;    // instances
     std::uint32_t vertexCount = 0;
     // Skinned meshes
     gpu::Buffer skin; // SkinVertex per vertex

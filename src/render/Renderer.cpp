@@ -2005,6 +2005,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                                       glm::length(glm::vec3(m[0][1], m[1][1], m[2][1]))};
         lightScaleZ[std::size_t(c)] = glm::length(glm::vec3(m[0][2], m[1][2], m[2][2]));
     }
+    float sceneTop = -1e30f; // the highest point of the opaque surfaces in view, by their bounding spheres (m)
     for (std::uint32_t i = 0; i < slots; ++i) {
         InstanceEntry* inst = scene.instances.slot(i);
         if (!inst || !inst->desc.visible) continue;
@@ -2022,6 +2023,17 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         const bool needNormal = inView || ((cascades > 0 || !localMaps.empty() || raining) && inst->desc.castsShadows);
         if (needNormal) normalMatrices[i] = glm::transpose(glm::inverse(model));
         if (inView) {
+            if (m.blend == BlendMode::Opaque) {
+                // A rigid mesh by its box (a wide ground's sphere reaches as high as it is wide), others by their
+                // sphere.
+                float top = center.y + radius;
+                if (mesh->jointCount == 0 && mesh->morphTargetCount == 0) {
+                    const glm::vec3 h = mesh->halfExtent;
+                    top = std::min(top, center.y + std::abs(model[0].y) * h.x + std::abs(model[1].y) * h.y +
+                                            std::abs(model[2].y) * h.z);
+                }
+                sceneTop = std::max(sceneTop, top);
+            }
             const Shading shading =
                 !localMaps.empty() && (!screenLocal || m.blend != BlendMode::Opaque) && surface->localShadowFragment
                     ? Shading::LocalShadows
@@ -2630,6 +2642,12 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             e && (e->stage == PassStage::PostHdr || e->stage == PassStage::Overlay))
             hasLaterPasses = true;
     const bool particlesDrawn = particleMode != ParticleSimulation::Off && !pathFrame;
+    // The clouds in front of the scene's surfaces (a mountain in its clouds, the ground under a camera above them):
+    // drawn over the image between the opaque surfaces with the sky and the transparent ones, which cuts the HDR
+    // pass in two there. Only where they can be: with a camera or surfaces at the cloud base or higher.
+    const bool cloudsOver = !pathFrame && settings.sky && support.sampledDepth && clouds.drawsSky() &&
+                            clouds.drawsOver(cameraPos.y, sceneTop);
+    stats.cloudsOverScene = cloudsOver;
     const bool keepDepth = taa || hasLaterPasses || raining || particlesDrawn;
     const glm::vec3 clear = settings.sky ? glm::vec3(0.0f) : settings.clearColor;
     if (pathFrame) {
@@ -2674,7 +2692,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     if (!pathFrame) {
         const gpu::ColorTarget color{.texture = hdr, .clear = {clear.r, clear.g, clear.b, 1.0f}, .cycle = true};
         const gpu::DepthTarget dt{.texture = depth,
-                                  .store = keepDepth ? gpu::StoreOp::Store : gpu::StoreOp::DontCare,
+                                  .store = keepDepth || cloudsOver ? gpu::StoreOp::Store : gpu::StoreOp::DontCare,
                                   .clearDepth = 0.0f,
                                   .cycle = true};
         gpu::RenderPass pass = commands.beginRenderPass(color, &dt);
@@ -2729,29 +2747,51 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
                 pass.bindPipeline(skyPipeline);
                 pass.draw(3);
             }
-            if (!transparentBatches.empty()) {
-                bindFrame(false);
-                drawBatches(pass, transparentBatches, -1, stats.draws);
+            if (cloudsOver) {
+                // The second half of the pass goes on with the image and the depth as they are (the frame's uniforms
+                // stay pushed: Clouds::drawOver pushes the same ones).
+                pass.end();
+                clouds.drawOver(commands, hdr, depth, fu);
+                bool transparentPasses = false;
+                for (const PassId id : passOrder)
+                    if (const PassEntry* e = passes.get(id); e && e->stage == PassStage::Transparent)
+                        transparentPasses = true;
+                if (!transparentBatches.empty() || transparentPasses) {
+                    const gpu::ColorTarget more{.texture = hdr, .load = gpu::LoadOp::Load};
+                    const gpu::DepthTarget moreDepth{.texture = depth,
+                                                     .load = gpu::LoadOp::Load,
+                                                     .store = keepDepth ? gpu::StoreOp::Store : gpu::StoreOp::DontCare};
+                    pass = commands.beginRenderPass(more, &moreDepth);
+                    if (pass) bindFrame(true); // what a game's pass finds bound after the sky
+                }
             }
-            runPasses(PassStage::Transparent, ctx, fu);
-            pass.end();
+            if (pass) {
+                if (!transparentBatches.empty()) {
+                    bindFrame(false);
+                    drawBatches(pass, transparentBatches, -1, stats.draws);
+                }
+                runPasses(PassStage::Transparent, ctx, fu);
+                pass.end();
+            }
         }
     }
     commands.endTiming();
     // ---- 2b. The rain's shafts and rainbow over the HDR image (they read the clouds' weather map)
     if (raining && !pathFrame && effects.rainShafts && clouds.drawsSky()) {
         commands.beginTiming("rain_shafts");
-        rain.drawShafts(commands,
-                        {.hdr = hdr,
-                         .width = rw,
-                         .height = rh,
-                         .depth = &depth,
-                         .weatherMap = clouds.weatherMap(),
-                         .weatherMapUv = clouds.weatherMapPlace(),
-                         .cloudBase = clouds.cloudBase(),
-                         .rainbow = settings.rainbow,
-                         .sequence = sequenceIndex},
-                        weatherMaps, pointClamp, linearClamp, fu);
+        rain.drawShafts(
+            commands,
+            {.hdr = hdr,
+             .width = rw,
+             .height = rh,
+             .depth = &depth,
+             .weatherMap = clouds.weatherMap(),
+             .weatherMapUv = clouds.weatherMapPlace(),
+             .cloudBase = clouds.cloudBase(),
+             .rainbow = settings.rainbow,
+             .sequence = sequenceIndex,
+             .cloudsInFront = cameraPos.y >= clouds.cloudBase() ? clouds.marched() : gpu::TextureSamplerBinding{}},
+            weatherMaps, pointClamp, linearClamp, fu);
         commands.endTiming();
         stats.rainShafts = true;
         stats.rainbow = settings.rainbow;

@@ -3,7 +3,8 @@
 # same clouds in every run: fair-weather cumulus with the raining cumulonimbus placed as a cell on the right and its
 # shadow ahead on the left, the lake reflecting them (demo_weather.png); towering cumulus at sunset
 # (demo_weather_sunset.png); the 2D cloud layer, the fallback (demo_weather_layer.png). Then the overcast deck by
-# numbers: the cover around the camera and no rain on the plain below the fair sky.
+# numbers: the cover around the camera and no rain on the plain below the fair sky; and whether the clouds were drawn
+# over the scene's surfaces.
 section weather
 
 set dither 0
@@ -50,4 +51,14 @@ set preset overcast
 wait 0.5
 expect cloud_cover > 0.8
 expect clouds == 2
+
+# The clouds in front of the scene: not from the plain under the clouds (the frame is drawn as it was), from above
+# the clouds toward the mountain with the march and with the 2D layer.
+expect clouds_over == 0
+set view summit
+wait 0.5
+expect clouds_over == 1
+set quality layer
+wait 0.5
+expect clouds_over == 1
 quit

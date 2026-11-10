@@ -12,6 +12,14 @@
 // A point this far (m) below the highest surface along the rain is under cover.
 static const float QUENCH_RAIN_COVER_DEPTH = 0.4;
 
+// The share of the weather's rain and snow that falls at a height: all of it under the clouds, none at and above
+// their base (FrameUniforms::rainGrid.w; weather::Weather::precipitation says the same), less over the last 100 m
+// under it. The wetness grid knows no heights: its rain is the ground's, and a summit in or over the clouds stays
+// dry and bare.
+float quenchFallReach(float y) {
+    return quenchFrame.rainGrid.w > 0.0 ? saturate((quenchFrame.rainGrid.w - y) / 100.0) : 1.0;
+}
+
 // The wetness grid at a world xz: float4(ground wetness, standing water, precipitation, the share of it that falls as
 // rain), bilinear between the cells' centres (beyond the grid its edge cells').
 float4 quenchWetnessAt(Texture2D<float4> maps, SamplerState s, float2 xz) {
@@ -61,13 +69,15 @@ float quenchRainOccluder(Texture2D<float4> maps, SamplerState s, float2 uv) {
     return maps.SampleLevel(s, float2(uv.x, v), 0.0).r;
 }
 
-// How open a point is to the rain: 1 in the open (also outside the occlusion map), 0 under cover. Surfaces look up a
-// point a little off them along their normal, so that walls see the open ground beside them and floors their roof.
+// How open a point is to the rain: 1 in the open (also outside the occlusion map), 0 under cover and at and above
+// the cloud base (quenchFallReach). Surfaces look up a point a little off them along their normal, so that walls see
+// the open ground beside them and floors their roof.
 float quenchRainExposure(Texture2D<float4> maps, SamplerState s, float3 P) {
+    const float reach = quenchFallReach(P.y);
     const float3 m = quenchRainMapPos(P);
-    if (any(m.xy < 0.0) || any(m.xy > 1.0) || m.z < 0.0) return 1.0;
+    if (any(m.xy < 0.0) || any(m.xy > 1.0) || m.z < 0.0) return reach;
     const float top = quenchRainOccluder(maps, s, m.xy);
-    return saturate(1.0 - (m.z - top) * quenchFrame.rain.y / QUENCH_RAIN_COVER_DEPTH);
+    return reach * saturate(1.0 - (m.z - top) * quenchFrame.rain.y / QUENCH_RAIN_COVER_DEPTH);
 }
 
 // The relief whose hollows puddles fill (MaterialDesc::puddles): 0 deepest .. 1 highest, value noise at 6 m and
