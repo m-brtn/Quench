@@ -994,18 +994,27 @@ TextureRef WebGpuDevice::acquireSwapchainTexture(void*, SDL_Window* window) {
     int width = 0, height = 0;
     SDL_GetWindowSizeInPixels(window, &width, &height);
     if (width <= 0 || height <= 0) return {};
-    if (std::uint32_t(width) != w->width || std::uint32_t(height) != w->height) {
-        WGPUSurfaceConfiguration config = WGPU_SURFACE_CONFIGURATION_INIT;
-        config.device = m_device;
-        config.format = w->format;
-        config.usage = WGPUTextureUsage_RenderAttachment;
-        config.width = std::uint32_t(width);
-        config.height = std::uint32_t(height);
-        config.alphaMode = WGPUCompositeAlphaMode_Opaque;
-        config.presentMode = WGPUPresentMode_Fifo;
+    WGPUSurfaceConfiguration config = WGPU_SURFACE_CONFIGURATION_INIT;
+    config.device = m_device;
+    config.format = w->format;
+    config.usage = WGPUTextureUsage_RenderAttachment;
+    config.width = std::uint32_t(width);
+    config.height = std::uint32_t(height);
+    config.alphaMode = WGPUCompositeAlphaMode_Opaque;
+    config.presentMode = WGPUPresentMode_Fifo;
+    if (config.width != w->width || config.height != w->height) {
+        // Safari 27 sometimes never shows a canvas configured at the start: its frames are rendered (a copy of the
+        // canvas has them), but the page stays black until the canvas's size changes. A change of one pixel and
+        // back, a few frames later, makes it show them.
+        if (w->width == 0) w->framesUntilRefresh = 20;
         wgpuSurfaceConfigure(w->surface, &config);
         w->width = config.width;
         w->height = config.height;
+    } else if (w->framesUntilRefresh > 0 && --w->framesUntilRefresh == 0) {
+        config.width = config.width > 1 ? config.width - 1 : 2;
+        wgpuSurfaceConfigure(w->surface, &config);
+        config.width = w->width;
+        wgpuSurfaceConfigure(w->surface, &config);
     }
     for (WgTexture::View& v : w->current.views) wgpuTextureViewRelease(v.view);
     w->current.views.clear();

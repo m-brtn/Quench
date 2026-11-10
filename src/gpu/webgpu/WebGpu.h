@@ -157,7 +157,8 @@ struct WgWindow {
     WGPUTextureFormat format = WGPUTextureFormat_BGRA8Unorm;
     std::uint32_t width = 0; // as configured
     std::uint32_t height = 0;
-    WgTexture current; // the frame's texture
+    std::uint32_t framesUntilRefresh = 0; // 0: none pending
+    WgTexture current;                    // the frame's texture
 };
 
 // What a stage has bound in a pass, and the uniforms pushed to the command buffer for it.

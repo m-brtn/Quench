@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-10, version 0.13.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-10, version 0.13.1): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -200,6 +200,8 @@ measurement limits are in
 The earlier platform claims above describe 0.12.0. Version 0.13.0 (2026-11-10) adds the Windows build and the
 web build below and fixes the intermittent Vulkan validation error of `demo_batch_vulkan` (SDL GPU's defragmentation
 moved resources of the open frame: `SdlVulkanDefrag.cmake`, libsdl-org/SDL#16685) (`docs/releases/v0.13.0.md`).
+The 0.13.1 patch (2026-11-10) works around Safari's black web page (frames rendered but not shown until a resize)
+in the WebGPU backend (`docs/releases/v0.13.1.md`).
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the
@@ -222,7 +224,9 @@ and a few seconds of each page on the path a person's page takes; every demo sec
 Cursor's built-in Chromium. No ray tracing, GPU timing, HDR output or threads there; the user directory is in
 memory; a capture or a GPU wait in a frame on the screen loses that frame. In Safari 27.0.1 on the user's Mac the
 user saw the demo run (2026-11-10, with a patch of SDL's canvas probe, since replaced by a CSS size the app gives
-the canvas; that build not yet looked at in Safari); Playwright's headless WebKit 27.2 passed the demo's batch. Not run in Firefox, on another system or a phone; nobody has played it or listened to it in a browser (`docs/platforms.md`, "Web (WebAssembly)";
+the canvas; that build, 0.13.0, stayed black in about 1 of 3 to 5 loads until a resize, frames rendered but not
+shown by Safari: since then the WebGPU backend configures the canvas once more after 20 frames, none of 9 pages
+black in Safari afterwards); Playwright's headless WebKit 27.2 passed the demo's batch. Not run in Firefox, on another system or a phone; nobody has played it or listened to it in a browser (`docs/platforms.md`, "Web (WebAssembly)";
 `docs/app.md`, "Web runs").
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms), Metal directly (the native backend, MetalFX)

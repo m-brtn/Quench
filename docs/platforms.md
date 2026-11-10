@@ -11,8 +11,8 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.13.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
-and thread sanitizers); [the release notes](releases/v0.13.0.md) give the counts of passed and skipped cases. Its GPU tests render offscreen and check the
+The engine (version 0.13.1) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases. Its GPU tests render offscreen and check the
 pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
 Mac (with the Khronos validation layer; a test of
 the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables
@@ -390,8 +390,16 @@ WebAssembly on the browser's WebGPU. Run so far only in Chromium on the Mac (Web
   page reported a 3406 x 2318 canvas and 191 frames in 7 s, and the user saw the demo (user report: "it works").
   The patch was then replaced by the app giving the canvas its CSS size before SDL measures it: a CSS `zoom` of
   0.85 on the body gives the same 0 x 0 window in headless WebKit and Chrome without either fix, and a full canvas
-  (2000 x 1280 at a pixel ratio of 2) with the app's; the user has not looked at that build in Safari yet. No
-  scripted run in Safari itself (its remote automation is off), nothing listened to.
+  (2000 x 1280 at a pixel ratio of 2) with the app's. The user then opened the 0.13.0 page (GitHub Pages and the
+  same build served locally) in Safari: it ran, but in about 1 of 3 to 5 loads the page stayed black until the
+  window's size changed (in Chrome never). A script in those pages showed the black ones the same as the others:
+  one configuration of the canvas, every `getCurrentTexture` in an animation frame, about 59 frames per second, no
+  error, and a copy of the canvas (`drawImage`) as bright as in the shown pages (mean 140.2 to 140.7 of 255). So
+  the frames were rendered and Safari did not show them. Since then the WebGPU backend configures the canvas once
+  more, one pixel narrower and back, 20 frames after its first configuration
+  (`WebGpuDevice::acquireSwapchainTexture`): the user saw none of 9 such pages black (5 opened as new tabs, 4 with
+  the same change made by the page's script) and none in two rounds of about ten reloads, against 1 of 4 new tabs
+  and 1 to 2 of 5 reloads without it; a small sample, not a proof. No scripted run in Safari itself (its remote automation is off), nothing listened to.
   In Playwright's headless WebKit 27.2 on the Mac (WebKit's engine, not Safari itself) the demo's `batch.txt`
   passed 757 of 757 offscreen; its captures were not compared there.
 - **Hosted** (2026-11-10): `tools/publish_web.sh` assembles the demo and the sample as a static site (`dist/web`:
