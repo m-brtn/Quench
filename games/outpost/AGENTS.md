@@ -39,7 +39,12 @@ Changes that can behave differently on a phone: run on the device, or ask the us
 
 The build cooks `assets_src/models/*.glb` into `.qmodel` files (`quench_cook_assets` in `CMakeLists.txt`). Blender's
 Z up and -Y front become the game's Y up and +Z: game (x, y, z) = Blender (x, z, -y). A model `<name>_outline` is the
-black shell drawn around `<name>` (single-sided, turned inside out); the game places both together (`Part`).
+black shell drawn around `<name>` (single-sided, turned inside out); the game places both together (`Part`), the
+shell without shadows (`SceneAssets::setCastsShadows`: as a caster it shadows its own model close up).
+
+Things drawn on the ground (the click marker) take their height from `Level::surfaceHeight`: the pad, the ramp and
+the `raised` rectangles of `level.json` (what the walker steps over: the ramp's curbs, lip and teeth). A new step in
+the models needs its `raised(...)` in `tools/make_models.py`, or the marker hides under it.
 
 ## Engine
 

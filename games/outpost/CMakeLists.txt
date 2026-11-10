@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.28)
 if(CMAKE_HOST_APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Minimum macOS version" FORCE)
 endif()
-project(outpost VERSION 0.1.0 LANGUAGES C CXX)
+project(outpost VERSION 0.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,7 +16,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(FetchContent)
 FetchContent_Declare(quench
     GIT_REPOSITORY https://github.com/m-brtn/Quench.git
-    GIT_TAG cfb0f3ce52fdc1df79b37c327f391cf8d845db06)
+    GIT_TAG 12578bee5107173f9fbbd22875ca47a427a97d02) # 0.13.2
 FetchContent_MakeAvailable(quench)
 
 # The host-tools preset builds only the engine's shader compiler and asset cooker (for the iOS builds).

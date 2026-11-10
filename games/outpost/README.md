@@ -19,8 +19,7 @@ of the experiment supplied (`assets_src/models/CREDITS.md`).
 | T | day or the blue hour (the sun slider in the panel) |
 | P | autopilot: the walker gathers and delivers by itself (`--autopilot` starts with it) |
 
-The panel also switches the outlines and, where the GPU can, ray-traced shadows and ambient occlusion (the outlines
-are off with them).
+The panel also switches the outlines and, where the GPU can, ray-traced shadows and ambient occlusion.
 
 ## Build
 

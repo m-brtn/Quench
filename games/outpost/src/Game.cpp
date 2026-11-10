@@ -47,6 +47,8 @@ constexpr int kCellsPerPod = 3; // cells that bring a pod online
 constexpr int kPods = 4;
 constexpr int kMaxCells = 5; // cells lying around at a time
 constexpr float kAgentRadius = 1.2f;
+constexpr int kMarkerParts = 32; // the tubes of the ring that marks where a click sent the walker
+constexpr float kMarkerRadius = 0.9f, kMarkerTube = 0.05f;
 constexpr float kWalkSpeed = 4.2f;   // m/s
 constexpr float kStride = 1.5f;      // m a foot travels in one step
 constexpr float kStepLift = 0.38f;   // m a foot rises in its swing
@@ -87,6 +89,13 @@ struct Level {
     std::vector<glm::vec2> pad; // the concrete pad's outline in x, z
     glm::vec4 bounds{0.0f};
     glm::vec4 ramp{0.0f};
+    // Ground the walker steps over that is higher than the pad or the ramp (the ramp's curbs, lip and teeth): its
+    // top at the rectangle's front (z1) and back (z0).
+    struct Raised {
+        glm::vec4 rect{0.0f};
+        float frontY = 0.0f, backY = 0.0f;
+    };
+    std::vector<Raised> raised;
     float padY = 0.2f;
     float rampFrontY = 0.3f, rampBackY = 0.56f, rampFrontZ = 8.0f, rampBackZ = 1.0f;
     glm::vec3 door{0.0f};
@@ -114,6 +123,9 @@ struct Level {
         level.rampFrontZ = float(ramp["front_z"].numberOr(level.rampFrontZ));
         level.rampBackZ = float(ramp["back_z"].numberOr(level.rampBackZ));
         level.padY = float((*root)["pad_y"].numberOr(level.padY));
+        for (const json::Value& v : (*root)["raised"].array)
+            level.raised.push_back(
+                {vec4Of(v["rect"]), float(v["front_y"].numberOr(0.0)), float(v["back_y"].numberOr(0.0))});
         level.door = vec3Of((*root)["door"]);
         level.doorHalfWidth = float((*root)["door_half_width"].numberOr(level.doorHalfWidth));
         level.walkerStart = vec3Of((*root)["walker_start"]);
@@ -150,6 +162,17 @@ struct Level {
             return glm::mix(rampFrontY, rampBackY, t);
         }
         return onPad(p) ? padY : 0.0f;
+    }
+
+    // The height of what is seen from above at x, z among the ground and what the walker steps over: where
+    // something drawn on the ground has to lie to stay in sight.
+    float surfaceHeight(glm::vec2 p) const {
+        float height = groundHeight(p);
+        for (const Raised& r : raised) {
+            if (p.x < r.rect.x || p.x > r.rect.z || p.y < r.rect.y || p.y > r.rect.w) continue;
+            height = std::max(height, glm::mix(r.backY, r.frontY, (p.y - r.rect.y) / (r.rect.w - r.rect.y)));
+        }
+        return height;
     }
 };
 
@@ -316,7 +339,11 @@ public:
             if (std::optional<glm::vec3> point = groundPoint(input.mousePosition())) {
                 if (m_crowd->setTarget(m_agent, glm::vec3(point->x, 0.0f, point->z))) {
                     m_goal = Goal::Manual;
-                    m_marker = glm::vec3(point->x, m_level.groundHeight({point->x, point->z}) + 0.06f, point->z);
+                    // The marker lies where the walker goes: the walkable point nearest to the click.
+                    m_marker = glm::vec2(point->x, point->z);
+                    if (m_query)
+                        if (const auto near = m_query->nearestPoint(glm::vec3(point->x, 0.0f, point->z)))
+                            m_marker = glm::vec2(near->position.x, near->position.z);
                     m_markerTime = app.time();
                 }
             }
@@ -326,13 +353,7 @@ public:
         placeCells(app.time());
         updateLights(walker);
 
-        const bool showMarker = m_goal == Goal::Manual;
-        m_scene->setVisible(m_markerInstance, showMarker);
-        if (showMarker) {
-            const float pulse = 1.0f + 0.12f * std::sin(float(app.time() - m_markerTime) * 6.0f);
-            m_scene->setTransform(m_markerInstance,
-                                  glm::scale(glm::translate(glm::mat4(1.0f), m_marker), glm::vec3(pulse, 1.0f, pulse)));
-        }
+        placeMarker(m_goal == Goal::Manual, app.time());
 
         if (const render::RenderSettings settings = renderSettings(); !(settings == m_renderer->settings()))
             m_renderer->setSettings(settings);
@@ -355,10 +376,7 @@ public:
         if (ImGui::SliderFloat("Sun (T)", &m_sunElevation, kMinElevation, kMaxElevation, "%.0f deg"))
             m_sunTarget = m_sunElevation;
         if (m_rayTracingAvailable) ImGui::Checkbox("Ray-traced shadows and occlusion", &m_rayTracing);
-        // The outlines are shells around the models: rays would hit them, so ray tracing draws without them.
-        ImGui::BeginDisabled(m_rayTracing && m_rayTracingAvailable);
         ImGui::Checkbox("Outlines", &m_outlines);
-        ImGui::EndDisabled();
         ImGui::Separator();
         ImGui::TextDisabled("Click: send the walker   WASD: steer");
         ImGui::TextDisabled("Q, E, right drag: turn   Wheel: zoom");
@@ -434,6 +452,12 @@ public:
         }
         if (command.op == "raytracing") return flag(m_rayTracing);
         if (command.op == "outlines") return flag(m_outlines);
+        if (command.op == "occlusion") return flag(m_occlusion);
+        if (command.op == "sharpen") return flag(m_sharpen);
+        if (command.op == "occlusion_rays" && command.args.size() == 1) {
+            m_occlusionRays = std::clamp(std::stoi(command.args[0]), 1, 8);
+            return app::ScenarioExec::Done;
+        }
         if (command.op == "sun" && command.args.size() == 1) {
             m_sunElevation = m_sunTarget = std::clamp(std::stof(command.args[0]), kMinElevation, kMaxElevation);
             return app::ScenarioExec::Done;
@@ -441,6 +465,11 @@ public:
         if (command.op == "camera" && !command.args.empty() && command.args.size() <= 2) {
             m_azimuth = m_azimuthTarget = glm::radians(std::stof(command.args[0]));
             if (command.args.size() == 2) m_distance = std::clamp(std::stof(command.args[1]), 30.0f, 220.0f);
+            m_cut = true;
+            return app::ScenarioExec::Done;
+        }
+        if (command.op == "look" && command.args.size() == 3) { // the camera's target, in place of the walker
+            m_look = glm::vec3(std::stof(command.args[0]), std::stof(command.args[1]), std::stof(command.args[2]));
             m_cut = true;
             return app::ScenarioExec::Done;
         }
@@ -472,15 +501,16 @@ private:
         s.shadowFilter = 2;
         s.bloomStrength = 0.07f;
         s.vignette = 0.12f;
-        s.sharpen = 0.2f;
+        s.sharpen = m_sharpen ? 0.2f : 0.0f;
         if (m_rayTracing && m_rayTracingAvailable) {
             s.sunShadows = render::SunShadows::RayTraced;
             s.shadowSoftness = 0.6f;
             s.ambientOcclusion = render::AmbientOcclusion::RayTraced;
             s.occlusionRadius = 1.6f;
-        } else {
+        } else if (m_occlusion) {
             s.ambientOcclusion = render::AmbientOcclusion::ScreenSpace;
             s.occlusionRadius = 1.6f;
+            s.occlusionRays = m_occlusionRays;
         }
         return s;
     }
@@ -540,15 +570,15 @@ private:
                                       .outerAngle = 0.55f,
                                       .castsShadows = false});
 
-        // The ring that shows where a click sent the walker.
-        Result<render::MeshId> ring = scene.addMesh(render::torusMesh(0.9f, 0.05f, 48, 8).desc("marker"));
+        // The ring that shows where a click sent the walker: short tubes from point to point (placeMarker).
+        Result<render::MeshId> ring = scene.addMesh(render::cylinderMesh(kMarkerTube, 0.5f, 8).desc("marker"));
         if (!ring) return Error{ring.error()};
         const render::MaterialId glow = scene.addMaterial({.baseColor = {0.02f, 0.1f, 0.12f, 1.0f},
                                                            .emissive = {0.5f, 2.6f, 3.2f},
                                                            .shadows = render::ShadowMode::None,
                                                            .name = "marker"});
-        m_markerInstance =
-            scene.addInstance({.mesh = *ring, .material = glow, .visible = false, .castsShadows = false});
+        for (render::InstanceId& part : m_markerParts)
+            part = scene.addInstance({.mesh = *ring, .material = glow, .visible = false, .castsShadows = false});
 
         // Sparks for a pickup and a delivery.
         particles::ParticleDesc sparks;
@@ -619,16 +649,20 @@ private:
 
     static bool ready(const Model& model) { return model.mesh.ready() && (!model.outline || model.outline.ready()); }
 
-    // The outlines are closed shells around the models: rays from a surface would always hit them, so they are off
-    // while shadows and occlusion are ray traced.
-    bool outlinesShown() const { return m_outlines && !(m_rayTracing && m_rayTracingAvailable); }
+    // The outlines are closed shells around the models. They cast no shadows (addPart), which also keeps them out
+    // of the traced shadows' and occlusion's geometry.
+    bool outlinesShown() const { return m_outlines; }
 
     PartId addPart(const Model& model, bool visible = true) {
         Part part;
         part.visible = visible;
         part.mesh = m_sceneAssets->addModel(model.mesh, glm::mat4(1.0f), visible);
-        if (model.outline)
+        if (model.outline) {
             part.outline = m_sceneAssets->addModel(model.outline, glm::mat4(1.0f), visible && outlinesShown());
+            // A shell a few centimeters around its model: as a caster it shadows the model wherever the shadow maps
+            // are finer than that (the camera close up).
+            m_sceneAssets->setCastsShadows(part.outline, false);
+        }
         m_parts.push_back(part);
         return m_parts.size() - 1;
     }
@@ -775,6 +809,7 @@ private:
         // Zoomed out the camera looks at the middle of the outpost, zoomed in it follows the walker.
         const float follow = smoothstep(100.0f, 55.0f, m_distance);
         m_target = glm::mix(glm::vec3(1.5f, 3.0f, 0.0f), walker.position + glm::vec3(0.0f, 1.5f, 0.0f), follow);
+        if (m_look) m_target = *m_look;
         const float elevation = glm::radians(m_elevation);
         const glm::vec3 offset(std::sin(m_azimuth) * std::cos(elevation), std::sin(elevation),
                                std::cos(m_azimuth) * std::cos(elevation));
@@ -782,7 +817,38 @@ private:
         m_view = glm::lookAt(m_eye, m_target, glm::vec3(0.0f, 1.0f, 0.0f));
     }
 
-    // The point of the ground under a window position (the pad's height), inside the level's bounds.
+    // The marker's ring lies on the ground it crosses: each of its points at the height of the ground there, or of
+    // higher ground right next to it (the pad's edge, the ramp's sides), so no part of it is under a step.
+    void placeMarker(bool visible, double time) {
+        for (const render::InstanceId part : m_markerParts) m_scene->setVisible(part, visible);
+        if (!visible) return;
+        const float radius = kMarkerRadius * (1.0f + 0.12f * std::sin(float(time - m_markerTime) * 6.0f));
+        const auto pointAt = [&](int i) {
+            const float angle = 2.0f * kPi * float(i) / float(kMarkerParts);
+            const glm::vec2 p = m_marker + radius * glm::vec2(std::cos(angle), std::sin(angle));
+            float height = m_level.surfaceHeight(p);
+            for (int k = 0; k < 8; ++k) {
+                const float around = kPi / 4.0f * float(k);
+                height =
+                    std::max(height, m_level.surfaceHeight(p + 0.15f * glm::vec2(std::cos(around), std::sin(around))));
+            }
+            return glm::vec3(p.x, height + kMarkerTube + 0.02f, p.y);
+        };
+        glm::vec3 from = pointAt(0);
+        for (int i = 0; i < kMarkerParts; ++i) {
+            const glm::vec3 to = pointAt(i + 1);
+            const glm::vec3 along = to - from;
+            const float length = glm::length(along);
+            const glm::vec3 y = along / length, x = glm::normalize(glm::cross(y, glm::vec3(0.0f, 1.0f, 0.0f)));
+            // The tube is around its y axis, one unit long; a little longer than the span, the ends overlap.
+            const glm::mat4 transform(glm::vec4(x, 0.0f), glm::vec4(y * (length + kMarkerTube), 0.0f),
+                                      glm::vec4(glm::cross(x, y), 0.0f), glm::vec4((from + to) * 0.5f, 1.0f));
+            m_scene->setTransform(m_markerParts[std::size_t(i)], transform);
+            from = to;
+        }
+    }
+
+    // The point of the ground under a window position, inside the level's bounds.
     std::optional<glm::vec3> groundPoint(glm::vec2 window) const {
         const float tanHalf = std::tan(glm::radians(kFovY) * 0.5f);
         const float aspect = m_windowSize.x / m_windowSize.y;
@@ -790,7 +856,10 @@ private:
         const glm::vec3 inView = glm::normalize(glm::vec3(ndc.x * tanHalf * aspect, ndc.y * tanHalf, -1.0f));
         const glm::vec3 direction = glm::mat3(glm::inverse(m_view)) * inView;
         if (direction.y > -1e-4f) return std::nullopt;
-        const glm::vec3 point = m_eye + direction * ((m_level.padY - m_eye.y) / direction.y);
+        // On the pad's plane first, then on the ground's height there (the grass is lower, the ramp higher).
+        glm::vec3 point = m_eye + direction * ((m_level.padY - m_eye.y) / direction.y);
+        for (int i = 0; i < 2; ++i)
+            point = m_eye + direction * ((m_level.groundHeight({point.x, point.z}) - m_eye.y) / direction.y);
         const glm::vec4 b = m_level.bounds;
         if (point.x < b.x || point.x > b.z || point.z < b.y || point.z > b.w) return std::nullopt;
         return point;
@@ -930,7 +999,7 @@ private:
     PartId m_body = 0;
     std::array<PartId, 2> m_thigh{}, m_shin{}, m_foot{};
     std::array<PartId, kCapacity> m_carriedParts{};
-    render::InstanceId m_markerInstance;
+    std::array<render::InstanceId, kMarkerParts> m_markerParts{};
     render::LightId m_sun, m_headLight;
     std::vector<render::LightId> m_lampLights, m_bayLights, m_podLights;
     std::optional<render::ParticleSystemId> m_sparks;
@@ -955,12 +1024,13 @@ private:
     int m_delivered = 0;
     double m_simTime = 0.0;
     std::uint64_t m_seed = 20261110;
-    glm::vec3 m_marker{0.0f};
+    glm::vec2 m_marker{0.0f}; // x, z
     double m_markerTime = 0.0;
 
     float m_azimuth = kPi / 4.0f, m_azimuthTarget = kPi / 4.0f; // radians about +y from +z
     float m_elevation = 33.0f;                                  // degrees
     float m_distance = 108.0f;                                  // m
+    std::optional<glm::vec3> m_look;                            // a scenario's camera target
     glm::vec3 m_target{1.5f, 3.0f, 0.0f}, m_eye{0.0f};
     glm::mat4 m_view{1.0f};
     glm::vec2 m_windowSize{1280.0f, 720.0f};
@@ -968,6 +1038,8 @@ private:
     float m_sunElevation = kDayElevation, m_sunTarget = kDayElevation, m_shownSunElevation = -1.0f;
     bool m_rayTracing = false, m_rayTracingAvailable = false;
     bool m_outlines = true, m_outlinesShown = false;
+    bool m_occlusion = true, m_sharpen = true; // switched off by scenario commands, to tell their part of the picture
+    int m_occlusionRays = render::RenderSettings{}.occlusionRays;
 };
 
 } // namespace

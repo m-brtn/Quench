@@ -424,6 +424,12 @@ def game_rect(x0, y0, x1, y1):
     return [round(x0, 3), round(-y1, 3), round(x1, 3), round(-y0, 3)]
 
 
+def raised(x0, y0, x1, y1, top, top_back=None):
+    """Ground the walker steps over that is higher than the pad: its top at the front (toward -y) and at the back."""
+    LEVEL.setdefault("raised", []).append({"rect": game_rect(x0, y0, x1, y1), "front_y": round(top, 3),
+                                           "back_y": round(top if top_back is None else top_back, 3)})
+
+
 def block(x0, y0, x1, y1):
     LEVEL["blockers"].append(game_rect(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
 
@@ -682,6 +688,14 @@ def ramp(M):
             box2(f"ramp_dash{k}", (x, -6.2, 0), (x + 0.9, -6.08, t), M.yellow, bevel=0)
     LEVEL["ramp"] = {"rect": game_rect(DOOR_X0, RAMP_Y, DOOR_X1, HY0 + 1.6), "front_y": round(z0, 3),
                      "back_y": round(z1, 3), "front_z": -RAMP_Y, "back_z": -HY0}
+    # What the walker steps over around the ramp, for things drawn on the ground (the click marker): the tops of the
+    # curbs (sloped: at the rect's front and back), the lip and the teeth.
+    for x in (DOOR_X0, DOOR_X1):
+        raised(x - 0.28, RAMP_Y - 0.25, x + 0.28, HY0 - 0.6, z0 + 0.1, z1 + 0.05)
+    raised(DOOR_X0 - 0.28, RAMP_Y - 0.5, DOOR_X1 + 0.28, RAMP_Y, z0 + 0.02)
+    for i in range(9):
+        x = DOOR_X0 + 0.9 + i * 1.775
+        raised(x - 0.5, RAMP_Y - 0.95, x + 0.5, RAMP_Y - 0.45, PAD_Z + 0.3)
 
 
 def vents(M):
