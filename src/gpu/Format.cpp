@@ -86,6 +86,7 @@ const char* shaderFormatName(ShaderFormat format) {
     case ShaderFormat::Msl: return "MSL source";
     case ShaderFormat::Metallib: return "metallib";
     case ShaderFormat::Dxil: return "DXIL";
+    case ShaderFormat::Wgsl: return "WGSL";
     }
     return "unknown";
 }

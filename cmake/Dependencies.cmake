@@ -150,11 +150,16 @@ target_compile_definitions(quench_miniaudio PUBLIC
 if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(quench_miniaudio PRIVATE -w)
 endif()
-if(QUENCH_HEADLESS OR EMSCRIPTEN)
+if(QUENCH_HEADLESS)
     target_compile_definitions(quench_miniaudio PUBLIC MA_NO_DEVICE_IO)
     if(EMSCRIPTEN)
         target_compile_definitions(quench_miniaudio PUBLIC MA_NO_THREADING)
     endif()
+elseif(EMSCRIPTEN)
+    # A browser (QUENCH_WEB): Web Audio only, through a ScriptProcessorNode, whose callback mixes on the main thread
+    # (no threads in this build; miniaudio's AudioWorklet path needs them). miniaudio waits for the node with
+    # emscripten_sleep, so the program links with Asyncify (cmake/QuenchGame.cmake). No null backend: it is a thread.
+    target_compile_definitions(quench_miniaudio PUBLIC MA_ENABLE_ONLY_SPECIFIC_BACKENDS MA_ENABLE_WEBAUDIO)
 elseif(APPLE)
     # Core Audio linked at build time instead of loaded at run time (miniaudio's advice for notarization); the null
     # backend is a callback thread without sound (--audio-device null, the tests).

@@ -4,7 +4,8 @@
 # runtime loads: KTX2 textures with mips (BC7, ASTC 4x4, RGBA8 or Basis Universal), .qmodel models (meshes with levels
 # of detail, materials, skins, their textures cooked next to them), .qskel skeletons, .qanim clip sets and .qnav
 # navmeshes. Cross builds (iOS) cannot run a tool built for the target: they take a macOS `quench_cook` through
-# QUENCH_HOST_COOK (the `host-tools` preset builds it). The web build cooks nothing.
+# QUENCH_HOST_COOK (the `host-tools` preset builds it), and so does a browser build (the `web` preset). The headless
+# Emscripten build (`wasm-node`) cooks nothing.
 
 set(QUENCH_HOST_COOK "" CACHE FILEPATH "quench_cook built for the host (required for cross builds that cook assets)")
 if(NOT QUENCH_HOST_COOK AND NOT CMAKE_CROSSCOMPILING AND NOT EMSCRIPTEN)

@@ -22,13 +22,28 @@ const char* backendName(Backend backend) {
     case Backend::Default: return "default";
     case Backend::SdlGpu: return "sdl";
     case Backend::Metal: return "metal";
+    case Backend::WebGpu: return "webgpu";
     }
     return "unknown";
 }
 
-bool backendAvailable(Backend backend) { return backend != Backend::Metal || QUENCH_PLATFORM_APPLE; }
+bool backendAvailable(Backend backend) {
+    switch (backend) {
+    case Backend::Default: return true;
+    case Backend::SdlGpu: return !QUENCH_PLATFORM_WEB;
+    case Backend::Metal: return QUENCH_PLATFORM_APPLE;
+    case Backend::WebGpu: return QUENCH_PLATFORM_WEB;
+    }
+    return false;
+}
 
-Backend defaultBackend() { return QUENCH_PLATFORM_APPLE ? Backend::Metal : Backend::SdlGpu; }
+Backend defaultBackend() {
+#if QUENCH_PLATFORM_WEB
+    return Backend::WebGpu;
+#else
+    return QUENCH_PLATFORM_APPLE ? Backend::Metal : Backend::SdlGpu;
+#endif
+}
 
 namespace detail {
 
@@ -76,6 +91,16 @@ R adopt(DeviceImpl* device, void* native) {
 
 Backend chooseBackend(const DeviceDesc& desc) {
     Backend requested = desc.backend;
+#if QUENCH_PLATFORM_WEB
+    // A web build has the one backend.
+    if (requested != Backend::Default && requested != Backend::WebGpu)
+        log::warning("gpu", "a web build has only the WebGPU backend, not {}", backendName(requested));
+    return Backend::WebGpu;
+#else
+    if (requested == Backend::WebGpu) {
+        log::warning("gpu", "the WebGPU backend exists only in web builds: {}", backendName(defaultBackend()));
+        requested = defaultBackend();
+    }
     if (requested == Backend::Default) {
         std::string_view driver = desc.driver;
         if (const char* env = std::getenv("SDL_GPU_DRIVER"); driver.empty() && env) driver = env;
@@ -95,6 +120,7 @@ Backend chooseBackend(const DeviceDesc& desc) {
         requested = Backend::SdlGpu;
     }
     return requested;
+#endif
 }
 
 } // namespace
@@ -130,7 +156,11 @@ Result<Device> Device::create(const DeviceDesc& desc) {
         }
     }
 #endif
+#if QUENCH_PLATFORM_WEB
+    impl = detail::createWebGpuDevice(desc);
+#else
     if (backend == Backend::SdlGpu) impl = detail::createSdlGpuDevice(desc);
+#endif
     if (!impl)
         return Error{nativeError.empty() ? impl.error()
                                          : std::format("native Metal: {}; SDL GPU: {}", nativeError, impl.error())};

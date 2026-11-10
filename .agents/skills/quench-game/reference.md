@@ -20,6 +20,7 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 - Profiling
 - Scenario checks, captures and golden images
 - iOS
+- Web
 
 ## CMake
 
@@ -747,3 +748,25 @@ cmake --preset ios-xcode -DQUENCH_IOS_TEAM=<team id>               # device: Xco
 In the Simulator host paths work for `--capture` and `--script`. Device builds, `devicectl` installs and launches,
 bundle id suffixes and the user directory on the phone: `docs/app.md`, "iOS runs". Ask the user before using their
 phone, and ask them to check what is on its screen.
+
+## Web
+
+Experimental; needs Homebrew's `emscripten`, and for the check Node.js 22 or newer and Google Chrome.
+
+```sh
+cmake --preset host-tools && cmake --build --preset host-tools    # macOS quench_shaderc and quench_cook
+emcmake cmake --preset web && cmake --build --preset web          # build/web/my_game.html, .js, .wasm, .data
+python3 -m http.server 8000 --bind 127.0.0.1 --directory build/web
+# open http://127.0.0.1:8000/my_game.html in a browser with WebGPU; flags in the query string, separated by '&':
+#   my_game.html?--frame-size&1280x720
+# A scenario in headless Chrome (no window): the engine's script serves build/web at / and the game at /repo/
+node <engine>/tools/web_check.mjs --build build/web --repo . --page my_game.html --out build/web/check -- \
+    --script /repo/scenarios/smoke.txt
+```
+
+`web_check.mjs` adds `--offscreen` (in a browser not the default for scripted runs), prints the log, saves it and
+the captures of the user directory into `--out`, and exits with 1 when a check failed or WebGPU reported an error;
+`--golden DIR --compare TOOL` (the image compare tool of the section above) compares the captures with golden
+images of the same names, and
+`--onscreen` with a `--quit-after` runs the page as a person's browser would. `<engine>` is the engine checkout
+(`FETCHCONTENT_SOURCE_DIR_QUENCH`, or `build/<preset>/_deps/quench-src`).

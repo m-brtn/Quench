@@ -74,6 +74,20 @@
       }
     },
     {
+      "name": "web",
+      "displayName": "WebAssembly for a browser, experimental: the WebGPU backend, the examples as .html (configure with emcmake; build host-tools first)",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "environment": { "EMSDK_PYTHON": "/opt/homebrew/bin/python3" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "QUENCH_WEB": "ON",
+        "QUENCH_BUILD_TESTS": "OFF",
+        "QUENCH_HOST_SHADERC": "${sourceDir}/build/host-tools/quench_shaderc",
+        "QUENCH_HOST_COOK": "${sourceDir}/build/host-tools/quench_cook"
+      }
+    },
+    {
       "name": "windows-release",
       "displayName": "Windows Release (MSVC, from a Visual Studio x64 developer prompt; static runtime)",
       "inherits": "base",
@@ -139,6 +153,7 @@
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "host-tools", "configurePreset": "host-tools", "targets": ["quench_shaderc", "quench_cook"] },
     { "name": "wasm-node", "configurePreset": "wasm-node" },
+    { "name": "web", "configurePreset": "web" },
     { "name": "windows-release", "configurePreset": "windows-release" },
     { "name": "ios-sim-release", "configurePreset": "ios-sim-release" },
     { "name": "ios-sim-tests", "configurePreset": "ios-sim-tests" },

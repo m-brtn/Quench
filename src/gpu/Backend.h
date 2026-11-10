@@ -1,8 +1,9 @@
 #pragma once
 
-// The interface between the public GPU classes and a backend (src/gpu/sdlgpu, src/gpu/metal). The public classes
-// check their arguments (QUENCH_ASSERT) and forward here with the backend's native handles: resources, command
-// buffers, passes and fences are opaque pointers owned by the backend. A pass handle is valid until its end*Pass.
+// The interface between the public GPU classes and a backend (src/gpu/sdlgpu, src/gpu/metal, src/gpu/webgpu). The
+// public classes check their arguments (QUENCH_ASSERT) and forward here with the backend's native handles: resources,
+// command buffers, passes and fences are opaque pointers owned by the backend. A pass handle is valid until its
+// end*Pass.
 
 #include "core/Platform.h"
 
@@ -205,7 +206,11 @@ inline std::optional<double> commandBufferMilliseconds(double startSeconds, doub
 
 // The backends. Each fills caps except bcTextures, astcTextures and etc2Textures (Device::create asks
 // supportsFormat).
+#if QUENCH_PLATFORM_WEB
+Result<std::unique_ptr<DeviceImpl>> createWebGpuDevice(const DeviceDesc& desc); // the only backend of a web build
+#else
 Result<std::unique_ptr<DeviceImpl>> createSdlGpuDevice(const DeviceDesc& desc);
+#endif
 #if QUENCH_PLATFORM_APPLE
 Result<std::unique_ptr<DeviceImpl>> createMetalDevice(const DeviceDesc& desc);
 #endif
@@ -218,6 +223,7 @@ inline ShaderCode shaderCodeFor(const ShaderBlob& blob, ShaderFormat format) {
     case ShaderFormat::Msl: return blob.msl;
     case ShaderFormat::Metallib: return blob.metallib;
     case ShaderFormat::Dxil: return blob.dxil;
+    case ShaderFormat::Wgsl: return blob.wgsl;
     }
     return {nullptr, 0};
 }

@@ -17,7 +17,10 @@
 #                               ctest of the preset), wasm (wasm-node), ios (host-tools, ios-sim-release,
 #                               ios-sim-tests), xcode (host-tools, then the ios-xcode preset generated into
 #                               build/ios-xcode-check: no build, no signing, no team), new-game (tools/new_game.py
-#                               into a temporary directory), package
+#                               into a temporary directory), package, web (not a part of full: host-tools and
+#                               release for the tools, the web preset, then the sample's and the demo's scripted
+#                               checks in headless Chrome through tools/web_check.mjs, the demo's captures against
+#                               the Metal golden images; needs Homebrew's emscripten, Node.js and Google Chrome)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -63,6 +66,49 @@ run_step() {
         cmake --build --preset wasm-node
         ctest --preset wasm-node -j8 --output-on-failure
         echo "wasm-node: $(elapsed "$t") s"
+        ;;
+    web)
+        local t
+        t="$(now)"
+        step "web: the examples as WebAssembly on WebGPU, their scripted checks in headless Chrome (no window)"
+        configure host-tools
+        cmake --build --preset host-tools
+        configure release
+        cmake --build --preset release --target quench_image_compare
+        [[ -f build/web/CMakeCache.txt ]] || emcmake cmake --preset web >/dev/null
+        cmake --build --preset web
+        local hello_log=build/web/check_hello.log demo_log=build/web/check_demo.log
+        node tools/web_check.mjs --page examples/hello/hello.html --out build/web/check/hello --timeout 300 -- \
+            --window 640x360 --frame-size 1280x720 --script /repo/examples/hello/scenarios/check.txt \
+            >"$hello_log" 2>&1 || {
+            tail -40 "$hello_log"
+            fail "web: hello (log: $hello_log)"
+        }
+        grep -E "scenario: [^ ]*check.txt: |web_check: (passed|[0-9]+ failed)" "$hello_log"
+        # The demo's captures are compared with the Metal golden images (the sample's shows the backend's name).
+        node tools/web_check.mjs --page examples/demo/quench-demo.html --out build/web/check/demo \
+            --golden tests/golden/metal/apple-m4-pro --compare build/release/tests/quench_image_compare -- \
+            --window 960x540 --hdr-headroom 4 --script /repo/examples/demo/scenarios/batch.txt \
+            >"$demo_log" 2>&1 || {
+            grep -E "FAIL|ERROR: gpu|web_check:" "$demo_log" | tail -60
+            fail "web: the demo (log: $demo_log)"
+        }
+        grep -E "scenario: [^ ]*batch.txt: |web_check: ([0-9]+ captures compared|passed|[0-9]+ failed)" "$demo_log"
+        # As on a page a person opened (the canvas fills the page, frames at the display's rate, the sound output):
+        # the start, a few seconds of frames without a WebGPU error and the end. The weather section reads the
+        # rain's cover back every other frame.
+        local screen_log=build/web/check_onscreen.log
+        {
+            node tools/web_check.mjs --page examples/hello/hello.html --out build/web/check/hello_onscreen \
+                --timeout 120 --onscreen -- --quit-after 2 &&
+                node tools/web_check.mjs --page examples/demo/quench-demo.html --out build/web/check/demo_onscreen \
+                    --timeout 120 --onscreen -- --section weather --quit-after 4
+        } >"$screen_log" 2>&1 || {
+            tail -40 "$screen_log"
+            fail "web: the pages on the screen's path (log: $screen_log)"
+        }
+        grep -E "audio: output|quit after|web_check: (passed|[0-9]+ failed)" "$screen_log"
+        echo "web: $(elapsed "$t") s"
         ;;
     ios)
         local t booted=0
@@ -128,7 +174,7 @@ run_step() {
             tools/package_demo.sh
         fi
         ;;
-    *) fail "unknown step: $1 (format, debug, release, asan, tsan, wasm, ios, xcode, new-game, package)" ;;
+    *) fail "unknown step: $1 (format, debug, release, asan, tsan, wasm, ios, xcode, new-game, package, web)" ;;
     esac
 }
 

@@ -23,10 +23,14 @@
 #if QUENCH_PLATFORM_MACOS
 extern "C" void quench_app_prohibit_activation(void); // ActivationApple.m
 #endif
+#if QUENCH_PLATFORM_WEB
+#include <emscripten/emscripten.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 
@@ -185,6 +189,22 @@ std::optional<std::uint64_t> App::memoryFootprint() const {
 }
 
 namespace detail {
+
+#if QUENCH_PLATFORM_WEB
+void setCanvasSize(const char* selector, int width, int height) {
+    EM_ASM(
+        {
+            const canvas = document.querySelector(UTF8ToString($0));
+            if (!canvas) return;
+            const fill = $1 <= 0 || $2 <= 0;
+            canvas.style.position = fill ? "fixed" : "";
+            canvas.style.left = canvas.style.top = fill ? "0" : "";
+            canvas.style.width = fill ? "100%" : $1 + "px";
+            canvas.style.height = fill ? "100%" : $2 + "px";
+        },
+        selector, width, height);
+}
+#endif
 
 std::optional<ProcessCpuTime> processCpuTime() {
 #if QUENCH_PLATFORM_APPLE
@@ -720,7 +740,8 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     if (!s.options.script.empty()) {
         // A host path given on the command line (also in the iOS Simulator), not an asset. On a device the host's
         // files are out of reach: a relative path not found there is read from the user directory. Included files
-        // are read the same way.
+        // are read the same way. In a browser there is no host: a path not found in the virtual file system is
+        // fetched as a URL relative to the page (this waits for the browser, before the first frame).
         const Scenario::LoadFn load = [](const std::string& path) -> Result<std::string> {
             size_t size = 0;
             if (void* data = SDL_LoadFile(path.c_str(), &size)) {
@@ -729,6 +750,16 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
                 return text;
             }
             const std::string error = SDL_GetError();
+#if QUENCH_PLATFORM_WEB
+            void* fetched = nullptr;
+            int fetchedSize = 0, fetchError = 0;
+            emscripten_wget_data(path.c_str(), &fetched, &fetchedSize, &fetchError);
+            if (fetchError == 0 && fetched) {
+                std::string text(static_cast<const char*>(fetched), std::size_t(fetchedSize));
+                std::free(fetched);
+                return text;
+            }
+#endif
             Result<std::string> user =
                 std::filesystem::path(path).is_relative() ? fs::readUserText(path) : Result<std::string>(Error{error});
             if (!user) return Error{error};
@@ -750,8 +781,22 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     // Offscreen the window stays hidden: ImGui and the game still get its size, events and safe area.
     SDL_WindowFlags windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (s.offscreen) windowFlags |= SDL_WINDOW_HIDDEN;
+    // In a browser the window is the page's canvas, which fills the page and follows its size (offscreen it keeps
+    // the size asked for). The canvas's CSS sizes it: without one SDL measures the canvas at 1 x 1 to find out
+    // whether the page sizes it, and under a page zoom (Safari at 115%) that measures below 1: a 0 x 0 window.
+#if QUENCH_PLATFORM_WEB
+    {
+        const char* selector = SDL_GetHint(SDL_HINT_EMSCRIPTEN_CANVAS_SELECTOR);
+        setCanvasSize(selector && *selector ? selector : "#canvas", s.offscreen ? width : 0, s.offscreen ? height : 0);
+    }
+#endif
     s.window.reset(SDL_CreateWindow(s.desc.name.c_str(), width, height, windowFlags));
     if (!s.window) return fail(std::format("SDL_CreateWindow: {}", SDL_GetError()));
+    // In a browser the display's refresh calls the frames. Offscreen nothing is presented: the browser's timers call
+    // them instead, as fast as they allow (about every 4 ms), also in a tab that is not shown.
+#if QUENCH_PLATFORM_WEB
+    if (s.offscreen) SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, "1000");
+#endif
     updateWindowSize(s);
 
     Result<gpu::Device> device = gpu::Device::create({.driver = s.options.gpuDriver,

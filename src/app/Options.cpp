@@ -39,7 +39,8 @@ const char* optionsHelp() {
            "  --capture FILE.png   save one frame (with ImGui) as PNG; relative paths go to the user directory\n"
            "  --capture-at S       app time of the capture (default 3)\n"
            "  --script FILE        run a verification scenario; the exit code is 1 if a check failed. A host\n"
-           "                       path; a relative path not found there is read from the user directory\n"
+           "                       path; a relative path not found there is read from the user directory; in a\n"
+           "                       browser a URL relative to the page\n"
            "  --window WxH         window size in points (desktop)\n"
            "  --frame-size WxH     render every frame offscreen at W x H pixels and scale it to the window, so\n"
            "                       captures do not depend on the display density\n"
@@ -48,8 +49,8 @@ const char* optionsHelp() {
            "                       default on desktops with --script, --capture or --quit-after\n"
            "  --onscreen           a visible window also with --script, --capture or --quit-after (benchmarks)\n"
            "  --gpu-backend NAME   metal (the native Metal backend: Apple platforms, the default there; elsewhere\n"
-           "                       SDL GPU) or sdl (SDL GPU, the default elsewhere); a native device that fails\n"
-           "                       to start falls back to SDL GPU\n"
+           "                       SDL GPU), sdl (SDL GPU, the default elsewhere) or webgpu (web builds, their only\n"
+           "                       one); a native device that fails to start falls back to SDL GPU\n"
            "  --gpu-driver NAME    metal, vulkan or direct3d12 (SDL GPU's driver; vulkan and direct3d12 select\n"
            "                       SDL GPU)\n"
            "  --gpu-debug          GPU validation (backend debug mode)\n"
@@ -176,8 +177,10 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
                 options.gpuBackend = gpu::Backend::SdlGpu;
             else if (*v == "metal")
                 options.gpuBackend = gpu::Backend::Metal;
+            else if (*v == "webgpu")
+                options.gpuBackend = gpu::Backend::WebGpu;
             else
-                return Error{std::format("--gpu-backend: '{}' is not sdl or metal", *v)};
+                return Error{std::format("--gpu-backend: '{}' is not sdl, metal or webgpu", *v)};
         } else if (flag == "--hdr") {
             Result<std::string_view> v = value();
             if (!v) return Error{v.error()};

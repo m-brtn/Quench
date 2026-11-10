@@ -1,8 +1,8 @@
 # `cmake -P` script of quench_add_shaders(): embeds the compiled blobs of one shader set into a C++ source that
 # defines quench::shaders::<NAME>. Parameters: NAME, SOURCE_NAME, ENTRIES and FORMATS (comma-separated), GEN_DIR,
 # OUTPUT, MANIFEST (the set's manifest relative to the build directory, or empty). Formats: spirv (<entry>.spv), msl
-# (<entry>.msl), metallib (<entry>.metallib), dxil (<entry>.dxil). The stage, resource counts and thread group size of
-# each entry come from <entry>.reflect.
+# (<entry>.msl), metallib (<entry>.metallib), dxil (<entry>.dxil), wgsl (<entry>.wgsl). The stage, resource counts and
+# thread group size of each entry come from <entry>.reflect.
 cmake_minimum_required(VERSION 3.28)
 foreach(param NAME SOURCE_NAME ENTRIES FORMATS GEN_DIR OUTPUT)
     if(NOT DEFINED ${param})
@@ -15,6 +15,7 @@ set(_ext_spirv spv)
 set(_ext_msl msl)
 set(_ext_metallib metallib)
 set(_ext_dxil dxil)
+set(_ext_wgsl wgsl)
 
 set(_arrays "")
 set(_rows "")
@@ -55,14 +56,14 @@ foreach(entry IN LISTS ENTRIES)
     foreach(_key IN LISTS _keys ITEMS acceleration_structures)
         unset(_r_${_key})
     endforeach()
-    foreach(fmt spirv msl metallib dxil)
+    foreach(fmt spirv msl metallib dxil wgsl)
         if(fmt IN_LIST FORMATS)
             set(_file ${GEN_DIR}/${entry}.${_ext_${fmt}})
             file(READ "${_file}" _hex HEX)
             file(SIZE "${_file}" _size)
             string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," _bytes "${_hex}")
             string(REGEX REPLACE "((0x..,){32})" "\\1\n" _bytes "${_bytes}")
-            # A trailing zero keeps text formats (MSL) NUL-terminated; it is not counted in the size.
+            # A trailing zero keeps text formats (MSL, WGSL) NUL-terminated; it is not counted in the size.
             string(APPEND _arrays "const std::uint8_t k_${entry}_${fmt}[] = {\n${_bytes}0x00};\n")
             string(APPEND _row ", {k_${entry}_${fmt}, ${_size}}")
         else()

@@ -1,7 +1,8 @@
 #pragma once
 
 // The GPU device: creates resources and command buffers, presents to windows. Backends: native Metal (Apple
-// platforms, the default there) and SDL GPU (Metal on Apple platforms, Vulkan, Direct3D 12; the default elsewhere).
+// platforms, the default there), SDL GPU (Metal on Apple platforms, Vulkan, Direct3D 12; the default elsewhere) and
+// native WebGPU (web builds, the only one there).
 // Device capabilities are in caps() and the supports*() queries; effects choose their fallbacks from them, never from
 // the platform or the backend.
 
@@ -23,21 +24,23 @@ struct SDL_Window;
 
 namespace quench::gpu {
 
-enum class ShaderFormat : std::uint8_t { Spirv, Msl, Metallib, Dxil };
+enum class ShaderFormat : std::uint8_t { Spirv, Msl, Metallib, Dxil, Wgsl };
 
 const char* shaderFormatName(ShaderFormat format);
 
 // Default: the QUENCH_GPU_BACKEND environment variable ("sdl" or "metal"); else SDL GPU for a driver only SDL GPU has
 // (DeviceDesc::driver, or the SDL_GPU_DRIVER environment variable, other than "metal"); else defaultBackend(). Metal
 // is the native backend (Apple platforms only; elsewhere the device falls back to SDL GPU and logs it). A native
-// Metal device that fails to start falls back to SDL GPU with a warning; Caps::backend says which one runs.
-enum class Backend : std::uint8_t { Default, SdlGpu, Metal };
+// Metal device that fails to start falls back to SDL GPU with a warning; Caps::backend says which one runs. WebGpu is
+// the browser's WebGPU (web builds only, where it is the only backend: the pinned SDL has no WebGPU driver in SDL GPU).
+enum class Backend : std::uint8_t { Default, SdlGpu, Metal, WebGpu };
 
-const char* backendName(Backend backend); // "default", "sdl", "metal"
-// Whether this build can create a device on the backend (Metal: Apple platforms only), e.g. for a backend choice.
+const char* backendName(Backend backend); // "default", "sdl", "metal", "webgpu"
+// Whether this build can create a device on the backend (Metal: Apple platforms only; WebGpu: web builds only, which
+// have no other), e.g. for a backend choice.
 bool backendAvailable(Backend backend);
-// The platform's backend for Backend::Default: Metal on Apple platforms (macOS, iOS, the iOS Simulator), SDL GPU
-// elsewhere.
+// The platform's backend for Backend::Default: Metal on Apple platforms (macOS, iOS, the iOS Simulator), WebGpu in
+// web builds, SDL GPU elsewhere.
 Backend defaultBackend();
 
 struct DeviceDesc {
@@ -51,7 +54,7 @@ struct DeviceDesc {
 
 struct Caps {
     Backend backend = Backend::SdlGpu; // the backend in use (never Default)
-    std::string driver;                // "metal", "vulkan", "direct3d12"
+    std::string driver;                // "metal", "vulkan", "direct3d12", "webgpu"
     std::string deviceName;            // as reported by the driver; may be empty
     ShaderFormat shaderFormat = ShaderFormat::Spirv;
     bool gpuTiming = false;      // Device::gpuMilliseconds (Metal only)
