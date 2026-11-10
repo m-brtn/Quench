@@ -278,9 +278,13 @@ void quenchApplyRain(inout QuenchSurface s, QuenchSurfaceInput i) {
     }
     const float rain = w.b * w.a * exposed;
     [branch] if (water > 0.0 && rain > 0.02) {
-        const float near = saturate(1.0 - distance(i.world, quenchFrame.cameraPos.xyz) / 60.0);
-        const float2 slope = quenchRipples(i.world.xz, quenchFrame.cameraPos.w, rain) * (water * near);
-        s.normal = normalize(s.normal - float3(slope.x, 0.0, slope.y));
+        // The drops' rings near the camera; farther away, where they are finer than the pixels, a duller mirror.
+        const float reach = quenchRippleReach(distance(i.world, quenchFrame.cameraPos.xyz));
+        [branch] if (reach > 0.0) {
+            const float2 slope = quenchRipples(i.world.xz, quenchFrame.cameraPos.w, rain) * (water * reach);
+            s.normal = normalize(s.normal - float3(slope.x, 0.0, slope.y));
+        }
+        s.roughness = lerp(s.roughness, max(s.roughness, quenchRippleRoughness(rain)), water * (1.0 - reach));
     }
 }
 

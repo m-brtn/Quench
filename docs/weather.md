@@ -183,7 +183,8 @@ today (SDL GPU's Metal and Vulkan through MoltenVK, the native Metal backend, th
    result reprojected by its depth, read Catmull-Rom (a bilinear read blurs it a little every frame the view moves,
    and the blur builds up: smeared clouds while the camera turns) and kept within the range of this frame's 3x3
    neighbourhood; a cut or a change of mode starts it again.
-4. **The sky cube** (with `skyCubeSize`): the sky with its clouds (24 steps, three light steps, no detail erosion) into an Rgba16Float
+4. **The sky cube** (with `skyCubeSize`): the sky with its clouds (24 steps, three light steps, no detail erosion)
+   into an Rgba16Float
    cube, `skyCubeFacesPerFrame` faces per frame in turns (all six on the first frame, a cut or a change of mode),
    with mips for rough reflections.
 5. **In the HDR pass** the sky with the clouds over it replaces the plain sky: the march's result upsampled (or the
@@ -316,7 +317,8 @@ off with a line; the path tracer's frame has no rain (a line). Every backend has
    faint smears), at least 1.5 pixels (thinner ones fainter), at most 0.9 opaque where sharp; half of the streaks in
    a box 0.4 times the size of the others' around the camera (the rain grows denser toward the camera there), faded
    toward the boxes' edges and within 1.5 m of the camera. Lit by the sky's and the ground's light it refracts
-   (under a closing cover the bases' light, 1.6 times the cover's mean for the sky above the horizon a drop sees) and the sun's it scatters forward (Henyey-Greenstein, g 0.7): about as bright as what lies around it,
+   (under a closing cover the bases' light, 1.6 times the cover's mean for the sky above the horizon a drop sees)
+   and the sun's it scatters forward (Henyey-Greenstein, g 0.7): about as bright as what lies around it,
    so rain shows as faint lines against a dark wall and toward the sun and hardly against the sky. Splashes: crowns
    6 cm high (give or take 30 %) for 0.12 s each at random places within the radius on the highest surface the
    occlusion map has, a rim of droplets rising and spreading and four droplets thrown up and out of it; twice the
@@ -349,11 +351,17 @@ the clouds, drawn behind it, do not).
   `max(0.12, 0.4 r)`. Up-facing parts of a material with `puddles` collect standing water in the hollows of a relief
   (`quenchPuddleHeight`: value noise at 6 and 1.5 m) up to 0.42 of it at full water, about a third of a flat surface:
   a dark mirror there (roughness 0.02, not metallic, the geometric normal). On standing water and on materials with
-  `water` (a lake) the rings of the drops falling now (`quenchRipples`: two offset grids of 0.4 m cells, a drop every
-  0.8 s in a share of the cells that grows with the rain, its ring spreading and fading; within 60 m of the camera)
-  bend the normal, so they show in the sky cube's, SSR's and traced reflections. Each drop has a size of its own
-  (its ring's width, wavelength and reach, 0.6 to 1.4), and drops fall more densely and strike harder in some
-  puddles than in others (value noise at 3 m: 0.55 to 1.45 times the density, 0.7 to 1.3 times the strength).
+  `water` (a lake) the rings of the drops falling now (`quenchRipples` in `quench/Rain.hlsli`) bend the normal, so
+  they show in SSR's and traced reflections. A drop leaves a short packet of capillary waves (since 2026-11-10;
+  before, a target of wide rings 6 to 14 cm apart that spread for 0.8 s over a 0.4 m cell): two or three crests
+  about 2 cm apart, the short ones leading, running out at about 0.3 m/s, weaker as their circle grows, gone after
+  0.55 s some 10 to 25 cm from where the drop fell, the water inside calm again. Two offset grids of 0.22 m cells,
+  a drop every 0.9 s (light rain) to 0.5 s (heavy) in a share of the cells that grows with the rain. Each drop has
+  a size of its own (its waves' length, speed and strength, 0.65 to 1.35), and drops fall more densely and strike
+  harder in some puddles than in others (value noise at 3 m: 0.6 to 1.5 times the density, 0.7 to 1.3 times the
+  strength). The waves are finer than a pixel from a few metres on: they fade out between 5 and 14 m from the
+  camera at 1080 lines (`quenchRippleReach`; in proportion at other render heights), and the water beyond is a
+  duller mirror instead (`quenchRippleRoughness`: roughness 0.05 to 0.15 with the rain).
 - **Opt-out:** a surface file that defines `QUENCH_SURFACE_NO_RAIN` before including `quench/SurfaceEntries.hlsli`
   keeps its surface as its function makes it, or calls `quenchApplyRain` itself and changes what it gets; a material
   with wetness 0, no puddles and not water costs a branch.
@@ -644,7 +652,8 @@ downpour, passing shower, snowfall, thaw, snow showers, windy storm), coverage, 
 cirrus, a raining cumulonimbus as a cell, wind speed and direction, gusts, turbulence, change of shape, the
 weather's speed, the temperature, the sun (the Rain here and Passing shower presets place it for their picture;
 the next preset without a sun of its own puts it back where it was, unless the person has moved it since
-2026-11-10: before, a snowfall chosen after the sun shower kept its low sun), Run day and Sunset, the quality (full size, half size, 2D layer, off),
+2026-11-10: before, a snowfall chosen after the sun shower kept its low sun), Run day and Sunset, the quality (full
+size, half size, 2D layer, off),
 steps, cloud shadows, the sky cube and its faces per frame, 60 Hz; the rain's and the snow's levels, shafts,
 rainbow, lightning and its rate, sound and its volume; views from the air, from the ground, toward the cloud, from
 the shelter, over the shelter and in the meadow. On the ground: wet paving with puddles, a pond, a shelter with a
