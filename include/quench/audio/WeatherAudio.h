@@ -2,12 +2,12 @@
 
 // The engine's weather sounds (docs/audio.md, "Weather sounds"): looping layers of rain and wind mixed from what the
 // weather does around the listener, and thunder after lightning. Light and heavy rain crossfade by the precipitation
-// there, distant rain grows as the nearest rain comes closer, rain on a roof replaces the open-air layers as the
-// listener goes under cover, and a light and a strong wind crossfade by the wind's speed (its gusts swell them). A
-// flash of lightning the game passes on is heard as thunder when its sound arrives, later and duller the farther it
-// struck. A game sets the numbers once per frame (from quench_weather and the renderer's rain cover, or its own), names
-// its own sound for any layer, or switches the object off and plays its own sounds from the same numbers
-// (targetGains and thunderGains give the engine's mix rules for that).
+// there, distant rain grows as the nearest rain comes closer, rain on a roof joins the open-air layers, which grow
+// quieter, as the listener goes under cover, and a light and a strong wind crossfade by the wind's speed (its gusts
+// swell them). A flash of lightning the game passes on is heard as thunder when its sound arrives, later and duller
+// the farther it struck. A game sets the numbers once per frame (from quench_weather and the renderer's rain cover,
+// or its own), names its own sound for any layer, or switches the object off and plays its own sounds from the same
+// numbers (targetGains and thunderGains give the engine's mix rules for that).
 //
 // Game thread only: it plays, fades and restarts sounds through the AudioSystem, whose audio thread keeps its rules
 // (nothing here runs there). The sounds are assets: a reloaded file (hot reload) crossfades into the new data.
@@ -27,7 +27,7 @@ enum class WeatherLayer : std::uint8_t {
     RainLight,  // rain at the listener, light: a soft hiss of fine drops
     RainHeavy,  // heavy rain at the listener: a dense roar
     RainFar,    // rain heard from afar, low and dull, while the nearest rain is within WeatherSoundDesc::farDistance
-    RainCover,  // rain drumming on the roof over the listener (under cover)
+    RainCover,  // rain drumming on the roof over the listener (under cover): close, dull thuds
     WindLight,  // a light wind: a soft rush that rises with its speed
     WindStrong, // a strong wind: a roar with a howl, from about 6 m/s
 };
@@ -113,12 +113,14 @@ public:
     std::uint32_t thunderPlayed() const { return m_thunderPlayed; }
 
     // The engine's mix rules: the gain of each layer for a state, without smoothing. The rain at the listener is the
-    // precipitation times 1 - snow. The open-air layers (light, heavy) scale by 1 - cover and the roof layer by cover,
-    // all by a loudness that rises with the square root of the rain; light and heavy crossfade at equal power between
-    // rain 0.25 and 0.75; the distant layer rises to 1 as the nearest rain comes from farDistance to 0 m, fades out as
-    // rain starts at the listener and is muffled by up to 60 % in falling snow. The wind's layers rise with the
-    // square root of its speed from 1 to 20 m/s, crossfade at equal power from light to strong between 6 and 16 m/s
-    // and are halved under cover.
+    // precipitation times 1 - snow. The open-air layers (light, heavy) fall to kOpenUnderCover of their gain under a
+    // roof (the rain around is still heard there) and the roof layer scales by the cover, all by a loudness that
+    // rises with the square root of the rain; light and heavy crossfade at equal power between rain 0.25 and 0.75;
+    // the distant layer rises to 1 as the nearest rain comes from farDistance to 0 m, fades out as rain starts at
+    // the listener and is muffled by up to 60 % in falling snow. The wind's layers rise with the square root of its
+    // speed from 1 to 20 m/s, crossfade at equal power from light to strong between 6 and 16 m/s and are halved
+    // under cover.
+    static constexpr float kOpenUnderCover = 0.35f;
     static std::array<float, kWeatherLayers> targetGains(const WeatherSoundState& state, float farDistance);
     // The thunder's rule: a flash's gain falls as 1 / (1 + distance / 1.5 km) up to `reach` (0 beyond), times its
     // brightness and 1 - 0.3 cover; the near clap gives way to the far rumble at equal power from 1 to 5 km.

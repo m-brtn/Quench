@@ -255,17 +255,19 @@ part 3 the snow's quiet, part 4 the wind and the thunder ([Weather](weather.md#w
 
 | Layer | Default sound | Gain |
 |---|---|---|
-| `RainLight` | `quench/weather/rain_light.wav`: fine drops, most energy above 2 kHz | the loudness times the light share, times 1 - cover |
-| `RainHeavy` | `rain_heavy.wav`: dense, broad, the loudest | the loudness times the heavy share, times 1 - cover |
+| `RainLight` | `quench/weather/rain_light.wav`: fine drops, most energy above 2 kHz | the loudness times the light share, times 1 - 0.65 x cover |
+| `RainHeavy` | `rain_heavy.wav`: dense, broad, the loudest | the loudness times the heavy share, times 1 - 0.65 x cover |
 | `RainFar` | `rain_far.wav`: a low rumble, most energy below 700 Hz | rises to 1 as the nearest rain comes from `farDistance` (4 km) to 0 m (squared), fades out as rain starts at the listener (gone at precipitation 0.1), halved under cover |
-| `RainCover` | `rain_cover.wav`: drops drumming on a roof, low and ringing | the loudness times the cover |
+| `RainCover` | `rain_cover.wav`: drops drumming on a roof, close dull thuds | the loudness times the cover |
 | `WindLight` | `wind_light.wav`: a soft rush with a leafy rustle, swelling slowly | the wind's loudness times the light share, halved under cover |
 | `WindStrong` | `wind_strong.wav`: a roar with a howl that rises and falls | the wind's loudness times the strong share, halved under cover |
 
 The rain `p` is the precipitation times 1 - the snow's share: snow falls without a sound (sleet at share 0.5 and
 precipitation 0.6 plays as rain at 0.3), and falling snow at the listener muffles the distant layer (times
 1 - 0.6 x the snowfall). The loudness is `sqrt((p - 0.02) / 0.98)` above a trace of 0.02; light and heavy crossfade
-at equal power (their squares sum to the loudness's) between rain 0.25 and 0.75. `WeatherAudio::targetGains` gives these rules
+at equal power (their squares sum to the loudness's) between rain 0.25 and 0.75. Under a roof the rain around is
+still heard, at 0.35 of its gain (`kOpenUnderCover`), with the roof's drumming over it (until 2026-11-10 the roof's
+layer alone played there). `WeatherAudio::targetGains` gives these rules
 for a game that plays its own sounds. The wind's loudness is `sqrt((v - 1) / 19)` for a speed `v` from 1 to 20 m/s
 (`WeatherSoundState::wind`: `|Weather::windAt|` at the listener, so its gusts swell it), light and strong
 crossfading at equal power between 6 and 16 m/s. Each layer follows its target over `smoothing` (0.5 s), starts (fading in)
@@ -286,17 +288,31 @@ new data. It runs on the game thread only and plays, fades and restarts sounds t
 thread's rules hold (nothing of it runs there).
 
 **The default sounds** are procedural loops (`tools/assets/make_weather_sounds.py`, Python's standard library,
-CC0): 4 s at 32 kHz, stereo, filtered as periodic signals and with drops placed around the loop, so they have no
-seam. The CMake function `quench_weather_sounds(<name>)` (`cmake/QuenchCook.cmake`) writes them at build time and
-cooks them like any sound; a game lists `<name>` in `quench_add_game(... COOKED_ASSETS ...)` to ship them.
+CC0): the rain's 8 s and the wind's 4 s at 32 kHz, stereo, filtered as periodic signals and with drops placed around
+the loop, so they have no seam. The CMake function `quench_weather_sounds(<name>)` (`cmake/QuenchCook.cmake`) writes
+them at build time (about 10 s) and cooks them like any sound; a game lists `<name>` in
+`quench_add_game(... COOKED_ASSETS ...)` to ship them.
+
+The rain is made of noise only (since 2026-11-10; the user's report of the first version: "very strange,
+synthetic", and under a roof "melodic"). Its drops were decaying sines, each at a pitch of its own, 500 a second
+between 250 and 1500 Hz under the roof: a tune. Now a drop is a burst of noise a few milliseconds long through a
+filter of its own (a click, a splat or a dull thud), somewhere between the two channels; under it lie a bed of
+noise through second-order filters and a crackle of sparse impulses of very uneven size; the loudest drops are held
+back (a soft limit at 5 to 7 times the loop's RMS) so that none is known again when the loop comes round, and the
+loop's level drifts by 12 to 30 % along sines of whole cycles. The roof is 1400 small and 110 larger thuds a second
+(low-passed between 400 and 2400 Hz, 1 to 5 ms) and the roof's body, the same two wide bands (190 and 410 Hz, Q 2.5
+and 3) for every drop. Nobody has listened to the new loops yet: they were measured only.
+
 `audio.weather_default_sounds` measures them (rms, peak, the energy below 700 Hz and above 2 kHz through one-pole
-filters, the seam): light 0.060 rms, 0.04 below 700 Hz, 0.51 above 2 kHz; heavy 0.130 rms, peak 0.717, 0.18 and
-0.39; far 0.100, 0.71 and 0.05; roof 0.120, 0.53 and 0.10; the light wind 0.050, 0.72 and 0.05; the strong wind
-0.110, peak 0.682, 0.58 and 0.09; each seam smaller than the loop's own largest change over two frames. The thunder
-is two one-shots (6 and 8 s) that end in silence: near 0.100 rms, peak 0.710, 0.94 below 700 Hz and 0.01 above
-2 kHz; far 0.080, 0.98 and 0.00. The heavy rain's loop was 0.178 rms with a peak of 0.980 until 2026-11-08: heavy
-rain, a gale and near thunder together clipped once in the demo's windy storm. It runs in the Mac's builds (the host writes the sounds) and is skipped under Node.js and in the iOS
-Simulator.
+filters, the seam; 2026-11-10, this case alone, not the audio label):
+light 0.060 rms, peak 0.413, 0.04 below 700 Hz, 0.54 above 2 kHz; heavy 0.130 rms, peak 0.621, 0.23 and 0.34; far
+0.100, 0.80 and 0.02; roof 0.120, peak 0.691, 0.59 and 0.09; the light wind 0.050, 0.72 and 0.05; the strong wind
+0.110, peak 0.682, 0.58 and 0.09; each seam smaller than the loop's own largest change over two frames. In the
+averaged spectrum the roof's strongest bin stands 1.3 times over its third-octave neighbourhood (3.7 times in the
+first version). The thunder is two one-shots (6 and 8 s) that end in silence: near 0.100 rms, peak 0.710, 0.94
+below 700 Hz and 0.01 above 2 kHz; far 0.080, 0.98 and 0.00. The heavy rain's loop was 0.178 rms with a peak of
+0.980 until 2026-11-08: heavy rain, a gale and near thunder together clipped once in the demo's windy storm. The
+test runs in the Mac's builds (the host writes the sounds) and is skipped under Node.js and in the iOS Simulator.
 
 ## Offline mixing and captures
 

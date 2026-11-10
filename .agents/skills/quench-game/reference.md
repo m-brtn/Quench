@@ -296,7 +296,8 @@ quench_add_game(my_game ... COOKED_ASSETS my_game_cooked my_game_weather_sounds)
   `dryingTime`, `puddleFillTime`, `puddleDryTime` set how fast. `setTime` estimates the wetness of that time, so a
   scripted check that jumps in time gets the same ground.
 - The sound's layers (`audio::WeatherLayer`): `RainLight`, `RainHeavy` (crossfaded by the precipitation),
-  `RainFar` (the nearest rain within `farDistance`), `RainCover` (on the roof, by the cover). `setSound(layer,
+  `RainFar` (the nearest rain within `farDistance`), `RainCover` (on the roof, by the cover; the open-air layers play at
+  0.35 under it). `setSound(layer,
   "sounds/my_rain.wav")` replaces one (a cooked sound; "" silences it), `setEnabled(false)` turns the engine's off
   and `WeatherAudio::targetGains(state, farDistance)` gives its mix rules to a game's own sounds.
 - `effects().rain` says what is drawn (none in the path tracer's frame), `stats().rainAtCamera`, `rainStreaks`,

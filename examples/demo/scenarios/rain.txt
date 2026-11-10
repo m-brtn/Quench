@@ -52,13 +52,15 @@ windows off
 capture demo_rain_rainbow.png
 windows on
 
-# Under the roof: the renderer's cover, the roof's layer instead of the open-air ones.
+# Under the roof: the renderer's cover, the roof's layer over the open-air ones, which are quieter there.
 set view shelter
 wait 1.5
 expect rain_cover > 0.8
 expect sound_cover > 0.4
-expect sound_light < 0.1
-expect sound_heavy < 0.1
+expect sound_light > 0.05
+expect sound_light < 0.35
+expect sound_heavy > 0.05
+expect sound_heavy < 0.35
 audio_measure 1.0
 expect audio_rms > 0.01
 windows off
@@ -68,7 +70,7 @@ windows on
 # The cloud gone: no rain at the camera, the sound fades out, the ground dries (240 s of weather in 4 s).
 set view ground
 set shower 0
-wait 1.5
+wait 2.5
 expect rain_at_camera == 0
 expect sound_light < 0.01
 expect sound_heavy < 0.01

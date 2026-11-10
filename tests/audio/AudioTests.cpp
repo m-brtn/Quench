@@ -1382,9 +1382,13 @@ QUENCH_TEST(weather_audio_gains) {
         CHECK(near(power, (p - 0.02f) / 0.98f, 1e-4f), "power %f at %f", power, p);
     }
     const auto covered = gains(0.6f, 0.0f, 1.0f);
-    CHECK(at(covered, WeatherLayer::RainLight) == 0.0f && at(covered, WeatherLayer::RainHeavy) == 0.0f &&
-              at(covered, WeatherLayer::RainCover) > 0.7f,
-          "under a roof only the roof is heard");
+    const auto open = gains(0.6f, 0.0f, 0.0f);
+    CHECK(near(at(covered, WeatherLayer::RainLight), at(open, WeatherLayer::RainLight) * 0.35f, 1e-5f) &&
+              near(at(covered, WeatherLayer::RainHeavy), at(open, WeatherLayer::RainHeavy) * 0.35f, 1e-5f) &&
+              at(covered, WeatherLayer::RainCover) > 0.7f && at(open, WeatherLayer::RainCover) == 0.0f,
+          "under a roof the roof is heard, and the rain around it at 0.35: light %f, heavy %f, roof %f",
+          at(covered, WeatherLayer::RainLight), at(covered, WeatherLayer::RainHeavy),
+          at(covered, WeatherLayer::RainCover));
     const auto near_ = gains(0.0f, 500.0f, 0.0f), far = gains(0.0f, 3500.0f, 0.0f), beyond = gains(0.0f, 5000.0f, 0.0f);
     CHECK(at(near_, WeatherLayer::RainFar) > at(far, WeatherLayer::RainFar) && at(far, WeatherLayer::RainFar) > 0.0f &&
               at(beyond, WeatherLayer::RainFar) == 0.0f,
@@ -1568,7 +1572,9 @@ QUENCH_TEST(weather_audio_mix) {
         run({.precipitation = 0.95f, .cover = 1.0f}, 1.0);
         peak = strongest();
         CHECK(near(peak.frequency, 500.0f, 2.0f), "under cover: %f Hz", peak.frequency);
-        CHECK(dominantFrequency(last(out, 0.25), 2, kRate, 800.0f, 1200.0f).level < 0.01f, "open-air layers gone");
+        const float around = dominantFrequency(last(out, 0.25), 2, kRate, 800.0f, 1200.0f).level;
+        CHECK(around > 0.01f && around < peak.level * 0.5f, "the rain around under cover, below the roof: %f of %f",
+              around, peak.level);
         run({.precipitation = 0.0f, .distanceToRain = 300.0f}, 1.0);
         peak = strongest();
         CHECK(near(peak.frequency, 200.0f, 2.0f), "distant rain: %f Hz", peak.frequency);

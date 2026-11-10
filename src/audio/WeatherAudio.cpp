@@ -61,9 +61,12 @@ std::array<float, kWeatherLayers> WeatherAudio::targetGains(const WeatherSoundSt
     const float near = std::clamp(1.0f - state.distanceToRain / std::max(farDistance, 1.0f), 0.0f, 1.0f);
     // Falling snow muffles what is heard from afar.
     const float muffled = 1.0f - 0.6f * total * share;
+    // A roof keeps the drops off the listener, not the rain's sound out: the rain around is still heard under it,
+    // quieter, with the roof's drumming over it.
+    const float open = 1.0f - (1.0f - kOpenUnderCover) * cover;
     std::array<float, kWeatherLayers> g{};
-    g[std::size_t(WeatherLayer::RainLight)] = (1.0f - cover) * level * std::sqrt(1.0f - heavy);
-    g[std::size_t(WeatherLayer::RainHeavy)] = (1.0f - cover) * level * std::sqrt(heavy);
+    g[std::size_t(WeatherLayer::RainLight)] = open * level * std::sqrt(1.0f - heavy);
+    g[std::size_t(WeatherLayer::RainHeavy)] = open * level * std::sqrt(heavy);
     g[std::size_t(WeatherLayer::RainFar)] =
         near * near * (1.0f - std::clamp(p / 0.1f, 0.0f, 1.0f)) * (1.0f - 0.5f * cover) * muffled;
     g[std::size_t(WeatherLayer::RainCover)] = cover * level;
