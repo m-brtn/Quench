@@ -109,12 +109,12 @@ error with its label and window and counted in the scenario value `imgui_id_conf
 | `--quit-after S` | quit after S seconds of app time |
 | `--capture FILE.png` | save one frame (with ImGui) as PNG; relative paths go to the user directory, absolute ones are used as given |
 | `--capture-at S` | app time of the capture (default 3) |
-| `--script FILE` | run a verification scenario; the exit code is 1 if a check failed. A host path; a relative path not found there is read from the user directory (on a device: copy the script there first) |
+| `--script FILE` | run a verification scenario; the exit code is 1 if a check failed. A host path; a relative path not found there is read from the user directory (on a device: copy the script there first); in a browser a path in the virtual file system, else a URL relative to the page ([Web runs](#web-runs)) |
 | `--window WxH` | window size in points (desktop) |
 | `--frame-size WxH` | render every frame offscreen at W x H pixels and scale it to the window, so captures do not depend on the display density |
 | `--offscreen` | no window on the screen ([Offscreen runs](#offscreen-runs)); the default on desktops with `--script`, `--capture` or `--quit-after` |
 | `--onscreen` | a visible window also with `--script`, `--capture` or `--quit-after`: to watch a scenario, and for benchmarks |
-| `--gpu-backend NAME` | `sdl` (SDL GPU) or `metal` (the native Metal backend, [Architecture](architecture.md#native-metal-backend); Apple platforms, elsewhere SDL GPU with a warning); default `AppDesc::gpuBackend`, which reads the `QUENCH_GPU_BACKEND` environment variable, else takes SDL GPU for `--gpu-driver vulkan` or `direct3d12`, else the platform's default (since 2026-11-07: the native Metal backend on Apple platforms, SDL GPU elsewhere). A native device that fails to start falls back to SDL GPU with one warning |
+| `--gpu-backend NAME` | `sdl` (SDL GPU), `metal` (the native Metal backend, [Architecture](architecture.md#native-metal-backend); Apple platforms, elsewhere SDL GPU with a warning) or `webgpu` (web builds, which have no other); default `AppDesc::gpuBackend`, which reads the `QUENCH_GPU_BACKEND` environment variable, else takes SDL GPU for `--gpu-driver vulkan` or `direct3d12`, else the platform's default (since 2026-11-07: the native Metal backend on Apple platforms, SDL GPU elsewhere). A native device that fails to start falls back to SDL GPU with one warning |
 | `--gpu-driver NAME` | SDL GPU's driver: `metal`, `vulkan` or `direct3d12` (the native backend has only `metal`) |
 | `--gpu-debug` | GPU validation (the backend's debug mode) |
 | `--gpu-pass-timing` | record the GPU time per pass in every frame (`gpu::Caps::gpuPassTiming`: the native Metal backend); without it only while the game asks (`App::requestPassTiming`) or a scenario's perf region runs, since recording costs CPU time ([Performance](performance.md#gpu-time-per-pass)) |
@@ -402,6 +402,9 @@ time, per file and only when a source changed ([Jobs, assets and the cook](asset
   phones at 60 Hz; with it the iPhone 18 Pro Max runs hello at 120 Hz). `ORIENTATIONS all` allows all four
   orientations on iPad; a fixed orientation sets `UIRequiresFullScreen`, deprecated since iOS 26 but still the only
   way to keep one orientation on an iPad.
+- **The web** (the `web` preset, experimental): `<OUTPUT_NAME>.html` from `cmake/shell.web.html` with `.js`,
+  `.wasm` and, with assets, `.data` (the assets preloaded at `assets/` in the virtual file system) next to it
+  ([Web runs](#web-runs)). No icon, bundle id or orientations there.
 - `CUSTOM_MAIN`: the target defines `main` itself (the device test app).
 
 New games start from `templates/game`: `python3 tools/new_game.py "My Game" <directory>` copies it, renames it, pins
@@ -522,3 +525,71 @@ category; the one that plays through the speaker runs only with `QUENCH_TEST_AUD
 the last line is `N cases: P passed, F failed, S skipped` and the exit code is 0 only without failures. Agents cannot
 see the device screen: what is visible on it (rendering, touch, rotation) is checked by the user and recorded as a
 user report in the devlog.
+
+## Web runs
+
+Experimental (2026-11-10; what ran and what did not: [Platforms](platforms.md#web-webassembly)). A web build is
+WebAssembly on the browser's WebGPU, single-threaded, with the engine's WebGPU backend:
+
+```sh
+cmake --preset host-tools && cmake --build --preset host-tools   # quench_shaderc and quench_cook for the Mac
+emcmake cmake --preset web && cmake --build --preset web         # Homebrew's emscripten; the first configure also
+                                                                 # builds Tint into the tool cache
+python3 -m http.server 8000 --bind 127.0.0.1 --directory build/web
+# then open http://127.0.0.1:8000/examples/demo/quench-demo.html in a browser with WebGPU
+```
+
+The page needs HTTP (`file://` cannot fetch the `.wasm` and `.data` files) and a secure context for WebGPU, which
+`127.0.0.1` and `localhost` are. Program arguments come from the query string, separated by `&`:
+`quench-demo.html?--section&weather`, `hello.html?--frame-size&1280x720`.
+
+- The window is the page's canvas and fills the page: the app gives the canvas a CSS size of the whole page before
+  it creates the window (offscreen: the `--window` size; the scenario command `resize` sets it too), and SDL takes
+  the size from the page (SDL's fill-document window is not used: under a page zoom SDL measured the canvas as
+  0 x 0). The frame size follows the page and its device pixel ratio.
+- `quench::fs` reads the preloaded assets; the user directory is in memory (SDL's `/libsdl/<organization>/<name>/`,
+  or what `--user-dir` names) and is empty again after a reload.
+- Sound starts with the first click, key or touch (the browser's rule). `--audio-device null` does not exist there;
+  `--no-audio` does.
+- The page keeps the program's log lines and the browser's warnings and errors in `quenchLog` (an array of strings,
+  at most 20000) and sets `window.quenchExit` to the exit code when the program ends; `Module.FS` is exported, so
+  a script on the page can read files the program wrote.
+- No HDR output (the backend's surface is SDR only), GPU timing or ray tracing there; `--gpu-driver` has no meaning;
+  `--hot-reload` and the relaunch were not tried.
+
+**Scripted runs.** `--script` takes a URL when the path is not in the virtual file system, and the files it
+includes are read the same way; `--offscreen` (not the default in a browser) keeps the `--window` size instead of filling the
+page, renders offscreen frames and steps them from the browser's timers instead of the display's refresh, so a
+hidden or headless page runs at full speed. Captures go to the user directory. A capture or a wait in a frame *on
+the screen* costs that frame its swapchain texture ([Platforms](platforms.md#web-webassembly)): script captures
+offscreen.
+
+`tools/web_check.mjs` runs a page this way without a window: it serves the build directory (and the repository at
+`/repo/`) on `127.0.0.1`, starts headless Google Chrome (`QUENCH_CHROME` or `--chrome` names another Chromium)
+with a temporary profile, drives it through the DevTools protocol, prints the log, saves it and the PNG files of
+the user directory to `--out`, and with `--golden DIR --compare <quench_image_compare>` compares each capture with
+the golden image of the same name. It exits with 1 when the program's exit code is not 0, a WebGPU error was
+logged or a comparison failed. `--onscreen` leaves `--offscreen` out: the page runs as one a person opened (the
+canvas fills the page, frames at the display's rate, the sound output opened), still in headless Chrome, until its
+`--quit-after`. A game runs it on its own build: `--build build/web --repo .` (the game's directory at `/repo/`).
+Node.js 22 or newer.
+
+```sh
+node tools/web_check.mjs --page examples/demo/quench-demo.html --out build/web/check/demo \
+    --golden tests/golden/metal/apple-m4-pro --compare build/release/tests/quench_image_compare \
+    -- --window 960x540 --hdr-headroom 4 --script /repo/examples/demo/scenarios/batch.txt
+tools/check.sh step web   # host-tools, the web build, hello's check scenario, the demo's batch and a few seconds
+                          # of each page with --onscreen (about 2 minutes after the first build); not in `full`
+```
+
+The web captures are compared with the Mac's Metal golden images (there are no web ones): the demo's 41 are within
+the thresholds on Chrome 157 on the Mac. `hello`'s capture is not compared: its text names the backend.
+
+**Publishing.** A web build is static files: the `.html`, `.js`, `.wasm` and, with assets, `.data` of a game, served
+over HTTPS by any host. `tools/publish_web.sh` does it for the engine's demo and sample: it assembles `dist/web`
+(`index.html` is the demo's page, `hello.html` the sample, the licences, `version.txt`), checks it in headless Chrome
+(the demo's smoke scenario with `--onscreen`) and, with `--push` and a clean working tree, commits it to the
+`gh-pages` branch that GitHub Pages serves (<https://m-brtn.github.io/Quench/>; a normal push, so the branch keeps
+every publication). Every engine release is deployed this way from its tagged commit ([AGENTS.md](../AGENTS.md),
+"Versioning and releases"). A game's site needs the same files and the licence texts of what it ships
+(`THIRD_PARTY_LICENSES`, Emscripten's `LICENSE` and those in its `system/lib`).

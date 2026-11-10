@@ -868,6 +868,71 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
+Emdawnwebgpu v20260423.175430 (https://dawn.googlesource.com/dawn, revision 31e25af254ab572c77054edec4946d2244e184dd)
+---------------------------------------------------------------------------------------------------------------------
+
+Only in web builds (the web preset): Dawn's implementation of <webgpu/webgpu.h> over the browser's WebGPU, the port
+that Emscripten 6.0.13 downloads for --use-port=emdawnwebgpu. Its webgpu.cpp and library_webgpu.js are under
+Emscripten's licence (MIT, or the University of Illinois/NCSA Open Source License); the MIT text:
+
+Copyright (c) 2010-2014 Emscripten authors, see AUTHORS file.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+Its header webgpu.h (https://github.com/webgpu-native/webgpu-headers):
+
+BSD 3-Clause License
+
+Copyright (c) 2019, "WebGPU native" developers
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+A web build also contains Emscripten's own runtime (its JavaScript runtime under the licence above; musl libc, MIT;
+libc++, libc++abi and compiler-rt, Apache-2.0 with LLVM exceptions): a package of a web build ships Emscripten's
+LICENSE and the licences in its system/lib next to this file. The site that tools/publish_web.sh assembles (the web
+demo on GitHub Pages) has them in licenses/emscripten/.
+
+
 Build-time tools (not linked into programs, not shipped)
 ========================================================
 
@@ -884,6 +949,11 @@ quench_shaderc runs on the build machine only and links these; their licence tex
   SPIRV-Headers (MIT), SPIRV-Tools (Apache-2.0) and DirectX-Headers (MIT) at the commits that tag records
   (cmake/BuildDxc.cmake); it compiles only the shader entries that use ray queries. Both licence files are kept
   next to the built dxc in the tool cache.
+
+tint, Dawn's shader compiler (web builds only: it translates the shaders' SPIR-V into WGSL; cmake/QuenchTint.cmake
+and cmake/BuildTint.cmake pin Dawn's commit 66f899221d41dbc6d6257350c4b654a9b375c7f2 and the abseil-cpp,
+SPIRV-Headers and SPIRV-Tools commits its DEPS names), built from source into the tool cache: BSD-3-Clause (Dawn's
+LICENSE), abseil-cpp and SPIRV-Tools Apache-2.0, SPIRV-Headers MIT.
 
 quench_cook, the asset cooker (cmake/CookToolchain.cmake pins fastgltf, stb and astc-encoder; fastgltf pins and
 hash-checks the simdjson and simdutf files it downloads), links:

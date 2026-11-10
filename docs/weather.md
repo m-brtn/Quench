@@ -257,8 +257,8 @@ off with a line; the path tracer's frame has no rain (a line). Every backend has
    slants it), 200 m deep from 100 m above the camera, on its texel grid, without the cascades' slope bias (which
    sank its depth by decimetres under slanted rain and hid the splashes under the ground). A point is under cover
    where the highest surface along the rain is more than 0.4 m above it. **The cover over the camera** (`RenderStats::rainCover`,
-   what the rain's sound takes): the texels within 0.75 m of the camera in last frame's map, copied in a command
-   buffer of their own and read a few frames later without waiting; the share whose surface is more than 0.5 m
+   what the rain's sound takes): the texels within 0.75 m of the camera in the frame's map, copied in the frame's
+   command buffer and read a few frames later without waiting (`CommandBuffer::completionFence`); the share whose surface is more than 0.5 m
    above the camera.
 2. **The weather maps** (surface sampler 14): one Rgba16Float texture of 512 x 1040 texels in three regions
    (`QUENCH_WEATHER_MAPS_*` in `quench/SceneUniforms.h`): the clouds' shadow (rows 0 to 511), the occlusion map (512

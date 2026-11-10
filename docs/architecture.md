@@ -41,7 +41,7 @@ src/<module>/              sources and internal headers, per module:
               terrain, ray tracing)
   app/        SDL main callbacks, window, input actions, ImGui, game interface, common flags, scenario runner
 shaders/quench/       engine shader library (.hlsli), included by game shaders
-tools/shaderc/        quench_shaderc: HLSL -> SPIR-V -> MSL (later WGSL), build-time host tool
+tools/shaderc/        quench_shaderc: HLSL -> SPIR-V -> MSL, DXIL, WGSL (through Tint), build-time host tool
 tools/cook/           quench_cook: asset pipeline (glTF, PNG, JPEG, KTX2 -> cooked formats)
 tools/imagecompare/   quench_image_compare: capture against golden image (mean difference, share of pixels over a
                       threshold, difference image)
@@ -76,8 +76,8 @@ docs/releases/        release notes per version
 | `quench_main` | `main` through the SDL main callbacks; linked by `quench_add_game()` | app | no |
 | `quench_cook` (host tool) | glTF / GLB, PNG, JPEG, KTX2 to cooked files (also skins, skeletons, clips and navmeshes), sounds checked or converted to WAV; `quench_cook_assets()` | assets, audio, animation, navigation, fastgltf, stb_image, bc7enc, meshoptimizer | yes (not in games) |
 
-The `QUENCH_HEADLESS` option (the `headless` preset, forced on for Emscripten) builds only the headless targets and
-does not fetch SDL.
+The `QUENCH_HEADLESS` option (the `headless` preset, forced on for Emscripten unless `QUENCH_WEB` is set, the `web`
+preset) builds only the headless targets and does not fetch SDL.
 
 Headless targets build and test without SDL video or a GPU. This is what lets the games keep their headless test
 presets and what makes the Node.js web check possible.
@@ -95,10 +95,12 @@ All graphics goes through `quench::gpu`: engine-owned handles for buffers, textu
 descriptor structs, and command recording. Backends:
 
 - **SDL GPU** (first, portable, the default off Apple platforms): Metal on Apple platforms, Vulkan and D3D12
-  elsewhere; WebGPU only if SDL ships it.
+  elsewhere. It has no WebGPU driver (an open pull request, libsdl-org/SDL#16020).
 - **Metal** (native, since stage 9; Apple platforms, their default since 2026-11-07): for what SDL GPU does not
   offer. Built and at parity with SDL GPU's Metal driver (see "Native Metal backend"), with GPU timestamps per pass,
   acceleration structures and ray queries, and MetalFX.
+- **WebGPU** (native, since 2026-11-10, experimental; web builds, their only backend): the named need is the
+  browser, which SDL GPU cannot reach (see "WebGPU backend").
 
 Why a native backend at all: SDL GPU deliberately targets a roughly ten-year-old common feature set. In reply to a
 request for a ray tracing API, its maintainers stated that features missing from the API were omitted intentionally
@@ -228,11 +230,45 @@ Stage 9, first half (2026-11-06): `src/gpu/metal/` (`MetalDevice.mm`: device, re
   `demo_animation_metal_native` and `demo_hdr_on_metal_native` (wall time); the other sections were run by hand. iOS
   Simulator: see [Platforms](platforms.md).
 
+### WebGPU backend
+
+`src/gpu/webgpu/` (about 2500 lines, C++ on `<webgpu/webgpu.h>` from Emscripten's `emdawnwebgpu` port), behind the
+same `gpu::Backend` interface, for web builds only (`gpu::Backend::WebGpu`, `--gpu-backend webgpu`). Experimental:
+run in Chromium on the Mac only ([Platforms](platforms.md#web-webassembly)).
+
+- **Start.** Adapter and device are requested from the browser and waited for with Asyncify (`emscripten_sleep`),
+  before the first frame. The surface is the page's canvas (`#canvas`); SDR and vsync only, and the browser
+  presents at the end of the frame callback (no present call).
+- **Shaders and bindings.** WGSL from the shader build ("Shaders" below). SDL GPU's slots map to bind groups by
+  rule: a texture slot `n` is binding `2n` and its sampler `2n + 1`, read-only storage buffers follow them, uniform
+  slot `n` is binding `n`; groups 0 (resources) and 1 (uniforms) for the vertex stage, 2 and 3 for the fragment
+  stage; compute has its read-only resources in 0, its read-write buffers in 1 and its uniforms in 2.
+- **Layouts need what a shader cannot say.** WebGPU's bind group layout wants a sample type per texture, and a
+  texture that cannot be filtered (depth, and 32-bit float without `float32-filterable`) must be declared
+  unfilterable with a non-filtering sampler. The backend learns this from the textures bound at a draw: a pipeline
+  has a variant per mask of unfilterable texture slots, created on first use, and such a slot gets a nearest
+  sampler. Bind group layouts and bind groups are cached.
+- **Uniforms** are copied into 256 KiB pages bound with dynamic offsets. **Uploads** go through staging buffers
+  (rows at a 256-byte pitch, sizes padded to 4 bytes).
+- **Downloads and fences.** The browser maps a buffer only between frames, and a wait inside a frame expires the
+  canvas's texture. A download's staging buffer is therefore mapped when its command buffer is submitted, the
+  callback copies the rows, and the submission's fence signals when the queue's work is done and every download
+  of it was read; `map()` after the fence does not wait. `Device::download` and waits before the fence still do
+  (Asyncify): fine offscreen, a lost frame on the screen.
+- **Lifetimes.** Released textures and buffers are destroyed after the open command buffers have closed.
+- **Own blit and mipmaps** (WGSL in the backend), indirect draws as one call per command, MSAA 1 or 4.
+- **Not there:** ray tracing, GPU timestamps, HDR swapchain compositions, storage textures, line fill mode, 3D blit
+  sources, blits into depth textures, downloads of the swapchain texture.
+- **Verified** (2026-11-10, Chrome 157 on the Mac, headless, adapter `apple metal-3`): no GPU unit tests run on it
+  (the test executables are not built for the browser); it is checked through the apps: `hello`'s check scenario
+  and the demo's whole batch, 757 checks, with 41 captures inside the golden image thresholds of the Metal ones.
+
 ### GPU timestamps per pass
 
 `Caps::gpuPassTiming` (native Metal backend where the device samples timestamps at stage boundaries, which is how
 Apple GPUs sample them; SDL GPU reports false). `CommandBuffer::beginTiming(name)` / `endTiming()` around passes,
-outside passes, nesting allowed; after `submitWithFence`, `Device::gpuTimings(fence)` returns per range its GPU busy
+outside passes, nesting allowed; after `submitWithFence` (or with `completionFence`, taken before someone else
+submits the command buffer), `Device::gpuTimings(fence)` returns per range its GPU busy
 time, its start and end within the command buffer and its nesting depth (`gpu::GpuTiming`). The backend attaches a
 counter sample buffer (512 samples per command buffer, pooled) to every encoder that starts inside a range: start and
 end of the vertex and fragment stages of a render pass, start and end of a compute or blit pass. A range's busy time
@@ -482,7 +518,10 @@ shader interface) and uniform structs defined once in headers read by both C++ a
 
 Planned changes:
 
-- WGSL output for the web (from SPIR-V through Tint or naga) once SDL has a WebGPU backend.
+- WGSL output for the web: done (2026-11-10, with the `web` preset). `quench_shaderc --wgsl-spirv` writes an
+  entry's SPIR-V with the WebGPU backend's bindings and Tint translates it (`--allow-non-uniform-derivatives`: the
+  HLSL samples inside branches as the other targets allow); the WGSL is embedded in the shader table like the
+  other formats (`gpu::ShaderBlob::wgsl`). Ray query entries have none.
 - Ray queries: done (below).
 
 Ray queries (stage 9): entries marked `<entry>:<stage>:rayquery` in `quench_add_shaders` are compiled by DXC
@@ -547,7 +586,7 @@ they are deterministic, except inside a scenario's `perf_begin` .. `perf_end` re
 ## Files
 
 All runtime file access goes through `quench::fs`: read-only assets (app bundle on Apple platforms, APK on Android,
-virtual file system on the web) and a writable user directory (`SDL_GetPrefPath`; IndexedDB-backed on the web).
+virtual file system on the web) and a writable user directory (`SDL_GetPrefPath`; on the web in memory so far, IndexedDB-backed later).
 TrailForge has 18 and Ashfall 5 uses of `std::ifstream`, `std::ofstream` or `fopen` that move to it when their code
 moves to the engine.
 
@@ -613,8 +652,10 @@ default) that does not open a device. Something pulls the mix through `AudioSyst
 `quench_audio_device` (miniaudio's playback API; Core Audio on Apple platforms) or an offline loop on the main thread
 (`mixOffline`: tests, `--audio-capture`, `--no-audio`, a missing device). Sounds are an asset type of the
 `AssetManager`, decoded on jobs; music is streamed through `quench::fs` readers and decoded on jobs ahead of the
-mix. The app owns one `AudioSystem` (`App::audio()`) and the device, and pauses the device in the background. The
-browser's audio output (Web Audio) is not built: the mixer is checked under Node.js only.
+mix. The app owns one `AudioSystem` (`App::audio()`) and the device, and pauses the device in the background. In
+a browser build the device is miniaudio's Web Audio backend (a `ScriptProcessorNode`: the mix runs on the main
+thread there, and starts with the first user gesture); nobody has listened to it. The mixer's tests run under
+Node.js only.
 
 ## Animation
 

@@ -6,7 +6,12 @@
 
 <p align="center">
   A game engine designed for making games entirely with AI coding agents.<br>
-  Version 0.12.1 · macOS and iOS · MIT
+  Version 0.13.0 · macOS and iOS · MIT
+</p>
+
+<p align="center">
+  <a href="https://m-brtn.github.io/Quench/"><b>Try the demo in your browser</b></a><br>
+  Experimental: needs WebGPU; run in Chrome and Safari on a Mac so far.
 </p>
 
 ## Make your game with AI agents
@@ -65,7 +70,9 @@ flower-lined paths, discover old ruins and glide above the clouds, with animated
 - **Profiling:** Tracy zones on the CPU and the GPU for the engine and your game, recorded from a scripted run into
   a table of where the frame's time goes.
 - **Platforms:** macOS and iOS, where a game can lower its frame rate and resolution as the phone heats up; an early
-  Windows build on Direct3D 12, not yet tried on a Windows PC; Linux, Android and the web are planned.
+  Windows build on Direct3D 12, not yet tried on a Windows PC; an experimental browser build on WebGPU
+  ([the demo on the web](https://m-brtn.github.io/Quench/)), tried in Chrome and Safari on a Mac only; Linux and
+  Android are planned.
 
 ## Getting started
 

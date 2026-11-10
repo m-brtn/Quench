@@ -379,8 +379,12 @@ the sines it was encoded from.
 - **iPhone**: built (`ios-device-release`); not run in this stage. On the iPhone 17 the user listened to the demo's
   weather sounds (2026-11-08: fine). The silent switch, interruptions and route changes need the device and the
   user.
-- **Web**: the mixer, decoders and analysis run under Node.js (`wasm-node`, single-threaded, without device I/O);
-  browser output (Web Audio, an `AudioWorklet`, and starting audio only after a user gesture) is not built.
+- **Web**: the mixer, decoders and analysis run under Node.js (`wasm-node`, single-threaded, without device I/O).
+  In a browser build (the `web` preset, 2026-11-10, experimental) the device is miniaudio's Web Audio backend: a
+  `ScriptProcessorNode`, so the mix runs on the page's main thread (not an `AudioWorklet`, which needs threads), and
+  the browser starts it only after a user gesture. It opens in Chrome on the Mac (headless: 48000 Hz, periods of
+  512 frames); nobody has listened to it, and underruns under load were not measured. No null device there:
+  `--no-audio`, or an offscreen run, mixes offline.
 
 ## Limitations
 
