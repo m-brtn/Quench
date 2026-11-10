@@ -307,13 +307,15 @@ FetchContent_Declare(SDL3
     URL https://github.com/libsdl-org/SDL/archive/829a65d769d935c4852f8159e964312c0957260a.tar.gz
     URL_HASH SHA256=48e15cf1a6928453d77afa955d1fdfbbca9169e2bc3d76d111acb9b8bb076d66
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    # iOS Simulator only (TARGET_OS_SIMULATOR): accept the Simulator's Metal device in SDL GPU. Vulkan: 3D textures
-    # are 2D-array compatible only as color targets (MoltenVK's portability subset has no 2D views of 3D images).
-    # The shader blit (Direct3D 12's mipmaps) and render passes: a level at least 1 x 1 (the last levels of a
-    # non-square texture).
+    # iOS Simulator only (TARGET_OS_SIMULATOR): accept the Simulator's Metal device in SDL GPU. Vulkan: 3D
+    # textures are 2D-array compatible only as color targets (MoltenVK's portability subset has no 2D views of 3D
+    # images). The shader blit (Direct3D 12's mipmaps) and render passes: a level at least 1 x 1 (the last levels
+    # of a non-square texture). Vulkan: no defragmentation while another command buffer is open (it moved resources
+    # that one had bound).
     PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlIosSimulator.cmake
           COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlVulkan3d.cmake
           COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlLevelSize.cmake
+          COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_LIST_DIR}/patches/SdlVulkanDefrag.cmake
     SYSTEM
     EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(SDL3)

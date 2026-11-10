@@ -342,6 +342,11 @@ public:
     // Also returns a fence to wait for completion or read the GPU time (Device::gpuMilliseconds).
     Result<Fence> submitWithFence();
     void cancel();
+    // A fence of this command buffer before its submit, e.g. for a download recorded into a frame's command buffer,
+    // which the app submits: signalled once the command buffer, submitted by submit or submitWithFence, has
+    // completed (the same fence as submitWithFence's). Not signalled before the submit (waiting then is a
+    // programming error), and never after a cancel.
+    Fence completionFence();
 
 private:
     friend class Device;
@@ -349,11 +354,13 @@ private:
     friend class CopyPass;
     friend class ComputePass;
     friend class AccelerationStructurePass;
+    void dropCompletion();
     detail::DeviceImpl* m_device = nullptr;
     void* m_native = nullptr;
     bool m_passOpen = false;
     bool m_swapchainAcquired = false;
-    bool m_timed = false; // beginTiming records ranges
+    bool m_timed = false;         // beginTiming records ranges
+    void* m_completion = nullptr; // completionFence's detail::SharedFence, one handle of it until the submit
 };
 
 } // namespace quench::gpu

@@ -408,6 +408,73 @@ QUENCH_TEST(gpu_timing) {
     }
 }
 
+// A download recorded into a command buffer that someone else submits (the app's frame): its completion fence,
+// taken before the submit, signals once submit or submitWithFence has run it, and never after a cancel.
+QUENCH_TEST(completion_fence) {
+    QUENCH_GPU_DEVICE(device);
+    const std::int64_t liveBefore = device.liveResources();
+    Result<Texture> target = device.createTexture({.usage = TextureUsage::ColorTarget, .width = 4, .height = 4});
+    Result<TransferBuffer> transfer =
+        device.createTransferBuffer({.direction = TransferDirection::Download, .size = 4 * 4 * 4});
+    REQUIRE(target && transfer, "creation failed");
+    const auto record = [&](CommandBuffer& commands, Color clear) {
+        commands.beginRenderPass(ColorTarget{.texture = *target, .clear = clear}).end();
+        CopyPass copy = commands.beginCopyPass();
+        copy.download({.texture = *target}, *transfer, 0);
+    };
+    const auto red = [&]() {
+        const std::span<std::byte> data = transfer->map(false);
+        const std::uint8_t first = data.empty() ? 0 : std::uint8_t(data[0]);
+        transfer->unmap();
+        return first;
+    };
+
+    {
+        CommandBuffer commands = device.acquireCommandBuffer();
+        REQUIRE(commands, "no command buffer");
+        record(commands, Color{1, 0, 0, 1});
+        Fence fence = commands.completionFence();
+        CHECK(fence && !device.isSignaled(fence), "signalled before the submit");
+        Result<void> submitted = commands.submit();
+        REQUIRE(submitted, "submit: %s", submitted.error().c_str());
+        device.wait(fence);
+        CHECK(device.isSignaled(fence), "not signalled after wait");
+        CHECK(red() == 255, "red %u after submit", unsigned(red()));
+    }
+    {
+        CommandBuffer commands = device.acquireCommandBuffer();
+        record(commands, Color{0.5f, 0, 0, 1});
+        Fence early = commands.completionFence();
+        Result<Fence> late = commands.submitWithFence();
+        REQUIRE(late, "submit: %s", late.error().c_str());
+        device.wait(early);
+        CHECK(device.isSignaled(early) && device.isSignaled(*late), "the two handles disagree");
+        CHECK(red() > 100 && red() < 160, "red %u after submitWithFence", unsigned(red()));
+        device.gpuMilliseconds(early);
+    }
+    {
+        CommandBuffer commands = device.acquireCommandBuffer();
+        record(commands, Color{0, 0, 0, 1});
+        Fence fence = commands.completionFence();
+        commands.cancel();
+        device.wait(fence);
+        CHECK(!device.isSignaled(fence), "signalled after a cancel");
+    }
+    {
+        Fence fence;
+        {
+            CommandBuffer commands = device.acquireCommandBuffer();
+            record(commands, Color{0, 0, 0, 1});
+            fence = commands.completionFence();
+        }
+        CHECK(!device.isSignaled(fence), "signalled after the command buffer was dropped");
+    }
+    *target = {};
+    *transfer = {};
+    CHECK(device.liveResources() == liveBefore, "%lld live, %lld before",
+          static_cast<long long>(device.liveResources()), static_cast<long long>(liveBefore));
+}
+
 QUENCH_TEST(gpu_time_needs_both_times) {
     using gpu::detail::commandBufferMilliseconds;
     CHECK(!commandBufferMilliseconds(0.0, 627037.98), "a start of 0 (the host's uptime as the GPU time)");

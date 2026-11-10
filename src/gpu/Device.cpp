@@ -41,9 +41,17 @@ void setNativeDeviceFailsForTesting(bool fails) { g_nativeDeviceFails = fails; }
 DeviceImpl::DeviceImpl() = default;
 DeviceImpl::~DeviceImpl() = default;
 
+void releaseSharedFence(DeviceImpl* device, SharedFence* fence) noexcept {
+    if (fence->handles.fetch_sub(1, std::memory_order_acq_rel) != 1) return;
+    if (void* native = fence->native.load(std::memory_order_acquire)) device->release(Kind::Fence, native);
+    delete fence;
+}
+
 void release(DeviceImpl* device, Kind kind, void* native) noexcept {
     if (kind == Kind::GraphicsPipeline || kind == Kind::ComputePipeline)
         removePipeline(*device, kind, native);
+    else if (kind == Kind::Fence)
+        releaseSharedFence(device, static_cast<SharedFence*>(native));
     else
         device->release(kind, native);
     device->live.fetch_sub(1, std::memory_order_relaxed);
@@ -473,26 +481,37 @@ TextureFormat Device::swapchainFormat(SDL_Window* window) const { return m_impl-
 
 // ------------------------------------------------------------------ fences
 
+namespace {
+// The backend's fence behind a Fence: null before its command buffer is submitted and after a cancel.
+void* backendFence(const Fence& fence) {
+    return static_cast<detail::SharedFence*>(Access::native(fence))->native.load(std::memory_order_acquire);
+}
+} // namespace
+
 bool Device::isSignaled(const Fence& fence) const {
     QUENCH_ASSERT(fence, "isSignaled on an empty fence");
-    return m_impl->isSignaled(Access::native(fence));
+    void* native = backendFence(fence);
+    return native && m_impl->isSignaled(native);
 }
 
 void Device::wait(const Fence& fence) const {
     QUENCH_ASSERT(fence, "wait on an empty fence");
-    m_impl->wait(Access::native(fence));
+    void* native = backendFence(fence);
+    QUENCH_ASSERT(native || static_cast<detail::SharedFence*>(Access::native(fence))->cancelled,
+                  "wait on the completion fence of a command buffer that was not submitted");
+    if (native) m_impl->wait(native);
 }
 
 std::optional<double> Device::gpuMilliseconds(const Fence& fence) const {
     QUENCH_ASSERT(fence, "gpuMilliseconds on an empty fence");
     if (!m_impl->caps.gpuTiming || !isSignaled(fence)) return std::nullopt;
-    return m_impl->gpuMilliseconds(Access::native(fence));
+    return m_impl->gpuMilliseconds(backendFence(fence));
 }
 
 std::vector<GpuTiming> Device::gpuTimings(const Fence& fence) const {
     QUENCH_ASSERT(fence, "gpuTimings on an empty fence");
     if (!m_impl->caps.gpuPassTiming || !isSignaled(fence)) return {};
-    return m_impl->gpuTimings(Access::native(fence));
+    return m_impl->gpuTimings(backendFence(fence));
 }
 
 void Device::setPassTiming(bool enabled) { m_impl->passTiming = enabled; }

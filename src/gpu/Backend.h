@@ -42,6 +42,18 @@ struct PipelineSlot {
     std::string name;
 };
 
+// What a Fence holds: the backend's fence, shared by the handles of one command buffer's submitWithFence and
+// completionFence, and released with the last of them. Empty until the command buffer is submitted (and for good when
+// it is cancelled); the command buffer holds one handle until then.
+struct SharedFence {
+    std::atomic<void*> native{nullptr};
+    std::atomic<int> handles{1};
+    std::atomic<bool> cancelled{false};
+};
+struct DeviceImpl;
+// Drops one handle; the last one releases the backend's fence (src/gpu/Device.cpp).
+void releaseSharedFence(DeviceImpl* device, SharedFence* fence) noexcept;
+
 class ShaderReloader;
 
 struct DeviceImpl {

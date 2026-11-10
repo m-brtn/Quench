@@ -110,8 +110,8 @@ private:
     gpu::TransferBuffer m_gridTransfer;
     std::uint64_t m_gridVersion = ~0ull;
     glm::vec2 m_gridOrigin{0.0f};
-    // The cover over the camera: a few texels of last frame's occlusion map around the camera, copied in a command
-    // buffer of its own and read once its fence is signalled.
+    // The cover over the camera: a few texels of the occlusion map around the camera, copied in the frame's command
+    // buffer and read once its completion fence is signalled.
     struct Readback {
         gpu::TransferBuffer buffer;
         gpu::Fence fence;
@@ -123,7 +123,6 @@ private:
     std::uint64_t m_readbackSerial = 0, m_readSerial = 0;
     glm::uvec2 m_lastCameraTexel{0u};
     float m_lastCameraDepth = 0.0f;
-    bool m_lastMapValid = false;
     float m_cover = -1.0f;
     std::uint64_t m_frame = 0;
 
