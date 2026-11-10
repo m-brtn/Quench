@@ -1,0 +1,45 @@
+# Smoke check (ctest `smoke`): the models load, the navmesh is built, a click sends the walker to a cell and to the
+# door, the cell is delivered, and the autopilot brings the first pod online. App time advances 1/120 s per frame in
+# scripted runs.
+# The window is 1280x720 points in ctest: in a smaller one the panel covers the door the script clicks.
+#   outpost --window 1280x720 --script scenarios/smoke.txt
+
+until models_ready == 1 10
+until nav_ready == 1 10
+until cells == 5 5
+expect carried == 0
+expect ray_shadows == 0
+
+# A click on the pad: the walker walks there.
+mark walker_x
+click @pad
+until d_walker_x < -6 8
+expect walker_speed > 1
+
+# The keys steer it, relative to the camera: W is away from the camera (-x and -z at the start's azimuth).
+until walker_speed < 0.2 6
+mark walker_z
+down W
+wait 0.8
+up W
+expect d_walker_z < -1
+
+# A click on the nearest cell picks it up; a click at the door delivers it.
+click @cell
+until carried == 1 20
+click @door
+until delivered == 1 20
+expect carried == 0
+expect walker_y > 0.4
+
+# The autopilot gathers by itself: the first pod comes online after three cells.
+autopilot on
+until pods_online >= 1 60
+expect delivered >= 3
+
+# The blue hour: the sun is down and the lamps take over.
+sun -7
+wait 0.2
+expect night > 0.9
+capture smoke.png
+quit
