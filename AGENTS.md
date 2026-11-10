@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-10, version 0.13.2): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-10, version 0.14.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -218,6 +218,13 @@ ambient occlusion over frames (its blotches crawled on evenly lit surfaces) and 
 stop casting shadows (`Scene::setCastsShadows`, `SceneAssets::setCastsShadows`: an outline shell shadowed its own
 model); released without the full gates (user decision, 2026-11-10: the render and demo tests of the Mac's three
 backends only; `docs/releases/v0.13.2.md`), seen by nobody in motion on a screen at the time of the release.
+Version 0.14.0 (2026-11-10) is the weather's look and sound described above (the rain's sound, the light under the
+clouds, the rings, the clouds' shapes, the clouds in front of the scene, no rain above the clouds), released
+without any gate (the user's decision; `docs/releases/v0.14.0.md`): the golden captures of the demo's Weather
+section (the weather, rain, snow and wind parts, 14 images per backend) are stale until they are renewed, so those
+capture checks and `tools/check.sh step web` fail on them (in headless Chrome on the Mac the demo's batch itself
+passed, 762 passed, 0 failed, no WebGPU error, and the 14 captures match the same build's captures on SDL GPU's
+Metal driver).
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the
