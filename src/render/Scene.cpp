@@ -428,6 +428,11 @@ void Scene::setVisible(InstanceId instance, bool visible) {
         entry->desc.visible = visible;
 }
 
+void Scene::setCastsShadows(InstanceId instance, bool castsShadows) {
+    if (InstanceEntry* entry = lookup(m_impl->instances, instance, "setCastsShadows: stale or null instance"))
+        entry->desc.castsShadows = castsShadows;
+}
+
 void Scene::setInstanceMaterial(InstanceId instance, MaterialId material) {
     InstanceEntry* entry = lookup(m_impl->instances, instance, "setInstanceMaterial: stale or null instance");
     MaterialEntry* next = lookup(m_impl->materials, material, "setInstanceMaterial: stale or null material");

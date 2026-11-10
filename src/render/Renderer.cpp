@@ -79,6 +79,7 @@ constexpr float kGtaoSteps = 4.0f;
 constexpr float kGtaoRadiusMultiplier = 1.457f;
 constexpr float kGtaoMaxRadius = 0.2f;
 constexpr float kGtaoBlurTolerance = 0.02f;
+constexpr float kGtaoHistory = 16.0f; // frames the term is accumulated over
 // Screen-space reflections (screenspace.hlsl): march steps, the first step (relative to the view depth), the growth
 // of each next step (48 steps reach about 4.8 view depths), the surfaces' thickness and the resolve's depth tolerance
 // (relative to the view depth).
@@ -2287,6 +2288,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
     const bool screenHistory = screenReflections && screenTargets; // this frame's image is kept for the next
     const bool screenReflect = screenHistory && screenSpace.historyValid() && !cut;
     if (screenAo) rayBits |= 2u;
+    if (!screenAo) screenSpace.dropOcclusionHistory();
     if (screenReflect) {
         rayBits |= 64u;
         fu.rayLighting = glm::vec4(std::clamp(settings.reflectionRoughness, 0.05f, 1.0f), 0.0f, 0.0f, 0.0f);
@@ -2515,23 +2517,30 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         };
         const glm::vec3 rayOrigin = rayAt(0.0f, 0.0f);
         const float noiseFrame = taa ? float(sequenceIndex % 64) : 0.0f;
+        // The occlusion's term is accumulated over frames, so its noise changes every frame, with or without TAA.
+        const glm::mat4 stableRelativeViewProj = proj * glm::mat4(glm::mat3(view.view));
+        if (cut) screenSpace.dropOcclusionHistory();
+        const bool occlusionHistory = screenAo && screenSpace.occlusionHistoryValid();
         const shader::ScreenSpaceUniforms su{
             glm::vec4(float(std::clamp(settings.occlusionRays, 1, 8)), kGtaoSteps,
                       std::max(settings.occlusionRadius, 0.01f) * kGtaoRadiusMultiplier,
                       std::clamp(settings.occlusionStrength, 0.0f, 1.0f)),
-            glm::vec4(noiseFrame, kGtaoMaxRadius * float(rh), kGtaoBlurTolerance, 0.0f),
+            glm::vec4(float(screenSpace.occlusionFrame() % 64), kGtaoMaxRadius * float(rh), kGtaoBlurTolerance,
+                      occlusionHistory ? kGtaoHistory : 0.0f),
             glm::vec4(rayOrigin, 0.0f),
             glm::vec4((rayAt(float(rw), 0.0f) - rayOrigin) / float(rw), 0.0f),
             glm::vec4((rayAt(0.0f, float(rh)) - rayOrigin) / float(rh), 0.0f),
             glm::vec4(kSsrSteps, kSsrFirstStep, kSsrThickness, std::clamp(settings.reflectionRoughness, 0.05f, 1.0f)),
             glm::vec4(noiseFrame, kSsrResolveTolerance, kSsrGrowth, 0.0f),
             relativeViewProj,
-            screenReflect ? screenSpace.historyViewProj(cameraPos) : relativeViewProj};
+            screenReflect ? screenSpace.historyViewProj(cameraPos) : relativeViewProj,
+            stableRelativeViewProj,
+            occlusionHistory ? screenSpace.occlusionHistoryViewProj(cameraPos) : stableRelativeViewProj};
         const gpu::Texture& screenDepth = tracedPrepass ? rayTracing.depth() : screenSpace.depth();
         if (screenAo) {
             commands.beginTiming("gtao");
             screenSpace.occlusion(commands, screenDepth, tracedPrepass ? rayTracing.mask() : screenSpace.mask(),
-                                  tracedPrepass && rayShadows, su);
+                                  tracedPrepass && rayShadows, su, stableRelativeViewProj, cameraPos);
             commands.endTiming();
         }
         if (screenReflect) {

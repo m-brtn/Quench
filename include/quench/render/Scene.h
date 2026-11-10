@@ -256,6 +256,9 @@ public:
     // The previous transform is kept for motion vectors (TAA); teleport: no motion from the old place (a respawn).
     void setTransform(InstanceId instance, const glm::mat4& transform, bool teleport = false);
     void setVisible(InstanceId instance, bool visible);
+    // InstanceDesc::castsShadows: false takes the instance out of the shadow maps, the traced shadows and occlusion
+    // and the rain's occluders (a shell around another instance, such as an inverted-hull outline, shadows it).
+    void setCastsShadows(InstanceId instance, bool castsShadows);
     void setInstanceMaterial(InstanceId instance, MaterialId material);
     void setInstanceColor(InstanceId instance, const glm::vec4& color, const glm::vec4& custom = glm::vec4(0.0f));
     // An instance of a skinned mesh: one matrix per joint of the mesh, each taking a bind-pose vertex to its posed

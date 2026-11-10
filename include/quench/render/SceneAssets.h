@@ -168,6 +168,8 @@ public:
     ModelInstanceId addModel(assets::AssetRef<ModelAsset> model, const glm::mat4& transform, bool visible = true);
     void setTransform(ModelInstanceId instance, const glm::mat4& transform, bool teleport = false);
     void setVisible(ModelInstanceId instance, bool visible);
+    // Whether the model's parts cast shadows (InstanceDesc::castsShadows; they do until set otherwise).
+    void setCastsShadows(ModelInstanceId instance, bool castsShadows);
     // The joint matrices of one of the model's skins (ModelAsset::skins(), Scene::setJointPalette) for the parts that
     // use it; kept and applied again when the parts are rebuilt (loaded, reloaded) with a skin of as many joints.
     void setJointPalette(ModelInstanceId instance, int skin, std::span<const glm::mat4> palette, bool teleport = false);

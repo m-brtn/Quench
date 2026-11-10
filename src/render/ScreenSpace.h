@@ -16,6 +16,7 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 
 namespace quench::render::detail {
@@ -46,10 +47,21 @@ public:
     const gpu::Texture& reflections() const { return m_reflections; }
     const gpu::Texture& localShadows() const { return m_localShadows; }
 
-    // GTAO from `depth` (at half resolution) into alpha of `mask` (an Rgba8Unorm target of the render size, blurred
-    // and upsampled): rgb 1, or kept with keepRgb (the traced sun's visibility).
+    // GTAO from `depth` (at half resolution), accumulated over frames, into alpha of `mask` (an Rgba8Unorm target of
+    // the render size, blurred and upsampled): rgb 1, or kept with keepRgb (the traced sun's visibility). `viewProj`
+    // is this frame's camera-relative view-projection without the TAA jitter (ScreenSpaceUniforms::
+    // occlusionViewProj), kept with `cameraPos` for the next frame's look into this one.
     void occlusion(gpu::CommandBuffer& commands, const gpu::Texture& depth, const gpu::Texture& mask, bool keepRgb,
-                   const shader::ScreenSpaceUniforms& uniforms);
+                   const shader::ScreenSpaceUniforms& uniforms, const glm::mat4& viewProj, const glm::vec3& cameraPos);
+    // The accumulated occlusion of the last frame: valid when that frame ran occlusion() at this size.
+    bool occlusionHistoryValid() const { return m_occlusionValid; }
+    // Its view-projection for camera-relative positions of a frame whose camera is at `cameraPos`.
+    glm::mat4 occlusionHistoryViewProj(const glm::vec3& cameraPos) const;
+    // The frames accumulated without a break, the next frame's noise: 0 without a history, so a frame that starts
+    // over is the same image whatever came before it.
+    std::uint32_t occlusionFrame() const { return m_occlusionValid ? m_occlusionFrame : 0; }
+    // A frame without occlusion(), or a cut: the next one starts over.
+    void dropOcclusionHistory() { m_occlusionValid = false; }
 
     // The previous frame's image: valid when the last frame kept one at this size.
     bool historyValid() const { return m_historyValid; }
@@ -78,6 +90,7 @@ private:
     const gpu::Sampler* m_point = nullptr;
     const gpu::Sampler* m_linear = nullptr;
     gpu::GraphicsPipeline m_gtaoPipeline;
+    gpu::GraphicsPipeline m_temporalPipeline;
     gpu::GraphicsPipeline m_blurPipeline;      // writes the mask's rgb (1) and alpha
     gpu::GraphicsPipeline m_blurAlphaPipeline; // writes its alpha only
     gpu::GraphicsPipeline m_reflectPipeline;
@@ -85,6 +98,12 @@ private:
     gpu::GraphicsPipeline m_localPipeline;
     gpu::GraphicsPipeline m_localBlurPipeline;
     gpu::Texture m_depth, m_term, m_mask, m_localTerm, m_localShadows;
+    std::array<gpu::Texture, 2> m_occlusionHistory; // the accumulated term: this frame's and the last one's
+    int m_occlusionIndex = 0;                       // the one this frame writes
+    glm::mat4 m_occlusionViewProj{1.0f};
+    glm::vec3 m_occlusionCamera{0.0f};
+    bool m_occlusionValid = false;
+    std::uint32_t m_occlusionFrame = 0;
     gpu::Texture m_gbufferNormal, m_gbufferAlbedo, m_reflectTerm, m_reflections, m_history;
     Targets m_targets{};
     glm::mat4 m_historyViewProj{1.0f};

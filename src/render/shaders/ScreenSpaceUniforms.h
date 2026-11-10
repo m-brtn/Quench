@@ -11,8 +11,8 @@ struct QUENCH_ALIGN16 ScreenSpaceUniforms {
     // Ambient occlusion: x: slices per pixel (1..8), y: steps per side of a slice, z: the effect's radius (m),
     // w: strength (0..1)
     float4 occlusion;
-    // x: the noise's frame (0: the same noise every frame), y: the longest screen radius (pixels), z: depth
-    // tolerance of the blur (relative to the view depth), w: unused
+    // x: the noise's frame, y: the longest screen radius (pixels), z: depth tolerance of the blur and of the history
+    // (relative to the view depth), w: the longest history (frames; 0: the frame has none to read)
     float4 occlusionParams;
     // The camera rays (xyz): the position at reversed depth 1 of the point at render pixel coordinates (x, y) (pixel
     // centers at .5), relative to the camera, is rayOrigin + x * rayX + y * rayY; at depth d it is that divided by d
@@ -29,6 +29,10 @@ struct QUENCH_ALIGN16 ScreenSpaceUniforms {
     float4 reflectionParams;
     float4x4 viewProj;         // camera-relative position -> clip of this frame (with the TAA jitter)
     float4x4 previousViewProj; // camera-relative position (this frame's camera) -> clip of the previous frame's image
+    // The ambient occlusion's history: the same position -> clip of this frame and of the frame the history is from,
+    // both without the TAA jitter, so that a still camera reads each texel's own history.
+    float4x4 occlusionViewProj;
+    float4x4 occlusionHistoryViewProj;
 };
 
 QUENCH_SHARED_END

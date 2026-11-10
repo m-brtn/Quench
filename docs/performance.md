@@ -1119,6 +1119,17 @@ contact gets softer (the test's 64 x 64 image: 0.940 against 0.885 next to the b
 radius cap (20 % of the render height) did not change the cost in these views (0.05 to 0.2 of the height: the
 same), and each step to either side of a slice cost about 0.1 ms.
 
+**The term accumulated over frames** (2026-11-10; [Render](render.md#screen-space-ambient-occlusion)): the history
+pass at half resolution and the blur's tent weights. The same scenario (`gtao_phone.txt` on the native backend,
+offscreen, 1920 x 1080, two runs before and two after in one session), native `gtao` p50: shadows section 0.413,
+0.414 to 0.497, 0.496 ms (`game` with GTAO 1.966, 1.958 to 2.048, 2.056); ray tracing section 0.175, 0.175 to
+0.220, 0.220; tunnel 0.255, 0.250 to 0.300, 0.299. A first version of the tent, computed per texel inside the
+loop, cost 0.20 ms more (0.69 ms in the shadows section); the weights per axis are now set up before the loop.
+What it buys, measured in the Outpost game (`games/outpost`, native backend, offscreen, 4536 x 2835, a flat
+surface in ambient light, 8-bit levels, RMS): the image's deviation from its 11 x 11 mean 1.45 to 0.57 and the
+difference of two captures 7 frames apart 2.37 to 0.48 (without occlusion: 0.42 and 0.15). SDL GPU's frame times
+were not measured again.
+
 Not measured on a phone. `scenarios/gtao_phone.txt` measures it there on SDL GPU (the three sections without
 occlusion and with GTAO, from the nominal thermal state, and a capture); on the Mac offscreen at 1170 x 2532 it
 passed 8 of 8 (SDL GPU's GPU time p50 4.42 to 5.96 ms in the shadows section, 5.09 to 6.52 in the ray tracing

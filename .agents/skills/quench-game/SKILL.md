@@ -280,6 +280,9 @@ demo; a template game in headless Chrome). What differs there:
 - Declare `Scene`, then `SceneAssets`, then the `AssetRef`s, or reset them in reverse in `shutdown`:
   `SceneAssets` must go after every reference to its assets and before the scene.
 - One `Renderer::render` per scene and frame; set `View::cut` when the camera jumps or the scene switches.
+- A shell drawn around a model (an inverted-hull outline, a glow) shadows the model it surrounds, most visibly
+  with the camera close up: take it out of the shadows with `SceneAssets::setCastsShadows(instance, false)`
+  (`Scene::setCastsShadows` for an instance of the game's own), or give its material `ShadowMode::None`.
 - Timings drawn in ImGui make captures differ between runs; hide them when `app.deterministic()`.
 - A capture path without a directory lands in the user directory, which is the real one unless `--user-dir` is
   given.

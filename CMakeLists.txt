@@ -5,7 +5,7 @@ if(NOT DEFINED PROJECT_NAME AND CMAKE_HOST_APPLE AND NOT CMAKE_SYSTEM_NAME STREQ
    AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Minimum macOS version" FORCE)
 endif()
-project(Quench VERSION 0.13.1 LANGUAGES C CXX)
+project(Quench VERSION 0.13.2 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJC)
     enable_language(OBJCXX)
@@ -314,7 +314,8 @@ if(NOT QUENCH_HEADLESS)
     # The screen-space effects (ambient occlusion and reflections where nothing is traced, or where a game asks for
     # them).
     quench_add_shaders(quench_render NAME render_screenspace SOURCE src/render/shaders/screenspace.hlsl
-        ENTRIES ss_gtao_fs:fragment ss_gtao_blur_fs:fragment ss_reflect_fs:fragment ss_reflect_resolve_fs:fragment)
+        ENTRIES ss_gtao_fs:fragment ss_gtao_temporal_fs:fragment ss_gtao_blur_fs:fragment ss_reflect_fs:fragment
+            ss_reflect_resolve_fs:fragment)
     # The local lights' shadow maps read in screen space (frames where an area light has maps).
     quench_add_shaders(quench_render NAME render_localshadow SOURCE src/render/shaders/localshadow.hlsl
         ENTRIES local_shadow_fs:fragment local_shadow_blur_fs:fragment)

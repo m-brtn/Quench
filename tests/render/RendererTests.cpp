@@ -189,6 +189,66 @@ QUENCH_TEST(renderer_shadow_darkens_the_ground) {
           sum(at(pixels, litPixel)));
 }
 
+// An instance that casts no shadows (Scene::setCastsShadows): a shell 5 cm around a box, as an inverted-hull outline
+// is, shadows neither the box inside it nor the ground, with shadow maps and with traced shadows.
+QUENCH_TEST(renderer_instance_without_shadows) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.shadowCascades = 2;
+    settings.shadowMapSize = 2048;
+    settings.shadowDistance = 30.0f;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().shadowCascades == 0) QUENCH_SKIP("no shadow maps on this device");
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(1.0f)));
+    const MeshId shellMesh = addMesh(scene, boxMesh(glm::vec3(1.05f)));
+    const MeshId roofMesh = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 0.9f});
+    // The shell's faces toward the camera are culled, as an outline's are: the camera sees the box through it.
+    const MaterialId inside = scene.addMaterial({.baseColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0, 1.0f, 0})});
+    const glm::mat4 flipped = glm::translate(glm::mat4(1.0f), {0, 1.0f, 0}) * glm::scale(glm::mat4(1.0f), {-1, 1, 1});
+    const InstanceId shell = scene.addInstance({.mesh = shellMesh, .material = inside, .transform = flipped});
+    // A box in the air whose shadow falls on open ground at x -3.
+    const InstanceId roof = scene.addInstance(
+        {.mesh = roofMesh, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {-6.0f, 3.0f, 0})});
+    addSun(scene, kSunDown);
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const glm::ivec2 top = pixelOf(kTopView, {0.0f, 2.0f, 0.0f}), under = pixelOf(kTopView, {-3.0f, 0, 0}),
+                     open = pixelOf(kTopView, {-3.0f, 0, 3.0f});
+    const auto check = [&](const char* how) {
+        scene.setCastsShadows(shell, true);
+        scene.setCastsShadows(roof, true);
+        std::vector<Rgba8> pixels = renderOnce(device, *renderer, scene, kTopView, *target);
+        REQUIRE(pixels.size() == kSize * kSize, "%zu pixels", pixels.size());
+        const float lit = sceneValue(at(pixels, open)).g;
+        const float shelled = sceneValue(at(pixels, top)).g / lit, roofed = sceneValue(at(pixels, under)).g / lit;
+        scene.setCastsShadows(shell, false);
+        scene.setCastsShadows(roof, false);
+        pixels = renderOnce(device, *renderer, scene, kTopView, *target);
+        REQUIRE(pixels.size() == kSize * kSize, "%zu pixels", pixels.size());
+        const float litAfter = sceneValue(at(pixels, open)).g;
+        const float free = sceneValue(at(pixels, top)).g / litAfter, clear = sceneValue(at(pixels, under)).g / litAfter;
+        std::printf("  %s: the box's top %.3f of open ground inside a shell that casts, %.3f inside one that does "
+                    "not; the ground under the box in the air %.3f, %.3f\n",
+                    how, double(shelled), double(free), double(roofed), double(clear));
+        CHECK(shelled < 0.2f && roofed < 0.2f, "%s: casters shadow: %.3f, %.3f", how, double(shelled), double(roofed));
+        CHECK(free > 0.9f && std::abs(clear - 1.0f) < 0.05f, "%s: no shadows from instances that cast none: %.3f, %.3f",
+              how, double(free), double(clear));
+    };
+    check("shadow maps");
+    settings.sunShadows = SunShadows::RayTraced;
+    settings.shadowRays = 1;
+    settings.shadowSoftness = 0.0f;
+    renderer->setSettings(settings);
+    if (renderer->effects().sunShadows == SunShadows::RayTraced) check("traced shadows");
+}
+
 QUENCH_TEST(renderer_cutout_shadows_let_light_through_the_holes) {
     QUENCH_GPU_DEVICE(device);
     Result<Renderer> renderer = Renderer::create(device, shadowSettings());
@@ -2335,6 +2395,67 @@ QUENCH_TEST(renderer_screen_space_ambient_occlusion) {
           sum(at(sunOn, lit)), double(shadowed));
     CHECK(std::abs(open - 1.0f) < 0.03f && nearSun < 0.95f, "open ground %.3f, next to the box %.3f", double(open),
           double(nearSun));
+}
+
+// GTAO's term is accumulated over frames with a noise that changes every frame: successive frames of a still camera
+// settle, the occlusion stays where it belongs when the camera moves (the history is read where the camera's motion
+// puts each surface), and a cut starts over with the image a first frame gives.
+QUENCH_TEST(renderer_screen_space_occlusion_accumulates) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    settings.ambientOcclusion = AmbientOcclusion::ScreenSpace;
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    if (renderer->effects().ambientOcclusion != AmbientOcclusion::ScreenSpace)
+        QUENCH_SKIP("no depth buffer to sample: no screen-space ambient occlusion");
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyAmbient = e.groundAmbient = glm::vec3(1.0f); // ambient light only
+    scene.setEnvironment(e);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(10.0f)));
+    const MeshId box = addMesh(scene, boxMesh(glm::vec3(0.5f)));
+    const MaterialId grey = scene.addMaterial({.baseColor = glm::vec4(0.5f, 0.5f, 0.5f, 1.0f), .roughness = 1.0f});
+    scene.addInstance({.mesh = ground, .material = grey});
+    scene.addInstance({.mesh = box, .material = grey, .transform = glm::translate(glm::mat4(1.0f), {0, 0.5f, 0})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+
+    // A still camera: the change from one frame to the next shrinks as the history grows.
+    std::vector<std::vector<Rgba8>> frames;
+    for (int i = 0; i < 18; ++i) frames.push_back(renderOnce(device, *renderer, scene, kTopView, *target));
+    const double early = compare(frames[0], frames[1]).mean, settled = compare(frames[16], frames[17]).mean;
+    std::printf("  a still camera: frames 1 and 2 differ by %.3f levels, frames 17 and 18 by %.3f\n", early, settled);
+    CHECK(early > 0.0, "the noise changes from frame to frame: %.3f", early);
+    CHECK(settled < 0.5 * early && settled < 0.1, "the accumulated term settles: %.3f after %.3f", settled, early);
+
+    // The camera a meter to the side: the occlusion is next to the box, not where the box was on the screen.
+    const View moved = lookAt(glm::vec3(1.0f, 9.0f, 0), glm::vec3(1.0f, 0, 0), glm::vec3(0, 0, -1));
+    const std::vector<Rgba8> after = renderOnce(device, *renderer, scene, moved, *target);
+    View cut = moved;
+    cut.cut = true;
+    const std::vector<Rgba8> restarted = renderOnce(device, *renderer, scene, cut, *target);
+    Result<Renderer> fresh = Renderer::create(device, settings);
+    REQUIRE(fresh, "%s", fresh.error().c_str());
+    const std::vector<Rgba8> first = renderOnce(device, *fresh, scene, moved, *target);
+    CHECK(compare(restarted, first).mean == 0.0, "a cut starts over: mean %.3f from a first frame",
+          compare(restarted, first).mean);
+    settings.ambientOcclusion = AmbientOcclusion::None;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> off = renderOnce(device, *renderer, scene, moved, *target);
+    const auto ratio = [&](const std::vector<Rgba8>& with, glm::vec3 p) {
+        const glm::ivec2 pixel = pixelOf(moved, p);
+        return sceneValue(at(with, pixel)).g / sceneValue(at(off, pixel)).g;
+    };
+    // Where the box's side was on the screen before the move, 1 m further along x in the world now.
+    const glm::vec3 near(0.6f, 0, 0), was(1.6f, 0, 0), far(2.5f, 0, 0);
+    std::printf("  after the move: %.3f next to the box (a first frame %.3f), %.3f where it was, %.3f away\n",
+                double(ratio(after, near)), double(ratio(first, near)), double(ratio(after, was)),
+                double(ratio(after, far)));
+    CHECK(ratio(after, near) < 0.95f, "occluded next to the box: %.3f", double(ratio(after, near)));
+    CHECK(std::abs(ratio(after, near) - ratio(first, near)) < 0.03f, "as much as in a first frame: %.3f, %.3f",
+          double(ratio(after, near)), double(ratio(first, near)));
+    CHECK(std::abs(ratio(after, was) - 1.0f) < 0.03f && std::abs(ratio(after, far) - 1.0f) < 0.03f,
+          "no occlusion left behind: %.3f, %.3f", double(ratio(after, was)), double(ratio(after, far)));
 }
 
 // MetalFX at half the target's size: the upscaled frame is close to the one rendered at full size.

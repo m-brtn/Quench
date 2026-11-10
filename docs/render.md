@@ -54,6 +54,12 @@ renderer->render(scene, {.view = camera, .fovY = fov, .nearPlane = 0.1f, .time =
   The alpha cutoff cuts the shadow too.
 - **Instances** carry a transform, a color, a `vec4` for the surface shader, visibility and shadow casting. The
   previous transform is kept for motion vectors; `setTransform(..., teleport = true)` drops it (a respawn).
+  `InstanceDesc::castsShadows` can change later (`Scene::setCastsShadows`, and `SceneAssets::setCastsShadows` for
+  the parts of a placed model, since 2026-11-10): an instance that casts none is in no shadow map, among no traced
+  shadow or occlusion rays' geometry and no rain occluder. A shell around another instance (an inverted-hull
+  outline) has to be one: as a caster it shadows what it surrounds wherever the shadow maps resolve the gap
+  between them (test `renderer_instance_without_shadows`: a box inside a shell 5 cm larger gets 0.000 of the
+  sun's light while the shell casts, 1.000 when it does not, with shadow maps and with traced shadows).
 - **Lights**: the first directional light is the sun (cascaded shadows, the sun disc in the sky). Further directional,
   point, spot and area lights (rect, disk, tube; [Area lights](#area-lights)) light surfaces without shadows; per
   frame the 16 nearest to the camera are used, at most 8 of them area lights. A light with zero color or intensity
@@ -550,7 +556,8 @@ for the rays. `ActiveEffects::localShadowMaps` is that count; `RenderStats::loca
 Since 2026-11-07 (0.10.0). `AmbientOcclusion::ScreenSpace`, or `AmbientOcclusion::RayTraced`
 with `RenderSettings::screenSpaceFallbacks` (off by default) where the rays are not available (SDL GPU, the
 default off Apple platforms, and the native backend without `gpu::Caps::rayTracing`): GTAO from the depth of the
-opaque surfaces. It needs a sampleable depth and `Rg16Float` targets; else none, with a line in `fallbacks()`.
+opaque surfaces. It needs a sampleable depth and `Rg16Float` and `Rgba16Float` targets; else none, with a line in
+`fallbacks()`.
 Where the device traces, `RayTraced` stays traced; `ScreenSpace` set by the game runs GTAO there too.
 `RenderStats::screenOcclusion` says whether it ran, `screenPrepassDraws` the draws of its own prepass.
 
@@ -562,27 +569,48 @@ Where the device traces, `RayTraced` stays traced; `ScreenSpace` set by the game
   effects): `occlusionRays` slices per pixel (1..8, default 2), each with 4 steps to either side, out to
   `occlusionRadius` times XeGTAO's 1.457 and at most 20 % of the render height on the screen (no depth MIP chain:
   far samples would only miss the cache), XeGTAO's falloff and final power 2.2, normals from the depth, positions
-  along camera rays (`ScreenSpaceUniforms`, camera-relative). The noise is a 4 x 4 tile that changes every frame
-  under TAA, which averages it, and stays fixed otherwise. The term and its depth go into an `Rg16Float` target.
+  along camera rays (`ScreenSpaceUniforms`, camera-relative). The noise is a 4 x 4 tile that changes every frame,
+  with or without TAA. The term and its depth go into an `Rg16Float` target.
+- **Accumulation over frames** (`ss_gtao_temporal_fs`, half resolution, since 2026-11-10): 4 steps to either side
+  over a radius of up to 20 % of the screen leave one frame's term blotchy, and neither the blur nor TAA took that
+  out (the blotches crawled on evenly lit surfaces). The term is blended into a history of up to 16 frames (two
+  `Rgba16Float` targets in turn: the term, its depth, the history's length). A texel finds its surface in the
+  history where the camera's motion puts it (the two frames' view-projections without the TAA jitter, so a still
+  camera reads each texel's own history; no motion vectors: the scene is taken as still), from the four texels
+  around that point, weighted bilinearly and by their depth (tolerance 2 % of the view depth, or a quarter of the
+  effect's radius where that is less). What the history takes in is the mean of the 3 x 3 new terms on the texel's
+  surface, and it is kept within their range, so occlusion that is gone does not linger. A texel without a
+  history (a first frame, `View::cut`, a surface that has just come into view) keeps its own term; the noise
+  counts the frames since the history began, so a frame that starts over is the same image whatever came before.
 - **Blur and upsample** (`ss_gtao_blur_fs`, full resolution): the 4 x 4 term texels around the pixel (one period of
   the noise tile), each weighted by how well its depth continues the pixel's depth gradient (a reversed depth is
-  linear over a plane on the screen; tolerance 2 % of the view depth), so other surfaces do not bleed in; then
+  linear over a plane on the screen; tolerance 2 % of the view depth), so other surfaces do not bleed in; all 16
+  alike where the term is new, and over the first 8 frames of the history more and more as a tent 2 texels to
+  either side (equal weights give 2 x 2 pixel steps on every gradient, which a term without noise shows); then
   `occlusionStrength`. The result goes into alpha of the mask the surfaces read for traced occlusion (sampler 6,
   `FrameUniforms::options.w` bit 2): with ray-traced sun shadows the traced mask, its rgb kept by the pipeline's
   write mask, else a mask of its own. Surfaces built on `Surface.hlsli` take it without changes.
 - **Cost** on the M4 Pro at 1080p (offscreen, [Performance](performance.md#screen-space-ambient-occlusion)): native
-  backend `gtao` 0.41 ms in the demo's shadows section (its own prepass 0.03 ms), 0.17 ms in the ray tracing
-  section, where it replaces the occlusion rays (`rays` 2.30 to 1.70 ms), 0.25 ms in the tunnel; SDL GPU's Metal
-  driver frame p50 1.33 to 1.79 ms (shadows section) and 1.58 to 2.00 ms (ray tracing section).
+  backend `gtao` 0.50 ms in the demo's shadows section (its own prepass 0.03 ms; 0.41 before the accumulation),
+  0.22 ms in the ray tracing section, where it replaces the occlusion rays (0.17 before), 0.30 ms in the tunnel
+  (0.25 before); SDL GPU's Metal driver, before the accumulation and not measured since: frame p50 1.33 to
+  1.79 ms (shadows section) and 1.58 to 2.00 ms (ray tracing section).
 - **Test** `renderer_screen_space_ambient_occlusion` (64 x 64, a box on the ground under ambient light only; SDL
   GPU's Metal driver, Vulkan through MoltenVK, the native backend): 0.940 of the light without it next to the box
   (the rays: 0.822), 1.000 on open ground and on the box's top; the fallback from `RayTraced` the same image and
   named in `fallbacks()`; on the native backend with traced sun shadows the shadow stays (0.965 of the frame
   without GTAO, open ground 1.000, next to the box 0.930) and no prepass of its own is drawn.
+  `renderer_screen_space_occlusion_accumulates` (the same scene and backends): with a still camera frames 1 and 2
+  differ by 0.352 levels on average, frames 17 and 18 by 0.039; after the camera moves 1 m sideways the ground is
+  occluded next to the box (0.926; a first frame there 0.940) and not where the box was on the screen (1.000); a
+  frame with `View::cut` is the image a new renderer's first frame gives.
 - **Limits.** Only what is on the screen occludes: nothing behind the camera, off the screen or hidden behind a
   nearer surface, and a thin object seen edge on occludes as if it were thick behind. Half resolution and the
   8 x 8 pixel footprint soften the contact (0.940 against the rays' 0.822 in the test's small image). No bent
-  normals, no temporal filter of its own, no occlusion of translucent surfaces.
+  normals, no occlusion of translucent surfaces. The history follows the camera only: the occlusion around a
+  moving object settles over the frames after it has passed (kept short by the range of the new terms; looked at
+  in still captures of the Outpost game's walker and of a turning camera, not in motion on a screen). The first
+  frames after a cut show one frame's noise, as before.
 
 ### Screen-space reflections
 

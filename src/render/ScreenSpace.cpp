@@ -20,6 +20,7 @@ using gpu::TextureUsage;
 
 constexpr ShaderStage kFragment = ShaderStage::Fragment;
 constexpr TextureFormat kTermFormat = TextureFormat::Rg16Float;         // the term and its depth
+constexpr TextureFormat kHistoryFormat = TextureFormat::Rgba16Float;    // the accumulated term, its depth and length
 constexpr TextureFormat kMaskFormat = TextureFormat::Rgba8Unorm;        // RayTracing's mask, which it also writes into
 constexpr TextureFormat kReflectionFormat = TextureFormat::Rgba16Float; // radiance and confidence
 
@@ -52,6 +53,7 @@ bool ScreenSpace::init(gpu::Device& device, std::uint32_t& pipelines, const gpu:
     gpu::ColorTargetDesc alphaOnly{kMaskFormat};
     alphaOnly.blend.writeMask = gpu::ColorWrite::A;
     if (make(m_gtaoPipeline, "ss_gtao_fs", {kTermFormat}, "render gtao") &&
+        make(m_temporalPipeline, "ss_gtao_temporal_fs", {kHistoryFormat}, "render gtao temporal") &&
         make(m_blurAlphaPipeline, "ss_gtao_blur_fs", alphaOnly, "render gtao blur (alpha)") &&
         make(m_blurPipeline, "ss_gtao_blur_fs", {kMaskFormat}, "render gtao blur") &&
         make(m_reflectPipeline, "ss_reflect_fs", {kReflectionFormat}, "render ssr") &&
@@ -60,6 +62,7 @@ bool ScreenSpace::init(gpu::Device& device, std::uint32_t& pipelines, const gpu:
         make(m_localBlurPipeline, "local_shadow_blur_fs", {kMaskFormat}, "render local shadows blur"))
         return true;
     m_gtaoPipeline = {};
+    m_temporalPipeline = {};
     m_blurAlphaPipeline = {};
     m_blurPipeline = {};
     m_reflectPipeline = {};
@@ -95,6 +98,10 @@ bool ScreenSpace::ensureTargets(const Targets& targets) {
                           "render screen-space depth");
     if (ok && targets.occlusion)
         ok = createTarget(m_term, kTermFormat, target, (w + 1) / 2, (h + 1) / 2, "render gtao term") &&
+             createTarget(m_occlusionHistory[0], kHistoryFormat, target, (w + 1) / 2, (h + 1) / 2,
+                          "render gtao history 0") &&
+             createTarget(m_occlusionHistory[1], kHistoryFormat, target, (w + 1) / 2, (h + 1) / 2,
+                          "render gtao history 1") &&
              (!targets.ownDepth || createTarget(m_mask, kMaskFormat, target, w, h, "render screen-space mask"));
     if (ok && targets.reflections)
         ok = createTarget(m_reflectTerm, kReflectionFormat, target, (w + 1) / 2, (h + 1) / 2, "render ssr term") &&
@@ -118,6 +125,8 @@ bool ScreenSpace::ensureTargets(const Targets& targets) {
 void ScreenSpace::releaseTargets() {
     m_depth = {};
     m_term = {};
+    m_occlusionHistory = {};
+    m_occlusionValid = false;
     m_mask = {};
     m_gbufferNormal = {};
     m_gbufferAlbedo = {};
@@ -130,8 +139,13 @@ void ScreenSpace::releaseTargets() {
     m_historyValid = false;
 }
 
+glm::mat4 ScreenSpace::occlusionHistoryViewProj(const glm::vec3& cameraPos) const {
+    return m_occlusionViewProj * glm::translate(glm::mat4(1.0f), cameraPos - m_occlusionCamera);
+}
+
 void ScreenSpace::occlusion(gpu::CommandBuffer& commands, const gpu::Texture& depth, const gpu::Texture& mask,
-                            bool keepRgb, const shader::ScreenSpaceUniforms& uniforms) {
+                            bool keepRgb, const shader::ScreenSpaceUniforms& uniforms, const glm::mat4& viewProj,
+                            const glm::vec3& cameraPos) {
     {
         const gpu::ColorTarget color{.texture = m_term, .load = gpu::LoadOp::DontCare, .cycle = true};
         if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
@@ -142,10 +156,29 @@ void ScreenSpace::occlusion(gpu::CommandBuffer& commands, const gpu::Texture& de
             pass.end();
         }
     }
+    // The term through its history (without one, uniforms.occlusionParams.w is 0 and the pass copies the term).
+    const gpu::Texture& accumulated = m_occlusionHistory[std::size_t(m_occlusionIndex)];
+    {
+        const gpu::ColorTarget color{.texture = accumulated, .load = gpu::LoadOp::DontCare};
+        if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
+            const gpu::TextureSamplerBinding samplers[] = {
+                {m_term, *m_point}, {m_occlusionHistory[std::size_t(1 - m_occlusionIndex)], *m_point}};
+            pass.bindPipeline(m_temporalPipeline);
+            pass.bindSamplers(kFragment, 0, samplers);
+            pass.pushUniforms(kFragment, 1, uniforms);
+            pass.draw(3);
+            pass.end();
+        }
+    }
+    m_occlusionIndex = 1 - m_occlusionIndex;
+    m_occlusionViewProj = viewProj;
+    m_occlusionCamera = cameraPos;
+    m_occlusionFrame = m_occlusionValid ? m_occlusionFrame + 1 : 1;
+    m_occlusionValid = true;
     const gpu::ColorTarget color{
         .texture = mask, .load = keepRgb ? gpu::LoadOp::Load : gpu::LoadOp::DontCare, .cycle = !keepRgb};
     if (gpu::RenderPass pass = commands.beginRenderPass(color)) {
-        const gpu::TextureSamplerBinding samplers[] = {{m_term, *m_point}, {depth, *m_point}};
+        const gpu::TextureSamplerBinding samplers[] = {{accumulated, *m_point}, {depth, *m_point}};
         pass.bindPipeline(keepRgb ? m_blurAlphaPipeline : m_blurPipeline);
         pass.bindSamplers(kFragment, 0, samplers);
         pass.pushUniforms(kFragment, 1, uniforms);

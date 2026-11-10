@@ -11,8 +11,10 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.13.1) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
-and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases. Its GPU tests render offscreen and check the
+The engine (version 0.13.2) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases (those
+of 0.13.1: 0.13.2, a patch of the renderer, ran the render and demo tests only, [its notes](releases/v0.13.2.md)).
+Its GPU tests render offscreen and check the
 pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
 Mac (with the Khronos validation layer; a test of
 the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables

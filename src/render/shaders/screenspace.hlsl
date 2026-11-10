@@ -16,8 +16,19 @@
 // without XeGTAO's packing. XeGTAO's default constants: radius multiplier 1.457 (applied by the renderer),
 // falloff range 0.615, sample distribution power 2, final power 2.2; its fast acos (Lagarde's).
 //
+// ss_gtao_temporal_fs: at half resolution, the term accumulated over frames (the noise changes every frame; one
+// frame's term is blotchy, and TAA alone leaves the blotches crawling). The texel's surface is looked up in the
+// history where the camera's motion puts it (the scene is taken as still: no motion vectors here), its four texels
+// weighted bilinearly and by how well their depth matches; the history takes in the mean of the 3 x 3 new terms
+// around the texel that lie on its surface and is kept within their range, so occlusion that is gone (something
+// moved away) does not linger. A texel without a history keeps its own term. r: the term, g: the depth,
+// b: the history's length in frames.
+//
 // ss_gtao_blur_fs: at full resolution, the 4 x 4 term texels around the pixel (one period of the noise tile), each
-// weighted by how well its depth (kept next to the term) continues the pixel's depth gradient (other surfaces do not bleed in), with the
+// weighted by how well its depth (kept next to the term) continues the pixel's depth gradient (other surfaces do not
+// bleed in): all 16 alike where the term is new (a first frame, a surface that has just come into view: its noise
+// needs the whole tile), and the nearer ones more, as a tent 2 texels to either side, as the history grows (a term
+// without noise shows the equal weights' steps of 2 x 2 pixels on every gradient). With the
 // strength, into alpha of the mask the surfaces read (sampler 6, FrameUniforms::options.w bit 1); rgb 1, or kept by
 // the pipeline's write mask where the traced sun's visibility is there.
 //
@@ -33,8 +44,8 @@
 // multiply into their traced reflections' weight (sampler 7, FrameUniforms::options.w bit 6).
 //
 // Bindings (fragment): uniform 0 FrameUniforms, uniform 1 ScreenSpaceUniforms. ss_gtao_fs: sampler 0 the prepass
-// depth. ss_gtao_blur_fs: sampler 0 the term (r; g: its depth; half resolution), sampler 1 the
-// depth. ss_reflect_fs: sampler 0 the prepass depth, sampler 1 the G-buffer's normal and roughness, sampler 2 the
+// depth. ss_gtao_temporal_fs: sampler 0 this frame's term, sampler 1 the history. ss_gtao_blur_fs: sampler 0 the
+// accumulated term (r; g: its depth; half resolution), sampler 1 the depth. ss_reflect_fs: sampler 0 the prepass depth, sampler 1 the G-buffer's normal and roughness, sampler 2 the
 // previous frame's image (linear). ss_reflect_resolve_fs: sampler 0 the term (half resolution), sampler 1 the depth,
 // sampler 2 the G-buffer's normal and roughness.
 
@@ -158,6 +169,69 @@ float4 ss_gtao_fs(FullscreenOut vin) : SV_Target0 {
 }
 #endif
 
+#if defined(QUENCH_ENTRY_ss_gtao_temporal_fs)
+Texture2D<float4> termTex : QUENCH_TEXTURE(0);
+SamplerState termSampler : QUENCH_SAMPLER(0);
+Texture2D<float4> historyTex : QUENCH_TEXTURE(1);
+SamplerState historySampler : QUENCH_SAMPLER(1);
+
+float4 ss_gtao_temporal_fs(FullscreenOut vin) : SV_Target0 {
+    const int2 h = int2(vin.position.xy);
+    const float2 term = termTex.Load(int3(h, 0)).rg;
+    const float longest = ss.occlusionParams.w;
+    if (term.g <= 0.0 || longest < 1.5) return float4(term, 1.0, 1.0);
+    const int2 last = int2(quenchFrame.screen.xy) - 1;
+    const int2 halfLast = last >> 1;
+    const float3 P = ssViewAt(float2(min(h * 2, last)) + 0.5, term.g);
+    const float4 now = mul(ss.occlusionViewProj, float4(P, 1.0));
+    const float4 then = mul(ss.occlusionHistoryViewProj, float4(P, 1.0));
+    if (now.w <= 0.0 || then.w <= 0.0) return float4(term, 1.0, 1.0);
+    // The camera's motion in term texels: none for a still camera, whose texels read their own history.
+    const float2 motion = (then.xy / then.w - now.xy / now.w) * float2(0.25, -0.25) * quenchFrame.screen.xy;
+    const float2 t = float2(h) + motion;
+    const int2 t0 = int2(floor(t));
+    const float2 f = t - floor(t);
+    // The surface's depth in the history's frame. Another surface: further off than the blur's tolerance, or than a
+    // quarter of the effect's radius where that is less (a camera far away with a narrow view).
+    const float expected = then.z / then.w;
+    const float tolerance = min(ss.occlusionParams.z, 0.25 * ss.occlusion.z / now.w);
+    const float invTolerance = 1.0 / (tolerance * expected);
+    float sum = 0.0, length = 0.0, weight = 0.0;
+    for (int j = 0; j < 2; ++j)
+        for (int i = 0; i < 2; ++i) {
+            const int2 q = t0 + int2(i, j);
+            if (any(q < int2(0, 0)) || any(q > halfLast)) continue;
+            const float3 old = historyTex.Load(int3(q, 0)).rgb;
+            const float bilinear = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
+            const float w = old.g > 0.0 ? bilinear * saturate(2.0 - 2.0 * abs(old.g - expected) * invTolerance) : 0.0;
+            sum += old.r * w;
+            length += old.b * w;
+            weight += w;
+        }
+    if (weight < 0.05) return float4(term, 1.0, 1.0);
+    // The new terms on the texel's surface around it (as the blur finds them: those that continue its depth
+    // gradient): their mean is what the history takes in, their range what it is kept within.
+    float2 near[9];
+    for (int n = 0; n < 9; ++n)
+        near[n] = termTex.Load(int3(clamp(h + int2(n % 3 - 1, n / 3 - 1), int2(0, 0), halfLast), 0)).rg;
+    const float dr = near[5].g - term.g, dl = term.g - near[3].g, dd = near[7].g - term.g, du = term.g - near[1].g;
+    const float2 gradient = float2(abs(dr) < abs(dl) ? dr : dl, abs(dd) < abs(du) ? dd : du);
+    const float invNear = 1.0 / (ss.occlusionParams.z * term.g);
+    float lowest = term.r, highest = term.r, mean = 0.0, meanWeight = 0.0;
+    for (int m = 0; m < 9; ++m) {
+        const float surface = term.g + dot(float2(m % 3 - 1, m / 3 - 1), gradient);
+        const float w = near[m].g > 0.0 ? saturate(1.0 - abs(near[m].g - surface) * invNear) : 0.0;
+        if (w <= 0.0) continue;
+        lowest = min(lowest, near[m].r);
+        highest = max(highest, near[m].r);
+        mean += near[m].r * w;
+        meanWeight += w;
+    }
+    const float frames = min(length / weight + 1.0, longest);
+    return float4(lerp(clamp(sum / weight, lowest, highest), mean / meanWeight, 1.0 / frames), term.g, frames, 1.0);
+}
+#endif
+
 #if defined(QUENCH_ENTRY_ss_gtao_blur_fs)
 Texture2D<float4> termTex : QUENCH_TEXTURE(0);
 SamplerState termSampler : QUENCH_SAMPLER(0);
@@ -180,13 +254,20 @@ float4 ss_gtao_blur_fs(FullscreenOut vin) : SV_Target0 {
     // The 4 x 4 texels around the pixel (the half-resolution texel of p is the second or third of each row).
     const int2 first = (p >> 1) - 2 + (p & 1);
     const int2 halfLast = last >> 1;
+    // From equal weights to the tent over the first 8 frames of the pixel's own texel. The tent per axis: the texels
+    // are 4, 2, 0 and 2 pixels from an even pixel, 3, 1, 1 and 3 from an odd one.
+    const float settled = saturate((termTex.Load(int3(min(p >> 1, halfLast), 0)).b - 1.0) / 7.0);
+    const float4 even = lerp(float4(1.0, 1.0, 1.0, 1.0), float4(0.0, 0.5, 1.0, 0.5), settled);
+    const float4 odd = lerp(float4(1.0, 1.0, 1.0, 1.0), float4(0.25, 0.75, 0.75, 0.25), settled);
+    const float4 across = (p.x & 1) != 0 ? odd : even, down = (p.y & 1) != 0 ? odd : even;
     float sum = 0.0, weight = 0.0;
     for (int y = 0; y < 4; ++y)
         for (int x = 0; x < 4; ++x) {
             const int2 t = clamp(first + int2(x, y), int2(0, 0), halfLast);
             const float2 term = termTex.Load(int3(t, 0)).rg;
             const float expected = d + dot(float2(min(t * 2, last) - p), gradient);
-            const float w = term.g > 0.0 ? saturate(1.0 - abs(term.g - expected) * invTolerance) : 0.0;
+            const float w =
+                term.g > 0.0 ? saturate(1.0 - abs(term.g - expected) * invTolerance) * across[x] * down[y] : 0.0;
             sum += term.r * w;
             weight += w;
         }

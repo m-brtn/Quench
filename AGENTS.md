@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-10, version 0.13.1): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-10, version 0.13.2): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -201,7 +201,11 @@ The earlier platform claims above describe 0.12.0. Version 0.13.0 (2026-11-10) a
 web build below and fixes the intermittent Vulkan validation error of `demo_batch_vulkan` (SDL GPU's defragmentation
 moved resources of the open frame: `SdlVulkanDefrag.cmake`, libsdl-org/SDL#16685) (`docs/releases/v0.13.0.md`).
 The 0.13.1 patch (2026-11-10) works around Safari's black web page (frames rendered but not shown until a resize)
-in the WebGPU backend (`docs/releases/v0.13.1.md`).
+in the WebGPU backend (`docs/releases/v0.13.1.md`). The 0.13.2 patch (2026-11-10) accumulates the screen-space
+ambient occlusion over frames (its blotches crawled on evenly lit surfaces) and lets instances and placed models
+stop casting shadows (`Scene::setCastsShadows`, `SceneAssets::setCastsShadows`: an outline shell shadowed its own
+model); released without the full gates (user decision, 2026-11-10: the render and demo tests of the Mac's three
+backends only; `docs/releases/v0.13.2.md`), seen by nobody in motion on a screen at the time of the release.
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the

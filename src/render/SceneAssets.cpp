@@ -40,6 +40,7 @@ struct SceneAssets::Impl {
         assets::AssetRef<ModelAsset> model;
         glm::mat4 transform{1.0f};
         bool visible = true;
+        bool castsShadows = true;
         std::vector<InstanceId> instances;
         std::vector<int> instanceSkins;               // per instance: the part's skin (-1: rigid, placeholder)
         std::vector<std::uint32_t> instanceJoints;    // per instance: its mesh's joints
@@ -407,6 +408,14 @@ void SceneAssets::setVisible(ModelInstanceId instance, bool visible) {
     for (InstanceId id : placed->instances) m_scene.setVisible(id, visible);
 }
 
+void SceneAssets::setCastsShadows(ModelInstanceId instance, bool castsShadows) {
+    Impl::Placed* placed = m_impl->placed.get(instance);
+    QUENCH_ASSERT(placed, "setCastsShadows: stale or null model instance");
+    if (!placed) return;
+    placed->castsShadows = castsShadows;
+    for (InstanceId id : placed->instances) m_scene.setCastsShadows(id, castsShadows);
+}
+
 void SceneAssets::setJointPalette(ModelInstanceId instance, int skin, std::span<const glm::mat4> palette,
                                   bool teleport) {
     Impl::Placed* placed = m_impl->placed.get(instance);
@@ -484,7 +493,8 @@ void SceneAssets::update() {
                 placed->instances.push_back(m_scene.addInstance({.mesh = m_impl->box,
                                                                  .material = material,
                                                                  .transform = placeholderTransform(placed->transform),
-                                                                 .visible = placed->visible}));
+                                                                 .visible = placed->visible,
+                                                                 .castsShadows = placed->castsShadows}));
                 placed->instanceSkins.push_back(-1);
                 placed->instanceJoints.push_back(0);
             }
@@ -496,6 +506,7 @@ void SceneAssets::update() {
                      .material = part.material,
                      .transform = placed->transform,
                      .visible = placed->visible,
+                     .castsShadows = placed->castsShadows,
                      .skinning = known ? placed->skinnings[std::size_t(part.skin)] : Skinning::Linear});
                 placed->instances.push_back(id);
                 const std::uint32_t joints = m_scene.jointCount(part.mesh);
