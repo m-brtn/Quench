@@ -256,7 +256,11 @@ const float far = m_weather.distanceToPrecipitation({playerPosition.x, playerPos
 `m_renderer->effects().clouds` says what is drawn (Volumetric falls back to Layer by `gpu::Caps`; clouds need
 `RenderSettings::sky`), `stats().cloudCover` how overcast it is above the camera. The sun's light on surfaces goes
 through the clouds' shadow (`cloudShadows`; `cloudShadowHeight`: the plane its map lies on, the ground's height
-for a world above the clouds), the sky's ambient light and the fog grey with the cover, and surfaces
+for a world above the clouds; a surface above its column's clouds is in the sun either way), the clouds are drawn
+in front of surfaces that reach into them or lie under a camera above them (`stats().cloudsOverScene`; transparent
+surfaces are drawn over the clouds, and a game's Transparent-stage pass then runs in a render pass of its own
+after them, with the frame's bindings bound as before), no rain or snow falls at or above the cloud base, the
+sky's ambient light and the fog grey with the cover, and surfaces
 reflect a cube of the sky with its clouds (`skyCubeSize`, `skyCubeFacesPerFrame`). Costs and phone settings:
 `docs/weather.md`, "Phones and fallbacks"; `examples/demo/sections/WeatherSection.cpp` (presets, a shower cell, the
 sun's day).
@@ -296,7 +300,8 @@ quench_add_game(my_game ... COOKED_ASSETS my_game_cooked my_game_weather_sounds)
   `dryingTime`, `puddleFillTime`, `puddleDryTime` set how fast. `setTime` estimates the wetness of that time, so a
   scripted check that jumps in time gets the same ground.
 - The sound's layers (`audio::WeatherLayer`): `RainLight`, `RainHeavy` (crossfaded by the precipitation),
-  `RainFar` (the nearest rain within `farDistance`), `RainCover` (on the roof, by the cover). `setSound(layer,
+  `RainFar` (the nearest rain within `farDistance`), `RainCover` (on the roof, by the cover; the open-air layers play at
+  0.35 under it). `setSound(layer,
   "sounds/my_rain.wav")` replaces one (a cooked sound; "" silences it), `setEnabled(false)` turns the engine's off
   and `WeatherAudio::targetGains(state, farDistance)` gives its mix rules to a game's own sounds.
 - `effects().rain` says what is drawn (none in the path tracer's frame), `stats().rainAtCamera`, `rainStreaks`,
@@ -652,6 +657,35 @@ m_renderer->setSettings(s);
 
 Checks without a hot device: `--thermal-state serious`, or in a scenario `thermal_state serious` (`thermal_state
 system` gives it back), then `expect thermal_reaction == 2` and `expect frame_rate_limit == 60`.
+
+## Slow devices
+
+`app.mobile()` says the game runs on a phone or tablet (iOS, Android, a browser on one; `--mobile` makes it true on
+a desktop, for checks). The reaction to late frames is opt-in and works everywhere, also in a browser, which has
+no thermal state:
+
+```cpp
+#include <quench/app/LoadGovernor.h> // also through App.h
+
+// init: lighter defaults on a phone, and the reaction for devices that still do not keep up
+if (app.mobile()) {
+    m_playerSettings.renderScale = 0.67f;
+    app.setMaxFrameRate(60.0); // heat
+}
+app.loadGovernor().enable(); // LoadGovernorDesc: .frameRate (0: the limit in effect, else the display's), .minScale
+// update: the factor goes into what the renderer gets
+render::RenderSettings s = m_playerSettings;
+s.renderScale = std::max(app.loadGovernor().renderScale(s.renderScale), 0.25f);
+if (!(s == m_renderer->settings())) m_renderer->setSettings(s);
+```
+
+A window of a second with a quarter of its frames late (more than 1.25 intervals) takes a step down (x0.85, two
+steps when far off, to x0.5); 10 s without one bring a step back up, later after tries that failed. It holds while
+the main thread alone makes the frames late. Offscreen and scripted frames feed it nothing: a scenario fakes them,
+`frame_load 30` (every frame counts as 30 ms; `frame_load 40 36`: 36 ms of it on the main thread; `frame_load
+system` ends it), then `until load_scale < 1 5` and the game's own value for its render scale. Measure what a
+frame costs before choosing the lighter defaults (`perf_begin`, `--gpu-pass-timing` on the native Metal backend,
+`--frame-size` for the phone's frame): the main pass's light per pixel is usually the largest part.
 
 ## Profiling
 

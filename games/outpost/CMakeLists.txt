@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.28)
 if(CMAKE_HOST_APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Minimum macOS version" FORCE)
 endif()
-project(outpost VERSION 0.1.1 LANGUAGES C CXX)
+project(outpost VERSION 0.1.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,7 +16,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(FetchContent)
 FetchContent_Declare(quench
     GIT_REPOSITORY https://github.com/m-brtn/Quench.git
-    GIT_TAG 12578bee5107173f9fbbd22875ca47a427a97d02) # 0.13.2
+    GIT_TAG 3c5d68b2256994ec4c25d47d1864d60e991f183c) # 0.15.0
 FetchContent_MakeAvailable(quench)
 
 # The host-tools preset builds only the engine's shader compiler and asset cooker (for the iOS builds).
@@ -49,5 +49,8 @@ if(NOT CMAKE_CROSSCOMPILING)
     enable_testing()
     add_test(NAME smoke COMMAND outpost --window 1280x720 --audio-device null
         --user-dir ${CMAKE_CURRENT_BINARY_DIR}/user --script ${CMAKE_CURRENT_SOURCE_DIR}/scenarios/smoke.txt)
-    set_tests_properties(smoke PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
+    # A phone's defaults: the frame of an iPhone 17 held sideways.
+    add_test(NAME mobile COMMAND outpost --mobile --window 874x402 --frame-size 2622x1206 --audio-device null
+        --user-dir ${CMAKE_CURRENT_BINARY_DIR}/user --script ${CMAKE_CURRENT_SOURCE_DIR}/scenarios/mobile.txt)
+    set_tests_properties(smoke mobile PROPERTIES FAIL_REGULAR_EXPRESSION "FAIL line")
 endif()

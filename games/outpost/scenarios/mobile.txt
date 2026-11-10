@@ -1,0 +1,20 @@
+# A phone's defaults on a desktop (ctest `mobile`, with the engine's --mobile): the low detail, at most 60 frames per
+# second, the reaction to late frames on; the picture by day and at dusk.
+#   outpost --mobile --window 874x402 --frame-size 2622x1206 --script scenarios/mobile.txt
+
+until models_ready == 1 10
+until nav_ready == 1 10
+expect mobile == 1
+expect detail == 0
+expect render_scale == 0.67
+expect shadow_size == 2048
+expect frame_rate_limit == 60
+expect load_scale == 1
+autopilot on
+wait 2
+capture mobile_day.png
+sun -7
+wait 0.3
+expect night > 0.9
+capture mobile_dusk.png
+quit

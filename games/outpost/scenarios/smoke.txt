@@ -42,4 +42,27 @@ sun -7
 wait 0.2
 expect night > 0.9
 capture smoke.png
+
+# The low detail renders two thirds of the frame each way; the engine's reaction to late frames (faked: 30 ms a
+# frame for the 16.7 ms of 60 Hz) lowers the render scale further, and lifts it when switched off.
+expect detail == 1
+expect render_scale == 1
+expect shadow_size == 4096
+detail low
+wait 0.05
+expect render_scale == 0.67
+expect shadow_size == 2048
+frame_load 30
+until load_scale < 1 5
+wait 0.05
+expect render_scale < 0.6
+adapt_load off
+wait 0.05
+expect load_scale == 1
+expect render_scale == 0.67
+frame_load system
+adapt_load on
+detail high
+wait 0.05
+expect render_scale == 1
 quit

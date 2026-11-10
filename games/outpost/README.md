@@ -21,6 +21,13 @@ of the experiment supplied (`assets_src/models/CREDITS.md`).
 
 The panel also switches the outlines and, where the GPU can, ray-traced shadows and ambient occlusion.
 
+Detail (low, high) in the panel: low renders two thirds of the frame each way with lighter shadows, no screen-space
+occlusion and the lamps off by day, and is the default on a phone or tablet (also in its browser), where the game
+also runs at 60 frames per second at most. Adapt to load (on) lowers the render scale further while frames come
+late and raises it again when they fit (the engine's `App::loadGovernor()`). The panel's last line shows the size
+the picture is rendered at. `--mobile` (an engine flag) gives a phone's defaults on a desktop. Not yet tried on a
+phone.
+
 ## Build
 
 Requirements: CMake 3.28+, Ninja, a C++20 compiler; on Apple platforms Xcode with the Metal toolchain. The first
@@ -38,7 +45,7 @@ build/release/outpost --frame-size 1920x1080 --capture /tmp/outpost.png --captur
 
 Engine flags (`--help` lists them all): `--quit-after S`, `--capture FILE`, `--capture-at S`, `--script FILE`,
 `--window WxH`, `--frame-size WxH`, `--offscreen`, `--onscreen` (automated runs are offscreen unless it is given),
-`--gpu-backend metal|sdl`, `--no-audio`, `--audio-device NAME` (`null`: no sound). The game makes no sound.
+`--gpu-backend metal|sdl`, `--mobile`, `--no-audio`, `--audio-device NAME` (`null`: no sound). The game makes no sound.
 
 Scenario values, commands and points of the game (for `--script`): `scenarios/smoke.txt` uses most of them;
 `Outpost::scenarioValue`, `scenarioCommand` and `scenarioPoint` in `src/Game.cpp` list them all.

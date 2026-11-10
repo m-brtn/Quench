@@ -11,8 +11,9 @@
 # what it ships are at the site's root (LICENSE, THIRD_PARTY_LICENSES, licenses/), put there by the engine's
 # tools/publish_web.sh, which keeps games/ when it replaces the site.
 #
-# The check runs scenarios/smoke.txt on the page in headless Chrome (no window), then a few seconds on the path a
-# person's page takes (--onscreen): exit code 0 and no WebGPU error each.
+# The check runs scenarios/smoke.txt and scenarios/mobile.txt (a phone's defaults, the engine's --mobile) on the page
+# in headless Chrome (no window), then a few seconds on the path a person's page takes (--onscreen), as a desktop
+# and as a phone: exit code 0 and no WebGPU error each.
 #
 # QUENCH_DIR names the engine checkout (default: two directories up, where this experiment lives).
 set -euo pipefail
@@ -26,7 +27,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
     --no-build) BUILD=0 ;;
     --push) PUSH=1 ;;
-    -h | --help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -38,6 +39,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 cd "$ROOT"
 [[ -f "$ENGINE/tools/web_check.mjs" ]] || fail "no engine checkout at $ENGINE (QUENCH_DIR)"
 ENGINE_HASH="$(git -C "$ENGINE" rev-parse --short HEAD)"
+# A checkout with uncommitted changes (this game lives in it) is named as one: the page is not that commit's build.
+[[ -z "$(git -C "$ENGINE" status --porcelain)" ]] || ENGINE_HASH="$ENGINE_HASH-dirty"
 ENGINE_VERSION="$(sed -n 's/^project(Quench VERSION \([0-9.]*\).*/\1/p' "$ENGINE/CMakeLists.txt")"
 VERSION="$(sed -n 's/^project([A-Za-z_]* VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
 
@@ -74,10 +77,12 @@ check() { # name, then web_check.mjs's arguments
         tail -40 "$log"
         fail "the page's check '$name' (log: $log)"
     }
-    grep -E "scenario: [^ ]*smoke.txt: |web_check: (passed|[0-9]+ failed)" "$log"
+    grep -E "scenario: [^ ]*\.txt: |quit after|web_check: (passed|[0-9]+ failed)" "$log"
 }
 check smoke -- --window 1280x720 --script /repo/scenarios/smoke.txt
+check mobile -- --mobile --window 874x402 --frame-size 2622x1206 --script /repo/scenarios/mobile.txt
 check onscreen --onscreen -- --autopilot --quit-after 6
+check onscreen_mobile --onscreen -- --mobile --autopilot --quit-after 6
 
 if [[ $PUSH -eq 0 ]]; then
     echo "dist/web is ready (not published: --push)"

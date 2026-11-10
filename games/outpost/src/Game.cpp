@@ -218,6 +218,11 @@ public:
         m_level = std::move(*level);
 
         m_rayTracingAvailable = app.device().caps().rayTracing;
+        // A phone or tablet (also in a browser): the low detail and at most 60 frames per second, for its heat. The
+        // engine's reaction to late frames lowers the render scale further where that is still too much.
+        setDetail(app.mobile() ? Detail::Low : Detail::High);
+        if (app.mobile()) app.setMaxFrameRate(60.0);
+        setAdaptToLoad(app, true);
         Result<render::Renderer> renderer = render::Renderer::create(app.device(), renderSettings());
         if (!renderer) return Error{renderer.error()};
         m_renderer.emplace(std::move(*renderer));
@@ -355,6 +360,7 @@ public:
 
         placeMarker(m_goal == Goal::Manual, app.time());
 
+        m_loadScale = app.loadGovernor().renderScaleFactor();
         if (const render::RenderSettings settings = renderSettings(); !(settings == m_renderer->settings()))
             m_renderer->setSettings(settings);
     }
@@ -377,10 +383,24 @@ public:
             m_sunTarget = m_sunElevation;
         if (m_rayTracingAvailable) ImGui::Checkbox("Ray-traced shadows and occlusion", &m_rayTracing);
         ImGui::Checkbox("Outlines", &m_outlines);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Detail");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("low", m_detail == Detail::Low)) setDetail(Detail::Low);
+        ImGui::SameLine();
+        if (ImGui::RadioButton("high", m_detail == Detail::High)) setDetail(Detail::High);
+        bool adapt = app.loadGovernor().enabled();
+        if (ImGui::Checkbox("Adapt to load", &adapt)) setAdaptToLoad(app, adapt);
         ImGui::Separator();
         ImGui::TextDisabled("Click: send the walker   WASD: steer");
         ImGui::TextDisabled("Q, E, right drag: turn   Wheel: zoom");
-        if (!app.deterministic()) ImGui::TextDisabled("%.0f fps, %.2f ms", app.stats().fps, app.stats().frameMs);
+        if (!app.deterministic()) {
+            ImGui::TextDisabled("%.0f fps, %.2f ms", app.stats().fps, app.stats().frameMs);
+            // What the picture is rendered at: the detail's scale times the reaction's.
+            const float scale = renderSettings().renderScale;
+            ImGui::TextDisabled("%.0f x %.0f, scale %.2f", std::round(float(app.pixelWidth()) * scale),
+                                std::round(float(app.pixelHeight()) * scale), scale);
+        }
         ImGui::End();
     }
 
@@ -432,12 +452,17 @@ public:
         if (name == "sun") return m_sunElevation;
         if (name == "ray_shadows") return m_renderer->effects().sunShadows == render::SunShadows::RayTraced ? 1.0 : 0.0;
         if (name == "instances") return m_renderer->stats().instances;
+        if (name == "detail") return double(m_detail);
+        if (name == "render_scale") return double(m_renderer->settings().renderScale);
+        if (name == "shadow_size") return double(m_renderer->settings().shadowMapSize);
         return std::nullopt;
     }
 
-    // autopilot on|off; sun DEGREES; camera AZIMUTH_DEGREES [DISTANCE]; raytracing on|off; outlines on|off
+    // autopilot on|off; sun DEGREES; camera AZIMUTH_DEGREES [DISTANCE]; look X Y Z; raytracing on|off;
+    // outlines on|off; detail low|high; adapt_load on|off. To tell the parts of a frame's cost apart, after `detail`:
+    // occlusion on|off; occlusion_rays N; sharpen on|off; scale X; shadow_size N; shadow_filter 0..2;
+    // aa taa|fxaa|none; day_lamps on|off; bloom on|off.
     app::ScenarioExec scenarioCommand(App& app, const app::ScenarioCommand& command) override {
-        (void)app;
         const auto flag = [&](bool& value) {
             if (command.args.size() != 1 || (command.args[0] != "on" && command.args[0] != "off"))
                 return app::ScenarioExec::Failed;
@@ -451,6 +476,17 @@ public:
             return result;
         }
         if (command.op == "raytracing") return flag(m_rayTracing);
+        if (command.op == "detail" && command.args.size() == 1 &&
+            (command.args[0] == "low" || command.args[0] == "high")) {
+            setDetail(command.args[0] == "low" ? Detail::Low : Detail::High);
+            return app::ScenarioExec::Done;
+        }
+        if (command.op == "adapt_load") {
+            bool on = app.loadGovernor().enabled();
+            const app::ScenarioExec result = flag(on);
+            if (result == app::ScenarioExec::Done) setAdaptToLoad(app, on);
+            return result;
+        }
         if (command.op == "outlines") return flag(m_outlines);
         if (command.op == "occlusion") return flag(m_occlusion);
         if (command.op == "sharpen") return flag(m_sharpen);
@@ -458,6 +494,26 @@ public:
             m_occlusionRays = std::clamp(std::stoi(command.args[0]), 1, 8);
             return app::ScenarioExec::Done;
         }
+        if (command.op == "scale" && command.args.size() == 1) {
+            m_renderScale = std::clamp(std::stof(command.args[0]), 0.25f, 1.0f);
+            return app::ScenarioExec::Done;
+        }
+        if (command.op == "shadow_size" && command.args.size() == 1) {
+            m_shadowMapSize = std::uint32_t(std::clamp(std::stoi(command.args[0]), 256, 8192));
+            return app::ScenarioExec::Done;
+        }
+        if (command.op == "shadow_filter" && command.args.size() == 1) {
+            m_shadowFilter = std::clamp(std::stoi(command.args[0]), 0, 2);
+            return app::ScenarioExec::Done;
+        }
+        if (command.op == "aa" && command.args.size() == 1) {
+            m_antiAliasing = command.args[0] == "taa"    ? render::AntiAliasing::Taa
+                             : command.args[0] == "fxaa" ? render::AntiAliasing::Fxaa
+                                                         : render::AntiAliasing::None;
+            return app::ScenarioExec::Done;
+        }
+        if (command.op == "day_lamps") return flag(m_dayLamps);
+        if (command.op == "bloom") return flag(m_bloom);
         if (command.op == "sun" && command.args.size() == 1) {
             m_sunElevation = m_sunTarget = std::clamp(std::stof(command.args[0]), kMinElevation, kMaxElevation);
             return app::ScenarioExec::Done;
@@ -492,13 +548,41 @@ public:
 private:
     // ---- setup
 
+    // What a frame costs, by measurement (devlog/2026-11-10.md): the main pass's light per pixel is half of it, so
+    // the low detail renders fewer pixels (two thirds of the frame each way), takes 4 shadow taps for 12, leaves
+    // the screen-space occlusion out and the lamps off by day, where they hardly show. 0.4 of the high detail's GPU
+    // time on the Mac.
+    enum class Detail : std::uint8_t { Low, High };
+
+    void setDetail(Detail detail) {
+        const bool high = detail == Detail::High;
+        m_detail = detail;
+        m_renderScale = high ? 1.0f : 0.67f;
+        m_shadowMapSize = high ? 4096 : 2048;
+        m_shadowFilter = high ? 2 : 1;
+        m_occlusion = high;
+        m_dayLamps = high;
+    }
+
+    // The engine's reaction to late frames: its factor for the render scale, applied in renderSettings().
+    void setAdaptToLoad(App& app, bool on) {
+        if (on == app.loadGovernor().enabled()) return;
+        if (on)
+            app.loadGovernor().enable();
+        else
+            app.loadGovernor().disable();
+    }
+
     render::RenderSettings renderSettings() const {
         render::RenderSettings s;
         // The camera is far away: the cascades start just in front of the outpost (View::nearPlane) and end behind it.
         s.shadowCascades = 3;
-        s.shadowMapSize = 4096;
+        s.renderScale = std::max(m_renderScale * m_loadScale, 0.25f);
+        s.shadowMapSize = m_shadowMapSize;
         s.shadowDistance = 320.0f;
-        s.shadowFilter = 2;
+        s.shadowFilter = m_shadowFilter;
+        s.antiAliasing = m_antiAliasing;
+        s.bloom = m_bloom;
         s.bloomStrength = 0.07f;
         s.vignette = 0.12f;
         s.sharpen = m_sharpen ? 0.2f : 0.0f;
@@ -959,7 +1043,7 @@ private:
         const float boost = online >= kPods ? 1.5f : 1.0f; // the outpost is online: everything shines
         for (std::size_t i = 0; i < m_lampLights.size(); ++i)
             scene.setLight(m_lampLights[i], {.color = {0.35f, 0.85f, 1.0f},
-                                             .intensity = (2.0f + 26.0f * dark) * boost,
+                                             .intensity = ((m_dayLamps ? 2.0f : 0.0f) + 26.0f * dark) * boost,
                                              .position = m_level.lamps[i],
                                              .range = 15.0f,
                                              .castsShadows = false});
@@ -1038,8 +1122,17 @@ private:
     float m_sunElevation = kDayElevation, m_sunTarget = kDayElevation, m_shownSunElevation = -1.0f;
     bool m_rayTracing = false, m_rayTracingAvailable = false;
     bool m_outlines = true, m_outlinesShown = false;
-    bool m_occlusion = true, m_sharpen = true; // switched off by scenario commands, to tell their part of the picture
+    // The detail's settings (setDetail); scenario commands change them one by one, to tell their part of the picture
+    // and of the frame's cost.
+    Detail m_detail = Detail::High;
+    float m_renderScale = 1.0f;
+    float m_loadScale = 1.0f; // App::loadGovernor()'s factor
+    std::uint32_t m_shadowMapSize = 4096;
+    int m_shadowFilter = 2;
+    bool m_occlusion = true, m_dayLamps = true;
+    bool m_sharpen = true, m_bloom = true;
     int m_occlusionRays = render::RenderSettings{}.occlusionRays;
+    render::AntiAliasing m_antiAliasing = render::AntiAliasing::Taa;
 };
 
 } // namespace
