@@ -94,14 +94,19 @@ float cloudAltitude(float r2, float y) {
     return (r2 + y * (y + 2.0 * R)) / (sqrt(r2 + (y + R) * (y + R)) + R);
 }
 
-// The weather map at a world xz (coverage, type, precipitation, cirrus); coverage and cirrus fade out at its edges.
+// 1 inside the weather map, falling to 0 over the outer eighth of its half width: where the clouds drawn end.
+float cloudEdgeFade(float2 xz) {
+    const float2 e = abs((xz - cloud.weatherMap.xy) * cloud.weatherMap.z - 0.5);
+    return saturate((0.5 - max(e.x, e.y)) * 16.0);
+}
+
+// The weather map at a world xz (coverage, type, precipitation, cirrus); the cirrus fades out at its edges. The
+// coverage does not: what is drawn of the clouds thins out there (cloudEdgeFade on the density a view ray meets, or on
+// the 2D layer's coverage), while the clouds that shade them from the sun go on past the map. Fading the coverage
+// instead broke a deck's rim into bits with the sun on them, a row of bright dots along the horizon.
 float4 cloudWeather(float2 xz, float lod) {
-    const float2 uv = (xz - cloud.weatherMap.xy) * cloud.weatherMap.z;
-    const float2 e = abs(uv - 0.5);
-    const float fade = saturate((0.5 - max(e.x, e.y)) * 16.0);
-    float4 w = weatherTex.SampleLevel(weatherSampler, uv, lod);
-    w.x *= fade;
-    w.w *= fade;
+    float4 w = weatherTex.SampleLevel(weatherSampler, (xz - cloud.weatherMap.xy) * cloud.weatherMap.z, lod);
+    w.w *= cloudEdgeFade(xz);
     return w;
 }
 
@@ -179,8 +184,7 @@ float4 cloudCirrus(float3 dir) {
     const float a = streak * 0.6;
     const float mu = dot(dir, quenchFrame.sunDir.xyz);
     // Thin ice: the sun's forward lobe and its light scattered on within the streak, the sky's from above.
-    const float3 E = cloud.sun.rgb * (phaseHG(mu, 0.6) * kInvFourPi * 1.6 + 0.12) +
-                     cloud.ambientTop.rgb * (1.0 / QUENCH_PI);
+    const float3 E = cloud.sun.rgb * (phaseHG(mu, 0.6) * kInvFourPi * 1.6 + 0.12) + cloud.ambientTop.rgb * 0.6;
     return cloudAerial(E * a, 1.0 - a * 0.85, tc, dir);
 }
 
@@ -195,12 +199,14 @@ float4 cloudOver(float4 front, float4 back) { return float4(front.rgb + front.a 
 
 // The cloud density (0..1) at a world xz and an altitude: the weather map's coverage under the type's profile, the
 // anvil of cumulonimbus at the top, the Perlin-Worley shape and, with `detail`, the Worley erosion of the edges.
+// `body` is the density before the erosion: how deep in its cloud the point lies, for the light.
 float cloudDensity(float2 xz, float alt, bool detail, float detailFade, out float ht, out float thickness,
-                   out float rain) {
+                   out float rain, out float body) {
     const float base = cloud.layer.x;
     ht = 0.0;
     thickness = 0.0;
     rain = 0.0;
+    body = 0.0;
     if (alt < base || alt > cloud.params.w) return 0.0;
     const float4 w = cloudWeather(xz, 0.0);
     const float type = w.y;
@@ -227,6 +233,7 @@ float cloudDensity(float2 xz, float alt, bool detail, float detailFade, out floa
     const float shape =
         shapeTex.SampleLevel(shapeSampler, (pa + float3(0.0, tau * 1500.0, 0.0)) * cloud.shape.x, 0.0).r;
     float c = saturate((shape - (1.0 - coverage) + 0.12 * smoothstep(0.8, 1.0, coverage)) * 5.0);
+    body = c;
     if (detail && c > 0.0 && detailFade > 0.0) {
         const float3 q = (pa + float3(tau * 400.0, tau * 1100.0, -tau * 300.0)) * cloud.shape.y;
         const float4 dn = detailTex.SampleLevel(detailSampler, q, 0.0);
@@ -239,37 +246,67 @@ float cloudDensity(float2 xz, float alt, bool detail, float detailFade, out floa
 }
 
 float cloudDensity(float2 xz, float alt, bool detail, float detailFade) {
-    float ht, thickness, rain;
-    return cloudDensity(xz, alt, detail, detailFade, ht, thickness, rain);
+    float ht, thickness, rain, body;
+    return cloudDensity(xz, alt, detail, detailFade, ht, thickness, rain, body);
 }
 
-// Optical depth toward the sun from a point in the clouds: six steps growing to about 3 km.
-float cloudSunDepth(float2 xz, float alt, float3 sun, int steps) {
+// Optical depth toward the sun from a point in the clouds: steps growing to about 3 km (six start at 60 m; fewer
+// are longer and reach as far: the sky cube's three would else end 400 m away, in the gaps of a deck's ragged
+// base, and put the sun's glow through the deck into every reflection), each read at `jitter` of its length (the
+// march's own, so the frames average what lies along the way: read at fixed distances, the edge of a cloud toward
+// the sun passes from one step to the next in lines across the clouds seen against the light). Where
+// the last step is still in a cloud, the cloud is taken to go on as it is there up to its top: under a deck and a
+// low sun the way out is tens of kilometres long, and the steps alone would let the sun's colour through to the
+// bases.
+float cloudSunDepth(float2 xz, float alt, float3 sun, int steps, float jitter) {
     float od = 0.0;
     float dist = 0.0;
-    float step = 60.0;
+    float step = 2762.0 / (pow(1.9, float(steps)) - 1.0);
+    float mid = 0.0;
+    float d = 0.0;
+    float ht = 0.0;
+    float thickness = 0.0;
     for (int i = 0; i < steps; ++i) {
-        const float mid = dist + step * 0.5;
-        od += cloudDensity(xz + sun.xz * mid, alt + sun.y * mid, i < 2, 1.0) * step;
+        float rain, body;
+        mid = dist + step * jitter;
+        d = cloudDensity(xz + sun.xz * mid, alt + sun.y * mid, i < 2, 1.0, ht, thickness, rain, body);
+        od += d * step;
         dist += step;
         step *= 1.9;
     }
-    return od;
+    const float above = (1.0 - saturate(ht)) * thickness - sun.y * (dist - mid);
+    return od + d * max(above, 0.0) / max(sun.y, 0.05);
 }
 
-// The light a cloud sample scatters toward the camera (per unit of extinction): the sun through the octaves of
-// multiple scattering with the powder term, and the sky's light from above and the ground's from below by the
-// sample's height in its own cloud (ht of `thickness`), the light from above dimmed by the cloud over the sample (an
-// estimate from the local density) and the bases of raining clouds darker.
-float3 cloudScatter(float2 xz, float alt, float density, float ht, float thickness, float rain, float mu,
-                    int lightSteps) {
-    const float above = (1.0 - saturate(ht)) * thickness * density * cloud.shape.w * 0.15;
-    const float3 top = cloud.ambientTop.rgb * lerp(0.3, 1.0, exp(-above * 0.2));
-    float3 S = lerp(cloud.ambientBottom.rgb, top, saturate(ht * 1.2 + 0.1)) * (1.0 / QUENCH_PI);
+// The share of the light falling on one side of a cloud that is left, as diffuse light, at an optical depth tau
+// into it: droplets absorb nothing and scatter mostly forward, so light is lost only by turning back, slowly (the
+// two-stream solution of a layer that scatters without loss, 1 / (1 + (1 - g) tau 3/4) with g near 0.85, here a
+// little steeper: a stratus deck of optical depth 8 passes a third, as the ground's light under a closed cover
+// assumes, a cumulonimbus a few percent).
+float cloudDiffuse(float tau) { return 1.0 / (1.0 + QUENCH_CLOUD_DIFFUSE * tau); }
+
+// The light a cloud sample scatters toward the camera (per unit of extinction), in the scene's units (what a white
+// surface would send back). The sun through the octaves of multiple scattering with the powder term: the first
+// orders, which shape the lit sides. Then the diffuse light deep in the cloud, by the sample's height in its own
+// cloud (ht of `thickness`) and an estimate of the cloud over and under it from the density of the cloud's body
+// there (`body`: before the erosion, whose fine grain would show in the light as lines): the sky's light and the
+// sun's from above (the sun's growing in over the first optical depths: at the lit surface the octaves have it),
+// what the ground sends up from below; the bases of raining clouds darker. A cloud counts as at most
+// QUENCH_CLOUD_DEEP m thick: light also comes in through the sides of a tall one, and the ground's light under a
+// cover (Clouds.cpp) takes the same limit. A thick cloud's base is as bright as the light it lets through to the
+// ground, and its creases, where the cloud is dense, darker than its edges.
+float3 cloudScatter(float2 xz, float alt, float density, float body, float ht, float thickness, float rain, float mu,
+                    int lightSteps, float jitter) {
+    const float column = min(thickness, QUENCH_CLOUD_DEEP) * body * cloud.shape.w * QUENCH_CLOUD_COLUMN;
+    const float over = (1.0 - saturate(ht)) * column;
+    const float down = cloudDiffuse(over);
+    const float up = cloudDiffuse(saturate(ht) * column);
+    float3 S = cloud.ambientTop.rgb * down + cloud.sunDeep.rgb * (down * (1.0 - exp(-0.5 * over))) +
+               cloud.ambientBottom.rgb * (0.5 * up);
     S *= 1.0 - 0.5 * rain * (1.0 - saturate(ht * 2.0));
     if (cloud.sun.w > 0.0) {
         const float3 sun = quenchFrame.sunDir.xyz;
-        const float od = cloudSunDepth(xz, alt, sun, lightSteps) * cloud.shape.w;
+        const float od = cloudSunDepth(xz, alt, sun, lightSteps, jitter) * cloud.shape.w;
         float ms = 0.0;
         float a = 1.0;
         float b = 1.0;
@@ -282,7 +319,7 @@ float3 cloudScatter(float2 xz, float alt, float density, float ht, float thickne
         }
         // Powder: the edges facing away from the sun are darker (light has not yet scattered toward the camera).
         const float powder = 1.0 - exp(-2.0 * (od + density * 30.0 * cloud.shape.w));
-        S += cloud.sun.rgb * ms * lerp(powder, 1.0, saturate(mu * 0.5 + 0.5)) * 2.4;
+        S += cloud.sun.rgb * ms * lerp(powder, 1.0, saturate(mu * 0.5 + 0.5)) * QUENCH_CLOUD_SUN;
     }
     return S;
 }
@@ -318,9 +355,13 @@ float4 marchClouds(float3 dir, float jitter, int steps, int lightSteps, bool det
     depth = 60000.0;
     if (seg.y <= seg.x) return cirrus;
     // Steps that grow with the distance, each a constant share of it: fine steps through near clouds, coarse ones
-    // through far clouds, which are smaller on the screen.
+    // through far clouds, which are smaller on the screen. The jitter moves the whole row of steps along the ray, not
+    // each sample inside a cell that stays where it is: with fixed cells the light of the first sample inside a cloud
+    // depends on where the cloud's surface lies in its cell, which no number of frames averages out (fine lines
+    // like a map's contours over the clouds, each the shell of one step).
     const float t0 = max(seg.x, 100.0);
-    const float growth = exp(log(max(seg.y, t0 + 1.0) / t0) / float(steps));
+    const float logGrowth = log(max(seg.y, t0 + 1.0) / t0) / float(steps);
+    const float width = exp(0.5 * logGrowth) - exp(-0.5 * logGrowth);
     const float mu = dot(dir, quenchFrame.sunDir.xyz);
     const float sigma = cloud.shape.w;
     const float3 cam = quenchFrame.cameraPos.xyz;
@@ -328,22 +369,39 @@ float4 marchClouds(float3 dir, float jitter, int steps, int lightSteps, bool det
     float3 L = float3(0.0, 0.0, 0.0);
     float depthSum = 0.0;
     float weight = 0.0;
-    float ta = t0;
+    float3 last = float3(0.0, 0.0, 0.0);
     for (int i = 0; i < steps; ++i) {
-        if (T < 0.01) break;
-        const float dt = ta * (growth - 1.0);
-        const float t = ta + dt * jitter;
-        ta += dt;
+        // Nothing shows through the last hundredth; the cloud behind it is taken to go on as it is here (left open,
+        // that hundredth of the sun's disc shone through a closed deck).
+        if (T < 0.01) {
+            L += T * last;
+            T = 0.0;
+            break;
+        }
+        const float t = t0 * exp(logGrowth * (float(i) + jitter));
+        const float dt = t * width;
         const float2 off = dir.xz * t;
         const float alt = cloudAltitude(dot(off, off), cam.y + dir.y * t);
         const float2 xz = cam.xz + off;
         // Detail fades out far away, where it would only alias.
-        float ht, thickness, rain;
-        const float d = cloudDensity(xz, alt, detail, 1.0 - smoothstep(20000.0, 45000.0, t), ht, thickness, rain);
+        // What is drawn thins out toward the map's edge and ends there (nothing is read past it).
+        const float drawn = cloudEdgeFade(xz);
+        float ht = 0.0;
+        float thickness = 0.0;
+        float rain = 0.0;
+        float body = 0.0;
+        float d = 0.0;
+        [branch] if (drawn > 0.0) {
+            d = drawn *
+                cloudDensity(xz, alt, detail, 1.0 - smoothstep(20000.0, 45000.0, t), ht, thickness, rain, body);
+        }
         if (d > 0.002) {
             const float Tr = exp(-d * sigma * dt);
-            const float3 S = cloudScatter(xz, alt, d, ht, thickness, rain, mu, lightSteps);
+            // The light's steps at a place of their own in every step of the march.
+            const float3 S = cloudScatter(xz, alt, d, body, ht, thickness, rain, mu, lightSteps,
+                                          frac(jitter + 0.618034 * float(i + 1)));
             const float absorbed = T * (1.0 - Tr);
+            last = S;
             L += absorbed * S;
             depthSum += t * absorbed;
             weight += absorbed;
@@ -389,23 +447,27 @@ float4 cloudLayer(float3 dir) {
     const float t = over ? hit.x : hit.y;
     if (t <= 0.0) return cirrus;
     const float2 xz = quenchFrame.cameraPos.xz + dir.xz * t;
-    const float4 w = cloudWeather(xz, 0.0);
+    float4 w = cloudWeather(xz, 0.0);
+    w.x *= cloudEdgeFade(xz);
     const float d = layerDensity(xz, w);
     if (d <= 0.002) return cirrus;
     const float thickness = byType(w.y, 300.0, 1200.0, 2500.0, 4000.0);
     const float od = d * thickness * cloud.shape.w * 0.25;
     const float T = exp(-od);
     const float mu = dot(dir, quenchFrame.sunDir.xyz);
-    float3 S = lerp(cloud.ambientBottom.rgb, cloud.ambientTop.rgb, 0.6) * (1.0 / QUENCH_PI) *
-               lerp(1.0, 0.45, saturate(od * 0.08));
+    // The base: the light the layer lets through from above (as the volume's clouds do) and the ground's.
+    const float deep = 1.0 / (1.0 + QUENCH_CLOUD_DIFFUSE * od * 2.4);
+    float3 S = (cloud.ambientTop.rgb + cloud.sunDeep.rgb * (1.0 - exp(-1.2 * od))) * deep +
+               cloud.ambientBottom.rgb * 0.5;
     if (over) {
         // The tops: the clear sky's light and the sun's, diffused by the cloud and a little toward it.
-        S = cloud.ambientTop.rgb * (1.0 / QUENCH_PI);
+        S = cloud.ambientTop.rgb;
         if (cloud.sun.w > 0.0)
             S += cloud.sun.rgb * (saturate(quenchFrame.sunDir.y) * 0.25 + 0.03 + cloudPhase(mu, 1.0) * 0.6);
     } else if (cloud.sun.w > 0.0) {
         const float lightOd = od * lerp(1.6, 0.6, saturate(quenchFrame.sunDir.y * 2.0));
-        S += cloud.sun.rgb * (cloudPhase(mu, 1.0) * exp(-lightOd * 0.5) + 0.06 * exp(-lightOd * 0.08)) * 2.4;
+        S += cloud.sun.rgb * (cloudPhase(mu, 1.0) * exp(-lightOd * 0.5) + 0.06 * exp(-lightOd * 0.08)) *
+             QUENCH_CLOUD_SUN;
     }
     return cloudOver(cloudAerial(S * (1.0 - T), T, t, dir), cirrus);
 }
@@ -551,11 +613,13 @@ float4 cloud_temporal_fs(FullscreenOut vin) : SV_Target0 {
 
 // The sky behind the clouds, as sky_fs draws it (quench/Sky.hlsli), with the clouds over it and the horizon haze
 // after them, so that distant clouds meet the fog. Within a few degrees of the horizon, beyond the clouds of the
-// weather map, the sky turns toward the cloud bases' grey as the cover closes (the clouds go on past the map).
+// weather map, the sky turns toward the cloud bases' grey as the cover closes (the clouds go on past the map): all of
+// it below about 3 degrees, where the map's clouds end, or a low sun's glow would show in the gap under a closed deck
+// and, through the sky cube's blur, colour every wet surface.
 float3 cloudySkyColor(float3 dir, float4 clouds, bool sunDisc) {
     float3 col = skyRadiance(dir);
     if (sunDisc) col = quenchSunDisc(col, dir);
-    col = lerp(col, quenchFrame.overcast.rgb, quenchFrame.overcast.w * saturate(1.0 - abs(dir.y) * 10.0));
+    col = lerp(col, quenchFrame.overcast.rgb, quenchFrame.overcast.w * saturate(1.5 - abs(dir.y) * 10.0));
     // Under the cloud base the clouds are above the horizon; over it (a camera flying over a sea of clouds) below it
     // too.
     const bool seen = dir.y > -0.02 || quenchFrame.cameraPos.y > cloud.layer.x;

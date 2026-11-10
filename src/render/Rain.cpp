@@ -73,7 +73,6 @@ constexpr float kSnowSlant = 0.3f;
 constexpr float kShaftExtinction = 0.0012f;
 constexpr float kShaftNear = 20.0f;
 constexpr float kRainbowStrength = 0.06f;
-constexpr float kPi = 3.14159265f;
 // The cover over the camera: the texels within this many of the camera's (0.75 m), covered where the highest surface
 // is more than kCoverHeight above the camera along the rain.
 constexpr int kCoverRadius = 3;
@@ -406,12 +405,11 @@ void RainRenderer::updateMaps(gpu::CommandBuffer& commands, const gpu::Texture& 
 
 void RainRenderer::lightUniforms(const shader::FrameUniforms& fu, float deck) {
     const glm::vec3 sky(fu.skyAmbient), ground(fu.groundAmbient);
-    // The drops and the veil refract and scatter the light that reaches them: from the closed share of the sky `deck`
-    // times the radiance of the clouds' bases (FrameUniforms::overcast, what the traced effects' misses see), not the
-    // sky's ambient term there, which is what a white surface sends back and pi times as bright; else a storm's rain
-    // shines brighter than the clouds above it. The flakes are lit as the snow on the ground is.
+    // The drops and the veil refract and scatter the light that reaches them: the sky's ambient light, with the
+    // closed share of the sky at `deck` times the radiance of the clouds' bases (FrameUniforms::overcast, which is
+    // that share of the ambient light). The flakes are lit as the snow on the ground is.
     const float closing = std::pow(std::clamp(fu.overcast.w, 0.0f, 1.0f), 1.2f);
-    const glm::vec3 seen = glm::max(sky - glm::vec3(fu.overcast) * (closing * (kPi - deck)), glm::vec3(0.0f));
+    const glm::vec3 seen = glm::max(sky + glm::vec3(fu.overcast) * (closing * (deck - 1.0f)), glm::vec3(0.0f));
     m_uniforms.light = glm::vec4(glm::mix(ground, seen, kSkyShare), m_uniforms.light.w);
     m_uniforms.sun =
         fu.sunDir.w > 0.0f && fu.sunDir.y > 0.0f ? glm::vec4(glm::vec3(fu.sunColor), kSunForward) : glm::vec4(0.0f);

@@ -285,12 +285,15 @@ public:
         ImGui::SliderFloat("Time scale", &m_timeScale, 0.0f, 60.0f, "%.0f x");
         if (changed) m_weather.setSettings(w);
         ImGui::Separator();
-        ImGui::SliderFloat("Sun elevation", &m_elevation, -4.0f, 80.0f, "%.0f deg");
-        ImGui::SliderFloat("Sun azimuth", &m_azimuth, 0.0f, 360.0f, "%.0f deg");
+        // A sun the person has placed is theirs: the next preset leaves it where it is.
+        if (ImGui::SliderFloat("Sun elevation", &m_elevation, -4.0f, 80.0f, "%.0f deg")) m_presetSun = false;
+        if (ImGui::SliderFloat("Sun azimuth", &m_azimuth, 0.0f, 360.0f, "%.0f deg")) m_presetSun = false;
         ImGui::Checkbox("Run the day", &m_runDay);
+        if (m_runDay) m_presetSun = false;
         if (ImGui::Button("Sunset")) {
             m_elevation = 3.0f;
             m_azimuth = 25.0f;
+            m_presetSun = false;
         }
         ImGui::Separator();
         int quality = int(m_quality);
@@ -472,10 +475,12 @@ public:
             return true;
         } else if (name == "sun_elevation" && number) {
             m_elevation = std::clamp(*number, -4.0f, 80.0f);
+            m_presetSun = false;
             applySun();
             return true;
         } else if (name == "sun_azimuth" && number) {
             m_azimuth = *number;
+            m_presetSun = false;
             applySun();
             return true;
         } else if (name == "run_day" && flag) {
@@ -569,6 +574,18 @@ private:
         w.wind.gusts = 0.0f;
         w.wind.turbulence = 0.0f;
         w.lightning = 1.0f;
+        // Two presets place the sun for their picture (a low sun ahead for the sun shower, the sun behind for the
+        // passing one). The next preset without a sun of its own puts it back where it was: left there, a snowfall
+        // chosen after the sun shower kept its sun at 12 degrees, and its sky was dim and brown.
+        const bool ownSun = name == "rain_here" || name == "passing";
+        if (ownSun && !m_presetSun) {
+            m_elevationBefore = m_elevation;
+            m_azimuthBefore = m_azimuth;
+        } else if (!ownSun && m_presetSun) {
+            m_elevation = m_elevationBefore;
+            m_azimuth = m_azimuthBefore;
+        }
+        m_presetSun = ownSun;
         std::optional<wx::Cell> shower;
         const wx::Cell showerCell{.position = kShowerAt,
                                   .radius = 3200.0f,
@@ -1052,6 +1069,10 @@ private:
     float m_timeScale = 10.0f;
     float m_elevation = 30.0f;
     float m_azimuth = 50.0f;
+    // The sun is where a preset placed it, and where it was before that.
+    bool m_presetSun = false;
+    float m_elevationBefore = 30.0f;
+    float m_azimuthBefore = 50.0f;
     bool m_runDay = false;
     bool m_limit60 = false;
     double m_outsideRate = 0.0;

@@ -51,9 +51,20 @@ constexpr int kCubeSteps = 24;
 constexpr int kCubeLightSteps = 3;
 // How overcast it is: the mean coverage within this distance of the camera.
 constexpr float kCoverRadius = 6000.0f;
-// The share of the light above a closed cloud deck that reaches the ground, all of it diffuse.
-constexpr float kOvercastTransmittance = 0.3f;
-constexpr float kPi = 3.14159265f;
+// The share of the light above a closed cloud deck that reaches the ground, all of it diffuse, follows the deck's
+// thickness over the camera by the march's own numbers (QUENCH_CLOUD_DIFFUSE and the others in CloudUniforms.h) and
+// the density of a closed deck's body over its base as the march's light sees it (the profile's and the shape's
+// mean there): a stratus deck 500 m thick passes 0.31 of the light above it, a storm's 2 km and more 0.10.
+constexpr float kDeckDensity = 0.68f;
+// How much of the sun's hue the light under a closed deck keeps.
+constexpr float kOvercastHue = 0.1f;
+// How much of the light on the clouds from above is the dome's blue rather than the scene's ambient color.
+constexpr float kDomeShare = 0.6f;
+// How much of the sun's hue its light keeps deep inside a cloud.
+constexpr float kDeepHue = 0.35f;
+// What the ground sends back up to the clouds' bases: grass and earth, and snow where it lies.
+constexpr float kGroundAlbedo = 0.15f;
+constexpr float kSnowAlbedo = 0.8f;
 // The lightning (RenderSettings::lightning): flashes within this distance of the camera are lit; a flash's light on
 // the scene halves at kFlashNear, its glow in the clouds at kGlowNear; the glow sits this far above the cloud base.
 // Its light on the scene, as irradiance from the sky at a flash of 1: a fixed amount and a share of the light under
@@ -365,19 +376,36 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
     const glm::vec3 skyAmbient(fu.skyAmbient);
     // Only the clouds above the camera dim its light: over the tops the sun and the clear sky are back.
     const float cover = weather.coverAbove(cam, kCoverRadius);
-    // A closed deck passes about a third of the light above it, all of it diffuse, grey with a little of the sun's
-    // hue: the radiance of its base, and the sky's ambient light moving toward it as the cover closes (also the light
-    // from above on the clouds themselves: under a deck they do not see the blue sky).
+    // A closed deck passes a share of the light above it, all of it diffuse and grey: many scatterings leave little
+    // of the sun's hue, and a low sun hardly gets into a deck at all (kOvercastHue of it is kept). That is the
+    // light on the ground under it, and the sky's ambient light moves toward it as the cover closes. The share is
+    // what the march gives the base of the clouds over the camera (cloudScatter in clouds.hlsl, the same numbers):
+    // about a third under stratus, a tenth under a storm, whose bases are dark and whose ground is dim.
+    //
+    // The scene's lights are in the units of what a white surface sends back (a surface's ambient term is its
+    // albedo times the sky's ambient light), so a sky of one radiance all over lights the ground with that radiance:
+    // the base of a closed deck is as bright as the ground's light under it, not a pi-th of it (as it was until
+    // 2026-11-10: a deck half as bright as the snow it lit).
     const float sunPeak = std::max({sunColor.r, sunColor.g, sunColor.b});
-    const glm::vec3 hue = sunPeak > 0.0f ? glm::mix(glm::vec3(1.0f), sunColor / sunPeak, 0.3f) : glm::vec3(1.0f);
-    const glm::vec3 overcastIrradiance = glm::vec3(0.93f, 0.96f, 1.0f) * hue * kOvercastTransmittance *
-                                         (luminance(sunColor) * sinSun + luminance(skyAmbient));
+    const glm::vec3 hue =
+        sunPeak > 0.0f ? glm::mix(glm::vec3(1.0f), sunColor / sunPeak, kOvercastHue) : glm::vec3(1.0f);
+    const float thickness = weather.cloudTop(weather.sample(camXz).type) - wu.layer.x;
+    const float column = std::min(std::max(thickness, 0.0f), QUENCH_CLOUD_DEEP) * kExtinction * QUENCH_CLOUD_COLUMN;
+    const float through = 1.0f / (1.0f + QUENCH_CLOUD_DIFFUSE * column * kDeckDensity);
+    const glm::vec3 overcastLight =
+        glm::vec3(0.93f, 0.96f, 1.0f) * hue * through * (luminance(sunColor) * sinSun + luminance(skyAmbient));
     const float closing = std::pow(std::clamp(cover, 0.0f, 1.0f), 1.2f);
-    const glm::vec3 ambient = glm::mix(skyAmbient, overcastIrradiance, closing);
+    const glm::vec3 ambient = glm::mix(skyAmbient, overcastLight, closing);
     // The light under the clouds for the rest of the frame (and the cloud passes' haze): set before the passes.
-    fu.overcast = glm::vec4(overcastIrradiance / kPi, cover);
+    fu.overcast = glm::vec4(overcastLight, cover);
     fu.skyAmbient = glm::vec4(ambient, fu.skyAmbient.w);
-    fu.groundAmbient = glm::vec4(glm::vec3(fu.groundAmbient) * glm::mix(1.0f, 0.45f, cover), fu.groundAmbient.w);
+    glm::vec3 groundAmbient = glm::vec3(fu.groundAmbient) * glm::mix(1.0f, 0.45f, cover);
+    // Snow on the ground sends most of the light back up: the undersides of things, the falling snow and the clouds'
+    // bases are lit from below by it (where the snow is drawn: RainRenderer::prepare has set FrameUniforms::snow).
+    const float snowCover = fu.snow.x > 0.0f ? weather.wetness(camXz).snow : 0.0f;
+    const glm::vec3 groundLight = sunColor * (sinSun * (1.0f - cover)) + ambient;
+    groundAmbient = glm::mix(groundAmbient, groundLight * kSnowAlbedo, snowCover);
+    fu.groundAmbient = glm::vec4(groundAmbient, fu.groundAmbient.w);
     const glm::vec3 fog(fu.fogColor);
     fu.fogColor = glm::vec4(glm::mix(fog, glm::vec3(luminance(fog) * 0.85f), cover * 0.8f), fu.fogColor.w);
 
@@ -409,9 +437,16 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
     u.air = wu.air;
     u.shape = glm::vec4(kShapeScale, kDetailScale, wu.shape.y, kExtinction);
     u.sun = glm::vec4(sunColor, fu.sunDir.w > 0.0f ? 1.0f : 0.0f);
-    // The tops see the clear sky; the bases the ground, lit by the sun where the clouds let it through.
-    u.ambientTop = glm::vec4(ambient, 0.0f);
-    u.ambientBottom = glm::vec4((sunColor * sinSun * (1.0f - 0.8f * cover) + ambient) * 0.15f, 0.0f);
+    // The light on the clouds from above: the clear sky's, of which they see the whole dome and mostly its blue (the
+    // palette's ambient light at a low sun is the warm glow at the horizon, which lights walls, not cloud tops: with
+    // it the shadow sides of sunset clouds went brown), and the sun's light on a level top, which goes deep into a
+    // cloud as diffuse light and loses some of its hue to the sky's on the way. The bases see the ground, lit by
+    // the sun where the clouds let it through.
+    const float skyLuminance = luminance(skyAmbient);
+    const glm::vec3 dome = glm::vec3(0.80f, 0.93f, 1.16f) * skyLuminance;
+    u.ambientTop = glm::vec4(glm::mix(skyAmbient, dome, kDomeShare), 0.0f);
+    u.sunDeep = glm::vec4(glm::mix(glm::vec3(luminance(sunColor)), sunColor, kDeepHue) * sinSun, 0.0f);
+    u.ambientBottom = glm::vec4(groundLight * glm::mix(kGroundAlbedo, kSnowAlbedo, snowCover), 0.0f);
     const int steps = std::clamp(settings.cloudSteps, 8, 256);
     const int lightSteps = steps >= 64 ? 6 : 4;
     u.march = glm::vec4(float(steps), float(lightSteps), kLongestPath, 0.0f);
@@ -589,8 +624,7 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
             fu.skyAmbient += glm::vec4(irradiance, 0.0f);
             fu.groundAmbient += glm::vec4(irradiance * 0.3f, 0.0f);
             fu.lightning = glm::vec4(toward, brightest);
-            fu.lightningColor =
-                glm::vec4(kLightningColor * (kGlowRadiance + 3.0f * luminance(overcastIrradiance) / kPi), 0.0f);
+            fu.lightningColor = glm::vec4(kLightningColor * (kGlowRadiance + 3.0f * luminance(overcastLight)), 0.0f);
         }
         stats.lightning = light;
     }

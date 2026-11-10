@@ -109,7 +109,8 @@ struct QUENCH_ALIGN16 FrameUniforms {
     // The sky cube (sampler 15: the sky with its clouds, for the sky's reflection): x: 1 when it is read, y: its last
     // mip level.
     float4 skyCube;
-    // How overcast it is around the camera: rgb: the radiance of a closed cloud deck's base, w: the cover (0..1). The
+    // How overcast it is around the camera: rgb: the radiance of a closed cloud deck's base (in the lights' units:
+    // as bright as the light it gives the ground, skyAmbient under a closed cover), w: the cover (0..1). The
     // traced effects' sky (misses, the probe grid, the path tracer) takes it in place of the clouds themselves.
     float4 overcast;
     // The rain (render::RenderSettings::rain; quench/Rain.hlsli). World -> the rain occlusion map: an orthographic

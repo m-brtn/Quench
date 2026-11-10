@@ -485,8 +485,14 @@ float4 rain_shafts_fs(FullscreenOut vin) : SV_Target0 {
         const float stepT = exp(-sigma * dt);
         color += T * light * (1.0 - stepT);
         T *= stepT;
-        // Beyond this the rest adds less than one part in 200 (a heavy snowfall's veil is opaque within kilometres).
-        if (T < 0.005) break;
+        // Beyond this the rest adds less than one part in 200 (a heavy snowfall's veil is opaque within kilometres):
+        // taken to go on as it is here. Left open, that part came and went with the step the march stopped at: faint
+        // level lines across an even veil.
+        if (T < 0.005) {
+            color += T * light;
+            T = 0.0;
+            break;
+        }
     }
     return float4(color, T);
 }

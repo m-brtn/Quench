@@ -67,14 +67,17 @@ float3 skyRadiance(float3 dir) {
 }
 
 // Haze color along a view ray: the fog color, warmed toward the sun; with the scattering sky also the sky color just
-// above the horizon in that direction (aerial perspective: distant land fades into the sky behind it).
+// above the horizon in that direction (aerial perspective: distant land fades into the sky behind it). Under the
+// scene's clouds (FrameUniforms::overcast, 0 without them) the sun does not reach the haze and the sky behind the
+// land is the clouds' grey: else the horizon toward a low sun glows under a closed deck, and the water mirrors it.
 float3 hazeColor(float3 rd) {
     const float hasSun = quenchFrame.sunDir.w;
-    const float sunAmt = pow(saturate(dot(rd, quenchFrame.sunDir.xyz)), 8.0) * hasSun;
+    const float cover = quenchFrame.overcast.w;
+    const float sunAmt = pow(saturate(dot(rd, quenchFrame.sunDir.xyz)), 8.0) * hasSun * (1.0 - cover);
     const float3 base = quenchFrame.fogColor.rgb + quenchFrame.sunGlow.rgb * 0.22 * sunAmt * quenchFrame.fogParams.w;
     const float atmosphere = quenchFrame.skyGround.w * hasSun;
     if (atmosphere <= 0.0) return base;
-    const float3 sky = skyRadiance(normalize(float3(rd.x, 0.06, rd.z)));
+    const float3 sky = lerp(skyRadiance(normalize(float3(rd.x, 0.06, rd.z))), quenchFrame.overcast.rgb, cover);
     return lerp(base, sky * (luminance(base) / max(luminance(sky), 1e-5)) * 0.5 + sky * 0.5, 0.6 * atmosphere);
 }
 
