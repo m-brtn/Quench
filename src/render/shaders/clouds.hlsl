@@ -197,23 +197,27 @@ float4 cloudOver(float4 front, float4 back) { return float4(front.rgb + front.a 
 
 #if defined(QUENCH_CLOUD_VOLUME)
 
+// The width of a cloud's edge, 1 / QUENCH_CLOUD_EDGE of the shape's range, and how far the detail moves the surface
+// in and out, in the shape's range per unit of detail (whose deviation is 0.08, its extremes 0.2 from its mean).
+#define QUENCH_CLOUD_EDGE 5.0
+#define QUENCH_CLOUD_BILLOW 1.0
+
 // The cloud density (0..1) at a world xz and an altitude: the weather map's coverage under the type's profile, the
-// anvil of cumulonimbus at the top, the Perlin-Worley shape and, with `detail`, the Worley erosion of the edges.
-// `body` is the density before the erosion: how deep in its cloud the point lies, for the light.
-float cloudDensity(float2 xz, float alt, bool detail, float detailFade, out float ht, out float thickness,
-                   out float rain, out float body) {
+// anvil of cumulonimbus at the top, the Perlin-Worley shape and, with `detail`, the Worley detail of its surface.
+// `map` is the weather map there: x the coverage, y the precipitation.
+float cloudDensity(float2 xz, float alt, bool detail, float detailFade, float edge, out float ht,
+                   out float thickness, out float2 map) {
     const float base = cloud.layer.x;
     ht = 0.0;
     thickness = 0.0;
-    rain = 0.0;
-    body = 0.0;
+    map = float2(0.0, 0.0);
     if (alt < base || alt > cloud.params.w) return 0.0;
     const float4 w = cloudWeather(xz, 0.0);
     const float type = w.y;
     const float top = cloudTopOf(type);
     thickness = max(top - base, 1.0);
     ht = (alt - base) / thickness;
-    rain = w.z;
+    map = w.xz;
     float coverage = ht < 1.0 ? w.x * cloudProfile(ht, type) : 0.0;
     // The anvil: near the layer's top a cumulonimbus spreads over the blurred map (a wider footprint).
     if (alt > cloud.layer.y - 1800.0) {
@@ -230,36 +234,46 @@ float cloudDensity(float2 xz, float alt, bool detail, float detailFade, out floa
     const float tau = cloud.shape.z;
     float3 pa = float3(xz.x - cloud.air.x, alt, xz.y - cloud.air.y);
     pa.xz += cloud.air.zw * min(alt - base, 3000.0) * 0.15;
-    const float shape =
+    float shape =
         shapeTex.SampleLevel(shapeSampler, (pa + float3(0.0, tau * 1500.0, 0.0)) * cloud.shape.x, 0.0).r;
-    float c = saturate((shape - (1.0 - coverage) + 0.12 * smoothstep(0.8, 1.0, coverage)) * 5.0);
-    body = c;
-    if (detail && c > 0.0 && detailFade > 0.0) {
+    const float threshold = 1.0 - coverage - 0.12 * smoothstep(0.8, 1.0, coverage);
+    const float billow = QUENCH_CLOUD_BILLOW * detailFade * smoothstep(0.02, 0.25, w.x);
+    if (detail && shape > threshold - 0.2 * billow) {
         const float3 q = (pa + float3(tau * 400.0, tau * 1100.0, -tau * 300.0)) * cloud.shape.y;
         const float4 dn = detailTex.SampleLevel(detailSampler, q, 0.0);
-        const float d = dn.r * 0.625 + dn.g * 0.25 + dn.b * 0.125;
-        // Wispy at the base, billowing higher up.
-        const float erosion = lerp(d, 1.0 - d, saturate(ht * 4.0)) * 0.35 * detailFade;
-        c = saturate((c - erosion) / max(1.0 - erosion, 1e-3));
+        const float d = dn.r * 0.625 + dn.g * 0.25 + dn.b * 0.125 - 0.48;
+        // Wispy at the base, billowing higher up: the surface moves in and out with the detail (about its mean, so
+        // the cloud keeps its size): the round bumps of a cumulus top between the Worley cells' points. Less where
+        // the map has next to no cloud: there the bumps would only add puffs to a clear sky.
+        shape -= lerp(d, -d, saturate(ht * 4.0)) * billow;
     }
-    return c;
+    // `edge` under QUENCH_CLOUD_EDGE widens the edge about its middle: the cloud as from afar, blurred.
+    return saturate(0.5 + (shape - threshold - 0.5 / QUENCH_CLOUD_EDGE) * edge);
 }
 
 float cloudDensity(float2 xz, float alt, bool detail, float detailFade) {
-    float ht, thickness, rain, body;
-    return cloudDensity(xz, alt, detail, detailFade, ht, thickness, rain, body);
+    float ht, thickness;
+    float2 map;
+    return cloudDensity(xz, alt, detail, detailFade, QUENCH_CLOUD_EDGE, ht, thickness, map);
 }
 
-// Optical depth toward the sun from a point in the clouds: steps growing to about 3 km (six start at 60 m; fewer
-// are longer and reach as far: the sky cube's three would else end 400 m away, in the gaps of a deck's ragged
-// base, and put the sun's glow through the deck into every reflection), each read at `jitter` of its length (the
-// march's own, so the frames average what lies along the way: read at fixed distances, the edge of a cloud toward
-// the sun passes from one step to the next in lines across the clouds seen against the light). Where
-// the last step is still in a cloud, the cloud is taken to go on as it is there up to its top: under a deck and a
-// low sun the way out is tens of kilometres long, and the steps alone would let the sun's colour through to the
-// bases.
-float cloudSunDepth(float2 xz, float alt, float3 sun, int steps, float jitter) {
+// The way to the sun from a point in the clouds: x the optical depth in metres of full density over the short steps,
+// y the share of the light that the long steps let through, z the depth within about 700 m (how deep the point
+// lies in its own cloud). Steps growing to about 3 km (six start at 60 m; fewer are longer and reach as far: the
+// sky cube's three would else end 400 m away, in the gaps of a deck's ragged base, and put the sun's glow through
+// the deck into every reflection), each read at `jitter` of its length, so the frames average what lies along the
+// way. A step of hundreds of metres reads one place for all its length, a cloud or none, and the light at the
+// sample would be all or nothing from frame to frame (grain that the accumulation does not take out). Such a step
+// reads the clouds with wider edges instead, as blurred over its length, and takes what it reads for the share of
+// its length that is in a cloud: it lets through 1 - share, the mean of all and nothing, whatever the order of
+// scattering. Where the last step is in a cloud, the cloud is taken to go on from there up to its top the same
+// way: under a deck and a low sun the way out is tens of kilometres long, and the steps alone would let the sun's
+// colour through to the bases.
+float3 cloudSunDepth(float2 xz, float alt, float3 sun, int steps, float jitter) {
+    const float sigma = cloud.shape.w;
     float od = 0.0;
+    float through = 1.0;
+    float near = 0.0;
     float dist = 0.0;
     float step = 2762.0 / (pow(1.9, float(steps)) - 1.0);
     float mid = 0.0;
@@ -267,15 +281,21 @@ float cloudSunDepth(float2 xz, float alt, float3 sun, int steps, float jitter) {
     float ht = 0.0;
     float thickness = 0.0;
     for (int i = 0; i < steps; ++i) {
-        float rain, body;
+        float2 map;
         mid = dist + step * jitter;
-        d = cloudDensity(xz + sun.xz * mid, alt + sun.y * mid, i < 2, 1.0, ht, thickness, rain, body);
-        od += d * step;
+        const float edge = clamp(1500.0 / step, 1.5, QUENCH_CLOUD_EDGE);
+        d = cloudDensity(xz + sun.xz * mid, alt + sun.y * mid, i < 2, 1.0, edge, ht, thickness, map);
+        if (dist < 500.0) near += d * step;
+        if (edge < QUENCH_CLOUD_EDGE)
+            through *= 1.0 - d * (1.0 - exp(-sigma * step));
+        else
+            od += d * step;
         dist += step;
         step *= 1.9;
+        if (through < 0.003) return float3(od, 0.0, near); // dark already (the depth within 700 m is read by then)
     }
-    const float above = (1.0 - saturate(ht)) * thickness - sun.y * (dist - mid);
-    return od + d * max(above, 0.0) / max(sun.y, 0.05);
+    const float above = max((1.0 - saturate(ht)) * thickness - sun.y * (dist - mid), 0.0) / max(sun.y, 0.05);
+    return float3(od, through * (1.0 - d * (1.0 - exp(-sigma * above))), near);
 }
 
 // The share of the light falling on one side of a cloud that is left, as diffuse light, at an optical depth tau
@@ -288,25 +308,33 @@ float cloudDiffuse(float tau) { return 1.0 / (1.0 + QUENCH_CLOUD_DIFFUSE * tau);
 // The light a cloud sample scatters toward the camera (per unit of extinction), in the scene's units (what a white
 // surface would send back). The sun through the octaves of multiple scattering with the powder term: the first
 // orders, which shape the lit sides. Then the diffuse light deep in the cloud, by the sample's height in its own
-// cloud (ht of `thickness`) and an estimate of the cloud over and under it from the density of the cloud's body
-// there (`body`: before the erosion, whose fine grain would show in the light as lines): the sky's light and the
-// sun's from above (the sun's growing in over the first optical depths: at the lit surface the octaves have it),
-// what the ground sends up from below; the bases of raining clouds darker. A cloud counts as at most
-// QUENCH_CLOUD_DEEP m thick: light also comes in through the sides of a tall one, and the ground's light under a
-// cover (Clouds.cpp) takes the same limit. A thick cloud's base is as bright as the light it lets through to the
-// ground, and its creases, where the cloud is dense, darker than its edges.
-float3 cloudScatter(float2 xz, float alt, float density, float body, float ht, float thickness, float rain, float mu,
+// cloud (ht of `thickness`) and how closed the cloud is around it: by the optical depth of the first steps toward
+// the sun (the side toward the sun is the open one; without a sun a cloud counts as closed) and by the weather
+// map's coverage there (`map.x`: under a deck or a storm cell the sky's light comes through all of the cloud
+// above, whatever a low sun sees along its base). The sky's light and the sun's from above (the sun's growing in
+// over the first optical depths: at the lit surface the octaves have it), what the ground sends up from below; the
+// bases of raining clouds darker (`map.y`). A cloud counts as at most QUENCH_CLOUD_DEEP m thick: light also comes
+// in through the sides of a tall one, and the ground's light under a cover (Clouds.cpp) takes the same limit and
+// the same density. A closed cloud's base is as bright as the light it lets through to the ground, and a cloud's
+// shadow side darker than its lit one. (Until 2026-11-10 the depth came from the density at the sample: the light
+// then followed the shape noise value by value, bright along every edge like an X-ray picture.)
+float3 cloudScatter(float2 xz, float alt, float density, float ht, float thickness, float2 map, float mu,
                     int lightSteps, float jitter) {
-    const float column = min(thickness, QUENCH_CLOUD_DEEP) * body * cloud.shape.w * QUENCH_CLOUD_COLUMN;
+    const bool lit = cloud.sun.w > 0.0;
+    const float3 way =
+        lit ? cloudSunDepth(xz, alt, quenchFrame.sunDir.xyz, lightSteps, jitter) : float3(0.0, 1.0, 0.0);
+    const float od = way.x * cloud.shape.w;
+    const float inside =
+        lit ? max(1.0 - exp(-way.z * cloud.shape.w * QUENCH_CLOUD_INSIDE), smoothstep(0.5, 0.9, map.x)) : 1.0;
+    const float column =
+        min(thickness, QUENCH_CLOUD_DEEP) * cloud.shape.w * (QUENCH_CLOUD_COLUMN * QUENCH_CLOUD_BODY) * inside;
     const float over = (1.0 - saturate(ht)) * column;
     const float down = cloudDiffuse(over);
     const float up = cloudDiffuse(saturate(ht) * column);
     float3 S = cloud.ambientTop.rgb * down + cloud.sunDeep.rgb * (down * (1.0 - exp(-0.5 * over))) +
                cloud.ambientBottom.rgb * (0.5 * up);
-    S *= 1.0 - 0.5 * rain * (1.0 - saturate(ht * 2.0));
-    if (cloud.sun.w > 0.0) {
-        const float3 sun = quenchFrame.sunDir.xyz;
-        const float od = cloudSunDepth(xz, alt, sun, lightSteps, jitter) * cloud.shape.w;
+    S *= 1.0 - 0.5 * map.y * (1.0 - saturate(ht * 2.0));
+    if (lit) {
         float ms = 0.0;
         float a = 1.0;
         float b = 1.0;
@@ -319,7 +347,7 @@ float3 cloudScatter(float2 xz, float alt, float density, float body, float ht, f
         }
         // Powder: the edges facing away from the sun are darker (light has not yet scattered toward the camera).
         const float powder = 1.0 - exp(-2.0 * (od + density * 30.0 * cloud.shape.w));
-        S += cloud.sun.rgb * ms * lerp(powder, 1.0, saturate(mu * 0.5 + 0.5)) * QUENCH_CLOUD_SUN;
+        S += cloud.sun.rgb * (ms * way.y * lerp(powder, 1.0, saturate(mu * 0.5 + 0.5)) * QUENCH_CLOUD_SUN);
     }
     return S;
 }
@@ -349,7 +377,8 @@ float2 cloudSegment(float3 dir) {
 // Marches the clouds along a view ray: premultiplied radiance and transmittance (behind the clouds: the cirrus);
 // `depth` is the distance of the clouds' weight along the ray (for the reprojection). Without `detail` the shapes are
 // not eroded (the sky cube's blurred reflections).
-float4 marchClouds(float3 dir, float jitter, int steps, int lightSteps, bool detail, out float depth) {
+float4 marchClouds(float3 dir, float jitter, float lightJitter, int steps, int lightSteps, bool detail,
+                   out float depth) {
     const float2 seg = cloudSegment(dir);
     const float4 cirrus = cloudCirrus(dir);
     depth = 60000.0;
@@ -388,18 +417,17 @@ float4 marchClouds(float3 dir, float jitter, int steps, int lightSteps, bool det
         const float drawn = cloudEdgeFade(xz);
         float ht = 0.0;
         float thickness = 0.0;
-        float rain = 0.0;
-        float body = 0.0;
+        float2 map = float2(0.0, 0.0);
         float d = 0.0;
         [branch] if (drawn > 0.0) {
-            d = drawn *
-                cloudDensity(xz, alt, detail, 1.0 - smoothstep(20000.0, 45000.0, t), ht, thickness, rain, body);
+            d = drawn * cloudDensity(xz, alt, detail, 1.0 - smoothstep(20000.0, 45000.0, t), QUENCH_CLOUD_EDGE, ht,
+                                     thickness, map);
         }
         if (d > 0.002) {
             const float Tr = exp(-d * sigma * dt);
             // The light's steps at a place of their own in every step of the march.
-            const float3 S = cloudScatter(xz, alt, d, body, ht, thickness, rain, mu, lightSteps,
-                                          frac(jitter + 0.618034 * float(i + 1)));
+            const float3 S = cloudScatter(xz, alt, d, ht, thickness, map, mu, lightSteps,
+                                          frac(lightJitter + 0.618034 * float(i + 1)));
             const float absorbed = T * (1.0 - Tr);
             last = S;
             L += absorbed * S;
@@ -539,9 +567,13 @@ CloudMarchOut cloud_march_fs(FullscreenOut vin) {
     // a turning camera the history of a pixel comes from its neighbours, and noise that only steps on would repeat
     // along that path in stripes that move with the view.
     const float jitter = ign(vin.position.xy + cloud.temporal.zw);
+    // The light's steps from a noise of their own: tied to the march's, where the light's samples lie depended on how
+    // far behind the cloud's surface the march's first sample fell, differently for every place of the surface in
+    // the row of steps, and the frames' mean kept the steps' shells as level lines over the clouds (2026-11-10).
+    const float lightJitter = frac(hash12(vin.position.xy) + cloud.temporal.z / 256.0);
     float depth;
     CloudMarchOut o;
-    o.color = marchClouds(dir, jitter, int(cloud.march.x), int(cloud.march.y), true, depth);
+    o.color = marchClouds(dir, jitter, lightJitter, int(cloud.march.x), int(cloud.march.y), true, depth);
     o.depth = float4(depth, 0.0, 0.0, 1.0);
     return o;
 }
@@ -660,7 +692,7 @@ float4 sky_layer_fs(FullscreenOut vin) : SV_Target0 {
 float4 sky_cube_fs(FullscreenOut vin) : SV_Target0 {
     const float3 dir = quenchCubeDirection(int(cloud.params.y), vin.uv);
     float depth;
-    const float4 clouds = marchClouds(dir, 0.5, int(cloud.march.x), int(cloud.march.y), false, depth);
+    const float4 clouds = marchClouds(dir, 0.5, 0.5, int(cloud.march.x), int(cloud.march.y), false, depth);
     return float4(cloudySkyColor(dir, clouds, false), 1.0);
 }
 #endif

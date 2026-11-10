@@ -161,8 +161,10 @@ today (SDL GPU's Metal and Vulkan through MoltenVK, the native Metal backend, th
 
 1. **Noise** (drawn once, in the first frame with volumetric clouds): a 128³ Perlin-Worley shape
    texture (its red channel spread evenly over 0..1 by a logistic curve fitted to its distribution, so the share of
-   air above `1 - coverage` is about `coverage`) with Worley octaves in the other channels, a 32³ Worley detail
-   texture, and a 256² tiling 2D noise for the layer. Procedural, in the shaders (`cloudnoise.hlsl`).
+   air above `1 - coverage` is about `coverage`; the other channels unused), a 64³ Worley detail texture (32³
+   until 2026-11-10), and a 256² tiling 2D noise for the layer. No octave has cells under 8 texels in the shape
+   and 4 in the detail (since 2026-11-10; finer ones are noise in textures of these sizes). Procedural, in the
+   shaders (`cloudnoise.hlsl`).
 2. **The weather map:** the field drawn by the GPU into a 512² Rgba8Unorm texture, 250 m texels over 128 km around
    the camera (on its texel grid, so it does not swim), with mips. **The cloud shadow map:** a 512² map over 24 km
    (47 m texels): the clouds' transmittance along the sun's direction above the plane y = `cloudShadowHeight` (16
@@ -176,14 +178,18 @@ today (SDL GPU's Metal and Vulkan through MoltenVK, the native Metal backend, th
    let that share of the sun's disc through a closed deck), jittered per pixel by interleaved gradient noise read at
    a place of its own in every frame (an R2 sequence of whole pixels: a pattern that only stepped on would repeat
    along a turning view's reprojection and show as moving stripes); the jitter moves the whole row of steps along
-   the ray (since 2026-11-10; before, each sample within a cell that stayed in place). Over the outer eighth of the
+   the ray (since 2026-11-10; before, each sample within a cell that stayed in place). The light's steps take a
+   noise of their own (a fixed white noise per pixel that steps on through the frames; since 2026-11-10): tied to
+   the march's jitter, where they lay depended on how far behind the cloud's surface the first sample fell,
+   differently for every place of the surface in the row of steps, and the frames' mean kept the steps' shells:
+   level lines over the steep sides of the clouds and ripples over bases seen at a low angle. Over the outer eighth of the
    weather map's half width what is drawn thins out (the density a view ray meets, since 2026-11-10; before, the
    coverage, which broke a deck's rim into sunlit bits); nothing is read past the map. **The accumulation** (`cloudTemporal`): each frame's march,
    smoothed by a 3x3 tent (the jitter's noise is finer than the clouds' shapes), blended at 0.1 with the previous
    result reprojected by its depth, read Catmull-Rom (a bilinear read blurs it a little every frame the view moves,
    and the blur builds up: smeared clouds while the camera turns) and kept within the range of this frame's 3x3
    neighbourhood; a cut or a change of mode starts it again.
-4. **The sky cube** (with `skyCubeSize`): the sky with its clouds (24 steps, three light steps, no detail erosion)
+4. **The sky cube** (with `skyCubeSize`): the sky with its clouds (24 steps, three light steps, no detail)
    into an Rgba16Float
    cube, `skyCubeFacesPerFrame` faces per frame in turns (all six on the first frame, a cut or a change of mode),
    with mips for rough reflections.
@@ -193,21 +199,32 @@ today (SDL GPU's Metal and Vulkan through MoltenVK, the native Metal backend, th
 **Shapes** (after Schneider's cloudscapes for Horizon Zero Dawn, "The real-time volumetric cloudscapes of Horizon
 Zero Dawn", SIGGRAPH 2015, and Nubis, 2017): the weather map's coverage and type at a point; a height profile per
 type (flat bases, round tops for cumulus, a tower for towering cumulus, an anvil for cumulonimbus, a slab for
-stratus); the shape noise at 6 km per tile, sheared along the wind with height, above `1 - coverage`; eroded at the
-edges by the detail noise at 800 m (faded out beyond 20 to 45 km, where it would alias). The noise moves through the
-field's evolution time, so the clouds change shape instead of only scrolling.
+stratus); the shape noise at 6 km per tile, sheared along the wind with height, above `1 - coverage`, with edges
+over a fifth of its range; the detail noise at 800 m moves the surface in and out by up to a fifth of the shape's
+range (since 2026-11-10: the round bumps of a cumulus top, wisps at the base; before, it only wore the edge down
+by a third of that, and the clouds were smooth lumps), less where the map has next to no cloud, and fades out
+beyond 20 to 45 km, where it would alias. The noise moves through the field's evolution time, so the clouds change
+shape instead of only scrolling.
 
 **Light** (Hillaire, "Physically based sky, atmosphere and cloud rendering in Frostbite", 2016; Wrenninge, "Oz: the
 great and volumetric", 2013): Beer-Lambert extinction (a mean free path of 25 m at density 1), the scattering
-integrated per step; a light march of 3 to 6 steps toward the sun, growing to about 3 km whatever their number
-(each read at a jittered place of its own; where the last one is still in a cloud, the cloud is taken to go on to
-its top, so a low sun does not reach the base of a deck), with a powder term (dark creases, bright edges toward the
-sun); four octaves of multiple scattering; two Henyey-Greenstein lobes (the silver lining toward the sun). These
-first orders shape the lit sides. Deep in a cloud the light is diffuse (since 2026-11-10): the sky's light and the
-sun's on a level top from above, what the ground sends back from below (grass and earth 0.15 of its light, snow
-0.8), each left at an optical depth tau as 1 / (1 + 0.27 tau), the two-stream law of a layer that scatters
-without loss; the depth over and under a sample is estimated from its height in its cloud, the cloud's thickness
-(at most 2 km: light also comes in through the sides of a tall one) and the density of the cloud's body there.
+integrated per step; a light march of 3 to 6 steps toward the sun, growing to about 3 km whatever their number,
+each read at a jittered place of its own. The short steps (up to about 300 m) add up an optical depth; a long
+step reads one place for hundreds of metres, a cloud or none, so it reads the clouds with wider edges, as blurred
+over its length, and lets through one minus the share of it that is in a cloud (the mean of all and nothing: read
+as all or nothing, the far clouds' shadows on near ones were grain that the accumulation did not take out); where
+the last step is in a cloud, the cloud is taken to go on to its top the same way, so a low sun does not reach
+the base of a deck. A powder term (dark creases, bright edges toward the sun); four octaves of multiple scattering
+over the short steps' depth; two Henyey-Greenstein lobes (the silver lining toward the sun). These first orders
+shape the lit sides. Deep in a cloud the light is diffuse (since 2026-11-10): the sky's light and the sun's on a
+level top from above, what the ground sends back from below (grass and earth 0.15 of its light, snow 0.8), each
+left at an optical depth tau as 1 / (1 + 0.27 tau), the two-stream law of a layer that scatters without loss; the
+depth over and under a sample is estimated from its height in its cloud, the cloud's thickness (at most 2 km:
+light also comes in through the sides of a tall one) and how closed the cloud is around it: by the optical depth
+of the first 700 m toward the sun (the side toward the sun is the open one, the far side the cloud's grey shadow
+side) and by the weather map's coverage there (under a deck or a storm cell the light comes through all of the
+cloud above). (In the first commit of 2026-11-10 that depth came from the density at the sample: the light
+followed the noise value by value, bright along every edge.)
 Raining bases are darker. The lights are in the scene's units (what a white surface sends back), so the base of a
 closed deck is as bright as the light it lets through to the ground ([below](#light-under-the-clouds)); until
 2026-11-10 the clouds' ambient light was divided by pi, and a deck was a third as bright as the snow it lit. The
@@ -566,7 +583,12 @@ after (half size 1.47 and 1.51 ms, full size 3.79 and 3.90, the storm 1.07 and 1
 defaults 1.11 and 1.13). The light's changes of 2026-11-10 (the diffuse light, the light steps' reach, the edge of
 the map) cost 7 to 11 % of the clouds range at 1080p in one session before and after: half size 1.51 and 1.63 ms,
 full size 3.92 to 4.07 and 4.28 to 4.36, the storm 1.10 and 1.22 and 2.90 and 3.23, the phone defaults 1.14 and
-1.24; the sky cube 0.29 and 0.30. The table above is from before them.
+1.24; the sky cube 0.29 and 0.30. The shapes' and the light's changes of the same evening (the detail that
+moves the surface, read in a band around it, the 64³ detail texture, the long light steps) cost again, in one
+session before and after, two and three runs: half size 1.70 to 1.77 and 1.84 to 2.01 ms, full size 4.75 to 4.84
+and 5.56 to 5.79, the storm 1.26 to 1.27 and 1.22 to 1.30 and 3.46 to 3.48 and 3.52 to 3.73, the phone defaults
+1.27 and 1.35 to 1.48: about a tenth more in fair weather at half size, a sixth at full size, next to nothing in
+a storm. The table above is from before both.
 
 **The rain** (`scenarios/rain_cost.txt`, the same way: the Rain here preset from the ground and the storm preset
 from the air, half-size clouds, the snow off, 3 s per setting; 2026-11-08 00:57, with the splashes of part 3's
@@ -697,7 +719,8 @@ the wind's layers, thunder after its delay and the farthest dropped, a game's so
 and off) and `weather_default_sounds` (the default loops and the thunder: levels, seams, where their energy is); `gpu_device.texture_3d_from_layers` and `cube_faces` on every backend variant (a 3D texture
 filled from the layers of a 2D array; a cube's faces drawn with `quench/Cube.hlsli`'s directions and sampled back,
 with its mips); on every backend variant `render.renderer_clouds_shadow_the_ground` (off by default changes
-nothing; a raining cell's shadow on the ground, 0.073 under it against 0.775 in the sun, in both modes; the sky
+nothing; a raining cell's shadow on the ground, 0.024 under it against 0.775 in the sun, in both modes (0.073
+until 2026-11-10); the sky
 cube's faces; no clouds after `clearWeather`), `renderer_rain_wets_the_open_ground` (open ground 0.521 dry, 0.288
 wet; under a roof 0.521 both; the cover 0 in the open and above 0.9 under the roof; the streaks; the puddles' rings
 moving; no rain with the path tracer or without a weather), `renderer_rain_shafts_from_afar` (none without
@@ -761,11 +784,14 @@ without missed intervals with the thermal reaction on.
   light above the storm).
 - The clouds' light since 2026-11-10 was looked at in offscreen captures on the Mac's native backend only (fair
   weather, towering cumulus at 12 and 3 degrees of sun, a storm, an overcast deck, snowfall at 30, 12 and 5
-  degrees, a downpour, a sun shower), never in motion, on the screen, on Vulkan or on a phone. Known in them: fine
-  level lines, about 45 m apart, on the steep sides of tall clouds and ripples on bases seen at a low angle (the
-  shape noise's 47 m texels in 8 bits; more of them show with more march steps); fair-weather cumulus are white
-  with pale grey shadow sides (display values about 242 against 190 to 220), less modelled than real ones; a view from
-  inside a cloud is an even pale veil. The golden captures of the weather section were not renewed with it. The
+  degrees, a downpour, a sun shower), never in motion, on the screen, on Vulkan or on a phone. The level lines
+  and ripples seen in them at first were the light steps' jitter tied to the march's (fixed the same day, above;
+  not the shape noise's texels, as first written here). Known in them now: at full contrast a fine grain is left
+  in thin veils in front of shaded cloud; the shadow sides of fair-weather cumulus are an even grey with little
+  inside them (display values about 180 to 200 against 240 on the lit sides); the detail's bumps are 100 to 400
+  m, nothing finer; a view from inside a cloud is an even pale veil. How the detail's surface and the light's
+  noise look while the clouds and the camera move, nobody has seen. The golden captures of the weather section
+  were not renewed with it. The
   shafts of the 2D layer's clouds look like smoky blobs more than rain.
 - Clouds beyond 64 km fade out (the weather map's reach). A camera above the cloud base (since 2026-11-08): its
   light counts only the clouds above it (`Weather::coverAbove`) and the volumetric clouds below the horizon are

@@ -124,7 +124,13 @@ as WebAssembly under Node.js; the user looked at it in motion and listened to th
 the demo on the Mac and the iPhone 17 on 2026-11-08: "yes, everything is fine"; later that day the user found the
 rain unrealistic, the clouds hatched in motion and the shafts dotted on the Mac: the streaks, the clouds'
 accumulation and the shafts were changed the same day, checked in offscreen captures only, not looked at again by
-the user; its tests and costs not run on a phone, nothing on the iPhone 18 Pro Max), `quench_particles` (headless, 2026-11-08, stage 14: particle system
+the user; on 2026-11-10 the user found the rain's sound synthetic and melodic under a roof, the drops' rings
+unrealistic, the sky brown during snow and the clouds not realistic enough: the default rain sounds (noise only),
+the clouds' light and the light under them (the scene's units), the rings (capillary wave packets) and the clouds'
+shapes and light steps (level lines gone, bumps, shadow sides) were changed after 0.13.2, checked by measurement
+and in still offscreen captures on the Mac's native Metal backend only, without CTest (the user's decision): the
+weather section's golden captures are stale, nobody has heard the sound or seen any of it in motion;
+its tests and costs not run on a phone, nothing on the iPhone 18 Pro Max), `quench_particles` (headless, 2026-11-08, stage 14: particle system
 descs, spawns by rate, distance, bursts and the game's points in a point, sphere, box, disc or along a path,
 deterministic and frame-rate independent, the CPU simulation of gravity, drag, curl noise and the weather's wind
 from `shaders/quench/ParticleField.h`, which the GPU's step shares, trails behind moving points on centripetal

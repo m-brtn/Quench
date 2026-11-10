@@ -4,8 +4,10 @@
 //   kind 0, shape (128^3, Rgba8Unorm): r the clouds' large shapes: Perlin-Worley (Perlin fbm reshaped by Worley fbm)
 //           eroded by Worley fbm at 4, 8 and 16 cells per side (Schneider, "The real-time volumetric cloudscapes of
 //           Horizon Zero Dawn", SIGGRAPH 2015; "Nubis", 2017), spread to about an even distribution over 0..1, so that
-//           the share of it above 1 - c is about c (the coverage of the weather map); g, b, a those Worley fbms.
-//   kind 1, detail (32^3): r, g, b Worley fbm at 2, 4 and 8 cells per side: the eroded edges.
+//           the share of it above 1 - c is about c (the coverage of the weather map); g, b, a unused. No octave has
+//           cells under 8 texels: finer ones, at 4 and 2 texels a cell, are noise in a texture of this size.
+//   kind 1, detail (64^3): r, g, b Worley fbm from 2, 4 and 8 cells per side, down to cells of 4 texels: the bumps
+//           and wisps of a cloud's surface.
 //   kind 2, layer (256^2, 2D): r Perlin fbm, g Worley fbm, b fine Perlin fbm, a fine Worley: the 2D cloud layer and
 //           the cirrus.
 //
@@ -106,18 +108,23 @@ float4 cloud_noise_fs(FullscreenOut vin) : SV_Target0 {
     const float3 uvw = float3(vin.uv, (cloudNoise.noise.x + 0.5) / slices);
     const int kind = int(cloudNoise.noise.z);
     if (kind == 0) {
-        const float perlin = perlinFbm(uvw, 4, 4, 1u) * 0.5 + 0.5;
-        const float worley = worleyFbm(uvw, 4, 2u);
-        const float worley8 = worleyFbm(uvw, 8, 3u);
-        const float worley16 = worleyFbm(uvw, 16, 4u);
+        const float worley4 = tilingWorley(uvw * 4.0, 4, 2u);
+        const float worley8 = tilingWorley(uvw * 8.0, 8, 13u);
+        const float worley16 = tilingWorley(uvw * 16.0, 16, 25u);
+        const float worley = worley4 * 0.625 + worley8 * 0.25 + worley16 * 0.125;
+        const float finer = tilingWorley(uvw * 8.0, 8, 3u) * 0.7 + tilingWorley(uvw * 16.0, 16, 14u) * 0.3;
+        const float finest = tilingWorley(uvw * 16.0, 16, 4u);
+        const float perlin = perlinFbm(uvw, 4, 3, 1u) * 0.5 + 0.5;
         const float perlinWorley = remapClamped(perlin, worley - 1.0, 1.0, 0.0, 1.0);
-        const float fbm = worley * 0.625 + worley8 * 0.25 + worley16 * 0.125;
+        const float fbm = worley * 0.625 + finer * 0.25 + finest * 0.125;
         const float shape = remapClamped(perlinWorley, fbm - 1.0, 1.0, 0.0, 1.0);
-        // About normal with mean 0.780 and deviation 0.051 (measured over the tile): its logistic CDF.
-        const float even = 1.0 / (1.0 + exp(-(shape - 0.780) * 33.4));
-        return float4(even, worley, worley8, worley16);
+        // About normal with mean 0.780 and deviation 0.053 (measured over the tile): its logistic CDF.
+        return float4(1.0 / (1.0 + exp(-(shape - 0.780) * 31.9)), 0.0, 0.0, 1.0);
     }
-    if (kind == 1) return float4(worleyFbm(uvw, 2, 5u), worleyFbm(uvw, 4, 6u), worleyFbm(uvw, 8, 7u), 1.0);
+    if (kind == 1) {
+        return float4(worleyFbm(uvw, 2, 5u), worleyFbm(uvw, 4, 6u),
+                      tilingWorley(uvw * 8.0, 8, 7u) * 0.625 + tilingWorley(uvw * 16.0, 16, 18u) * 0.375, 1.0);
+    }
     const float3 p = float3(vin.uv, 0.0);
     return float4(perlinFbm(p, 4, 5, 8u) * 0.5 + 0.5, worleyFbm(p, 6, 9u), perlinFbm(p, 16, 3, 10u) * 0.5 + 0.5,
                   worleyFbm(p, 24, 11u));

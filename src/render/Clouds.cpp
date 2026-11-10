@@ -30,7 +30,7 @@ constexpr TextureFormat kWeatherFormat = TextureFormat::Rgba8Unorm;
 constexpr TextureFormat kCloudFormat = TextureFormat::Rgba16Float; // premultiplied radiance and transmittance
 // The noise (cloudnoise.hlsl): the shapes, their erosion and the 2D layer's.
 constexpr std::uint32_t kShapeSize = 128;
-constexpr std::uint32_t kDetailSize = 32;
+constexpr std::uint32_t kDetailSize = 64;
 constexpr std::uint32_t kLayerSize = 256;
 // The weather map: 250 m texels over 128 km around the camera (clouds farther away fade out; a cloud base at 1.5 km
 // meets the horizon at about 140 km); the shadow map, the first region of the weather maps: about 47 m texels over
@@ -52,10 +52,8 @@ constexpr int kCubeLightSteps = 3;
 // How overcast it is: the mean coverage within this distance of the camera.
 constexpr float kCoverRadius = 6000.0f;
 // The share of the light above a closed cloud deck that reaches the ground, all of it diffuse, follows the deck's
-// thickness over the camera by the march's own numbers (QUENCH_CLOUD_DIFFUSE and the others in CloudUniforms.h) and
-// the density of a closed deck's body over its base as the march's light sees it (the profile's and the shape's
-// mean there): a stratus deck 500 m thick passes 0.31 of the light above it, a storm's 2 km and more 0.10.
-constexpr float kDeckDensity = 0.68f;
+// thickness over the camera by the march's own numbers (QUENCH_CLOUD_DIFFUSE, QUENCH_CLOUD_BODY and the others in
+// CloudUniforms.h): a stratus deck 500 m thick passes 0.31 of the light above it, a storm's 2 km and more 0.10.
 // How much of the sun's hue the light under a closed deck keeps.
 constexpr float kOvercastHue = 0.1f;
 // How much of the light on the clouds from above is the dome's blue rather than the scene's ambient color.
@@ -391,7 +389,7 @@ void CloudRenderer::render(gpu::CommandBuffer& commands, const RenderSettings& s
         sunPeak > 0.0f ? glm::mix(glm::vec3(1.0f), sunColor / sunPeak, kOvercastHue) : glm::vec3(1.0f);
     const float thickness = weather.cloudTop(weather.sample(camXz).type) - wu.layer.x;
     const float column = std::min(std::max(thickness, 0.0f), QUENCH_CLOUD_DEEP) * kExtinction * QUENCH_CLOUD_COLUMN;
-    const float through = 1.0f / (1.0f + QUENCH_CLOUD_DIFFUSE * column * kDeckDensity);
+    const float through = 1.0f / (1.0f + QUENCH_CLOUD_DIFFUSE * column * QUENCH_CLOUD_BODY);
     const glm::vec3 overcastLight =
         glm::vec3(0.93f, 0.96f, 1.0f) * hue * through * (luminance(sunColor) * sinSun + luminance(skyAmbient));
     const float closing = std::pow(std::clamp(cover, 0.0f, 1.0f), 1.2f);

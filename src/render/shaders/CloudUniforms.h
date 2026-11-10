@@ -15,6 +15,10 @@ QUENCH_SHARED_BEGIN
 #define QUENCH_CLOUD_DIFFUSE 0.27f
 #define QUENCH_CLOUD_DEEP 2000.0f
 #define QUENCH_CLOUD_COLUMN 0.6f
+// The density of a closed cloud's body over its base as the light sees it (the profile's and the shape's mean
+// there), and how fast a sample counts as inside its cloud with the optical depth toward the sun (1 - exp(-k tau)).
+#define QUENCH_CLOUD_BODY 0.68f
+#define QUENCH_CLOUD_INSIDE 0.25f
 // The gain of the sun's light that the first orders of scattering send toward the camera (cloudScatter's octaves,
 // the 2D layer's lobe): with it the sunlit side of a thick cloud is about three quarters as bright as a white
 // surface facing the sun and about three times its shadow side, which the diffuse light alone fills.
