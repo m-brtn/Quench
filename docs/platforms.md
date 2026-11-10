@@ -323,7 +323,9 @@ step by compute, the CPU fallback and the draws are `quench_render`'s, chosen by
 - The plan (the user's decisions of 2026-11-09): the build on SDL GPU first (Direct3D 12 by default, Vulkan
   through `--gpu-driver vulkan`, the ray tracing effects on their fallbacks); then a native Vulkan backend with
   ray queries, developed on the Mac through MoltenVK and checked on the user's PC (an NVIDIA RTX GPU); then a
-  native Direct3D 12 backend with DXR. The default backend on Windows is chosen later from measurements on that PC.
+  native Direct3D 12 backend with DXR. The default backend on Windows is chosen later from measurements on that PC;
+  until then (stage 15 part 4 of the [roadmap](roadmap.md), added 2026-11-10) the native backends are chosen with
+  `--gpu-backend`, and a plain launch stays on SDL GPU without ray tracing.
 - Linux: no builds yet.
 
 ## Android

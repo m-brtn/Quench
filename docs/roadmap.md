@@ -272,7 +272,7 @@ Where ray tracing runs (discussed with the user, 2026-11-05):
   Vulkan backend with the ray tracing extensions on Windows, Linux and the Android devices that have them. WebGPU has
   no ray tracing. Acceleration structures come from the retained scene and the shaders are HLSL (compiled to MSL,
   SPIR-V and DXIL), so games do not change when a backend gains ray tracing. Named by the user on 2026-11-09: both, on
-  Windows ([stage 15](#stage-15-windows-part-1-the-build-on-sdl-gpu-2026-11-09-parts-2-and-3-not-started)).
+  Windows ([stage 15](#stage-15-windows-part-1-the-build-on-sdl-gpu-2026-11-09-parts-2-to-4-not-started)).
 
 TODO for stage 9:
 
@@ -704,7 +704,7 @@ budgets per system and per scene; no per-frame allocation once a scene's particl
 - [ ] Runs and costs on a phone; looked at in motion by a person. Not built: sorting within a system, collisions,
   particles in the ray tracing structures, lights cast by particles, GPU-driven trails.
 
-## Stage 15: Windows (part 1, the build on SDL GPU, 2026-11-09; parts 2 and 3 not started)
+## Stage 15: Windows (part 1, the build on SDL GPU, 2026-11-09; parts 2 to 4 not started)
 
 Requested by the user on 2026-11-09: the engine and its demo on Windows, built on GitHub Actions in the branch
 `windows-build` (merged into `main` once it builds); Direct3D 12 and Vulkan both; hardware ray tracing on Windows is
@@ -731,13 +731,37 @@ Part 2: a native Vulkan backend with ray queries (next, the user's order).
 - [ ] Acceleration structures (`VK_KHR_acceleration_structure`) and ray queries (`VK_KHR_ray_query`) from the
   retained scene; the stage 11 and 12 effects on it (the ray query shaders are SPIR-V already). MetalFX has no
   counterpart there: the engine's temporal denoiser and bilinear upscaling.
+- [ ] Chosen with `--gpu-backend vulkan` and `QUENCH_GPU_BACKEND=vulkan`; SDL GPU stays the default on Windows until
+  part 4. Where the backend fails to start it falls back to SDL GPU with one log line, as the native Metal backend
+  does; on a GPU or driver without the two extensions it runs with `Caps::rayTracing` off and the effects on their
+  fallbacks.
+- [ ] The demo on it: the ray tracing section and the tunnel trace with desktop defaults that need no MetalFX; the
+  panels' notes and the relaunch buttons name the platform's backends (today they know `--gpu-backend metal` and
+  Apple GPUs only).
+- [ ] What the user's run needs, in the Windows workflow's artifact: the demo, the GPU and render test executables
+  and one script that runs them and the ray tracing benchmark and collects the logs, the captures and
+  `benchmark.json` into a folder to send back. The user's PC is the first place the traced effects run on Vulkan
+  (MoltenVK has no ray queries): expect rounds of a push, the artifact, the user's run and its report. Whether a
+  software Vulkan driver on GitHub's runner can run ray queries is to be found out.
 - [ ] Verified on the user's PC: the GPU tests, the demo's ray tracing section and its benchmark.
 
 Part 3: a native Direct3D 12 backend with DXR (inline ray tracing, `RayQuery` in DXIL).
 
 - [ ] The backend, acceleration structures and the same effects; whether WARP's ray tracing support is enough to check
   them on GitHub's runner is to be found out.
+- [ ] Chosen with `--gpu-backend d3d12`, with the same fallbacks, demo changes and artifact as part 2.
 - [ ] Verified on the user's PC; the default backend on Windows from the measurements of parts 1 to 3.
+
+Part 4: ray tracing on Windows without a flag (added 2026-11-10, the user: once it is built it should work there by
+itself).
+
+- [ ] `gpu::defaultBackend()` on Windows returns the native backend the measurements chose, with SDL GPU as the
+  fallback where it fails to start (as on Apple platforms since 2026-11-07). The demo started without arguments on a
+  GPU with ray tracing then traces in its ray tracing section and the tunnel, and says why not on another GPU.
+- [ ] Games: nothing platform-specific. The traced effects stay settings a game turns on (the renderer's default
+  stays shadow maps, as on Apple platforms); a game that has turned them on gets them on Windows through
+  `gpu::Caps`, with the fallbacks elsewhere. The quench-game skill says so.
+- [ ] Looked at by the user on the PC on both native backends, with frame rates; the result in the release notes.
 
 ## What is next
 
@@ -748,7 +772,8 @@ queue below with stage 13 (weather) with 0.11.0, and stage 14 (particles and tra
 
 Asked by the user on 2026-11-09: Windows, stage 15 above. Part 1, the build on SDL GPU, is built and runs on GitHub's
 runner (WARP); next the user's run on their PC, then part 2 (a native Vulkan backend with ray queries), then part 3
-(a native Direct3D 12 backend with DXR).
+(a native Direct3D 12 backend with DXR), then part 4 (the native backend as the default there, so that ray tracing
+runs without a flag; added 2026-11-10).
 
 The queue the user set on 2026-11-07, in this order:
 
