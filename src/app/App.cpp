@@ -117,6 +117,8 @@ double App::maxFrameRate() const { return m_state.maxFrameRate; }
 ThermalGovernor& App::thermalGovernor() { return m_state.thermalGovernor; }
 const ThermalGovernor& App::thermalGovernor() const { return m_state.thermalGovernor; }
 double App::frameRateLimit() const { return m_state.frameRateLimit; }
+LoadGovernor& App::loadGovernor() { return m_state.loadGovernor; }
+const LoadGovernor& App::loadGovernor() const { return m_state.loadGovernor; }
 
 void App::setHdrMode(HdrMode mode) {
     m_state.hdrMode = mode;
@@ -157,7 +159,7 @@ bool App::canRelaunch() const {
     return (QUENCH_PLATFORM_MACOS || QUENCH_PLATFORM_WINDOWS || QUENCH_PLATFORM_LINUX) && !m_state.program.empty();
 }
 
-bool App::mobile() const { return QUENCH_PLATFORM_IOS || QUENCH_PLATFORM_ANDROID; }
+bool App::mobile() const { return m_state.mobile; }
 
 Result<void> App::relaunch(std::span<const std::string> args) {
     if (!canRelaunch()) return Error{"relaunch: not possible on this platform"};
@@ -189,6 +191,28 @@ std::optional<std::uint64_t> App::memoryFootprint() const {
 }
 
 namespace detail {
+
+namespace {
+
+// A browser on a phone or tablet: its user agent says so (iPadOS calls itself a Mac, with a touch screen), or the
+// page's main pointer is a finger and nothing hovers.
+bool browserOnMobile() {
+#if QUENCH_PLATFORM_WEB
+    // No regular expression literals or arrow functions in here: clang-format would put spaces into them.
+    return EM_ASM_INT({
+               const agent = navigator.userAgent || "";
+               const names = function(word) { return agent.indexOf(word) >= 0; };
+               if (navigator.userAgentData && navigator.userAgentData.mobile) return 1;
+               if (names("Android") || names("iPhone") || names("iPad") || names("iPod")) return 1;
+               if (names("Macintosh") && navigator.maxTouchPoints > 1) return 1;
+               return window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches ? 1 : 0;
+           }) != 0;
+#else
+    return false;
+#endif
+}
+
+} // namespace
 
 #if QUENCH_PLATFORM_WEB
 void setCanvasSize(const char* selector, int width, int height) {
@@ -228,8 +252,9 @@ void applyFrameRateLimit(AppState& s) {
     if (hz == s.frameRateLimit) return;
     s.frameRateLimit = hz;
     // Desktops: SDL's main loop waits between the callbacks. iOS calls them from a display link on every refresh, which
-    // the hint does not change: iterate() lets the early ones pass without a frame.
-    if (!s.offscreen) SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, std::format("{}", hz).c_str());
+    // the hint does not change: iterate() lets the early ones pass without a frame. So it is in a browser, where the
+    // hint would take the frames off the display's refresh and onto a timer.
+    if (!s.offscreen && !QUENCH_PLATFORM_WEB) SDL_SetHint(SDL_HINT_MAIN_CALLBACK_RATE, std::format("{}", hz).c_str());
     if (hz != s.maxFrameRate) log::info("app", "frame rate limit {} Hz (thermal reaction)", hz);
 }
 
@@ -243,6 +268,25 @@ void updateThermalState(AppState& s) {
 
 ThermalState thermalReaction(const AppState& s) {
     return s.thermalGovernor.enabled() ? s.thermalGovernor.level() : ThermalState::Unknown;
+}
+
+double loadInterval(const AppState& s, bool display) {
+    const auto lower = [](double hz, double other) { return other > 0.0 && (hz <= 0.0 || other < hz) ? other : hz; };
+    double hz = lower(s.loadGovernor.desc().frameRate, s.frameRateLimit);
+    double refresh = 0.0;
+    if (display && s.window)
+        if (const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(s.window.get())))
+            refresh = double(mode->refresh_rate);
+    if (display && QUENCH_PLATFORM_WEB) {
+        // A browser tells no rate: the game's or 60 Hz, on the refreshes the callbacks' cadence shows.
+        if (hz <= 0.0) hz = 60.0;
+        refresh = s.refreshEstimate.rate();
+    } else {
+        hz = lower(hz, refresh);
+    }
+    if (hz <= 0.0) return 1.0 / 60.0;
+    // Frames come on the display's refreshes: 50 Hz on a 60 Hz display is every second one.
+    return refresh > 0.0 ? std::ceil(refresh / hz - 1e-3) / refresh : 1.0 / hz;
 }
 
 namespace {
@@ -718,6 +762,9 @@ SDL_AppResult init(AppState& s, int argc, char** argv) {
     QUENCH_PROFILE_THREAD_NAME("main");
     if constexpr (profile::kEnabled)
         log::info("app", "Tracy profiling: on demand (tracy-capture or the Tracy GUI; TRACY_PORT sets the port)");
+    s.mobile = QUENCH_PLATFORM_IOS || QUENCH_PLATFORM_ANDROID || browserOnMobile() || s.options.mobile;
+    if (s.mobile && !(QUENCH_PLATFORM_IOS || QUENCH_PLATFORM_ANDROID))
+        log::info("app", "a phone or tablet{}", s.options.mobile ? " (--mobile)" : " (the browser says)");
     s.thermalOverride = s.options.thermalState;
     s.stats.thermal = s.thermalOverride ? *s.thermalOverride : queryThermalState();
     log::info("app", "thermal state {}{}", thermalStateName(s.stats.thermal),
@@ -863,6 +910,13 @@ SDL_AppResult iterate(AppState& s) {
     const Uint64 now = SDL_GetPerformanceCounter();
     const double frequency = double(SDL_GetPerformanceFrequency());
     const double realDt = double(now - s.lastCounter) / frequency;
+    if (QUENCH_PLATFORM_WEB && !s.offscreen) {
+        // Every callback counts, also the ones that pass without a frame below.
+        if (s.lastCallback != 0 && s.refreshEstimate.callback(double(now - s.lastCallback) / frequency))
+            log::info("app", "display refresh about {:.0f} Hz (by the cadence of the browser's frames)",
+                      s.refreshEstimate.rate());
+        s.lastCallback = now;
+    }
     // Under a frame rate limit a refresh that comes early passes without a frame (iOS calls on every refresh of its
     // display link: App::setMaxFrameRate). Three quarters of the interval, so that a refresh a little early by jitter
     // still renders: 60 Hz on a 120 Hz display renders every second refresh.
@@ -910,6 +964,19 @@ SDL_AppResult iterate(AppState& s) {
     s.time += frameDt;
     s.thermalGovernor.update(s.stats.thermal, s.time);
     applyFrameRateLimit(s);
+    // The frame that just ended, where it ran in real time on the screen; the scenario's frame in place of any.
+    if (s.loadGovernor.enabled()) {
+        if (s.fakeFrameLoad) {
+            FrameLoad load = *s.fakeFrameLoad;
+            load.interval = loadInterval(s, false);
+            s.loadGovernor.update(load);
+        } else if (!s.offscreen && !fixedFrame) {
+            s.loadGovernor.update({.frame = realDt,
+                                   .cpu = s.stats.cpuMs / 1000.0,
+                                   .gpu = s.stats.gpuMs >= 0.0 ? s.stats.gpuMs / 1000.0 : -1.0,
+                                   .interval = loadInterval(s, true)});
+        }
+    }
     s.assets->update();
     s.device->pollShaderHotReload();
     {

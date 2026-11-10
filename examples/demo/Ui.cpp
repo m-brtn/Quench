@@ -214,6 +214,7 @@ void DemoGame::performancePanel(App& app) {
             ImGui::Text("GPU resources %lld", static_cast<long long>(app.device().liveResources()));
         ImGui::Text("Thermal state %s", app::thermalStateName(stats.thermal));
         heatStatus(app);
+        loadStatus(app);
         const Slot& slot = m_slots[m_current];
         if (slot.initMs >= 0.0) ImGui::Text("Section ready in %.1f ms, switch %.1f ms", slot.initMs, m_switchMs);
         ImGui::Text("Jobs: %d threads, %d pending", app.jobs().threadCount(), app.jobs().pendingCount());
@@ -261,6 +262,21 @@ void DemoGame::heatStatus(App& app) {
     if (heat.recoveringSince() >= 0.0)
         ImGui::TextDisabled("Cooler for %.0f of %.0f s", app.time() - heat.recoveringSince(),
                             heat.desc().recoverSeconds);
+}
+
+void DemoGame::loadStatus(App& app) {
+    const app::LoadGovernor& load = app.loadGovernor();
+    if (!load.enabled()) {
+        ImGui::TextDisabled("Adapt to load off (Settings)");
+        return;
+    }
+    if (load.renderScaleFactor() >= 1.0f) {
+        ImGui::TextUnformatted("Adapt to load: nothing reduced");
+        return;
+    }
+    ImGui::TextWrapped("Adapt to load: render scale x%.2f (%.2f now), a step back up after %.0f s of frames on time",
+                       double(load.renderScaleFactor()), double(rendererSettings(current().settings).renderScale),
+                       load.raiseSeconds());
 }
 
 void DemoGame::logPanel() {
@@ -611,6 +627,15 @@ void DemoGame::settingsContents(App& app) {
     ImGui::TextWrapped("Thermal state serious: %s. Critical: %s (fewer traced effects). Lifted after %.0f s cooler.",
                        app::thermalLimitsText(heat.serious).c_str(), app::thermalLimitsText(heat.critical).c_str(),
                        m_heatRecoverSeconds);
+    if (ImGui::Checkbox("Adapt to load", &m_settings.adaptToLoad)) {
+        applyAdaptToLoad(app);
+        noteSettings();
+    }
+    recordPoint("ui:adapt_load");
+    const app::LoadGovernorDesc load;
+    ImGui::TextWrapped("Frames that come late: a lower render scale, down to x%.2f. A step back up after %.0f s of "
+                       "frames on time.",
+                       double(load.minScale), m_loadRaiseSeconds);
     if (ImGui::Button("Defaults")) {
         const std::string section = m_settings.section;
         m_settings = Settings{};
@@ -619,6 +644,7 @@ void DemoGame::settingsContents(App& app) {
         app.setHdrMode(app::HdrMode::Off);
         app.setPresentMode(gpu::PresentMode::Vsync);
         applyAdaptToHeat(app);
+        applyAdaptToLoad(app);
         applyStyle();
         noteSettings();
     }

@@ -148,6 +148,7 @@ Result<void> DemoGame::init(App& app) {
 
     loadSettings(app);
     applyAdaptToHeat(app);
+    applyAdaptToLoad(app);
     std::size_t start = 0;
     if (!m_flags.section.empty()) {
         const std::optional<std::size_t> found = find(m_flags.section);
@@ -260,6 +261,7 @@ void DemoGame::shutdown(App& app) {
     if (m_jobTest && m_jobTest->running) app.jobs().wait(m_jobTest->job);
     m_jobTest.reset();
     app.thermalGovernor().disable(); // its callback points into the demo
+    app.loadGovernor().disable();
     saveSettings(true);
     if (m_entered && currentReady()) current().leave(*m_context);
     for (Slot& slot : m_slots)
@@ -526,6 +528,13 @@ bool DemoGame::setDemoSetting(std::string_view name, std::string_view value) {
         m_heatRecoverSeconds = *number; // for this run only
         applyAdaptToHeat(m_context->app);
         return true;
+    } else if (name == "adapt_load" && flag) {
+        m_settings.adaptToLoad = *flag;
+        applyAdaptToLoad(m_context->app);
+    } else if (name == "load_raise" && number && *number > 0.0f) {
+        m_loadRaiseSeconds = *number; // for this run only
+        applyAdaptToLoad(m_context->app);
+        return true;
     } else {
         return false;
     }
@@ -546,10 +555,23 @@ void DemoGame::applyAdaptToHeat(App& app) {
                      .onChange = [this, &app](const app::ThermalGovernor&) { m_heatChangedAt = app.time(); }});
 }
 
+void DemoGame::applyAdaptToLoad(App& app) {
+    app::LoadGovernor& governor = app.loadGovernor();
+    if (!m_settings.adaptToLoad) {
+        governor.disable();
+        return;
+    }
+    if (governor.enabled() && governor.desc().raiseSeconds == m_loadRaiseSeconds) return;
+    // The engine's defaults: against the frame rate the app runs at, down to half the render scale; the factor
+    // goes into rendererSettings().
+    governor.enable({.raiseSeconds = m_loadRaiseSeconds});
+}
+
 render::RenderSettings DemoGame::rendererSettings(const render::RenderSettings& own) const {
     render::RenderSettings s = graphicsSettings(own);
     const app::ThermalGovernor& heat = m_context->app.thermalGovernor();
-    s.renderScale = std::max(heat.renderScale(s.renderScale), 0.25f);
+    s.renderScale = heat.renderScale(s.renderScale);
+    s.renderScale = std::max(m_context->app.loadGovernor().renderScale(s.renderScale), 0.25f);
     if (heat.reduceEffects()) {
         // The traced effects that cost the most per frame, to their fallbacks; the sun's shadows and the lamps'
         // light stay.
@@ -757,6 +779,7 @@ std::optional<double> DemoGame::scenarioValue(std::string_view name) const {
     if (name == "settings_loaded") return double(m_settingsLoaded);
     if (name == "settings_writes") return double(m_settingsWrites);
     if (name == "adapt_heat") return m_settings.adaptToHeat ? 1.0 : 0.0;
+    if (name == "adapt_load") return m_settings.adaptToLoad ? 1.0 : 0.0;
     if (name == "heat_scale") return double(rendererSettings(current().settings).renderScale);
     if (name == "heat_changed_at") return m_heatChangedAt;
     if (name == "mode") return double(int(m_mode));

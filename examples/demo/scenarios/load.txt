@@ -1,0 +1,88 @@
+# Adapt to load (ctest: demo_load_<backend>, a part of the batches; no capture): the setting turns the engine's
+# reaction to late frames on, and `frame_load` fakes the frames' times, so no slow device is needed (an offscreen run
+# has no frame times of its own). Every frame counts as FRAME_MS long against the 16.7 ms of 60 Hz. Off, late frames
+# change nothing. On, after the 2 s the reaction ignores at its start, a second of frames of 25 ms takes one step down
+# (0.85 of the render scale) and the next second another; late frames whose main thread takes 36 ms change nothing
+# (fewer pixels would not help); frames of 40 ms take two steps at once, down to half and not below. Frames on time
+# bring a step back up after the wait (`set load_raise 2`: 2 s instead of 10); a step up that brings late frames back
+# is taken back and doubles the wait, one that lasts gives the plain wait again; with a GPU time known, a step that
+# would not fit is not taken. Off lifts the factor at once. The tunnel at full size with bilinear scaling, so that
+# the render scale reads the same on every backend.
+section tunnel
+reset_section
+set dither 0
+until tunnel_ready == 1 10
+set animate 0
+set upscaling bilinear
+set scale 1
+wait 0.1
+expect adapt_load == 0
+expect load_scale == 1
+frame_load 25
+wait 1
+expect load_scale == 1
+expect render_scale == 1
+set load_raise 2
+mark load_changes
+set adapt_load on
+expect adapt_load == 1
+wait 0.5
+expect load_scale == 1
+until load_scale < 1 2
+expect load_scale == 0.85
+wait 0.05
+expect render_scale == 0.85
+until load_scale < 0.8 1
+expect load_scale == 0.7225
+expect d_load_changes == 2
+frame_load 40 36
+wait 1
+expect load_scale == 0.7225
+frame_load 40
+until load_scale < 0.7 1
+expect load_scale == 0.522
+until load_scale < 0.51 1
+expect load_scale == 0.5
+wait 1
+expect load_scale == 0.5
+expect render_scale == 0.5
+expect d_load_changes == 4
+frame_load 12
+wait 1
+expect load_scale == 0.5
+until load_scale > 0.5 1
+expect load_scale == 0.588
+expect load_raise_seconds == 2
+frame_load 25
+until load_scale < 0.51 1
+expect load_raise_seconds == 4
+frame_load 12
+wait 2.5
+expect load_scale == 0.5
+until load_scale > 0.5 1
+expect load_scale == 0.588
+until load_scale > 0.6 2
+expect load_scale == 0.692
+expect load_raise_seconds == 2
+expect d_load_changes == 8
+frame_load 12 1 11
+wait 3
+expect load_scale == 0.692
+frame_load 12 1 5
+until load_scale == 1 6
+wait 0.05
+expect render_scale == 1
+expect d_load_changes == 11
+wait 2
+expect load_scale == 1
+frame_load 25
+until load_scale < 1 2
+set adapt_load off
+expect adapt_load == 0
+expect load_scale == 1
+wait 0.05
+expect render_scale == 1
+expect d_load_changes == 13
+frame_load system
+set load_raise 10
+quit

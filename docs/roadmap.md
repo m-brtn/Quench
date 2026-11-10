@@ -775,6 +775,15 @@ runner (WARP); next the user's run on their PC, then part 2 (a native Vulkan bac
 (a native Direct3D 12 backend with DXR), then part 4 (the native backend as the default there, so that ray tracing
 runs without a flag; added 2026-11-10).
 
+Asked by the user on 2026-11-10 (evening, after 0.14.0): phones in a browser, after the Outpost micro game ran at
+30 to 40 frames per second on an iPhone and warmed it. Built the same evening and released with 0.15.0 ([its notes](releases/v0.15.0.md)):
+`App::mobile()` in a phone's browser and `--mobile`, a frame rate limit that stays on the browser's animation
+frames, and the opt-in reaction to late frames ([App shell](app.md#frame-load)); the game got a low detail for
+phones from a measurement of its frame ([Performance](performance.md#a-games-frame-at-a-phones-size)). Open: the
+user's run on the iPhone (the frame rate, the heat), on which the reaction's thresholds wait; then, if the web
+build is to carry larger games, what a browser lacks in the engine (threads behind cross-origin isolation, SIMD,
+Basis Universal textures for phones, a narrower Asyncify), none of which this game's frame needs.
+
 The queue the user set on 2026-11-07, in this order:
 
 1. The native Metal backend as the default on Apple platforms (done 2026-11-07).

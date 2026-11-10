@@ -29,6 +29,9 @@ struct Settings {
     // Adapt to heat: the engine's thermal reaction (App::thermalGovernor) with its defaults ("adapt_to_heat":
     // optional, off where a file has none).
     bool adaptToHeat = false;
+    // Adapt to load: the engine's reaction to late frames (App::loadGovernor) with its defaults ("adapt_to_load":
+    // optional, off where a file has none).
+    bool adaptToLoad = false;
     // The Graphics panel's options, for every section ("graphics": optional, so files without it still load).
     GraphicsOverrides graphics;
 

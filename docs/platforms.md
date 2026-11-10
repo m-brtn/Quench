@@ -11,12 +11,13 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.14.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+The engine (version 0.15.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases (those
 of 0.13.1: 0.13.2, a patch of the renderer, ran the render and demo tests only, [its notes](releases/v0.13.2.md);
 0.14.0, the weather's look and sound, ran no gate, [its notes](releases/v0.14.0.md); after its tag the golden
 captures of the demo's Weather section were renewed, and the Release tests of the Mac's three backends, 818 with 69
-skipped, and the web check in headless Chrome on the Mac pass again).
+skipped, and the web check in headless Chrome on the Mac pass again; 0.15.0, phones in a browser, ran the full
+gate and the web check before its version number changed, [its notes](releases/v0.15.0.md)).
 Its GPU tests render offscreen and check the
 pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
 Mac (with the Khronos validation layer; a test of
@@ -409,6 +410,17 @@ WebAssembly on the browser's WebGPU. Run so far only in Chromium on the Mac (Web
   and 1 to 2 of 5 reloads without it; a small sample, not a proof. No scripted run in Safari itself (its remote automation is off), nothing listened to.
   In Playwright's headless WebKit 27.2 on the Mac (WebKit's engine, not Safari itself) the demo's `batch.txt`
   passed 757 of 757 offscreen; its captures were not compared there.
+- **Phones** (2026-11-10 evening, version 0.15.0). The user ran Outpost's page on an iPhone (user report: 30 to 40
+  frames per second, and the phone gets warm; which iPhone and browser was not said). Nothing was measured on the
+  phone. On the Mac the game's frame at an iPhone 17's size is bound by the GPU's work per pixel, not by the
+  WebAssembly side: the page's main thread takes 0.49 ms a frame in headless Chrome on the Mac
+  ([Performance](performance.md#a-games-frame-at-a-phones-size)). What a web build lacked for phones, and has
+  since: `App::mobile()` is true in a phone's or tablet's browser, so a game's and the demo's phone defaults apply
+  there (checked in headless Chrome on the Mac with an iPhone's user agent only); a frame rate limit keeps the
+  frames on `requestAnimationFrame` (headless Chrome on the Mac: 480 frames in 8.0 s at a limit of 60 Hz, 181 in
+  6.0 s at 30 Hz); and the opt-in reaction to late frames lowers the render scale where a device does not keep up
+  ([App shell](app.md#frame-load)), which a browser needs because it reports no thermal state. Not run on a phone
+  since: whether they bring the phone to 60 frames per second and keep it cooler is the user's to check.
 - **Hosted** (2026-11-10): `tools/publish_web.sh` assembles the demo and the sample as a static site (`dist/web`:
   `index.html` is the demo's page, `hello.html` the sample; `LICENSE`, `THIRD_PARTY_LICENSES` and Emscripten's
   licences beside them), runs the demo's smoke scenario on it in headless Chrome and, with `--push`, commits it

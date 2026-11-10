@@ -336,6 +336,9 @@ PerfReport finishPerf(AppState& s) {
             thermal += std::format(" (max {})", thermalStateName(reactionMax));
         thermal += std::format(" ({} now)", thermalLimitsText(s.thermalGovernor.limits()));
     }
+    // The load reaction's factor at the end of the region, where it is on.
+    v["perf_load_scale"] = double(s.loadGovernor.renderScaleFactor());
+    if (s.loadGovernor.enabled()) thermal += std::format("; load reaction x{:.2f}", s.loadGovernor.renderScaleFactor());
     std::string details = s.game->perfDetails(s.app);
     const std::string process = v["perf_process_cpu"] < 0.0
                                     ? std::string()
@@ -476,6 +479,10 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
     if (name == "thermal_state") return double(s.stats.thermal);
     if (name == "max_frame_rate") return s.maxFrameRate;
     if (name == "frame_rate_limit") return s.frameRateLimit;
+    if (name == "load_scale") return double(s.loadGovernor.renderScaleFactor());
+    if (name == "load_changes") return double(s.loadGovernor.changes());
+    if (name == "load_raise_seconds") return s.loadGovernor.raiseSeconds();
+    if (name == "mobile") return s.mobile ? 1.0 : 0.0;
     if (name.starts_with("thermal_")) {
         const ThermalGovernor& governor = s.thermalGovernor;
         if (name == "thermal_reaction") return double(thermalReaction(s));
@@ -680,6 +687,29 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
         s.thermalOverride = state;
         if (!state) log::info("app", "thermal state: the system's again");
         updateThermalState(s);
+        return Exec::Done;
+    }
+
+    if (op == "frame_load") {
+        // Fake frames for the load reaction until `frame_load system`: every frame counts as FRAME_MS long, with
+        // CPU_MS of main thread work (default 0) and GPU_MS on the GPU (default: unknown).
+        const auto frameMs = number(c.args, 0), cpuMs = number(c.args, 1), gpuMs = number(c.args, 2);
+        const bool system = c.args.size() == 1 && first == "system";
+        if (!system &&
+            (c.args.empty() || c.args.size() > 3 || !frameMs || *frameMs <= 0.0 ||
+             (c.args.size() > 1 && (!cpuMs || *cpuMs < 0.0)) || (c.args.size() > 2 && (!gpuMs || *gpuMs < 0.0)))) {
+            log::error("scenario", "line {}: frame_load FRAME_MS [CPU_MS [GPU_MS]] | system", c.line);
+            return Exec::Failed;
+        }
+        s.loadGovernor.resetWindow(); // no window of frames of both kinds
+        if (system) {
+            s.fakeFrameLoad.reset();
+            log::info("app", "frame load: the measured frames again");
+        } else {
+            s.fakeFrameLoad = FrameLoad{.frame = *frameMs / 1000.0,
+                                        .cpu = cpuMs ? *cpuMs / 1000.0 : 0.0,
+                                        .gpu = gpuMs ? *gpuMs / 1000.0 : -1.0};
+        }
         return Exec::Done;
     }
 

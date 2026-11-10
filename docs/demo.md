@@ -94,6 +94,7 @@ What of the engine the demo shows, and where (audit of 2026-11-06; "added" marks
 | Frame, CPU and GPU times | the Performance panel | fps, frame, CPU and GPU time, a frame-time graph (added), the GPU time per pass on the native Metal backend; hidden in deterministic runs (captures) |
 | Memory and GPU resources | the Performance panel | the process's memory and the live GPU resources, the section's load and switch times (added) |
 | Thermal state, the reaction to heat | the Performance panel; Settings | the thermal state, and with Adapt to heat what is reduced and for how long (since 2026-11-07) |
+| The reaction to late frames | the Performance panel; Settings | with Adapt to load the render scale it gives and the wait before its next step up (since 2026-11-10) |
 | GPU backend, device, fallbacks | every section's "Frame and fallbacks"; About | the backend, driver, device and capabilities, every fallback with its reason (added); a relaunch with the other backend on the Mac (added) |
 | Display scale, safe area, orientation | the layouts | sizes from the display's scale, windows inside the safe area, the compact layout in portrait and landscape (added) |
 | Logging | the Log panel | the demo's log lines with the warning and error counts (added) |
@@ -269,6 +270,7 @@ on the Mac, `Library/Application Support/Quench/Quench Demo/` in the app's data 
 - `settings.json`: `section` (the last one), `show_ui`, `ui_scale` (0.5 to 3), `touch_controls` (`auto`, `on`,
   `off`), `hdr` (`off`, `auto`, `on`), `present_mode` (`vsync`, `immediate`, `mailbox`), `tour_seconds` (1 to 120),
   `adapt_to_heat` (a boolean, off; since 2026-11-07, still version 1: a file without it loads with it off),
+  `adapt_to_load` (a boolean, off; since 2026-11-10, the same way),
   `graphics` (the Graphics panel's options: an object with only the options it sets, under the keys of the table
   above; the choices as names, `aa` `none`, `fxaa`, `taa`; `upscaling` `bilinear`, `spatial`, `temporal`;
   `sun_shadows` `maps`, `rt`; `translucent_shadows` `map`, `dithered`; `ao` `none`, `rt`; `tone` `aces`, `agx`;
@@ -304,8 +306,8 @@ the native Metal backend by default, SDL GPU with `--gpu-backend sdl` or the env
 the backend follows the default unless the command line or the environment names one.
 
 Settings: the UI scale (applied when the slider is let go), touch-sized controls (auto, on, off), HDR output, the
-present mode (one piece of code with the Graphics panel's Display group), the tour's time, Adapt to heat, Defaults
-(also gives back every option of the Graphics panel and turns Adapt to heat off), and Screenshot
+present mode (one piece of code with the Graphics panel's Display group), the tour's time, Adapt to heat, Adapt to load, Defaults
+(also gives back every option of the Graphics panel and turns Adapt to heat and Adapt to load off), and Screenshot
 (`screenshot-N.png` in the user directory).
 
 Adapt to heat (off) turns on the engine's thermal reaction with its defaults ([App shell](app.md#thermal-state)):
@@ -316,6 +318,15 @@ settings and the Graphics panel's options, which stay as they are (the panel say
 and never raise the frame rate above the one set. The Performance panel shows the thermal state and, below it, what
 the reaction reduces and how long the device has been cooler. On a Mac the state is nominal unless the machine is
 hot; `--thermal-state serious` shows the reaction anywhere.
+
+Adapt to load (off) turns on the engine's reaction to late frames with its defaults
+([App shell](app.md#frame-load)): while the frames on the screen miss the interval of the frame rate in effect, the
+render scale goes down in steps of 0.85 to half, on top of each section's settings, the Graphics panel's options
+and Adapt to heat; a step back up after 10 s of frames on time. It is for devices without a thermal state (a
+phone's browser). The Performance panel shows the factor, the render scale it gives and the wait before the next
+step up. It is off by default because the demo measures: a benchmark's regions and the costs in the Graphics panel
+should not change their render scale underway. Its checks fake the frames (`frame_load`); nobody has watched it on a
+device that is too slow.
 
 ## Check mode on the iPhone
 
@@ -419,11 +430,11 @@ included), from the log's `gpu: backend ...` line.
 animation, raytracing_fallback, tunnel_fallback, ui, compact_portrait, compact_landscape, menu, audio_tone,
 audio_flyby, audio_music, audio_reverb, audio_hrtf, tunnel_motion_fallback, animation_blend2d, animation_lod, animation_skinning,
 animation_retarget, animation_blendshapes, raytracing_maps, raytracing_screen, tunnel_maps, heat, assets_basis,
-navigation, weather, rain, snow, wind, physics_wind, particles, cycle.
+navigation, weather, rain, snow, wind, physics_wind, particles, load, cycle.
 The parts that move (the tunnel's motion) and the parts added later come last, before the cycle, which has no
 capture: TAA's jitter follows the frame count, so a part inserted earlier would move every capture after it.
 `batch_native.txt` ends with animation_blend2d, animation_lod, animation_skinning, animation_retarget,
-animation_blendshapes, heat, raytracing_mirror, raytracing_probes, assets_basis, navigation, weather, rain, snow, wind, physics_wind and particles after tunnel_motion (no
+animation_blendshapes, heat, raytracing_mirror, raytracing_probes, assets_basis, navigation, weather, rain, snow, wind, physics_wind, particles and load after tunnel_motion (no
 raytracing_maps, raytracing_screen or tunnel_maps: the native backend traces those shadows and the occlusion on the
 Mac; the render tests run GTAO there).
 Every part selects its section first (and resets it where it needs the defaults), so it does not depend on the parts
@@ -478,6 +489,7 @@ elements stay where they are what is checked. The menu and the layouts have capt
 | `wind` (every batch, before physics_wind; since 2026-11-08) | the meadow in the Weather section with the weather's clock stopped: 79 plants; in a calm (fair weather, wind 0) no wind at 10 m, no lightning, the wind's layers silent; the Windy storm preset at 4000 s: gusts 0.6 and turbulence 0.4, the mean wind at 10 m 10 to 11 m/s, a lull of its gusts here (8 to 9.5), no flash, the rain at the camera above 0.9, the heavy rain's layer above 0.9, both wind layers playing; two seconds later a gust (above 10.2 m/s, the strong layer above 0.4); the next flash within 3 km (`set flash 1`): the lightning's light above 0.5, one flash lit, its thunder waiting and played within 12 s; eight seconds of the storm at six times its lightning: at least 3 thunders played over the rain and the gale; the lightning off: no light, no flash; no underruns or clipping (31 checks) | four captures: `demo_wind_calm.png` (the meadow upright under a low sun), `demo_wind.png` (the grass and the crowns bent downwind, the rain slanting under the storm), `demo_wind_gust.png` (two seconds later, bent by other amounts) and `demo_wind_flash.png` (5 ms after a flash: the meadow and the rain lit); the same images on SDL GPU's Metal driver and the native backend, Vulkan through MoltenVK within a mean of 0.03 |
 | `particles` (every batch, after physics_wind: before the cycle on SDL GPU, the last part on the native backend; since 2026-11-08) | the section's dusk scene restarted, in a wind of 3 m/s, after 4 s: the GPU simulation, 11 systems and 20 trails in the scene and drawn, more than 1500 strip vertices, more than 5000 particles (more than 200 stream sparkles, 3500 in the field, 40 fireflies, 50 sparks, 20 puffs of smoke); the CPU simulation a second after the switch (more than 1500 particles); a burst of sparks (more than 120 more); density 0.25 (the field below 1600); the streams off (no trails, 5 systems) and on again; the simulation off (nothing drawn) (26 checks) | two captures: `demo_particles.png` (the blue-hour sky with the gold, blue and rose ribbons, their heads, sparkles and dust, the twinkling field, the campfire on the left) and `demo_particles_fire.png` (half a second after the view "Fire": the flames, streaking sparks, smoke and the field close up, the streams above); the same images on SDL GPU's Metal driver and the native backend, Vulkan through MoltenVK within a mean of 0.0008 |
 | `physics_wind` (every batch, before the cycle on SDL GPU, the last part on the native backend; since 2026-11-08) | the Physics section's wind: three light balls put down upwind stay without wind; at a wind of 20 m/s at 10 m the wind at the floor 3 to 7 m/s (4.8); three seconds later the balls more than 0.4 m downwind of where they lay (they roll about 2.7 m); no ImGui ID shared by two items in any frame of the batch so far (`imgui_id_conflicts`, since 2026-11-08) (9 checks) | none |
+| `load` (every batch, after particles: before the cycle on SDL GPU, the last part on the native backend; since 2026-11-10) | Adapt to load in the tunnel through `frame_load` (bilinear at scale 1, so the scale is the reaction's): off, frames of 25 ms change nothing; on, after the 2 s ignored at the start, one step a second (0.85, then 0.7225 of the render scale); frames of 40 ms with 36 ms on the main thread change nothing; frames of 40 ms take two steps at once and stop at half; frames of 12 ms bring a step up after the wait (`set load_raise 2`), late frames take it back and double the wait to 4 s, a step that lasts gives 2 s again; with 11 ms on the GPU no step up is taken, with 5 ms three of them back to 1, 11 changes in all; off lifts the factor at once (44 checks) | none |
 | `cycle` (every batch, the last part on SDL GPU) | every section three times (created or reset, switched, reset), with the live GPU resources, the scene's instances and the error count marked after the first round and the memory after the second: no growth (the GPU resources within 3, fences and transfer buffers come and go; memory below 64 MB in the third round; no instance more; no new error); at its end no ImGui ID shared by two items in any frame of the run (`imgui_id_conflicts`, [App](app.md#scenarios); since 2026-11-08, when the Weather section's Cirrus preset and slider shared one). The memory is marked a round later since stage 11: after the first round alone it swung between -24 and +47 MB on the native backend, where the ray tracing section's filter histories come and go. The bound is 64 MB since the tunnel moves (2026-11-06): over 20 rounds the footprint moved within about 60 MB from round to round, with the tunnel's motion and without it, with no trend and the same GPU resources | none |
 
 The cycle runs on Vulkan through MoltenVK since 2026-11-06, when the growth there was found in SDL GPU's Vulkan
@@ -563,7 +575,8 @@ their surface's function) (all after fallbacks), `fallbacks` (their count),
 `mode` (0 none, 1 tour, 2 checks, 3 benchmark), `tours`, `check_index`, `check_items`, `check_writes`,
 `checks_pending`, `checks_ok`, `checks_problem`, `checks_skipped`, `benchmark_sections`, `benchmark_written`,
 `log_errors`, `log_warnings`, `job_test_ms` (-1 until a job test finished), `adapt_heat` (the setting),
-`heat_scale` (the render scale the renderer gets, after the reaction), `heat_changed_at` (the app time of the
+`adapt_load` (the setting; the engine's `load_scale` is its factor),
+`heat_scale` (the render scale the renderer gets, after both reactions), `heat_changed_at` (the app time of the
 reaction's last change; -1 before one); then the
 section's own (for example `bodies`, `blasts`,
 `player_x`, `jumps`, `marker_draws`, `exposure`; the assets section's `assets_loading`, `assets_ready`,
@@ -583,7 +596,8 @@ of the showcase's right pair and the other characters: 1 dual quaternion, 0 line
 `check ok|problem|skip [NOTE]`, `check next|prev`, `job_test`, `settings_save` (now, not half a second later),
 `settings_corrupt` (overwrites the settings file with text that is not JSON),
 `camera YAW PITCH DISTANCE [X Y Z]` (degrees, meters; the point it orbits, else the section's), `set NAME VALUE` (`ui_scale`, `touch_controls auto|on|off`,
-`adapt_heat on|off`, `heat_recover SECONDS` (the reaction's hold for this run, not saved); render settings: `aa none|fxaa|taa`,
+`adapt_heat on|off`, `heat_recover SECONDS` (the reaction's hold for this run, not saved), `adapt_load on|off`,
+`load_raise SECONDS` (the wait before a step up for this run, not saved); render settings: `aa none|fxaa|taa`,
 `tone aces|agx`, `cascades`, `shadow_size`, `shadow_filter`, `shadow_distance`, `translucent_shadows map|dithered`,
 `sun_shadows maps|rt`, `shadow_rays`, `shadow_softness`, `ao none|rt`, `ao_rays`, `ao_radius`,
 `upscaling bilinear|spatial|temporal`, `scale`, `bloom`, `bloom_strength`,

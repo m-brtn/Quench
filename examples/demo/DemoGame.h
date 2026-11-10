@@ -125,11 +125,15 @@ private:
     void resetSection();
     void resetCamera();
     bool setRenderSetting(std::string_view name, std::string_view value);
-    // `set` names of the demo's own settings: ui_scale, touch_controls, adapt_heat, heat_recover.
+    // `set` names of the demo's own settings: ui_scale, touch_controls, adapt_heat, heat_recover, adapt_load,
+    // load_raise.
     bool setDemoSetting(std::string_view name, std::string_view value);
     // Adapt to heat: the engine's thermal reaction on or off as the settings say.
     void applyAdaptToHeat(quench::app::App& app);
-    // What the renderer gets: graphicsSettings() with Adapt to heat's render scale and effects.
+    // Adapt to load: the engine's reaction to late frames on or off as the settings say.
+    void applyAdaptToLoad(quench::app::App& app);
+    // What the renderer gets: graphicsSettings() with Adapt to heat's render scale and effects and Adapt to load's
+    // render scale.
     quench::render::RenderSettings rendererSettings(const quench::render::RenderSettings& own) const;
     // One line of a check item's setup: `set NAME VALUE`, `camera YAW PITCH DISTANCE`, `hdr off|on|auto`.
     bool runLine(std::string_view line);
@@ -150,6 +154,7 @@ private:
     void modeButtons();
     void performancePanel(quench::app::App& app);
     void heatStatus(quench::app::App& app); // Adapt to heat: off, nothing reduced, or what is and since when
+    void loadStatus(quench::app::App& app); // Adapt to load: off, nothing reduced, or the render scale it gives
     void logPanel();
     void sectionPanel(bool withAbout);
     void aboutContents(quench::app::App& app);
@@ -252,6 +257,8 @@ private:
     // The reaction's hold before its limits are lifted: the engine's default, shorter in checks (`set heat_recover`).
     double m_heatRecoverSeconds = quench::app::ThermalGovernorDesc{}.recoverSeconds;
     double m_heatChangedAt = -1.0; // app time of the reaction's last change
+    // Adapt to load's wait before a step back up: the engine's default, shorter in checks (`set load_raise`).
+    double m_loadRaiseSeconds = quench::app::LoadGovernorDesc{}.raiseSeconds;
 
     // Modes
     Mode m_mode = Mode::None;

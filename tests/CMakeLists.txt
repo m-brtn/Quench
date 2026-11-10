@@ -59,6 +59,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             particles/ParticlesTests.cpp
             app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
+            app/LoadGovernorTests.cpp
+            app/RefreshEstimateTests.cpp
             app/OptionsTests.cpp
             app/ScenarioPointTests.cpp
             app/ScenarioTests.cpp
@@ -281,6 +283,8 @@ if(NOT QUENCH_HEADLESS)
         SOURCES
             app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
+            app/LoadGovernorTests.cpp
+            app/RefreshEstimateTests.cpp
             app/OptionsTests.cpp
             app/ScenarioPointTests.cpp
             app/ScenarioTests.cpp
@@ -544,7 +548,7 @@ if(NOT QUENCH_HEADLESS)
                 rain:demo_rain:demo_rain_rainbow:demo_rain_shelter
                 snow:demo_snow:demo_snow_building:demo_snow_thaw:demo_snow_sky
                 wind:demo_wind_calm:demo_wind:demo_wind_gust:demo_wind_flash physics_wind
-                particles:demo_particles:demo_particles_fire)
+                particles:demo_particles:demo_particles_fire load)
             set(demo_args --window 960x540 --gpu-debug --hdr-headroom 4)
             if(QUENCH_TEST_CAPTURES)
                 quench_add_batch(demo metal APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND metal

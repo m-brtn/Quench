@@ -6,6 +6,7 @@
 
 #include "DisplayHeadroom.h"
 #include "Options.h"
+#include "RefreshEstimate.h"
 #include "UiComposite.h"
 
 #include <quench/app/App.h>
@@ -150,6 +151,12 @@ struct AppState {
     double frameRateLimit = 0.0; // maxFrameRate lowered by the thermal reaction: what the frames are paced to
     ThermalGovernor thermalGovernor;
     std::optional<ThermalState> thermalOverride; // --thermal-state, the scenario command thermal_state
+    LoadGovernor loadGovernor;
+    std::optional<FrameLoad> fakeFrameLoad; // the scenario command frame_load: every frame counts as this one
+    bool mobile = false;                    // App::mobile(): the platform, a phone's or tablet's browser, or --mobile
+    // Web: the display's refresh rate by the callbacks' cadence on the screen, which a browser does not tell.
+    RefreshEstimate refreshEstimate;
+    Uint64 lastCallback = 0;
 
     // Statistics.
     FrameStats stats;
@@ -216,6 +223,9 @@ void updateOutput(AppState& state);
 void applyFrameRateLimit(AppState& state);
 // App.cpp: the thermal state from the platform, or the override; logs a change.
 void updateThermalState(AppState& state);
+// App.cpp: the interval of the frame rate the load reaction holds: the lowest of its own, the frame rate limit and
+// (on the screen) the display's rate, in whole refreshes; 1/60 s when nothing says.
+double loadInterval(const AppState& state, bool display);
 // App.cpp: the thermal reaction's level, Unknown while it is off (perf regions, scenario values).
 ThermalState thermalReaction(const AppState& state);
 

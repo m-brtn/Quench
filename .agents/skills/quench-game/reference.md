@@ -658,6 +658,35 @@ m_renderer->setSettings(s);
 Checks without a hot device: `--thermal-state serious`, or in a scenario `thermal_state serious` (`thermal_state
 system` gives it back), then `expect thermal_reaction == 2` and `expect frame_rate_limit == 60`.
 
+## Slow devices
+
+`app.mobile()` says the game runs on a phone or tablet (iOS, Android, a browser on one; `--mobile` makes it true on
+a desktop, for checks). The reaction to late frames is opt-in and works everywhere, also in a browser, which has
+no thermal state:
+
+```cpp
+#include <quench/app/LoadGovernor.h> // also through App.h
+
+// init: lighter defaults on a phone, and the reaction for devices that still do not keep up
+if (app.mobile()) {
+    m_playerSettings.renderScale = 0.67f;
+    app.setMaxFrameRate(60.0); // heat
+}
+app.loadGovernor().enable(); // LoadGovernorDesc: .frameRate (0: the limit in effect, else the display's), .minScale
+// update: the factor goes into what the renderer gets
+render::RenderSettings s = m_playerSettings;
+s.renderScale = std::max(app.loadGovernor().renderScale(s.renderScale), 0.25f);
+if (!(s == m_renderer->settings())) m_renderer->setSettings(s);
+```
+
+A window of a second with a quarter of its frames late (more than 1.25 intervals) takes a step down (x0.85, two
+steps when far off, to x0.5); 10 s without one bring a step back up, later after tries that failed. It holds while
+the main thread alone makes the frames late. Offscreen and scripted frames feed it nothing: a scenario fakes them,
+`frame_load 30` (every frame counts as 30 ms; `frame_load 40 36`: 36 ms of it on the main thread; `frame_load
+system` ends it), then `until load_scale < 1 5` and the game's own value for its render scale. Measure what a
+frame costs before choosing the lighter defaults (`perf_begin`, `--gpu-pass-timing` on the native Metal backend,
+`--frame-size` for the phone's frame): the main pass's light per pixel is usually the largest part.
+
 ## Profiling
 
 Configure the game with the engine's Tracy client (a preset of its own, as the engine's `profile`: Release with

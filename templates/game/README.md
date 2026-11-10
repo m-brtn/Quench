@@ -19,7 +19,8 @@ Engine flags (`--help` lists them all): `--quit-after S`, `--capture FILE`, `--c
 `--window WxH`, `--frame-size WxH`, `--offscreen`, `--onscreen` (automated runs are offscreen unless it is given),
 `--gpu-backend metal|sdl` (the native Metal backend is the default on Apple platforms, SDL GPU elsewhere),
 `--gpu-driver NAME`, `--gpu-debug`, `--present-mode vsync|immediate|mailbox`, `--max-frame-rate HZ`,
-`--thermal-state NAME` (a fake thermal state, to try Adapt to heat), `--no-audio`, `--audio-device NAME` (`null`: no
+`--thermal-state NAME` (a fake thermal state, to try Adapt to heat), `--mobile` (`App::mobile()` true, to try
+defaults for phones on a desktop), `--no-audio`, `--audio-device NAME` (`null`: no
 sound), `--audio-capture FILE.wav`.
 
 Adapt to heat (`"adapt_to_heat"` in `assets/settings.json`, off; a checkbox in the window): from the device's thermal

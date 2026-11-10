@@ -5,7 +5,7 @@ if(NOT DEFINED PROJECT_NAME AND CMAKE_HOST_APPLE AND NOT CMAKE_SYSTEM_NAME STREQ
    AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Minimum macOS version" FORCE)
 endif()
-project(Quench VERSION 0.14.0 LANGUAGES C CXX)
+project(Quench VERSION 0.15.0 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJC)
     enable_language(OBJCXX)
@@ -251,6 +251,8 @@ if(NOT QUENCH_HEADLESS)
         src/app/DisplayHeadroom.cpp
         src/app/ImGuiRenderer.cpp
         src/app/Input.cpp
+        src/app/LoadGovernor.cpp
+    src/app/RefreshEstimate.cpp
         src/app/Options.cpp
         src/app/Scenario.cpp
         src/app/ScenarioPoint.cpp

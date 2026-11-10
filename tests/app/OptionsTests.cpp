@@ -32,6 +32,8 @@ QUENCH_TEST(options_engine_flags) {
     CHECK(options->gpuDriver == "vulkan", "%s", options->gpuDriver.c_str());
     CHECK(!options->gpuBackend, "no backend given: AppDesc's");
     CHECK(options->gpuDebug, "gpu debug");
+    CHECK(!options->mobile && parse({"--mobile"})->mobile, "--mobile");
+    CHECK(parse({"--mobile=1"})->gameArgs.size() == 1, "--mobile takes no value");
     CHECK(options->presentMode == gpu::PresentMode::Mailbox, "present mode");
     CHECK(options->deterministic(), "script and capture runs are deterministic");
     CHECK(options->gameArgs.empty(), "%zu game args", options->gameArgs.size());

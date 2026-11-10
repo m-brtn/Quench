@@ -96,7 +96,7 @@ build directory without the override.
   `scenarioPoint` (`@NAME` points) and `perfDetails`.
 - `App` (main thread only): `device()`, `jobs()`, `assets()`, `audio()`, `input()`, `time()`, `alpha()`,
   `deterministic()`, `scripted()`, `stats()`, `safeArea()`, `requestCapture()`, `beginPerf()`, `endPerf()`,
-  `setMaxFrameRate()`, `thermalGovernor()`, `frameRateLimit()`, `mobile()`, `quit()`.
+  `setMaxFrameRate()`, `thermalGovernor()`, `loadGovernor()`, `frameRateLimit()`, `mobile()`, `quit()`.
 
 ### 3. Modules
 
@@ -192,6 +192,13 @@ Link what the game uses beside `quench_add_game()`:
   The App applies its frame rate limit on top of `setMaxFrameRate` (`frameRateLimit()` is the result); the game
   renders at `thermalGovernor().renderScale(playerScale)` and turns its own effects down while `reduceEffects()`.
   Never overwrite the player's settings with the limits. `docs/app.md`, "Thermal state".
+- **Slow devices (phones, browsers).** `app.mobile()` is true on a phone or tablet, also in its browser, and with
+  `--mobile` on a desktop: choose lighter defaults there (a render scale below 1 first: most of a frame's GPU time
+  is per pixel) and consider `app.setMaxFrameRate(60)` against heat. A browser reports no thermal state, so for
+  devices that do not keep up enable `app.loadGovernor()` (`LoadGovernorDesc`): while frames on the screen come
+  late it lowers a factor for the render scale, and raises it again when they fit; the game renders at
+  `loadGovernor().renderScale(playerScale)`. `docs/app.md`, "Frame load"; [reference.md](reference.md), "Slow
+  devices".
 - **Profiling.** `#include <quench/core/Profile.h>`: `QUENCH_PROFILE_ZONE("game.ai")` (a zone to the end of the
   scope, a literal name), `QUENCH_PROFILE_ZONE_DYNAMIC`, `QUENCH_PROFILE_ZONE_TEXT`, `QUENCH_PROFILE_PLOT`,
   `QUENCH_PROFILE_MESSAGE`, `QUENCH_PROFILE_THREAD_NAME`; a job's zone gets its name from
@@ -208,9 +215,10 @@ Link what the game uses beside `quench_add_game()`:
   window and plays sound) without asking the user.
 - **Scenarios** (`--script FILE`): `wait`, `until`, `expect`, `mark` (then `d_NAME`), `down`, `up`, `tap`, `touch`,
   `click`, `mouse`, `gamepad`, `resize`, `capture`, `audio_measure`, `perf_begin`, `perf_end`, `max_frame_rate`,
-  `thermal_state` (a fake thermal state, `system` ends it; also `--thermal-state NAME`), `include`, `quit`.
+  `thermal_state` (a fake thermal state, `system` ends it; also `--thermal-state NAME`), `frame_load` (fake frame
+  times for the reaction to late frames, `system` ends it), `include`, `quit`.
   Values: the game's (`scenarioValue`), `time`, `action:NAME`, `audio_played`, `audio_rms`, `gpu_resources`,
-  `thermal_reaction`, `frame_rate_limit`, `imgui_id_conflicts` (ImGui items sharing an ID in one frame, each also
+  `thermal_reaction`, `frame_rate_limit`, `load_scale`, `mobile`, `imgui_id_conflicts` (ImGui items sharing an ID in one frame, each also
   logged as an error: `expect imgui_id_conflicts == 0` after showing a panel) and more.
   Each check logs `ok` or `FAIL line N`; the exit code is 1 when one failed. Scripted runs are deterministic: one
   fixed step per frame. Points in percent (`50% 50%`) or `@NAME` work at any window size.

@@ -54,11 +54,13 @@ the ranges arrive a few frames later), the display output (`output()`, `hdrMode(
 `PerfReport` (a game's benchmark mode); `arguments()` is the command line the app was started with, and
 `relaunch(args)` starts the program again with other arguments and quits (`canRelaunch()`: desktops only; not phones,
 tablets or the web), for example with another `--gpu-backend`; `mobile()` says the app runs on a phone or tablet
-(iOS, also in the Simulator, and Android), for lighter quality defaults where sustained GPU load lowers the clocks
+(iOS, also in the Simulator, and Android; in a web build a browser on one, by its user agent or a touch-only
+pointer; `--mobile` on any device), for lighter quality defaults where sustained GPU load lowers the clocks
 (the demo's ray tracing section; effects still fall back by `gpu::Caps`); `memoryFootprint()` is the memory the system charges
 the process (Apple platforms; nullopt elsewhere); `setMaxFrameRate(hz)` limits the frame rate, and
 `thermalGovernor()` is the opt-in reaction to the device's heat, whose frame rate limit applies on top of it
-(`frameRateLimit()` is the result; [Thermal state](#thermal-state)). `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
+(`frameRateLimit()` is the result; [Thermal state](#thermal-state)); `loadGovernor()` is the opt-in reaction to
+frames that come late, a factor for the render scale ([Frame load](#frame-load)). `Frame::output` says what the values written to `Frame::target` mean (SDR, or HDR with its
 headroom); the renderer takes it as is ([HDR output](#hdr-output)).
 
 The app has no animation system: a game that animates creates its own `animation::AnimationSystem` on
@@ -119,7 +121,8 @@ error with its label and window and counted in the scenario value `imgui_id_conf
 | `--gpu-debug` | GPU validation (the backend's debug mode) |
 | `--gpu-pass-timing` | record the GPU time per pass in every frame (`gpu::Caps::gpuPassTiming`: the native Metal backend); without it only while the game asks (`App::requestPassTiming`) or a scenario's perf region runs, since recording costs CPU time ([Performance](performance.md#gpu-time-per-pass)) |
 | `--present-mode MODE` | `vsync`, `immediate` or `mailbox`; falls back to vsync where the window does not support it |
-| `--max-frame-rate HZ` | at most HZ frames per second on the screen, in whole display refreshes (60 on a 120 Hz display: every second one; `App::setMaxFrameRate`). iOS calls the app on every refresh of its display link and the app lets the early ones pass; desktops pace SDL's main loop (`SDL_HINT_MAIN_CALLBACK_RATE`). Offscreen frames are not limited. 0: the display's rate (the default) |
+| `--max-frame-rate HZ` | at most HZ frames per second on the screen, in whole display refreshes (60 on a 120 Hz display: every second one; `App::setMaxFrameRate`). iOS calls the app on every refresh of its display link and the app lets the early ones pass, and so does a browser (`requestAnimationFrame`); desktops pace SDL's main loop (`SDL_HINT_MAIN_CALLBACK_RATE`). Offscreen frames are not limited. 0: the display's rate (the default) |
+| `--mobile` | `App::mobile()` says yes on any device, to try a game's defaults for phones and tablets on a desktop |
 | `--thermal-state NAME` | `nominal`, `fair`, `serious`, `critical` or `unknown` in place of the system's thermal state for the whole run (`FrameStats::thermal`, logged as an override), to check a game's reaction to heat without a hot device ([Thermal state](#thermal-state)); the scenario command `thermal_state` changes it |
 | `--hdr MODE` | HDR output: `off` (SDR), `on` (wherever the GPU backend can composite the window in HDR) or `auto` (while the display reports HDR range); default `AppDesc::hdr`, normally off ([HDR output](#hdr-output)) |
 | `--hdr-headroom N` | peak of HDR output in multiples of paper white (1 to 1000) instead of the display's, for repeatable HDR runs |
@@ -208,6 +211,7 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `perf_begin LABEL`, `perf_end` | measure the frames in between, in real time; `perf_end` logs a `perf:` line (with the game's `Game::perfDetails` at the end) and sets the `perf_*` values. A frame's time runs from its start to the next frame's start: the frame before the region (a capture's encoding, for example) is not in it |
 | `max_frame_rate HZ` | `App::setMaxFrameRate` (0: the display's rate); value `max_frame_rate` |
 | `thermal_state NAME` | a fake thermal state (`nominal`, `fair`, `serious`, `critical`, `unknown`) in place of the system's, read at once, so the thermal reaction follows in the same frame; `thermal_state system` gives the state back to the system ([Thermal state](#thermal-state)) |
+| `frame_load FRAME_MS [CPU_MS [GPU_MS]]` | fake frames for the reaction to late frames ([Frame load](#frame-load)): from now on every frame counts as FRAME_MS long, with CPU_MS of main thread work (default 0) and GPU_MS on the GPU (default: unknown), against the game's frame rate or 60 Hz whatever the display; also offscreen, where no real frame counts. `frame_load system`: the measured frames again |
 | `audio_measure S [MIN_HZ MAX_HZ]` | measure the newest S seconds (at most 4) of the mix: RMS per channel and of both, peak, and the strongest frequency between MIN_HZ and MAX_HZ (default 20 to 20000; a Hann-windowed FFT with interpolation between bins); logs a line and sets the `audio_rms*`, `audio_peak`, `audio_freq*` and `audio_measured` values. A script with this command keeps the last 4 s of the mix for it |
 
 A point P is `X Y` in window points (`480 420`), in percent of the window's width and height (`50% 75%`; the two
@@ -252,7 +256,9 @@ with the frames and uploads in flight), for leak checks with `mark`; `shader_rel
 unknown, 0 nominal, 1 fair, 2 serious, 3 critical; `until thermal_state <= 0 600` waits for a cool device),
 `thermal_reaction` (`ThermalGovernor::level()`, -1 while the reaction is off), `thermal_frame_rate_cap`,
 `thermal_render_scale`, `thermal_reduce_effects` (its limits; 0, 1 and 0 when none) and `thermal_reaction_changes`,
-`frame_rate_limit` (`App::frameRateLimit`); then the game's (`Game::scenarioValue`). Unknown commands are offered
+`frame_rate_limit` (`App::frameRateLimit`), `load_scale` (`LoadGovernor::renderScaleFactor()`, 1 while the
+reaction to late frames is off), `load_changes`, `load_raise_seconds` and, after `perf_end`, `perf_load_scale`
+([Frame load](#frame-load)), `mobile` (`App::mobile`); then the game's (`Game::scenarioValue`). Unknown commands are offered
 to `Game::scenarioCommand`; a command nobody knows fails. Each check logs `ok` or `FAIL line N of FILE: ...`, and the
 run ends with `N passed, M failed`; tests match `FAIL line`. Scripts are read from host paths; on a device a relative
 path is read from the user directory, and an `include` there needs its file next to the including one.
@@ -294,6 +300,58 @@ app.thermalGovernor().disable(); // every limit lifted at once
   `thermal_state serious` and later `thermal_state system`; offscreen runs do not limit their frames, so a script
   checks `frame_rate_limit` and the game's values rather than the frame rate. The policy has its own unit tests
   (`tests/app/ThermalGovernorTests.cpp`), the demo a part of its batches (`heat.txt`, [Engine demo](demo.md#checks)).
+
+## Frame load
+
+A game cannot know how fast the device it runs on is, least of all in a browser, and a phone that heats up gets
+slower with nothing to say so: a browser reports no thermal state, so the [thermal reaction](#thermal-state) stays at
+nominal there. What every platform has is the frames' own times. `App::loadGovernor()`
+(`include/quench/app/LoadGovernor.h`) reacts to frames that come late, off by default:
+
+```cpp
+app.loadGovernor().enable();                    // LoadGovernorDesc: the frame rate to hold, the lowest factor, ...
+settings.renderScale = app.loadGovernor().renderScale(playerScale); // every frame: the player's scale times the factor
+app.loadGovernor().disable();                   // the factor lifted at once
+```
+
+- **What it decides.** One factor for the render scale, from 1 down to `minScale` (0.5) in steps of `step` (0.85,
+  which is 0.72 of the pixels). The game applies it to what the renderer gets (`RenderSettings::renderScale`
+  renders the scene, its anti-aliasing and bloom at that size and scales the result up; [Render module](render.md)),
+  not to the player's setting. The engine changes no setting by itself.
+- **Late frames.** The App feeds it every frame on the screen that runs in real time: its time from start to start,
+  the main thread's time, the GPU's where `gpu::Caps::gpuTiming` has it. A frame is late when it took more than
+  1.25 intervals of the frame rate to hold: `LoadGovernorDesc::frameRate`, else the App's frame rate limit in
+  effect, else the display's rate, in whole refreshes of the display (60 Hz on a 144 Hz display is every third
+  refresh, 20.8 ms). Frames are judged a window of a second at a time; a window with at least a quarter of its
+  frames late takes one step down, two when its mean frame took more than 1.75 intervals. Single hitches (a load, a
+  new pipeline) do not count, a frame of more than half a second is a pause, and the first 2 s after `enable()` are
+  ignored. `resetWindow()` forgets the open window after a game's own loading screen.
+- **Only where pixels are the cause.** While the main thread alone takes more than 0.8 of the interval the factor
+  holds: fewer pixels would not help.
+- **Back up.** After `raiseSeconds` (10 s) without a late window the factor takes one step up. Where the GPU's time
+  is known the step is taken only when the frame would still fit after it (GPU time grows at most with the pixels;
+  0.85 of the interval). Elsewhere it is a try: one that brings late frames back is taken back and doubles the wait
+  for the next, up to `maxRaiseSeconds` (160 s); one that lasts `raiseSeconds` gives the plain wait again. So a
+  device at its limit shows a second of late frames every few minutes, not every 10 s.
+- **A browser's display.** A browser tells no refresh rate. There the rate to hold is the game's, the limit's or
+  60 Hz, in whole refreshes of what the cadence of the browser's frames shows (the highest rate of callbacks in the
+  last ten seconds, at least 60 Hz, a common rate within 4%; logged when it changes).
+- **Reports.** A log line per change
+  (`app: load reaction: render scale x1.00 -> x0.85 (late frames: 100% of the frames late, 25.0 ms a frame for 16.7 ms)`),
+  `onChange` for the game, `; load reaction x0.85` in the perf line while it is on, and the scenario values
+  `load_scale`, `load_changes` and `load_raise_seconds`.
+- **Checks without a slow device.** Offscreen runs and the deterministic frames of a scripted run feed it nothing
+  (their frames take what the machine gives). The scenario command `frame_load 25` makes every frame count as
+  25 ms, `frame_load 40 36` as 40 ms with 36 ms on the main thread, `frame_load 12 1 11` with 11 ms on the GPU,
+  `frame_load system` ends it; the reaction's clock is then the sum of those frames, not the app time. The policy
+  has its own unit tests (`tests/app/LoadGovernorTests.cpp`, `RefreshEstimateTests.cpp`), the demo a part of its
+  batches (`load.txt`, [Engine demo](demo.md#checks)).
+
+It was checked with fake frames and in runs on the Mac whose frames are never late. Not yet on a device that is too
+slow or gets hot: the thresholds above are a starting point.
+
+With both reactions on, a game multiplies the factors (`loadGovernor().renderScale(thermalGovernor().renderScale(
+playerScale))`, as the demo does).
 
 ## HDR output
 
@@ -554,6 +612,13 @@ The page needs HTTP (`file://` cannot fetch the `.wasm` and `.data` files) and a
 - The page keeps the program's log lines and the browser's warnings and errors in `quenchLog` (an array of strings,
   at most 20000) and sets `window.quenchExit` to the exit code when the program ends; `Module.FS` is exported, so
   a script on the page can read files the program wrote.
+- `App::mobile()` is true in a phone's or tablet's browser: the user agent names Android, iPhone, iPad or iPod
+  (or `navigator.userAgentData.mobile`), a Mac's user agent comes with a touch screen (iPadOS), or the page's main
+  pointer is a finger (`(hover: none) and (pointer: coarse)`). Checked in headless Chrome on the Mac with an
+  iPhone's user agent only.
+- A frame rate limit (`App::setMaxFrameRate`, the thermal reaction's) keeps the frames on the display's refreshes
+  (`requestAnimationFrame`): the app lets the early ones pass without a frame, as on iOS. (Up to and including 0.14.0 the limit
+  moved SDL's callbacks onto a timer, which paces frames poorly in a browser.)
 - No HDR output (the backend's surface is SDR only), GPU timing or ray tracing there; `--gpu-driver` has no meaning;
   `--hot-reload` and the relaunch were not tried.
 

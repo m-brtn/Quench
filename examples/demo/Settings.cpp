@@ -38,6 +38,7 @@ Result<Settings> parseSettings(const std::string& text) {
     if (s.present != "vsync" && s.present != "immediate" && s.present != "mailbox") s.present.clear();
     s.tourSeconds = std::clamp(float(v["tour_seconds"].numberOr(8.0)), 1.0f, 120.0f);
     s.adaptToHeat = v["adapt_to_heat"].boolOr(false);
+    s.adaptToLoad = v["adapt_to_load"].boolOr(false);
     s.graphics = parseGraphics(v["graphics"]);
     return s;
 }
@@ -53,6 +54,7 @@ std::string writeSettings(const Settings& s) {
     v.object["present_mode"] = json::Value::makeString(s.present);
     v.object["tour_seconds"] = json::Value::makeNumber(double(s.tourSeconds));
     v.object["adapt_to_heat"] = json::Value::makeBool(s.adaptToHeat);
+    v.object["adapt_to_load"] = json::Value::makeBool(s.adaptToLoad);
     v.object["graphics"] = writeGraphics(s.graphics);
     return json::write(v) + "\n";
 }

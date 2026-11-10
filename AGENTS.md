@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-10, version 0.14.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-10, version 0.15.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -69,7 +69,11 @@ white; SDR captures), captures, perf regions a game starts (`App::beginPerf` / `
 footprint, the system's thermal state (read on Apple platforms) and a game's opt-in reaction to it
 (`App::thermalGovernor()`: frame rate and render scale limits with hysteresis, never above the player's; a fake
 state through `--thermal-state` and the scenario command `thermal_state`; checked offscreen only, not on a hot
-phone), a frame rate limit (`App::setMaxFrameRate`,
+phone), a game's opt-in reaction to frames that come late (`App::loadGovernor()`, 2026-11-10: a factor for the
+render scale that goes down while frames on the screen miss their interval and back up when they fit, for devices
+without a thermal state such as a browser; fake frames through the scenario command `frame_load`; checked with
+those and in runs on the Mac whose frames are not late, not on a slow or hot device), `App::mobile()` (a phone or
+tablet, also in its browser; `--mobile` anywhere), a frame rate limit (`App::setMaxFrameRate`,
 `--max-frame-rate`), a relaunch with other arguments on desktops), `quench_render` (the
 retained scene: meshes, textures, materials, instances and lights by handle; the standard frame of cascaded sun
 shadows (cut-out shadows with holes, translucent tinted shadows through a transmittance map or dithered), the HDR
@@ -227,7 +231,15 @@ Weather section (the weather, rain, snow and wind parts, 14 images per backend) 
 golden images renewed (each pair looked at), the case updated; since then the Release CTest passes on the Mac's
 three backends (818 tests, 69 skipped) and `step web` passes in headless Chrome on the Mac (the demo's batch 762
 passed, 0 failed, 41 captures within the thresholds). Debug, the sanitizers, `wasm-node` and the iOS Simulator
-have not run since 0.13.1.
+had not run since 0.13.1 until the gate below. Version 0.15.0 (2026-11-10, late evening;
+`docs/releases/v0.15.0.md`) is phones in a browser: the reaction to late frames, `App::mobile()` in a phone's browser with `--mobile`, a frame rate limit
+that keeps a browser's frames on `requestAnimationFrame`, the demo's Adapt to load setting with its `load` part in
+the batches, and, after the tag, Outpost's low detail for phones. On its code before the version number changed
+(nothing ran on the tagged commit, the user's decision) `tools/check.sh full` passes (Debug, ASan and TSan 689
+tests each with 70 skipped, Release 832 with 69 skipped on the Mac's three backends, Vulkan through MoltenVK,
+`wasm-node` 205 under Node.js with 9 skipped, the iOS Simulator 523 with 70 skipped, the Xcode project, a new
+game) and `step web` passes in headless Chrome on the Mac (the demo's batch 806 passed, 0 failed, 41 captures
+within the thresholds). None of it has run on a phone.
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the
@@ -240,7 +252,7 @@ of `docs/roadmap.md`; `docs/platforms.md`, "Windows and Linux").
 
 The web (since 2026-11-10, the user's request; experimental; published at <https://m-brtn.github.io/Quench/> by
 `tools/publish_web.sh`, at every release; the site's `games/outpost/` is the page of Outpost, an experimental
-micro game whose source is the untracked `games/outpost` of the user's checkout, published by its own
+micro game whose source is `games/outpost`, published by its own
 `tools/publish_web.sh` and kept by the engine's script): the `web` preset builds
 the engine, the sample and the demo as single-threaded WebAssembly for a browser, on a WebGPU backend of the
 engine's own (`src/gpu/webgpu`, on Emscripten's `emdawnwebgpu` port; SDL GPU has no WebGPU driver, and the open pull
@@ -254,7 +266,7 @@ memory; a capture or a GPU wait in a frame on the screen loses that frame. In Sa
 user saw the demo run (2026-11-10, with a patch of SDL's canvas probe, since replaced by a CSS size the app gives
 the canvas; that build, 0.13.0, stayed black in about 1 of 3 to 5 loads until a resize, frames rendered but not
 shown by Safari: since then the WebGPU backend configures the canvas once more after 20 frames, none of 9 pages
-black in Safari afterwards); Playwright's headless WebKit 27.2 passed the demo's batch. Not run in Firefox, on another system or a phone; nobody has played it or listened to it in a browser (`docs/platforms.md`, "Web (WebAssembly)";
+black in Safari afterwards); Playwright's headless WebKit 27.2 passed the demo's batch. Not run in Firefox or on another system. On a phone only by the user, Outpost's page on an iPhone (user report, 2026-11-10: 30 to 40 frames per second, the phone gets warm; before the changes for phones above, which have not run on one); nobody has listened to it in a browser (`docs/platforms.md`, "Web (WebAssembly)";
 `docs/app.md`, "Web runs").
 
 The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms), Metal directly (the native backend, MetalFX)

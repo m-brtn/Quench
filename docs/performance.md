@@ -299,7 +299,48 @@ would come about a minute after the first missed intervals; a game that wants it
 demo's Adapt to heat (Settings, off) uses them as they are, and its check mode has the run that would tell
 (`tunnel.heat`: the tunnel's phone defaults for 10 minutes with it on; [Engine demo](demo.md#modes)).
 
+## Frame load
+
+Where a device is slower than a game expects, or gets slower as it heats up without a thermal state to read (a
+browser), the opt-in `App::loadGovernor()` lowers the render scale while frames come late and raises it again when
+they fit ([App shell](app.md#frame-load)). Its own work is a few additions per frame (not measured). Its thresholds
+are a starting point: checked with fake frame times only, not on a device that is too slow.
+
 ## Measurements
+
+### A game's frame at a phone's size
+
+2026-11-10, after a user report that the Outpost micro game (`games/outpost`: one scene of 720 objects with
+outline shells, a sun with three shadow cascades, 16 lamps, screen-space occlusion, TAA, bloom) ran at 30 to 40
+frames per second in an iPhone's browser and warmed the phone. Nothing was measured on the phone. On the Mac (Apple
+M4 Pro), native Metal backend, offscreen, the frame of an iPhone 17 held sideways (2622 x 1206), the walker on
+autopilot, GPU busy time p50 of the game's range in 3 s regions:
+
+| Settings | GPU ms | of which |
+| --- | --- | --- |
+| the game's defaults, by day | 4.38 to 4.45 | `hdr` 2.29, `taa` 0.63, `shadows` 0.41, `gtao` 0.33, `bloom` 0.26, `tonemap` 0.16, `prepass` 0.14 |
+| no outline shells | 3.60 to 3.66 | `hdr` 1.64 |
+| no screen-space occlusion | 3.86 to 3.97 | |
+| dusk (no sun shadows, the lamps bright) | 3.17 to 3.19 | `hdr` 1.54 |
+| 4 shadow taps for 12 (`shadowFilter` 1) | 3.67 | |
+| shadow maps of 2048 for 4096 | 4.12 | `shadows` 0.18 |
+| the lamps off by day | 4.08 | |
+| FXAA for TAA | 3.85 | |
+| no bloom | 4.21 | |
+| render scale 0.67 | 3.03 | |
+| render scale 0.5 | 2.46 | |
+| the game's low detail (scale 0.67, shadow maps of 2048 with 4 taps, no occlusion, no lamps by day) | 1.65 to 1.74 | `hdr` 0.77, `taa` 0.32, `shadows` 0.17, `bloom` 0.16, `tonemap` 0.16 |
+
+The main pass's light per pixel (`hdr`) is half of the frame; the shadow maps themselves are a tenth, their 12-tap
+filter in the main pass more than their rendering. The low detail takes 0.37 to 0.40 of the defaults' time. By the factor
+of about 3 between the M4 Pro and the iPhone 17 found for the ray tracing section
+([Stage 11 on the iPhone](#stage-11-on-the-iphone)) the defaults would take about 13 ms on that phone while it is
+cool, which leaves little of a 16.7 ms interval once the phone warms up; that is an estimate from another
+workload, not a measurement.
+
+The same game as a web page in headless Chrome 157 on the Mac, offscreen at the same frame size: the main thread
+0.49 ms a frame at the defaults and 0.45 ms at the low detail (no GPU time there). So the WebAssembly side
+(one thread, no SIMD, Asyncify) is not what limits this game.
 
 ### Clouds
 

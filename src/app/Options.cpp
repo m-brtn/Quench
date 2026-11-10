@@ -63,6 +63,8 @@ const char* optionsHelp() {
            "                       state, to check a game's reaction to heat (App::thermalGovernor) without a hot\n"
            "                       device; the scenario command thermal_state changes it, `thermal_state system`\n"
            "                       ends it\n"
+           "  --mobile             App::mobile() says yes on any device: a game's defaults for phones and tablets\n"
+           "                       on a desktop\n"
            "  --hdr MODE           HDR output: off (SDR), on (where the GPU backend supports it) or auto (while\n"
            "                       the display has HDR range); default: the game's choice, normally off\n"
            "  --hdr-headroom N     peak brightness of HDR output in multiples of paper white (N >= 1) instead of\n"
@@ -227,6 +229,8 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
             options.gpuDebug = true;
         } else if (flag == "--gpu-pass-timing" && !inlineValue) {
             options.gpuPassTiming = true;
+        } else if (flag == "--mobile" && !inlineValue) {
+            options.mobile = true;
         } else if (flag == "--version" && !inlineValue) {
             options.printVersion = true;
         } else if ((flag == "--help" || flag == "-h") && !inlineValue) {

@@ -6,7 +6,8 @@
 // Per frame: events -> input -> scenario -> fixed simulation ticks -> update -> audio -> ImGui -> render -> ImGui on
 // top -> present. Rendering is skipped while the app is in the background (iOS) or the window is minimized.
 
-#include <quench/app/ImGuiRenderer.h>   // imguiTexture()
+#include <quench/app/ImGuiRenderer.h> // imguiTexture()
+#include <quench/app/LoadGovernor.h>
 #include <quench/app/ThermalGovernor.h> // ThermalState
 #include <quench/assets/AssetManager.h>
 #include <quench/audio/AudioSystem.h>
@@ -246,6 +247,11 @@ public:
     const ThermalGovernor& thermalGovernor() const;
     // The frame rate limit in effect: maxFrameRate() lowered by the thermal reaction; 0: the display's rate.
     double frameRateLimit() const;
+    // The opt-in reaction to frames that come late (LoadGovernor.h), off until the game enables it: a factor for the
+    // render scale, fed every frame on the screen before Game::update (the scenario command frame_load fakes the
+    // frames). It needs no thermal state, so it also works in a browser; the game applies the factor.
+    LoadGovernor& loadGovernor();
+    const LoadGovernor& loadGovernor() const;
 
     // HDR output. A new mode takes effect before the next frame; so do changes of the window's display (moved to
     // another display, HDR switched on or off: SDL_EVENT_WINDOW_HDR_STATE_CHANGED) and of its headroom, which the
@@ -270,9 +276,10 @@ public:
     std::span<const std::string> arguments() const;
     // Whether relaunch() can start the app again: desktops; not phones, tablets or the web.
     bool canRelaunch() const;
-    // Whether the app runs on a phone or tablet (iOS, also in the Simulator, and Android): a passively cooled device
-    // that lowers its clocks under sustained GPU load (FrameStats::thermal), for a game's quality defaults. Effects
-    // still fall back by gpu::Caps.
+    // Whether the app runs on a phone or tablet (iOS, also in the Simulator, Android, and a browser on one: its user
+    // agent names a phone or tablet, or its main pointer is a finger): a passively cooled device that lowers its
+    // clocks under sustained GPU load (FrameStats::thermal), for a game's quality defaults. --mobile says yes on any
+    // device, to try those defaults on a desktop. Effects still fall back by gpu::Caps.
     bool mobile() const;
     // Starts the program again as a new process with `args` (without the program name) and ends this one after the
     // frame, as quit(0); an error, and the app goes on, where it cannot or the process does not start.
