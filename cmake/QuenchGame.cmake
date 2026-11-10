@@ -78,6 +78,40 @@ function(quench_add_game target)
     set_target_properties(${target} PROPERTIES OUTPUT_NAME ${arg_OUTPUT_NAME})
     target_compile_definitions(${target} PRIVATE QUENCH_GAME_NAME="${arg_NAME}" QUENCH_GAME_VERSION="${arg_VERSION}")
 
+    if(EMSCRIPTEN)
+        # ------------------------------------------------------------ the web
+        # <OUTPUT_NAME>.html with its .js and .wasm and, with assets, a .data file that the page loads before main
+        # into the virtual file system's /assets (SDL_GetBasePath() is "/"). Asyncify: the WebGPU backend and
+        # miniaudio's Web Audio backend wait for the browser with emscripten_sleep. A stack of 1 MB as in
+        # quench_physics (Jolt's jobs run nested without threads). FS is exported so that a page's script can read
+        # the files a run wrote (captures of a scripted run).
+        set(_gen ${CMAKE_CURRENT_BINARY_DIR}/quench_game/${target})
+        file(MAKE_DIRECTORY ${_gen})
+        set(QUENCH_GAME_NAME ${arg_NAME})
+        configure_file(${CMAKE_CURRENT_FUNCTION_LIST_DIR}/shell.web.html ${_gen}/shell.html @ONLY)
+        set_target_properties(${target} PROPERTIES SUFFIX ".html" LINK_DEPENDS ${_gen}/shell.html)
+        target_link_options(${target} PRIVATE -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=65536 -sALLOW_MEMORY_GROWTH=1
+                            -sSTACK_SIZE=1048576 -sEXPORTED_RUNTIME_METHODS=FS --shell-file ${_gen}/shell.html)
+        if(_asset_dirs)
+            set(_stage ${_gen}/assets)
+            file(MAKE_DIRECTORY ${_stage})
+            string(REPLACE ";" "|" _sources "${_asset_dirs}")
+            # The stamp changes when a staged file did (StageAssets.cmake touches the folder), which links again.
+            add_custom_target(${target}_assets
+                COMMAND ${CMAKE_COMMAND} -DSTAGE=${_stage} -DSOURCES=${_sources}
+                        -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/StageAssets.cmake
+                BYPRODUCTS ${_stage}
+                COMMENT "Merging the assets of ${target}" VERBATIM)
+            if(arg_COOKED_ASSETS)
+                add_dependencies(${target}_assets ${arg_COOKED_ASSETS})
+            endif()
+            add_dependencies(${target} ${target}_assets)
+            target_link_options(${target} PRIVATE --preload-file ${_stage}@/assets)
+            set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${_stage})
+        endif()
+        return()
+    endif()
+
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         if(_asset_dirs)
             set(_copies "")

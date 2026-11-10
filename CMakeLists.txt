@@ -5,7 +5,7 @@ if(NOT DEFINED PROJECT_NAME AND CMAKE_HOST_APPLE AND NOT CMAKE_SYSTEM_NAME STREQ
    AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Minimum macOS version" FORCE)
 endif()
-project(Quench VERSION 0.12.1 LANGUAGES C CXX)
+project(Quench VERSION 0.13.0 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJC)
     enable_language(OBJCXX)
@@ -31,8 +31,11 @@ set(QUENCH_ASSET_OVERLAY AUTO CACHE STRING
 set_property(CACHE QUENCH_ASSET_OVERLAY PROPERTY STRINGS AUTO ON OFF)
 # Headless: only the modules without windowing, GPU or SDL (core, physics); SDL is not fetched.
 option(QUENCH_HEADLESS "Build only the headless modules" OFF)
-if(EMSCRIPTEN)
-    # SDL GPU has no WebGPU backend in the pinned SDL.
+# Web builds for a browser (the `web` preset; docs/platforms.md, "Web"): the GPU layer on the browser's WebGPU (the
+# native WebGPU backend, src/gpu/webgpu), the app and the examples. Off, an Emscripten build has the headless modules
+# only (`wasm-node`).
+option(QUENCH_WEB "Emscripten: build the GPU layer, the app and the examples for a browser (experimental)" OFF)
+if(EMSCRIPTEN AND NOT QUENCH_WEB)
     set(QUENCH_HEADLESS ON CACHE BOOL "" FORCE)
 endif()
 # Tracy profiling (cmake/QuenchTracy.cmake, docs/performance.md): its client in the engine and the QUENCH_PROFILE_*
@@ -195,9 +198,16 @@ if(NOT QUENCH_HEADLESS)
         src/gpu/CommandBuffer.cpp
         src/gpu/Device.cpp
         src/gpu/Format.cpp
-        src/gpu/ShaderReload.cpp
-        src/gpu/sdlgpu/SdlGpuCommands.cpp
-        src/gpu/sdlgpu/SdlGpuDevice.cpp)
+        src/gpu/ShaderReload.cpp)
+    if(EMSCRIPTEN)
+        # A web build has the one backend, the browser's WebGPU (src/gpu/webgpu) through Emscripten's emdawnwebgpu
+        # port (<webgpu/webgpu.h>, Dawn's; BSD-3-Clause): the pinned SDL has no WebGPU driver in SDL GPU.
+        target_sources(quench_gpu PRIVATE src/gpu/webgpu/WebGpuCommands.cpp src/gpu/webgpu/WebGpuDevice.cpp)
+        target_compile_options(quench_gpu PRIVATE --use-port=emdawnwebgpu)
+        target_link_options(quench_gpu INTERFACE --use-port=emdawnwebgpu)
+    else()
+        target_sources(quench_gpu PRIVATE src/gpu/sdlgpu/SdlGpuCommands.cpp src/gpu/sdlgpu/SdlGpuDevice.cpp)
+    endif()
     if(APPLE)
         # Objective-C++ with ARC (quench_configure_target): the Metal objects are strong members of plain C++ structs.
         target_sources(quench_gpu PRIVATE src/gpu/sdlgpu/SdlGpuTimingMetal.m src/gpu/metal/MetalCommands.mm

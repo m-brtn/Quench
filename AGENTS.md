@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-09, version 0.12.1): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-10, version 0.13.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -178,9 +178,9 @@ and runs on `quench_main` / `quench_app` (the engine's window, loop, flags, scen
 `d708783`, not yet moved to a release) with its own input layer fed through `Game::event` and its own physics clock;
 Ashfall is not being migrated for now (user decision, 2026-11-05) and still uses its own code;
 `tools/check_games.sh` builds both games against this checkout and starts them; neither game uses the job system,
-the asset system, the engine's audio, animation, navigation, weather or particles yet. No browser audio (stage 7
-remaining work)
-yet; what comes next is listed in `docs/roadmap.md`, "What is next".**
+the asset system, the engine's audio, animation, navigation, weather or particles yet. Browser audio (stage 7
+remaining work) is built with the web build below and not listened to; what comes next is listed in
+`docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`, `docs/particles.md`, `docs/demo.md`,
 `docs/performance.md` and `docs/platforms.md` describe what is built, `docs/architecture.md` the design with the
@@ -197,7 +197,9 @@ cast sunlight shadows) passed 21 assertions on each Mac backend, Debug demo 5/5 
 four intentional HDR golden changes and the refreshed package's smoke capture were inspected. Details and
 measurement limits are in
 `devlog/2026-11-09.md` and `docs/releases/v0.12.1.md`; no phone run or onscreen performance claim for this patch.
-The earlier platform claims above describe 0.12.0.
+The earlier platform claims above describe 0.12.0. Version 0.13.0 (2026-11-10) adds the Windows build and the
+web build below and fixes the intermittent Vulkan validation error of `demo_batch_vulkan` (SDL GPU's defragmentation
+moved resources of the open frame: `SdlVulkanDefrag.cmake`, libsdl-org/SDL#16685) (`docs/releases/v0.13.0.md`).
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the
@@ -208,8 +210,25 @@ real Windows hardware, on Vulkan on Windows or with ray tracing there yet. Next:
 NVIDIA RTX GPU), then a native Vulkan backend with ray queries and a native Direct3D 12 backend with DXR (stage 15
 of `docs/roadmap.md`; `docs/platforms.md`, "Windows and Linux").
 
-The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms) and Metal directly (the native backend, MetalFX)
-with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries), Jolt Physics,
+The web (since 2026-11-10, the user's request; experimental; published at <https://m-brtn.github.io/Quench/> by
+`tools/publish_web.sh`, at every release): the `web` preset builds
+the engine, the sample and the demo as single-threaded WebAssembly for a browser, on a WebGPU backend of the
+engine's own (`src/gpu/webgpu`, on Emscripten's `emdawnwebgpu` port; SDL GPU has no WebGPU driver, and the open pull
+request libsdl-org/SDL#16020 was tried and dropped), with WGSL shaders translated from the SPIR-V by Tint at build
+time and sound through miniaudio's Web Audio backend. Run only in Chromium on the Mac (WebGPU over Metal):
+`tools/check.sh step web` runs hello's check scenario (21 passed) and the demo's whole batch (757 passed, 0 failed,
+no WebGPU error; 41 captures within the thresholds of the Mac's Metal golden images) in headless Google Chrome 157,
+and a few seconds of each page on the path a person's page takes; every demo section was also opened once in
+Cursor's built-in Chromium. No ray tracing, GPU timing, HDR output or threads there; the user directory is in
+memory; a capture or a GPU wait in a frame on the screen loses that frame. In Safari 27.0.1 on the user's Mac the
+user saw the demo run (2026-11-10, with a patch of SDL's canvas probe, since replaced by a CSS size the app gives
+the canvas; that build not yet looked at in Safari); Playwright's headless WebKit 27.2 passed the demo's batch. Not run in Firefox, on another system or a phone; nobody has played it or listened to it in a browser (`docs/platforms.md`, "Web (WebAssembly)";
+`docs/app.md`, "Web runs").
+
+The stack: SDL3 (window, input), SDL GPU (Metal on Apple platforms), Metal directly (the native backend, MetalFX)
+and, in web builds, WebGPU directly (Emscripten's `emdawnwebgpu` port)
+with one HLSL shader source compiled at build time (glslang; DXC, built from source, for ray queries; Tint, built
+from source, for the web's WGSL), Jolt Physics,
 Dear ImGui (diagnostics), GLM, enkiTS (jobs), xxHash (asset IDs), meshoptimizer, bc7enc_rdo's BC7 decoder,
 mikktspace and Basis Universal's transcoder (assets), miniaudio (sound decoding, Vorbis through its stb_vorbis, the reverb through its verblib, and device output),
 the SADIE HRTF set (from Resonance Audio's repository, reduced to a table in `quench_audio`), ozz-animation (the animation runtime and the offline library
@@ -223,7 +242,8 @@ their licences: `docs/dependencies.md`.
 macOS and iOS come first: the available hardware is a Mac with an Apple M4 Pro and an iPhone 18 Pro Max. Windows,
 Linux, Android and the web (WebAssembly) are later targets. Their foundations are laid now (see "Portability rules"),
 but they are not worked on until the user asks. The user asked for Windows on 2026-11-09 (Direct3D 12 and Vulkan,
-hardware ray tracing required; the user has a Windows PC with an NVIDIA RTX GPU).
+hardware ray tracing required; the user has a Windows PC with an NVIDIA RTX GPU) and for a web build on 2026-11-10
+(experimental).
 
 Claim only platforms that were actually run, and say how (for example "iOS Simulator only" or "Vulkan through MoltenVK
 on the Mac"). Status, constraints and open questions per platform: `docs/platforms.md`.
@@ -236,10 +256,14 @@ How each backend is verified:
 - **Vulkan**: on the Mac only through MoltenVK, a translation layer over Metal (Homebrew's `vulkan-loader`,
   `molten-vk` and `vulkan-validationlayers`; the `gpu_vulkan.*` CTest variant). It checks the SPIR-V path and the
   Khronos validation layer's core checks, not real Vulkan drivers: say so whenever Vulkan results are mentioned.
-- **Web**: the pinned SDL (3.4.18) has no WebGPU backend in SDL GPU (only an experimental pull request,
-  libsdl-org/SDL#16020). Until one is usable, web compatibility is verified only for headless modules, built with
-  Emscripten and run as CTest under Node.js on the Mac (the `wasm-node` preset, single-threaded, with stack overflow
-  checks). Node.js is not a browser: say "under Node.js" whenever web results are mentioned.
+- **Web**: the headless modules are built with Emscripten and run as CTest under Node.js on the Mac (the
+  `wasm-node` preset, single-threaded, with stack overflow checks). Node.js is not a browser: say "under Node.js"
+  whenever those results are mentioned. The browser build (the `web` preset: the engine's WebGPU backend, since the
+  pinned SDL 3.4.18 has none in SDL GPU) is verified by `tools/check.sh step web`: `tools/web_check.mjs` runs the
+  pages' scripted checks in headless Google Chrome on the Mac (no window; WebGPU over Metal there) and compares the
+  demo's captures with the Mac's Metal golden images. Say "in headless Chrome on the Mac" whenever these results
+  are mentioned: no other browser, system or phone has run it, and what a page looks, plays and sounds like is the
+  user's to check.
 - **Direct3D 12**: on GitHub's Windows runner only (`.github/workflows/windows.yml`), whose only adapter is WARP, a
   software rasterizer, with the Direct3D 12 debug layer; on real hardware only by the user, on their PC. Say "on
   GitHub's runner, WARP" whenever these results are mentioned.
@@ -269,6 +293,10 @@ cmake --preset ios-sim-tests && cmake --build --preset ios-sim-tests && ctest --
 # Web check: headless tests as WebAssembly under Node.js, single-threaded (needs host-tools and Homebrew's
 # emscripten; the preset points EMSDK_PYTHON at Homebrew's python3, Xcode's is too old)
 emcmake cmake --preset wasm-node && cmake --build --preset wasm-node && ctest --preset wasm-node -j8
+# The browser build (experimental; needs host-tools; the first configure builds Tint, about a minute): the sample
+# and the demo as .html, served over HTTP (docs/app.md, "Web runs"); its checks in headless Chrome: step web
+emcmake cmake --preset web && cmake --build --preset web
+python3 -m http.server 8000 --bind 127.0.0.1 --directory build/web # examples/demo/quench-demo.html?--section&sky
 # The sample: flags with --help; the benchmark (docs/performance.md) in Release with vsync, in a window on the screen
 build/release/examples/hello/hello --onscreen --frame-size 1920x1080 \
     --script examples/hello/scenarios/benchmark.txt --audio-device null
@@ -345,7 +373,8 @@ decision, 2026-11-06); `tools/check.sh` runs them, offscreen:
   Look at a capture when its check fails or its golden image changes, not at all of them every time. Add the one step
   that can break where the change can: `tools/check.sh step asan` or `step tsan` (threaded code), `step wasm` (a
   headless module), `step ios` (platform code), `step new-game` (what a game's build uses: `cmake/QuenchGame.cmake`,
-  the template, the game skill). A change to profiling code (`Profile.h`, `cmake/QuenchTracy.cmake`, the zones)
+  the template, the game skill), `step web` (the WebGPU backend, the WGSL shader path, the web parts of the app and
+  of `quench_add_game()`; about 2 minutes after the first build; not a part of `full`). A change to profiling code (`Profile.h`, `cmake/QuenchTracy.cmake`, the zones)
   also builds the `profile` preset and runs its `ctest -L "core|hello"` (`hello_tracy_capture` records a capture).
 - **Shared foundations (core, the job system and threads, the GPU layer, the app loop, the build and CMake) and the
   end of a stage: `tools/check.sh full`.** format; `debug`, `release`, `asan` and `tsan` (build and ctest each; the
@@ -390,9 +419,10 @@ Details and rationale: `docs/architecture.md`.
 - **Headless core.** Simulation, physics, assets, animation, navigation, weather, particles and the audio mixer must not depend on
   windowing, the GPU or rendering, so they run in CTest without a window (and under Node.js for the web check).
 - **Graphics goes through `quench::gpu`.** Backends: SDL GPU (portable, the first one, the default off Apple
-  platforms, `--gpu-backend sdl`) and native Metal (since stage 9, `--gpu-backend metal`; the default on Apple
+  platforms, `--gpu-backend sdl`), native Metal (since stage 9, `--gpu-backend metal`; the default on Apple
   platforms since 2026-11-07, chosen in `gpu::defaultBackend()` only, falling back to SDL GPU with one log line when
-  it fails to start). The Metal backend exists for hardware ray tracing, GPU timestamps and
+  it fails to start) and native WebGPU (since 2026-11-10, experimental; web builds only and their only one: SDL GPU
+  does not reach a browser). The Metal backend exists for hardware ray tracing, GPU timestamps and
   MetalFX: SDL GPU does not offer them, and its maintainers decline to expose native object handles
   (libsdl-org/SDL#11147, #12094). SDL GPU types never appear in public engine headers, and games do not call SDL GPU
   directly. A new backend or a native feature is added only for a named need and verified on real hardware.
@@ -402,7 +432,7 @@ Details and rationale: `docs/architecture.md`.
   lists, so that ray tracing can build acceleration structures. Effects are slots with fallbacks chosen by device
   capabilities (`gpu::Caps`), never by platform `#ifdef` (for example shadow maps or ray-traced shadows, SSR or
   ray-traced reflections).
-- **Shaders.** HLSL compiled at build time to SPIR-V, MSL / metallib and DXIL (WGSL later). Shared shader code comes
+- **Shaders.** HLSL compiled at build time to SPIR-V, MSL / metallib, DXIL and, for web builds, WGSL. Shared shader code comes
   from the engine shader library by `#include`. Uniform structs are defined once, in headers read by both C++ and
   HLSL; uniform blocks use only 16-byte members (`vec4`, `mat4`), so the C++ and HLSL layouts match without padding
   rules.
@@ -554,6 +584,12 @@ are built:
   (numbers from the devlog) and "Changes for games" (renamed or removed APIs and what each game has to change).
   Releases are source only, no binaries.
 - Tags and GitHub releases are created only when the user asks.
+- **Every release also deploys the web demo** (user decision, 2026-11-10): after the release commit is merged into
+  `main` and tagged, `tools/check.sh step web` passes on that commit and `tools/publish_web.sh --no-build --push`
+  (a clean working tree, the tagged commit checked out) publishes it to the `gh-pages` branch, which GitHub Pages
+  serves at <https://m-brtn.github.io/Quench/>. Check that the published page loads and that its `version.txt`
+  names the release's version and commit; the release notes and the devlog say that it was deployed and how it was
+  checked. A release whose web build fails is not deployed: say so in the notes, and the page keeps the last release.
 
 ## Licence
 
@@ -641,17 +677,19 @@ LICENSE                MIT licence of the engine; THIRD_PARTY_LICENSES: licences
 CMakeLists.txt         engine targets; CMakePresets.json: configure, build and test presets
 cmake/                 Dependencies (runtime pins), ShaderToolchain (shader compiler pins), CookToolchain (asset
                        cooker pins), QuenchDxc and BuildDxc (DXC for ray query shaders, built from source into a
-                       per-machine tool cache), QuenchBasisu (Basis Universal's sources, kept in that cache, and its
+                       per-machine tool cache), QuenchTint and BuildTint (Tint for the web's WGSL shaders, built
+                       the same way), QuenchBasisu (Basis Universal's sources, kept in that cache, and its
                        transcoder), QuenchToolCache (the cache's place), QuenchShaders (quench_add_shaders,
                        quench_add_ray_hits), QuenchCook (quench_cook_assets,
                        quench_weather_sounds), EmbedShaders, QuenchTargets (warnings,
                        include directories), QuenchGame (quench_add_game), QuenchTracy (with QUENCH_TRACY:
                        Tracy's client, tracy-capture and tracy-csvexport, their pins)
-                       and Info.ios.plist.in, patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator;
+                       and Info.ios.plist.in, shell.web.html (the page of a web build), patches/ (SdlIosSimulator: the SDL GPU patch for the iOS Simulator;
                        MikkTSpaceRotate: a shift by 32 in MikkTSpace masked; DetourAlign8: Detour's tile sections
                        aligned to 8 bytes with 64-bit references; TracyPpqsort: Tracy's changes to PPQSort;
                        SdlVulkan3d: SDL GPU's 3D textures 2D-array compatible only as color targets, for MoltenVK;
-                       SdlLevelSize: SDL GPU's shader blit and render passes with levels at least 1 x 1)
+                       SdlLevelSize: SDL GPU's shader blit and render passes with levels at least 1 x 1;
+                       SdlVulkanDefrag: no Vulkan defragmentation while another command buffer is open)
 include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, navigation/,
                        weather/, particles/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
@@ -669,7 +707,7 @@ src/                   sources and internal headers per module (src/core/Platfor
                        (Emitter.cpp), the CPU simulation, trails, paths;
                        src/gpu/Backend.h: the backend interface; src/gpu/sdlgpu/: the
                        SDL GPU backend; src/gpu/metal/: the native Metal backend (Objective-C++, ARC; Apple
-                       platforms); src/gpu/shaders/: the backends' own shaders (blit); src/app/Main.cpp: quench_main;
+                       platforms); src/gpu/webgpu/: the WebGPU backend (web builds); src/gpu/shaders/: the backends' own shaders (blit); src/app/Main.cpp: quench_main;
                        src/render/: the scene, SceneAssets, the frame modules and their shaders, GPU skinning,
                        RayTracing: acceleration structures, hit data, the probe grid and the traced effects;
                        TemporalFilter: the temporal denoiser; PathTracer: the reference path tracer; ScreenSpace:
@@ -720,8 +758,10 @@ tools/new_game.py      creates a game from templates/game, with the quench-game 
 tools/check_skill.py   checks that the paths, flags and names the quench-game skill uses exist (step new-game)
 tools/tracy_capture.py records a profile build with tracy-capture (offscreen, no GUI), zone statistics to CSV
 tools/check.sh         the gates: quick (a small change), full, release, single steps
+tools/web_check.mjs    runs a web build's page in headless Chrome: its scripted checks, log and captures (step web)
 tools/check_games.sh   builds every game against this checkout, starts it, checks exit code 0 and a capture
 tools/package_demo.sh  builds the demo into dist/ (macOS .app in a zip; --ios: a development-signed .ipa)
+tools/publish_web.sh   assembles the web demo and sample in dist/web, checks it in headless Chrome; --push: gh-pages
 tools/format.sh        clang-format over the C and C++ sources (--check)
 tests/                 harness/, core/ (job system included), physics/, assets/ (data/: CC0 Basis Universal test files
                        written by cook.cook_basis_test_data), audio/ (mixer, streams, decoders, device; data/: CC0 test
@@ -734,7 +774,7 @@ docs/                  documentation (index docs/README.md): architecture, app s
                        animation, navigation, weather, particles, render module, engine demo, performance, platforms, dependencies,
                        migration, roadmap, releases/
 docs/images/           the README's screenshots (a few small JPEG files from the demo, each under about 300 KB)
-dist/                  demo packages from tools/package_demo.sh (not committed)
+dist/                  demo packages from tools/package_demo.sh, the web site from tools/publish_web.sh (not committed)
 devlog/                daily development log (template in devlog/README.md)
 .clang-format          code format; .editorconfig for editors
 ```

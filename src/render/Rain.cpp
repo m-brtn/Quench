@@ -199,7 +199,6 @@ void RainRenderer::release() {
     m_shafts = {};
     m_shaftsSmooth = {};
     m_gridVersion = ~0ull;
-    m_lastMapValid = false;
     m_readSerial = m_readbackSerial; // results still on their way are left unread
     m_cover = -1.0f;
     m_quality = Rain::Off;
@@ -328,43 +327,6 @@ void RainRenderer::readCover(RenderStats& stats) {
 void RainRenderer::updateMaps(gpu::CommandBuffer& commands, const gpu::Texture& maps, const weather::Weather& weather,
                               const gpu::Sampler& pointSampler, RenderStats& stats) {
     readCover(stats);
-    // Last frame's texels around the camera, in a command buffer submitted before this frame's: read a few frames
-    // later, without waiting.
-    if (m_lastMapValid && (m_frame++ & 1u) == 0) {
-        Readback* slot = nullptr;
-        for (Readback& r : m_readbacks)
-            if (!r.pending) slot = &r;
-        if (slot && !slot->buffer) {
-            Result<gpu::TransferBuffer> b =
-                m_device->createTransferBuffer({.direction = gpu::TransferDirection::Download,
-                                                .size = kCoverSide * kCoverSide * 8,
-                                                .name = "render rain cover"});
-            if (b) slot->buffer = std::move(*b);
-        }
-        if (slot && slot->buffer) {
-            if (gpu::CommandBuffer own = m_device->acquireCommandBuffer()) {
-                const auto first = [](std::uint32_t texel) {
-                    return std::min(std::uint32_t(std::max(int(texel) - kCoverRadius, 0)), kMapSize - kCoverSide);
-                };
-                {
-                    gpu::CopyPass copy = own.beginCopyPass();
-                    copy.download({.texture = maps,
-                                   .x = first(m_lastCameraTexel.x),
-                                   .y = QUENCH_RAIN_MAP_ROW + first(m_lastCameraTexel.y),
-                                   .width = kCoverSide,
-                                   .height = kCoverSide},
-                                  slot->buffer, 0);
-                }
-                if (Result<gpu::Fence> fence = own.submitWithFence()) {
-                    slot->fence = std::move(*fence);
-                    slot->pending = true;
-                    slot->cameraDepth = m_lastCameraDepth;
-                    slot->serial = ++m_readbackSerial;
-                }
-            }
-        }
-    }
-
     // The occlusion map into its region.
     if (gpu::RenderPass pass = commands.beginRenderPass(gpu::ColorTarget{.texture = maps, .load = gpu::LoadOp::Load})) {
         pass.setViewport({0.0f, float(QUENCH_RAIN_MAP_ROW), float(kMapSize), float(kMapSize)});
@@ -378,7 +340,39 @@ void RainRenderer::updateMaps(gpu::CommandBuffer& commands, const gpu::Texture& 
     m_lastCameraTexel = glm::uvec2(glm::clamp(glm::vec2(clip.x * 0.5f + 0.5f, 0.5f - clip.y * 0.5f) * float(kMapSize),
                                               glm::vec2(0.0f), glm::vec2(float(kMapSize - 1))));
     m_lastCameraDepth = clip.z;
-    m_lastMapValid = true;
+
+    // This frame's texels around the camera, copied in the frame's command buffer and read a few frames later,
+    // without waiting.
+    if ((m_frame++ & 1u) == 0) {
+        Readback* slot = nullptr;
+        for (Readback& r : m_readbacks)
+            if (!r.pending) slot = &r;
+        if (slot && !slot->buffer) {
+            Result<gpu::TransferBuffer> b =
+                m_device->createTransferBuffer({.direction = gpu::TransferDirection::Download,
+                                                .size = kCoverSide * kCoverSide * 8,
+                                                .name = "render rain cover"});
+            if (b) slot->buffer = std::move(*b);
+        }
+        if (slot && slot->buffer) {
+            const auto first = [](std::uint32_t texel) {
+                return std::min(std::uint32_t(std::max(int(texel) - kCoverRadius, 0)), kMapSize - kCoverSide);
+            };
+            {
+                gpu::CopyPass copy = commands.beginCopyPass();
+                copy.download({.texture = maps,
+                               .x = first(m_lastCameraTexel.x),
+                               .y = QUENCH_RAIN_MAP_ROW + first(m_lastCameraTexel.y),
+                               .width = kCoverSide,
+                               .height = kCoverSide},
+                              slot->buffer, 0);
+            }
+            slot->fence = commands.completionFence();
+            slot->pending = true;
+            slot->cameraDepth = m_lastCameraDepth;
+            slot->serial = ++m_readbackSerial;
+        }
+    }
 
     // The wetness grid and the snow cover beside it into their region when the weather has changed them: rows of
     // 2 * QUENCH_WETNESS_GRID texels.

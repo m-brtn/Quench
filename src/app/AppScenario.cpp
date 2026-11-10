@@ -5,6 +5,7 @@
 #include "ImGuiIdCheck.h"
 #include "ScenarioPoint.h"
 #include "ThermalState.h"
+#include "core/Platform.h"
 
 #include <quench/audio/Analysis.h>
 #include <quench/core/Log.h>
@@ -611,6 +612,12 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
             log::error("scenario", "line {}: resize W H (points)", c.line);
             return Exec::Failed;
         }
+#if QUENCH_PLATFORM_WEB
+        // The canvas's CSS size is the window's (SDL leaves it to the page).
+        setCanvasSize(SDL_GetStringProperty(SDL_GetWindowProperties(s.window.get()),
+                                            SDL_PROP_WINDOW_EMSCRIPTEN_CANVAS_ID_STRING, "#canvas"),
+                      int(*w), int(*h));
+#endif
         SDL_SetWindowSize(s.window.get(), int(*w), int(*h));
         return Exec::Done;
     }

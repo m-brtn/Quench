@@ -39,7 +39,19 @@ into 2D arrays and copies into sampled 3D textures). Since 2026-11-09 (the Windo
 `SdlLevelSize.cmake`: SDL GPU takes a mip level's size as `size >> level`, 0 for the last levels of a non-square
 texture, so its shader blit (Direct3D 12's blits and mipmaps, Metal's blits) divided by 0 and a render pass into such
 a level had an empty viewport and scissor (Direct3D 12, Metal) or framebuffer (Vulkan); the patch keeps both at least
-1 (`gpu_device.generate_mipmaps` with an 8 x 2 texture failed on Direct3D 12 before it). The games are not affected:
+1 (`gpu_device.generate_mipmaps` with an 8 x 2 texture failed on Direct3D 12 before it). Since 2026-11-10 the engine
+also carries `SdlVulkanDefrag.cmake`: SDL GPU's Vulkan driver defragments its memory at a submit (every submit when
+no window is claimed) and moves textures and buffers that another command buffer, acquired and not yet submitted, has
+already bound; that command buffer then samples the old image, left in `TRANSFER_SRC_OPTIMAL`
+(`VUID-vkCmdDraw-None-09600`, the intermittent `demo_batch_vulkan` failure of 0.12.0 and 0.12.1). The patch counts
+the open command buffers and defragments only when no other one is open: the demo's batch on Vulkan through MoltenVK
+failed in 3 of 16 parallel runs before it and in none of 24 after it. Reported to SDL as
+[libsdl-org/SDL#16685](https://github.com/libsdl-org/SDL/issues/16685) (an issue, not a pull request: SDL takes no
+AI-generated code); the patch goes when a release fixes it. The engine also stopped submitting the rain's cover
+readback in a command buffer of its own while the frame's is open (`CommandBuffer::completionFence`). A web build
+needs no patch for its canvas: SDL's Emscripten driver measures the canvas at 1 x 1 to learn whether the page sizes
+it, and under a page zoom (Safari at 115%) that measures a little under 1, a 0 x 0 window; the app gives the canvas
+its CSS size before it creates the window, so SDL takes the page's size (`src/app/App.cpp`). The games are not affected:
 TrailForge declares SDL itself (with `SdlIosSimulator.cmake` only) before it fetches the engine, so its SDL is
 unchanged (its sampled 3D colour LUT would be valid on Vulkan through MoltenVK with the patch); Ashfall creates no 3D
 textures and does not build on the engine. Ashfall has no iOS build and no
@@ -55,7 +67,8 @@ Build-time shader toolchain (host tools, not shipped in the binary):
 | SPIRV-Cross | `6c09849fe88c48eaed08413aa022aaa136a3a057` | Apache-2.0 | SPIR-V -> MSL |
 | DXC | 1.9.2609 (`dxc_2026_09_29.zip`; elsewhere built from source, see "Added in stage 9") | NCSA | HLSL -> DXIL on Windows hosts; HLSL -> SPIR-V for the entries with ray queries on every host |
 | `xcrun metal` | Xcode | Apple | MSL -> metallib |
-| Emscripten | 6.0.13 (Homebrew, not pinned) | MIT or NCSA; Apache-2.0 (with LLVM exception) parts | the `wasm-node` web check; needs Python 3.10+ |
+| Emscripten | 6.0.13 (Homebrew, not pinned) | MIT or NCSA; Apache-2.0 (with LLVM exception) parts | the `wasm-node` web check and the `web` build; needs Python 3.10+ |
+| Tint | Dawn `66f899221d41dbc6d6257350c4b654a9b375c7f2`, built from source (see "Added for the web build") | BSD-3-Clause; Apache-2.0 and MIT parts | SPIR-V -> WGSL, web builds only |
 | Node.js | 26.13.0 (Homebrew, installed with Emscripten) | MIT | runs the WebAssembly tests |
 | Vulkan loader, MoltenVK | 1.4.363.0, 1.4.2 (Homebrew `vulkan-loader`, `molten-vk`, not pinned) | Apache-2.0 | the `gpu_vulkan` tests on the Mac |
 | Khronos validation layer | 1.4.363.0 (Homebrew `vulkan-validationlayers`, not pinned) | Apache-2.0 | validation in the `gpu_vulkan` tests |
@@ -436,6 +449,41 @@ Checked in the 0.15.0 source:
 - On macOS `tracy-capture` started before the program listens fails at once ("disconnected during the initial
   connection handshake", exit code 3); `tools/tracy_capture.py` starts it again until it connects. Tracy's GUI of
   0.14.1 refuses 0.15.0 captures (`UnsupportedVersion` for a newer file).
+
+## Added for the web build
+
+The browser build ([Platforms](platforms.md#web-webassembly)), 2026-11-10, experimental. Only the `web` preset
+fetches or builds any of this.
+
+| Library or tool | Version | Pin | Licence | Used for |
+|---|---|---|---|---|
+| Tint (Dawn's shader compiler) | Dawn's commit of 2026-11 | `66f899221d41dbc6d6257350c4b654a9b375c7f2`, SHA256 `9aedcfdbc0c4b05379c675018bc7c42bec8bee4b94b5a5d660e31695d86a79b2` | BSD-3-Clause | host tool: the shaders' SPIR-V to WGSL |
+| abseil-cpp (for Tint) | the commit Dawn's DEPS names | `cf015c9b764fae69f2140ff2504cb9a4e3de06fc`, SHA256 `689091fabffee3f42828d8eb060ca8c9a303cc52626e6833ec89c4bd4a8f2913` | Apache-2.0 | Tint's build |
+| SPIRV-Headers (for Tint) | the commit Dawn's DEPS names | `6efe5ae6b7c6ad29da3f2cc3f164b9c3d72b78b1`, SHA256 `d035de73b4085301bf921dc66997ce993fbf7c0d78f3308e67b6be2513a8b88c` | MIT | Tint's SPIR-V reader |
+| SPIRV-Tools (for Tint) | the commit Dawn's DEPS names | `b570f00a782a7bf4006964e8284dd8c10c4c549b`, SHA256 `5f03c36bcf930fdc766821eb76f18fe81ab1492f69e4995d7b6f2b87132c8ffb` | Apache-2.0 | Tint's SPIR-V reader |
+| emdawnwebgpu (Emscripten's port) | v20260423.175430, Dawn revision `31e25af254ab572c77054edec4946d2244e184dd` | pinned by Emscripten 6.0.13 (`--use-port=emdawnwebgpu`, downloaded by `emcc` with its own hash check), not by the engine | MIT or NCSA (`webgpu.cpp`, `library_webgpu.js`); BSD-3-Clause (`webgpu.h`) | `<webgpu/webgpu.h>` over the browser's WebGPU; linked into web programs |
+| miniaudio's Web Audio backend | 0.11.25, the archive already pinned | the same | public domain or MIT-0 | sound output in a browser (`MA_ENABLE_WEBAUDIO`) |
+| Google Chrome | 157.0.8103.40 (installed on the Mac, not pinned) | none | proprietary; not linked, not shipped | `tools/web_check.mjs`: the scripted checks, headless |
+| Node.js | 22 or newer for `tools/web_check.mjs` (its global `WebSocket`); run with 24.21.0 | none | MIT | serves the build and drives Chrome through the DevTools protocol |
+
+**Tint.** The browser's WebGPU takes WGSL only. `cmake/QuenchTint.cmake` and `cmake/BuildTint.cmake` build the
+`tint` command line tool from the four archives above into the tool cache (`~/Library/Caches/Quench/tint-66f8992`,
+8.4 MB kept; about a minute on the M4 Pro), at the first configure of a web build on a machine, with only the
+SPIR-V reader and the WGSL writer (no Dawn backends, no other readers or writers); `QUENCH_TINT` names another
+`tint`. Dawn's release binaries were tried first: their `tint` has no SPIR-V reader. Why Tint and not naga: Tint
+is what Chrome's own WebGPU compiles WGSL with, and it builds with CMake alone (naga needs a Rust toolchain). The
+engine's SPIRV-Cross pin has no WGSL output. Not shipped; listed under the build-time tools in
+`THIRD_PARTY_LICENSES`.
+
+**emdawnwebgpu** is the only WebGPU binding Emscripten 6.0.13 offers (its older built-in one, `-sUSE_WEBGPU`, was
+removed in favour of this port: `library_webgpu.js` refuses `USE_WEBGPU`). The port's version follows the installed
+Emscripten, which is not pinned (Homebrew): another Emscripten can bring another `webgpu.h`. Linked into web
+programs, so listed in `THIRD_PARTY_LICENSES` among the shipped libraries.
+
+**SDL** stays at 3.4.18 on the web: window (the canvas), input, main callbacks, no SDL GPU driver there. The fork of
+SDL's pull request #16020 was pinned for a trial and removed again.
+
+**Games.** Neither game builds for the web; nothing changes for them.
 
 ## Planned
 

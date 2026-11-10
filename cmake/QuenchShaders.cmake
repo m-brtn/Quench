@@ -4,8 +4,11 @@
 #   - SPIR-V (Vulkan), on every platform;
 #   - Apple platforms: SPIR-V -> MSL (SPIRV-Cross, SDL GPU resource slots) -> xcrun metal -> one .metallib per entry
 #     point. Without the Metal toolchain the MSL source is embedded instead and SDL compiles it at startup;
-#   - Windows hosts: DXIL with the pinned DXC release.
-# Cross builds (iOS) cannot run a compiler built for the target: they take a macOS `quench_shaderc` through
+#   - Windows hosts: DXIL with the pinned DXC release;
+#   - web builds (Emscripten with the GPU layer): WGSL only, for the WebGPU backend (src/gpu/webgpu). quench_shaderc
+#     writes the SPIR-V again with that backend's bindings and Tint translates it (cmake/QuenchTint.cmake); ray
+#     query entries are left out (WebGPU has no ray tracing).
+# Cross builds (iOS, the web) cannot run a compiler built for the target: they take a macOS `quench_shaderc` through
 # QUENCH_HOST_SHADERC (the `host-tools` preset builds it). All blobs are embedded into the binary; no shader files are
 # read at run time, except by shader hot reload (gpu::Device::enableShaderHotReload): host builds with a
 # single-configuration generator write a manifest per set (<set>/manifest.json: the source, the build's depfiles and
@@ -18,6 +21,12 @@ if(NOT QUENCH_HOST_SHADERC AND NOT CMAKE_CROSSCOMPILING)
 endif()
 set(QUENCH_SHADER_DXC "${QUENCH_DXC}" CACHE INTERNAL "")
 include(${CMAKE_CURRENT_LIST_DIR}/QuenchDxc.cmake)
+set(_wgsl OFF)
+if(EMSCRIPTEN AND NOT QUENCH_HEADLESS)
+    set(_wgsl ON)
+    include(${CMAKE_CURRENT_LIST_DIR}/QuenchTint.cmake)
+endif()
+set(QUENCH_SHADER_WGSL ${_wgsl} CACHE INTERNAL "")
 
 set(_metal_ok OFF)
 set(_metal_sdk macosx)
@@ -141,6 +150,10 @@ function(quench_add_shaders target)
     if(QUENCH_SHADER_DXC)
         list(APPEND formats dxil)
     endif()
+    if(QUENCH_SHADER_WGSL)
+        set(formats wgsl)
+        quench_tint(tint)
+    endif()
 
     set(blobs "")
     set(entries "")
@@ -166,6 +179,9 @@ function(quench_add_shaders target)
         set(dxc_args "")
         set(dxc_depends "")
         if(ray_query)
+            if(QUENCH_SHADER_WGSL)
+                continue()
+            endif()
             quench_ray_query_dxc(ray_query_dxc)
             if(NOT ray_query_dxc)
                 continue()
@@ -181,16 +197,33 @@ function(quench_add_shaders target)
             list(APPEND outs ${gen_dir}/${entry}.msl)
             set(msl_args --msl ${gen_dir}/${entry}.msl --msl-platform ${QUENCH_SHADER_MSL_PLATFORM})
         endif()
+        set(wgsl_args "")
+        if(QUENCH_SHADER_WGSL)
+            list(APPEND outs ${gen_dir}/${entry}.wgsl.spv)
+            set(wgsl_args --wgsl-spirv ${gen_dir}/${entry}.wgsl.spv)
+        endif()
         add_custom_command(
             OUTPUT ${outs}
             COMMAND ${shaderc} --input ${source} --entry ${entry} --stage ${stage} --spirv ${gen_dir}/${entry}.spv
                     --reflect ${gen_dir}/${entry}.reflect ${msl_args} ${include_args} --depfile ${gen_dir}/${entry}.d
-                    ${dxc_args}
+                    ${dxc_args} ${wgsl_args}
             DEPENDS ${source} ${shaderc} ${dxc_depends}
             DEPFILE ${gen_dir}/${entry}.d
             COMMENT "Compiling ${source_name}:${entry} (${stage})"
             VERBATIM)
         list(APPEND blobs ${outs})
+
+        if(QUENCH_SHADER_WGSL)
+            # HLSL allows derivatives in non-uniform control flow; WGSL only with the diagnostic this flag adds.
+            add_custom_command(
+                OUTPUT ${gen_dir}/${entry}.wgsl
+                COMMAND ${tint} --input-format spirv --format wgsl --allow-non-uniform-derivatives
+                        -o ${gen_dir}/${entry}.wgsl ${gen_dir}/${entry}.wgsl.spv
+                DEPENDS ${gen_dir}/${entry}.wgsl.spv ${tint}
+                COMMENT "Translating ${entry} -> WGSL"
+                VERBATIM)
+            list(APPEND blobs ${gen_dir}/${entry}.wgsl)
+        endif()
 
         if(write_manifest)
             set(reload_msl "")

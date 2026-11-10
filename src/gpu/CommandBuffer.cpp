@@ -54,6 +54,45 @@ void endPassZones([[maybe_unused]] void* commands, [[maybe_unused]] bool all) {
 
 // ------------------------------------------------------------------ CommandBuffer
 
+namespace {
+
+Fence fenceHandle(detail::DeviceImpl* device, detail::SharedFence* fence) {
+    Fence result;
+    Access::adopt(result, device, fence);
+    device->live.fetch_add(1, std::memory_order_relaxed);
+    return result;
+}
+
+// Submits with a backend fence when one is wanted (`withFence`) or completionFence was taken, and gives it to the
+// completion's handles. With `withFence`, returns the shared fence whose handle (the command buffer's) the returned
+// Fence takes over; else null.
+Result<detail::SharedFence*> submitNative(detail::DeviceImpl* device, void* native, void*& completion, bool withFence) {
+    auto* shared = static_cast<detail::SharedFence*>(std::exchange(completion, nullptr));
+    if (!shared && !withFence) {
+        if (Result<void> r = device->submit(native); !r) return Error{r.error()};
+        return nullptr;
+    }
+    Result<void*> fence = device->submitWithFence(native);
+    if (!fence) {
+        if (shared) {
+            shared->cancelled.store(true, std::memory_order_release);
+            detail::releaseSharedFence(device, shared);
+        }
+        return Error{fence.error()};
+    }
+    if (!shared) {
+        shared = new detail::SharedFence;
+        shared->native.store(*fence, std::memory_order_release);
+        return shared;
+    }
+    shared->native.store(*fence, std::memory_order_release);
+    if (withFence) return shared; // the command buffer's handle becomes the returned one
+    detail::releaseSharedFence(device, shared);
+    return nullptr;
+}
+
+} // namespace
+
 CommandBuffer Device::acquireCommandBuffer() {
     CommandBuffer commands;
     void* native = m_impl->acquireCommandBuffer();
@@ -71,17 +110,37 @@ CommandBuffer::~CommandBuffer() {
     if (m_swapchainAcquired) {
         // A command buffer that acquired a swapchain texture cannot be cancelled (SDL); presenting is the lesser harm.
         QUENCH_ASSERT(false, "a command buffer that acquired a swapchain texture must be submitted");
-        if (Result<void> submitted = m_device->submit(m_native); !submitted) log::error("gpu", "{}", submitted.error());
+        if (Result<detail::SharedFence*> submitted = submitNative(m_device, m_native, m_completion, false); !submitted)
+            log::error("gpu", "{}", submitted.error());
     } else {
         m_device->cancel(m_native);
+        dropCompletion();
     }
+}
+
+void CommandBuffer::dropCompletion() {
+    auto* shared = static_cast<detail::SharedFence*>(std::exchange(m_completion, nullptr));
+    if (!shared) return;
+    shared->cancelled.store(true, std::memory_order_release);
+    detail::releaseSharedFence(m_device, shared);
+}
+
+Fence CommandBuffer::completionFence() {
+    QUENCH_ASSERT(m_native, "completionFence on an empty command buffer");
+    auto* shared = static_cast<detail::SharedFence*>(m_completion);
+    if (!shared) {
+        shared = new detail::SharedFence;
+        m_completion = shared;
+    }
+    shared->handles.fetch_add(1, std::memory_order_relaxed);
+    return fenceHandle(m_device, shared);
 }
 
 CommandBuffer::CommandBuffer(CommandBuffer&& other) noexcept
     : m_device(std::exchange(other.m_device, nullptr)), m_native(std::exchange(other.m_native, nullptr)),
       m_passOpen(std::exchange(other.m_passOpen, false)),
       m_swapchainAcquired(std::exchange(other.m_swapchainAcquired, false)),
-      m_timed(std::exchange(other.m_timed, false)) {
+      m_timed(std::exchange(other.m_timed, false)), m_completion(std::exchange(other.m_completion, nullptr)) {
     QUENCH_ASSERT(!m_passOpen, "a command buffer with an open pass must not move");
 }
 
@@ -94,6 +153,7 @@ CommandBuffer& CommandBuffer::operator=(CommandBuffer&& other) noexcept {
         m_passOpen = std::exchange(other.m_passOpen, false);
         m_swapchainAcquired = std::exchange(other.m_swapchainAcquired, false);
         m_timed = std::exchange(other.m_timed, false);
+        m_completion = std::exchange(other.m_completion, nullptr);
     }
     return *this;
 }
@@ -239,7 +299,9 @@ Result<void> CommandBuffer::submit() {
     void* native = std::exchange(m_native, nullptr);
     endPassZones(native, true);
     m_swapchainAcquired = false;
-    return m_device->submit(native);
+    if (Result<detail::SharedFence*> r = submitNative(m_device, native, m_completion, false); !r)
+        return Error{r.error()};
+    return {};
 }
 
 Result<Fence> CommandBuffer::submitWithFence() {
@@ -248,12 +310,9 @@ Result<Fence> CommandBuffer::submitWithFence() {
     void* native = std::exchange(m_native, nullptr);
     endPassZones(native, true);
     m_swapchainAcquired = false;
-    Result<void*> fence = m_device->submitWithFence(native);
+    Result<detail::SharedFence*> fence = submitNative(m_device, native, m_completion, true);
     if (!fence) return Error{fence.error()};
-    Fence result;
-    Access::adopt(result, m_device, *fence);
-    m_device->live.fetch_add(1, std::memory_order_relaxed);
-    return result;
+    return fenceHandle(m_device, *fence);
 }
 
 void CommandBuffer::cancel() {
@@ -262,6 +321,7 @@ void CommandBuffer::cancel() {
     QUENCH_ASSERT(!m_swapchainAcquired, "a command buffer that acquired a swapchain texture must be submitted");
     endPassZones(m_native, true);
     m_device->cancel(std::exchange(m_native, nullptr));
+    dropCompletion();
 }
 
 // ------------------------------------------------------------------ RenderPass

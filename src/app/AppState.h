@@ -222,4 +222,8 @@ ThermalState thermalReaction(const AppState& state);
 // App.cpp: the CPU time of the process's threads so far (Apple platforms; elsewhere none).
 std::optional<ProcessCpuTime> processCpuTime();
 
+// App.cpp, web builds: the CSS size of the window's canvas in points, which SDL follows (its "external size"); 0 x 0
+// fills the page.
+void setCanvasSize(const char* selector, int width, int height);
+
 } // namespace quench::app::detail

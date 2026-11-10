@@ -21,9 +21,14 @@
 // stage, the resource counts SDL GPU needs to create the shader and a compute shader's thread group size, as
 // key=value lines.
 //
+// --wgsl-spirv writes the SPIR-V again with the bindings the WebGPU backend (src/gpu/webgpu) expects of WGSL, for Tint
+// to translate (cmake/QuenchTint.cmake): in the resource set, texture t[n] -> binding 2n and sampler s[n] -> 2n + 1,
+// then the read-only storage buffers in slot order; compute read-write storage buffers in slot order from 0; uniforms
+// as they are.
+//
 // Usage: quench_shaderc --input FILE.hlsl --entry NAME --stage vertex|fragment|compute --spirv OUT.spv
 //                       [--reflect OUT] [--msl OUT.metal] [--msl-platform macos|ios] [--include-dir DIR]...
-//                       [--depfile OUT.d] [--dxc PATH]
+//                       [--depfile OUT.d] [--dxc PATH] [--wgsl-spirv OUT.spv]
 
 #include "core/Platform.h"
 
@@ -52,7 +57,7 @@ namespace {
 namespace fs = std::filesystem;
 
 struct Args {
-    std::string input, entry, stage, spirvOut, reflectOut, mslOut, mslPlatform = "macos", depfileOut, dxc;
+    std::string input, entry, stage, spirvOut, reflectOut, mslOut, mslPlatform = "macos", depfileOut, dxc, wgslSpirvOut;
     std::vector<std::string> includeDirs;
 };
 
@@ -79,6 +84,8 @@ bool parseArgs(int argc, char** argv, Args& a) {
             a.depfileOut = v;
         else if (k == "--dxc")
             a.dxc = v;
+        else if (k == "--wgsl-spirv")
+            a.wgslSpirvOut = v;
         else
             return false;
     }
@@ -347,9 +354,52 @@ struct Slots {
     std::uint32_t threads[3] = {1, 1, 1};
 };
 
-// Checks the descriptor sets, counts the resources and maps them to SDL's MSL slots; with `msl`, also translates.
+// The bindings the WebGPU backend expects of WGSL (see the top of the file), by variable id, for every resource
+// of the module (Tint keeps the unused ones too).
+bool wgslBindings(const Args& a, const spirv_cross::Compiler& compiler, std::uint32_t samplerSlots,
+                  std::map<std::uint32_t, std::uint32_t>& out, std::string& log) {
+    const spirv_cross::ShaderResources res = compiler.get_shader_resources();
+    auto bindingOf = [&](const spirv_cross::Resource& r) {
+        return compiler.get_decoration(r.id, spv::DecorationBinding);
+    };
+    for (const auto& r : res.separate_images) out[r.id] = 2 * bindingOf(r);
+    for (const auto& r : res.separate_samplers) out[r.id] = 2 * bindingOf(r) + 1;
+    std::map<std::uint32_t, std::uint32_t> storage, writable; // binding -> id
+    for (const auto& r : res.storage_buffers) {
+        if (a.stage == "compute" && compiler.get_decoration(r.id, spv::DecorationDescriptorSet) == 1)
+            writable[bindingOf(r)] = r.id;
+        else
+            storage[bindingOf(r)] = r.id;
+    }
+    std::uint32_t next = 2 * samplerSlots;
+    for (const auto& [binding, id] : storage) out[id] = next++;
+    next = 0;
+    for (const auto& [binding, id] : writable) out[id] = next++;
+    if (!res.acceleration_structures.empty()) {
+        log += "acceleration structures have no WGSL form\n";
+        return false;
+    }
+    return true;
+}
+
+// Rewrites the Binding decorations of the ids in `bindings`.
+void rebind(std::vector<std::uint32_t>& spirv, const std::map<std::uint32_t, std::uint32_t>& bindings) {
+    constexpr std::uint32_t kOpDecorate = 71, kDecorationBinding = 33, kHeaderWords = 5;
+    for (std::size_t i = kHeaderWords; i < spirv.size();) {
+        const std::uint32_t count = spirv[i] >> 16, op = spirv[i] & 0xffff;
+        if (count == 0 || i + count > spirv.size()) return;
+        if (op == kOpDecorate && count == 4 && spirv[i + 2] == kDecorationBinding) {
+            const auto it = bindings.find(spirv[i + 1]);
+            if (it != bindings.end()) spirv[i + 3] = it->second;
+        }
+        i += count;
+    }
+}
+
+// Checks the descriptor sets, counts the resources and maps them to SDL's MSL slots; with `msl`, also translates; with
+// `wgsl`, also the bindings for WGSL.
 bool mapResources(const Args& a, const std::vector<std::uint32_t>& spirv, Slots& slots, std::string* msl,
-                  std::string& log) {
+                  std::map<std::uint32_t, std::uint32_t>* wgsl, std::string& log) {
     const bool vertex = a.stage == "vertex", compute = a.stage == "compute";
     const std::uint32_t resourceSet = vertex || compute ? 0 : 2, uniformSet = vertex ? 1 : compute ? 2 : 3;
     const std::uint32_t writeSet = 1; // compute only
@@ -442,6 +492,7 @@ bool mapResources(const Args& a, const std::vector<std::uint32_t>& spirv, Slots&
         log += "storage textures and combined image samplers are not supported yet\n";
         ok = false;
     }
+    if (ok && wgsl) ok = wgslBindings(a, compiler, slots.samplers, *wgsl, log);
     if (!ok || !msl) return ok;
     for (auto& [key, b] : bindings) compiler.add_msl_resource_binding(b);
     *msl = compiler.compile();
@@ -472,7 +523,7 @@ int main(int argc, char** argv) {
     if (!parseArgs(argc, argv, a)) {
         std::fprintf(stderr, "usage: quench_shaderc --input FILE.hlsl --entry NAME --stage vertex|fragment|compute "
                              "--spirv OUT.spv [--reflect OUT] [--msl OUT.metal] [--msl-platform macos|ios] "
-                             "[--include-dir DIR]... [--depfile OUT.d] [--dxc PATH]\n");
+                             "[--include-dir DIR]... [--depfile OUT.d] [--dxc PATH] [--wgsl-spirv OUT.spv]\n");
         return 2;
     }
     std::string source;
@@ -494,14 +545,22 @@ int main(int argc, char** argv) {
 
     Slots slots;
     std::string msl;
+    std::map<std::uint32_t, std::uint32_t> wgsl;
     log.clear();
     try {
-        if (!mapResources(a, spirv, slots, a.mslOut.empty() ? nullptr : &msl, log))
+        if (!mapResources(a, spirv, slots, a.mslOut.empty() ? nullptr : &msl, a.wgslSpirvOut.empty() ? nullptr : &wgsl,
+                          log))
             return fail(a, "resource mapping failed\n" + log);
     } catch (const std::exception& e) { return fail(a, std::string("SPIRV-Cross: ") + e.what()); }
 
     if (!writeBytes(a.spirvOut, spirv.data(), spirv.size() * sizeof(std::uint32_t)))
         return fail(a, "cannot write " + a.spirvOut);
+    if (!a.wgslSpirvOut.empty()) {
+        std::vector<std::uint32_t> rebound = spirv;
+        rebind(rebound, wgsl);
+        if (!writeBytes(a.wgslSpirvOut, rebound.data(), rebound.size() * sizeof(std::uint32_t)))
+            return fail(a, "cannot write " + a.wgslSpirvOut);
+    }
     if (!a.mslOut.empty() && !writeText(a.mslOut, msl)) return fail(a, "cannot write " + a.mslOut);
     if (!a.reflectOut.empty()) {
         const std::string reflect =

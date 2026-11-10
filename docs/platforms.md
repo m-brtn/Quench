@@ -11,9 +11,8 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.12.1) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
-and thread sanitizers); [the release notes](releases/v0.12.1.md) separate passed and skipped cases and record the
-Vulkan demo retry for an intermittent image-layout validation error. Its GPU tests render offscreen and check the
+The engine (version 0.13.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+and thread sanitizers); [the release notes](releases/v0.13.0.md) give the counts of passed and skipped cases. Its GPU tests render offscreen and check the
 pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
 Mac (with the Khronos validation layer; a test of
 the SPIR-V path, not of a real Vulkan driver), in the iOS Simulator (iOS 27.0, iPhone 18 Pro Max; the test executables
@@ -32,7 +31,10 @@ benchmark on the native backend ([Performance](performance.md#measurements)); nu
 screen. The headless modules
 also pass as single-threaded WebAssembly under Node.js (Emscripten 6.0.13; the cases that need threads are skipped
 there).
-Nothing of the engine has run in a browser.
+Since 2026-11-10 the sample and the demo also build for a browser (the `web` preset, experimental: a WebGPU backend
+of the engine's own, see "Web (WebAssembly)" below) and ran in Chrome 157 on the Mac, headless: the demo's batch of
+scripted checks 757 of 757 with its 41 captures within the golden image thresholds of the Mac's Metal ones. No other
+browser, no phone, and nobody has played it there.
 Audio's tests (stage 7, see "Audio" below) have run only on the null backend and offline, on the Mac, in the iOS
 Simulator, on the iPhone (the device test app, 2026-11-06) and under Node.js; the user listened to the demo's
 weather sounds on the Mac and the iPhone 17 (2026-11-08: fine), to nothing else. Navigation and the weather ran on
@@ -68,7 +70,7 @@ tunnel phone scenarios, with the same numbers as before ([Performance](performan
 | Windows | D3D12 or Vulkan | DXIL or SPIR-V | builds with MSVC on GitHub's runner; tests and the demo's checks on D3D12 over WARP (software); never on real hardware | TrailForge builds and passes headless tests in CI; never run on real hardware |
 | Linux | Vulkan | SPIR-V | nothing | TrailForge builds in CI and starts on Mesa lavapipe under Xvfb; never run on real hardware |
 | Android | Vulkan | SPIR-V | nothing | nothing |
-| Web | WebGPU (not in SDL yet) | WGSL | headless tests under Node.js | nothing |
+| Web | none: the engine's WebGPU backend (SDL GPU has none) | WGSL | headless tests under Node.js; hello and the demo with their scripted checks in Chrome on the Mac (headless, WebGPU over Metal), experimental | nothing |
 
 TrailForge also ran on Vulkan through MoltenVK on the Mac as a test of the SPIR-V path. Ashfall has only run on macOS;
 its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewhere.
@@ -229,14 +231,15 @@ the default in the ray tracing section of an interim build (2026-11-07 17:47, la
 The playback device is miniaudio's ([Audio](audio.md)). Its 0.11.25 source has backends for WASAPI, DirectSound and
 WinMM (Windows), Core Audio (macOS, iOS), PulseAudio, ALSA, JACK, sndio and OSS (Linux, BSD), AAudio and OpenSL ES
 (Android), Web Audio (Emscripten, with AudioWorklets behind `MA_ENABLE_AUDIO_WORKLETS`) and a null backend. The
-engine compiles only Core Audio and null on Apple platforms, and no device I/O in headless and web builds.
+engine compiles only Core Audio and null on Apple platforms, no device I/O in headless builds (`wasm-node` among
+them) and only Web Audio in a browser build (the `web` preset).
 
 | Where | Output | Run so far |
 |---|---|---|
 | Mac | Core Audio (miniaudio, frameworks linked at build time) | tests on the null backend and offline (`audio.*`, `audio_device.null_device`, the demo's audio check with `--audio-capture`); the default output not opened by any test (`audio_device.default_output` is opt-in); the demo's weather sounds (rain, wind, thunder) listened to by the user (2026-11-08: fine), nothing else |
 | iOS Simulator | Core Audio; the engine sets the `AVAudioSession` category and activates the session when a real output opens (the null backend leaves the session alone) | `ios-sim-tests`: the audio cases, `audio_device.null_device` and `audio_device.audio_session_category` (sets the playback and ambient categories, reads them back and reads the route); no test opened a real output, so activation, interruptions and route changes did not run; not listened to |
 | iPhone | as in the Simulator | the device test app, 2026-11-06: the audio cases, `audio_device.null_device` and `audio_device.audio_session_category` (route: the speaker) passed on both GPU backends; the demo's audio section on the null backend; no test opened a real output. On the iPhone 17 the user listened to the demo's weather sounds (rain, wind, thunder; 2026-11-08: fine), nothing else. Needs the user: what plays with the Ring/Silent switch on silent (the default `Ambient` category is silenced), interruptions (a call, Siri, an alarm), route changes (headphones, Bluetooth), background and foreground |
-| Web | none (built with `MA_NO_DEVICE_IO`) | the mixer, decoders and analysis under Node.js (`wasm-node`, single-threaded; the thread stress case is skipped). Browser output needs a device backend (miniaudio's Web Audio one or SDL's audio) and starts only after a user gesture: not built |
+| Web | under Node.js none (`MA_NO_DEVICE_IO`); in a browser (the `web` preset) miniaudio's Web Audio backend through a `ScriptProcessorNode`, mixing on the main thread | the mixer, decoders and analysis under Node.js (`wasm-node`, single-threaded; the thread stress case is skipped). In a browser the output opens (Chrome on the Mac, 2026-11-10: 48 kHz, periods of 512 frames) and starts only after a user gesture; the scripted checks mix offline. Nobody has listened to it; no null device there (`--audio-device null` is not available, `--no-audio` is) |
 | Windows, Linux, Android | miniaudio's defaults for the platform (not configured or built yet) | nothing |
 
 ## Animation
@@ -337,23 +340,71 @@ step by compute, the CPU fallback and the draws are `quench_render`'s, chosen by
 
 ## Web (WebAssembly)
 
-- SDL 3.4.18 and SDL `main` (checked 2026-11-04; latest release 3.4.20 of 2026-11-03) have only the Vulkan, D3D12 and
-  Metal GPU backends.
-- Pull request [libsdl-org/SDL#16020](https://github.com/libsdl-org/SDL/pull/16020) "GPU: Experimental WebGPU SDLGPU
-  Backend" (open, last updated 2026-10-24) adds a WebGPU backend that takes WGSL shaders
-  (`SDL_GPU_SHADERFORMAT_WGSL`). Its author reports it working on Linux, Windows and the web (Chrome, Firefox,
-  Safari) and lists it as unfinished: not thread safe, sparse error handling, a WGSL parser that does not understand
-  all valid WGSL, macOS, iOS and Android not done.
-- WebGPU feature support quoted in that pull request: BC texture compression on about 86% of adapters, ASTC on about
-  44%, `float32-filterable` about 91%. Textures for the web therefore need Basis Universal transcoding: built
-  2026-11-07, its transcoder runs as WebAssembly under Node.js in the `wasm-node` check (`assets.basis_*`, a 64 x 64
-  file with mips in 0.02 to 0.18 ms); not in a browser.
-- Threads need cross-origin isolation (COOP / COEP headers on the host); otherwise the job system runs single
-  threaded. Audio starts only after a user gesture (the engine's audio has no browser output yet: see "Audio").
-  Memory and download size are limited (TrailForge has 272 MB of
-  assets in Git LFS).
-- Until the WebGPU backend is usable, web compatibility is checked for headless modules only: built with Emscripten
-  and run as CTest under Node.js.
+Experimental since 2026-11-10 (the user's request; the `web` preset): the engine, the sample and the demo as
+WebAssembly on the browser's WebGPU. Run so far only in Chromium on the Mac (WebGPU over Metal, adapter
+`apple metal-3`): Cursor's built-in browser, by hand, and Google Chrome 157 headless, the scripted checks.
+
+- **The GPU backend.** SDL 3.4.18 and SDL `main` have only the Vulkan, D3D12 and Metal backends in SDL GPU. Pull
+  request [libsdl-org/SDL#16020](https://github.com/libsdl-org/SDL/pull/16020) ("GPU: Experimental WebGPU SDLGPU
+  Backend", open) adds one; it was tried first (its head `5823af8`, on SDL's development branch: `hello` ran on
+  it; its bind group layouts, built from the bound resources at draw time, had no comparison samplers or depth
+  textures, which the shadow maps need) and
+  dropped. The engine has its own WebGPU backend instead (`src/gpu/webgpu`, `gpu::Backend::WebGpu`, the only
+  backend of a web build) on Emscripten's `emdawnwebgpu` port (`<webgpu/webgpu.h>`), so SDL stays on its pin; SDL
+  still gives the window (the page's canvas), input and the main callbacks.
+- **Shaders.** WGSL only: `quench_shaderc --wgsl-spirv` writes each entry's SPIR-V again with the backend's
+  bindings, and Tint (Dawn's shader compiler, built from source into the tool cache like DXC;
+  [Dependencies](dependencies.md)) translates it at build time. Ray query entries are left out.
+- **Capabilities.** No ray tracing (WebGPU has none), no GPU timing, no HDR output, vsync only; compute shaders,
+  indirect draws, depth clamp where the adapter has `depth-clip-control`. BC, ETC2 and ASTC textures by the
+  adapter's features (Basis Universal files are transcoded to what it has; BC7 in Chrome on the Mac). The renderer
+  takes its fallbacks as on any device without ray tracing.
+- **Threads.** None: the job system runs with zero workers (a build with threads needs cross-origin isolation, COOP
+  and COEP headers on the host; not built). The program is linked with Asyncify: the backend waits for the browser
+  when the device starts and when a download or a fence is waited for.
+- **What a wait costs.** A wait hands the frame back to the browser, which then expires the canvas's texture: a
+  frame that waits after it acquired the swapchain texture loses it (a WebGPU error, one black frame). Downloads
+  are therefore mapped when their command buffer is submitted and read between frames; a `map()` after the
+  submission's fence does not wait (the rain's cover readback works this way). `Device::download`, `waitIdle` and
+  `Fence::wait` inside a frame on the screen still do; captures are taken in offscreen runs.
+- **Files.** Assets are preloaded into the virtual file system (`<name>.data`, fetched before `main`); the user
+  directory is in memory: settings, saves and captures do not outlive the page.
+- **Sizes** (Release, 2026-11-10): `hello` 3.3 MB of WebAssembly; the demo 9.8 MB and 9.0 MB of assets. No size or
+  load time work was done (no Closure pass, no compression).
+- **Known differences and gaps.** Depth textures and, without `float32-filterable`, 32-bit float textures are
+  sampled with nearest filtering (WebGPU has no linear filter for them outside comparison samplers); storage
+  textures, 3D blit sources, blits into depth textures and line fill mode are not supported (logged once); buffer
+  uploads are padded to 4 bytes. The scripted checks did not show a difference from these.
+- **Checked** (2026-11-10): `tools/check.sh step web` runs `tools/web_check.mjs`, which serves the build, starts
+  headless Chrome and runs the page offscreen ([App shell](app.md#web-runs)): `hello`'s check scenario 21 of 21;
+  the demo's `batch.txt` 757 of 757 with no WebGPU error, its 41 captures compared with the Mac's Metal golden
+  images at the usual thresholds (the largest: `demo_ui`, 0.066% of the pixels, where the panel names the
+  backend); then `hello` for 2 s and the demo's weather section for 4 s on the path of a page a person opens (the
+  canvas filling the page, about 57 frames per second in headless Chrome, the Web Audio output opened), without a
+  WebGPU error. A game from `templates/game` built with its `web` preset passed its smoke scenario the same way
+  (11 of 11). In Cursor's built-in Chromium the demo's batch passed as well, and every section was opened once on
+  the screen at 120 frames per second (a 1450 x 1520 canvas).
+- **Safari** (2026-11-10, the user's Mac, Safari 27.0.1): the demo's page was black at first, without an error in
+  the console. Cause: SDL's probe of the canvas's CSS size under a page zoom (the user's was 115%): the window
+  became 0 x 0 and no frame reached the canvas ([Dependencies](dependencies.md)). With a patch of that probe the
+  page reported a 3406 x 2318 canvas and 191 frames in 7 s, and the user saw the demo (user report: "it works").
+  The patch was then replaced by the app giving the canvas its CSS size before SDL measures it: a CSS `zoom` of
+  0.85 on the body gives the same 0 x 0 window in headless WebKit and Chrome without either fix, and a full canvas
+  (2000 x 1280 at a pixel ratio of 2) with the app's; the user has not looked at that build in Safari yet. No
+  scripted run in Safari itself (its remote automation is off), nothing listened to.
+  In Playwright's headless WebKit 27.2 on the Mac (WebKit's engine, not Safari itself) the demo's `batch.txt`
+  passed 757 of 757 offscreen; its captures were not compared there.
+- **Hosted** (2026-11-10): `tools/publish_web.sh` assembles the demo and the sample as a static site (`dist/web`:
+  `index.html` is the demo's page, `hello.html` the sample; `LICENSE`, `THIRD_PARTY_LICENSES` and Emscripten's
+  licences beside them), runs the demo's smoke scenario on it in headless Chrome and, with `--push`, commits it
+  to the `gh-pages` branch, which GitHub Pages serves: <https://m-brtn.github.io/Quench/>. What is published is
+  the local build of a commit (`version.txt` names it), not a build made on GitHub.
+- **Not checked.** Firefox, Chrome and Safari on other systems and on phones; touch input and the compact layout in
+  a browser; sound by ear; long runs, memory growth, a lost device; resizing and fullscreen beyond the page's size
+  at load.
+- WebGPU feature support quoted in SDL's pull request: BC texture compression on about 86% of adapters, ASTC on
+  about 44%, `float32-filterable` about 91%. Memory and download size are limited (TrailForge has 272 MB of assets
+  in Git LFS).
 
 ## Hardware ray tracing
 

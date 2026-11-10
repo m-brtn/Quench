@@ -2,7 +2,7 @@
 
 Stages 1 to 3 and 5 to 14 of the [Roadmap](roadmap.md) are implemented (stages 11 and 12 except their runs on the iPhone
 18 Pro Max and the checks by eye, stage 13 except its costs on a phone and its runs on the iPhone 18 Pro Max, stage 14
-except its runs on a phone and the checks by eye; browser audio still open), stage 4 (games on the engine) for one game (version 0.12.1): the core and physics modules (with the
+except its runs on a phone and the checks by eye; browser audio still open), stage 4 (games on the engine) for one game (version 0.13.0): the core and physics modules (with the
 wind's drag on chosen bodies), the job system, profiling with Tracy (opt-in), the asset system and the asset cooker
 (BC7, ASTC in iOS builds, Basis Universal as an option, transcoded at load time; asset hot reload on the Mac and on a
 device), the GPU layer over SDL GPU and a native Metal backend with GPU timestamps per pass, acceleration structures and
@@ -57,10 +57,10 @@ in `images/`.
 | [Render module](render.md) | The retained scene, the standard frame, sky and sun, tone mapping and HDR output, fallbacks, game passes, surface shaders, the shader library, skinned meshes, limitations |
 | [Engine demo](demo.md) | The demo's code, sections, coverage, layouts and controls, its modes (tour, check mode, benchmark of every section), flags and files, About and settings, the check mode on the iPhone, its checks and golden images, its benchmark, packaged builds (`tools/package_demo.sh`) |
 | [Performance](performance.md) | The benchmark, how to run and compare it, GPU time per pass, budgets per device, the thermal state |
-| [Platforms](platforms.md) | Target platforms, what has run where, backend and shader formats, known constraints (WebGPU, Android, texture formats) |
+| [Platforms](platforms.md) | Target platforms, what has run where, backend and shader formats, known constraints (the experimental web build, Android, texture formats) |
 | [Dependencies](dependencies.md) | Pinned libraries, planned libraries with licences and verified capabilities |
 | [Migration](migration.md) | Inventory of the engine code in TrailForge and Ashfall, how far the copies diverged, the procedure for moving code, progress per game |
 | [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, the weather stage (its four parts built), particles and trails, what is next, the requested features and their priorities |
-| [Releases](releases/) | Release notes per version, the latest [0.12.1](releases/v0.12.1.md) |
+| [Releases](releases/) | Release notes per version, the latest [0.13.0](releases/v0.13.0.md) |
 
 Coding agents: see [AGENTS.md](../AGENTS.md). The daily development log is in [devlog/](../devlog/).

@@ -7,6 +7,12 @@
 
 #include "AppState.h"
 
+#include "core/Platform.h"
+
+#if QUENCH_PLATFORM_WEB
+#include <emscripten/emscripten.h>
+#endif
+
 using quench::app::detail::AppState;
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
@@ -26,4 +32,12 @@ void SDL_AppQuit(void* appstate, SDL_AppResult result) {
     if (!state) return;
     quench::app::detail::quit(*state, result);
     delete state;
+#if QUENCH_PLATFORM_WEB
+    // A page has no process to end: its shell (cmake/shell.web.html) is told, with the exit code.
+    EM_ASM(
+        {
+            if (Module['quenchEnded']) Module['quenchEnded']($0);
+        },
+        result == SDL_APP_FAILURE ? 1 : 0);
+#endif
 }

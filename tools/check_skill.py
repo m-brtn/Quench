@@ -7,7 +7,8 @@ A light check of the skill's Markdown files against this checkout, run by `tools
   - engine paths in inline code (docs/, include/quench/, cmake/, tools/, templates/, examples/), in
     ${quench_SOURCE_DIR}/... and in #include <quench/...> exist, and so do the files the skill links;
   - command line flags (--name) are flags of the app (src/app/Options.cpp), of tools/new_game.py, of
-    tools/tracy_capture.py, of the image compare tool, or of the external tools the skill runs (EXTERNAL_FLAGS);
+    tools/tracy_capture.py, of tools/web_check.mjs, of the image compare tool, or of the external tools the skill
+    runs (EXTERNAL_FLAGS);
   - the first words of ```scenario blocks and the lowercase names in the "Scenarios" bullet are known to the scenario
     runner (src/app/Scenario.cpp, src/app/AppScenario.cpp);
   - quench_* CMake functions and targets are defined in CMakeLists.txt or cmake/;
@@ -24,7 +25,7 @@ from pathlib import Path
 ENGINE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_SKILL = ENGINE_DIR / ".agents" / "skills" / "quench-game"
 ENGINE_PREFIXES = ("docs/", "include/quench/", "cmake/", "tools/", "templates/", "examples/")
-EXTERNAL_FLAGS = {"--preset", "--build", "--console", "--terminate-running-process"}
+EXTERNAL_FLAGS = {"--preset", "--build", "--console", "--terminate-running-process", "--bind", "--directory"}
 # Namespaces and prefixes whose names are not the engine's.
 FOREIGN = ("std::", "glm::", "JPH::", "ImGui", "SDL_")
 QUENCH_NAMESPACES = (r"(?:quench|render|app|audio|assets|animation|navigation|weather|particles|fs|log|gpu|"
@@ -61,7 +62,8 @@ def main() -> int:
         return 1
 
     app_flags = read(ENGINE_DIR / "src/app/Options.cpp") + read(ENGINE_DIR / "tools/new_game.py") + read(
-        ENGINE_DIR / "tools/tracy_capture.py") + read(ENGINE_DIR / "tools/imagecompare/ImageCompare.cpp")
+        ENGINE_DIR / "tools/tracy_capture.py") + read(ENGINE_DIR / "tools/imagecompare/ImageCompare.cpp") + read(
+            ENGINE_DIR / "tools/web_check.mjs")
     runner = read(ENGINE_DIR / "src/app/Scenario.cpp") + read(ENGINE_DIR / "src/app/AppScenario.cpp")
     commands = set(re.findall(r'op == "([a-z_]+)"', runner))
     cmake_text = read(ENGINE_DIR / "CMakeLists.txt") + "".join(read(p) for p in (ENGINE_DIR / "cmake").glob("*.cmake"))

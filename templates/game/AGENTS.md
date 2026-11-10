@@ -21,6 +21,10 @@ iOS: build the shader compiler and the asset cooker for the Mac first
 then `ios-sim-release` (Simulator, ad-hoc signed) or `ios-xcode` (device, Xcode Automatic signing with
 `-DQUENCH_IOS_TEAM=<team id>`). Device runs: install and launch with `xcrun devicectl`.
 
+Web (experimental: WebAssembly on the browser's WebGPU, run so far only in Chrome on a Mac): after `host-tools`,
+`emcmake cmake --preset web && cmake --build --preset web` (Homebrew's emscripten), then serve `build/web` over
+HTTP and open the game's `.html`; the skill's "Web" section has the scripted check in headless Chrome.
+
 Gates before a commit: build `debug` and `release`, `ctest` for both, take a capture and look at it (do not assume).
 Changes that can behave differently on a phone: run on the device, or ask the user to, and log their report.
 

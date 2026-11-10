@@ -24,7 +24,7 @@ is in [reference.md](reference.md).
   `-DFETCHCONTENT_SOURCE_DIR_QUENCH`.
 - Paths below (`docs/`, `include/quench/`, `cmake/`, `tools/`, `templates/`, `examples/`) are in that engine source.
   The headers are the truth for names and signatures: read the header before using a call.
-- Depth: `docs/app.md` (game interface, flags, scenarios, captures, `quench_add_game()`, iOS runs), `docs/render.md`,
+- Depth: `docs/app.md` (game interface, flags, scenarios, captures, `quench_add_game()`, iOS runs, web runs), `docs/render.md`,
   `docs/assets.md`, `docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`,
   `docs/particles.md`, `docs/performance.md`, `docs/platforms.md`. Working code: `templates/game/src/Game.cpp` and
   `examples/hello/Hello.cpp` (drawing with `quench::gpu`), `examples/demo/sections/` (renderer, physics, audio,
@@ -238,6 +238,25 @@ The template's presets: `host-tools` (the macOS `quench_shaderc` and `quench_coo
 `docs/app.md`, "iOS runs". Cooked textures are ASTC 4x4 in iOS builds and BC7 on the Mac (`TEXTURE_FORMAT auto`).
 Never write team ids, device UDIDs or personal names into the repository.
 
+## Web
+
+Experimental (engine `docs/platforms.md`, "Web (WebAssembly)"; `docs/app.md`, "Web runs"): the template's `web`
+preset builds the game as single-threaded WebAssembly on the browser's WebGPU, `<name>.html` with `.js`, `.wasm`
+and the assets in `.data`, to be served over HTTP. Verified in Chrome and Safari on a Mac only (the engine's
+demo; a template game in headless Chrome). What differs there:
+
+- No ray tracing, GPU timing, HDR output or worker threads (`App::jobs()` runs jobs on the frame thread): effects
+  take their fallbacks by `gpu::Caps` as on any device, so do not branch on the platform.
+- Never wait for the GPU in a frame on the screen (`Device::download`, `waitIdle`, `Fence::wait`, a `map()` before
+  its fence): the browser takes the frame's swapchain texture back. Poll the fence across frames (a download
+  recorded into the frame's command buffer: `commands.completionFence()`); take captures in offscreen runs.
+- The user directory is in memory and empty after a reload; sound starts with the first click, key or touch.
+- Cooked textures are BC7 there (`TEXTURE_FORMAT auto`), which desktop browsers have; phones' browsers need
+  `TEXTURE_FORMAT basis` (not tried in a browser).
+- Checks: the same scenarios, run in headless Chrome by the engine's `tools/web_check.mjs`
+  ([reference.md](reference.md), "Web"). Say "in headless Chrome on the Mac" when reporting them; how the page
+  looks, plays and sounds is the user's to check.
+
 ## Rules a game keeps
 
 - No blocking loads and no blocking loop: assets, sounds and long work finish across frames; the engine owns `main`.
@@ -267,8 +286,8 @@ Never write team ids, device UDIDs or personal names into the repository.
 - `FETCHCONTENT_SOURCE_DIR_QUENCH` stays in the cache: a build that looks pinned may still use the local checkout.
 - The first configure of a build directory downloads every pinned dependency; the first configure on a machine
   also builds DXC for the ray query shaders (minutes, once, kept in `~/Library/Caches/Quench`).
-- iOS builds need `host-tools` built first; a game that cooks assets needs `quench_cook` there as well (the
-  template's presets build and pass both).
+- iOS and web builds need `host-tools` built first; a game that cooks assets needs `quench_cook` there as well (the
+  template's presets build and pass both). The web preset is configured through `emcmake`.
 
 ## Keeping this skill current
 

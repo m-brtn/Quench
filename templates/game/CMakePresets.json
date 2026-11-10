@@ -12,7 +12,7 @@
     { "name": "release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } },
     {
       "name": "host-tools",
-      "displayName": "macOS shader compiler and asset cooker for the iOS builds",
+      "displayName": "macOS shader compiler and asset cooker for the iOS and web builds",
       "inherits": "base",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "QUENCH_HEADLESS": "ON" }
@@ -42,6 +42,19 @@
       "inherits": "ios-base",
       "generator": "Xcode",
       "cacheVariables": { "CMAKE_OSX_SYSROOT": "iphoneos" }
+    },
+    {
+      "name": "web",
+      "displayName": "WebAssembly for a browser with WebGPU, experimental (configure with emcmake; build host-tools first)",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "environment": { "EMSDK_PYTHON": "/opt/homebrew/bin/python3" },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "QUENCH_WEB": "ON",
+        "QUENCH_HOST_SHADERC": "${sourceDir}/build/host-tools/_deps/quench-build/quench_shaderc",
+        "QUENCH_HOST_COOK": "${sourceDir}/build/host-tools/_deps/quench-build/quench_cook"
+      }
     }
   ],
   "buildPresets": [
@@ -49,6 +62,7 @@
     { "name": "release", "configurePreset": "release" },
     { "name": "host-tools", "configurePreset": "host-tools", "targets": ["quench_shaderc", "quench_cook"] },
     { "name": "ios-sim-release", "configurePreset": "ios-sim-release" },
+    { "name": "web", "configurePreset": "web" },
     {
       "name": "ios-xcode",
       "configurePreset": "ios-xcode",

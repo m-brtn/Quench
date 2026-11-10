@@ -202,7 +202,8 @@ the user was away: the decisions are in the devlog of 2026-11-06 ("decided witho
   switching, no allocation, also under Node.js and ThreadSanitizer; about 1.2 µs per voice and millisecond of audio
   on the M4 Pro; not listened to).
 - Not done, remaining: listening (the Mac's output, headphones, the iPhone), the iPhone run of the stage 7 code
-  (silent switch, interruptions, route changes, background and foreground), browser output (Web Audio),
+  (silent switch, interruptions, route changes, background and foreground), browser output by ear (Web Audio is
+  built since 2026-11-10, not listened to),
   occlusion and filters, near-field or personal HRTFs, reverb zones and early reflections, virtual voices, Opus, gapless MP3 (encoder delay and padding are not trimmed). The release went ahead before the checks by ear and on the iPhone (decided without the user,
   2026-11-06, as recommended); they are listed as not verified in the release notes.
 - Done: version 0.5.0, release notes in [docs/releases/v0.5.0.md](releases/v0.5.0.md).
@@ -265,8 +266,8 @@ Where ray tracing runs (discussed with the user, 2026-11-05):
   on. SDL GPU has no ray tracing and does not expose native handles (libsdl-org/SDL#11147, #12094).
 - Every ray-traced effect is a slot with a fallback chosen by `gpu::Caps`, never by platform: shadow maps for shadows,
   screen-space reflections, screen-space or no ambient occlusion and indirect light. The SDL GPU backends (Vulkan
-  through MoltenVK today; D3D12, Vulkan on Windows, Linux and Android, the web later) run the same game with the
-  fallbacks.
+  through MoltenVK today; D3D12, Vulkan on Windows, Linux and Android later) and the WebGPU backend run the same
+  game with the fallbacks.
 - Later, only for a named need and verified on real hardware: a native D3D12 backend (DXR) on Windows, or a native
   Vulkan backend with the ray tracing extensions on Windows, Linux and the Android devices that have them. WebGPU has
   no ray tracing. Acceleration structures come from the retained scene and the shaders are HLSL (compiled to MSL,
@@ -795,7 +796,8 @@ What else stays open, in the order it is useful (not scheduled; the user decides
    60 Hz). Proposed 2026-11-07, not changed: the ray tracing section's render scale on the Mac by the window's pixel
    count, from 0.67 down to 0.5 (about a million pixels traced up to 2560 x 1440; 0.5 there: 7.9 instead of 11.4 ms
    a frame, at 3456 x 2160 14.5 instead of 21.6; [Performance](performance.md#the-ray-tracing-section-by-frame-size)).
-3. **Remaining work of the stages:** browser audio (stage 7).
+3. **Remaining work of the stages:** browser audio (stage 7): the output is built with the web build of 2026-11-10
+   (miniaudio's Web Audio backend) and opens in Chrome; nobody has listened to it.
 4. **Games on the engine** (stage 4): moving a game's pin to a release, more of a game's code onto the engine's
    modules, the second game's migration; only when the user asks, with each game's own gates.
 5. **Known open questions:** per-frame call counts and profiles: answered on the Mac by Tracy since 2026-11-07
@@ -819,8 +821,11 @@ ECS module. Tracy profiling, listed here before, was built on 2026-11-07
 Not scheduled; started only when the user asks. Windows: stage 15 since 2026-11-09. Linux (SDL GPU Vulkan; needs
 hardware or CI),
 Android (Vulkan, ASTC / ETC2 textures through Basis Universal (built; ETC2 needs a backend that offers it), APK
-assets), web (needs SDL GPU's WebGPU backend, WGSL shaders, single-thread jobs; Basis Universal textures are built).
-See [Platforms](platforms.md).
+assets). The web: an experimental build since 2026-11-10 (the user's request: the engine's own WebGPU backend, WGSL
+shaders through Tint, single-thread jobs; the demo's scripted checks pass in Chrome on the Mac, headless). Open
+there: other browsers and phones, a person's look and play, sound by ear, a persistent user directory, threads,
+download size, hosting.
+See [Platforms](platforms.md#web-webassembly).
 
 ## Requested features
 
@@ -851,4 +856,5 @@ Priorities from the user's request of 2026-11-05.
 
 The request also asks to verify Metal, Vulkan and browser compatibility separately. Metal: Mac and iPhone. Vulkan:
 MoltenVK on the Mac only (a test of the SPIR-V path, not of real Vulkan drivers). Browser: headless modules under
-Node.js until SDL GPU has a WebGPU backend.
+Node.js, and since 2026-11-10 the sample and the demo with their scripted checks in headless Chrome on the Mac
+(the engine's WebGPU backend; experimental).

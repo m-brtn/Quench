@@ -1,0 +1,61 @@
+<!doctype html>
+<!-- The page of a web build (quench_add_game, cmake/QuenchGame.cmake); Emscripten puts the program's script in
+     place of the SCRIPT marker. The app gives the canvas its CSS size before it creates the window (src/app/App.cpp:
+     the whole page, or the size an offscreen run asks for), and SDL follows that size. Program arguments come from
+     the query string, separated by '&': hello.html?--window&1280x720 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>@QUENCH_GAME_NAME@</title>
+<style>
+html, body { margin: 0; height: 100%; background: #101014; color: #c8c8d0; font: 14px system-ui, sans-serif; }
+body { overflow: hidden; }
+#canvas { display: block; outline: none; }
+#status { position: fixed; left: 0; right: 0; top: 40%; text-align: center; white-space: pre-wrap; padding: 0 2em; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+<div id="status">Loading…</div>
+<script>
+var statusElement = document.getElementById('status');
+function showStatus(text) {
+    statusElement.textContent = text;
+    statusElement.style.display = text ? 'block' : 'none';
+}
+// The program's output and the browser's warnings and errors (WebGPU validation among them), also kept in
+// quenchLog for automated checks of the page.
+var quenchLog = [];
+function keepLog(kind, text) {
+    if (quenchLog.length < 20000) quenchLog.push(kind + ' ' + text);
+}
+['warn', 'error'].forEach(function (kind) {
+    var original = console[kind].bind(console);
+    console[kind] = function () {
+        keepLog(kind, Array.prototype.join.call(arguments, ' '));
+        original.apply(null, arguments);
+    };
+});
+var Module = {
+    canvas: document.getElementById('canvas'),
+    arguments: location.search.length > 1 ? location.search.substring(1).split('&').map(decodeURIComponent) : [],
+    print: function (text) { keepLog('out', text); console.log(text); },
+    printErr: function (text) { keepLog('log', text); console.info(text); },
+    setStatus: function (text) { showStatus(text); },
+    onAbort: function (what) { showStatus('The program stopped: ' + what); },
+    // The end of the program, called by quench_main (the runtime stays alive, so Emscripten's onExit is not):
+    // quenchExit for automated checks.
+    quenchEnded: function (code) {
+        window.quenchExit = code;
+        Module.canvas.style.display = 'none';
+        showStatus('The program ended (exit code ' + code + ').');
+    }
+};
+if (!navigator.gpu)
+    showStatus('This browser has no WebGPU (navigator.gpu is missing).\n@QUENCH_GAME_NAME@ needs it.');
+window.addEventListener('error', function (event) { showStatus('Error: ' + event.message); });
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>
