@@ -1,2 +1,2 @@
-Quench 0.17.0, commit 35f28a9
+Quench 0.18.0, commit 94aa006
 https://github.com/m-brtn/Quench
