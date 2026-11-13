@@ -200,6 +200,20 @@ endif()
 quench_configure_target(quench_net)
 target_link_libraries(quench_net PUBLIC quench_core)
 
+# ------------------------------------------------------------------ assistant
+# Headless: a client for OpenAI-compatible APIs (chat with tool calls, speech-to-text, text-to-speech) on quench_net,
+# tools in the shape of MCP's, and the turn that lets a model operate a game through them (docs/assistant.md).
+# quench_audio for the speech's MP3 decoder.
+add_library(quench_assistant STATIC
+    src/assistant/Assistant.cpp
+    src/assistant/Chat.cpp
+    src/assistant/Provider.cpp
+    src/assistant/Speech.cpp
+    src/assistant/Text.cpp
+    src/assistant/Tools.cpp)
+quench_configure_target(quench_assistant)
+target_link_libraries(quench_assistant PUBLIC quench_core quench_net PRIVATE quench_audio)
+
 # The asset cooker (host tool, tools/cook) and quench_cook_assets().
 include(cmake/QuenchCook.cmake)
 

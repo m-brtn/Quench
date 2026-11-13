@@ -780,8 +780,15 @@ chat completions with tool calls, speech-to-text, text-to-speech): its transport
 0.17.0 and not yet released: `quench_net`, asynchronous HTTPS requests with streamed bodies on NSURLSession (macOS
 and iOS) and the browser's fetch, a fake for tests, none elsewhere yet ([Network](net.md)). Checked on the Mac
 against a local server and in headless Chrome on the Mac; not on an iPhone, the iOS Simulator or against a real
-provider. Next: the assistant module on top of it; open for the transport: a backend for Windows and Linux
-(WinHTTP or libcurl), its run on an iPhone.
+provider. Open for the transport: a backend for Windows and Linux (WinHTTP or libcurl), its run on an iPhone.
+The assistant module on it, the same day and not released: `quench_assistant` ([Assistant](assistant.md)): provider
+settings with presets for OpenRouter, OpenAI and a local server; tools in MCP's shape with a schema check; the chat
+client with its incremental stream parser and errors; the turn (rounds of tool calls, a round limit, cancel, one at a
+time, a bounded history, counters); speech-to-text and text-to-speech; the voice turn in one call. Checked with a fake
+network on the Mac and under Node.js, and by its manual check against OpenRouter on the Mac (a typed turn of three
+rounds, speech, the speech transcribed back, a voice turn). Next: the game's side (Outpost's tools, prompt, settings
+UI with the player's key, playback, a typed-text mode first). Open: the web build against a real provider, OpenAI's
+own API, a local server, iOS; an MCP transport; a live speech-to-speech backend; OAuth sign-in and keeping the key.
 Its recording side, the same day: microphone capture in `quench_audio` and `quench_audio_device`
 ([Audio](audio.md#microphone)): `App::microphone()`, the permission per platform (AVFoundation on macOS and iOS,
 `getUserMedia` in a browser), short mono recordings resampled to 16 kHz with a length limit and a level meter, 16-bit

@@ -195,6 +195,18 @@ Link what the game uses beside `quench_add_game()`:
   in the repository, a scenario or a log line. Tests use `net::FakeNetwork` (`ClientDesc::fake`, a manual
   `ClientDesc::clock`). In a browser the server must allow the page's origin (CORS). [reference.md](reference.md),
   "HTTP requests"; `docs/net.md`.
+- **Assistant.** `quench_assistant`, linked into every game: a language model that operates the game through tools
+  it registers (an OpenAI-compatible API: OpenRouter, OpenAI, a local server, by `assistant::ProviderSettings`
+  only). An `assistant::Assistant` member, `update()` once a frame in `Game::update` (its requests' answers and the
+  tool handlers run there); `tools().add(assistant::Tool{name, description, inputSchema (JSON Schema), annotations,
+  handler})`, the handler returning `assistant::ToolResult::ok(text or JSON)` or `ToolResult::error("readable")`
+  (bad arguments never reach it: they fail the schema and go back to the model as an error); `setSystemPrompt`,
+  `setStateSummary` (called once per turn); `ask(text)` for a typed turn, `askByVoice(recording.wav())` for a
+  recording to speech, `cancel()`; one operation at a time (a second is refused with "busy"). Show `state()`,
+  `toolName()`, `partialText()`, `answer()`, `failure()` each frame; play `takeSpeech()` through the audio system.
+  The player's key goes in `settings().apiKey` only: `settingsToJson()` and `historyJson()` leave it out; tell the
+  player what leaves the machine (`docs/assistant.md`, "Privacy"). Tests: `assistant::AssistantDesc::fake` with a
+  manual clock. [reference.md](reference.md), "Assistant"; `docs/assistant.md`.
 - **Jobs.** `app.jobs()`: `run`, `parallelFor`; poll `Job::done()` across frames for long work, `wait` only for work
   the frame needs now. Jobs must not throw. `docs/assets.md`, "Job system".
 - **Input.** `app.input().addAction(name, {bindings})` with `Binding::key("Space")` (returns an optional:

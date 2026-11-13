@@ -28,8 +28,8 @@ ENGINE_PREFIXES = ("docs/", "include/quench/", "cmake/", "tools/", "templates/",
 EXTERNAL_FLAGS = {"--preset", "--build", "--console", "--terminate-running-process", "--bind", "--directory"}
 # Namespaces and prefixes whose names are not the engine's.
 FOREIGN = ("std::", "glm::", "JPH::", "ImGui", "SDL_")
-QUENCH_NAMESPACES = (r"(?:quench|render|app|audio|assets|animation|navigation|weather|particles|net|fs|log|gpu|"
-                     r"PhysicsLayers|JobPriority)")
+QUENCH_NAMESPACES = (r"(?:quench|render|app|audio|assets|animation|navigation|weather|particles|net|assistant|fs|"
+                     r"log|gpu|PhysicsLayers|JobPriority)")
 
 
 def read(path: Path) -> str:

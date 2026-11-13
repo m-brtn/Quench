@@ -27,7 +27,9 @@ its costs on a phone not measured), stage 14, particles and trails (systems step
 shapes and along paths, curl noise and the weather's wind, twinkling glows, sparks and smoke, ribbons of light with
 bright heads and fading tails that shed sparkles; not yet run on a phone or looked at in motion), HTTPS requests
 (`quench_net`, after 0.17.0, not released: NSURLSession on Apple platforms, fetch in a browser, a fake for tests;
-checked on the Mac and in headless Chrome only, [Network](net.md)), the sample, the
+checked on the Mac and in headless Chrome only, [Network](net.md)), the assistant on it (`quench_assistant`, the same
+day, not released: a language model that operates a game through tools it registers, typed or spoken turns, speech;
+checked with a fake network and once against OpenRouter on the Mac, [Assistant](assistant.md)), the sample, the
 engine demo (finished in stage 10, with a tour, a check mode and a
 benchmark of every section) and the game template. Where a document describes something planned, it says so.
 [Migration](migration.md) describes the engine code in the two games, what has moved and what is not moved yet.
@@ -48,7 +50,7 @@ in `images/`.
 
 | Document | Contents |
 |---|---|
-| [Architecture](architecture.md) | Modules and targets, the graphics layer and its backends (SDL GPU, native Metal), GPU timestamps per pass, the ray tracing design, rendering, weather and clouds, particles, shaders, main loop, files, threads, assets, audio, animation, navigation, network |
+| [Architecture](architecture.md) | Modules and targets, the graphics layer and its backends (SDL GPU, native Metal), GPU timestamps per pass, the ray tracing design, rendering, weather and clouds, particles, shaders, main loop, files, threads, assets, audio, animation, navigation, network, the assistant |
 | [App shell](app.md) | The game interface, input, ImGui, command line flags, scenarios, the thermal state and a game's reaction to it, HDR output, captures and golden images, `quench_add_game()`, iOS runs |
 | [Jobs, assets and the cook](assets.md) | The job system, asset IDs and the manager, budgets and placeholders, textures and models in a scene, streaming by distance, hot reload, the cooked formats (skins, skeletons and clip sets included), `quench_cook` and `quench_cook_assets()`, limitations |
 | [Audio](audio.md) | The mixer, buses, sounds and streams, generators, 3D sound, voice limit, the audio thread, device output and the iOS audio session, offline mixing and captures, `audio_measure`, the demo section and tests, platforms, limitations |
@@ -57,6 +59,7 @@ in `images/`.
 | [Weather](weather.md) | Stage 13's design and what is built: the headless weather map, its queries and the wetness and snow cover it remembers, the clouds (volumetric and the 2D layer), their light and shadows, the sky cube, the rain (occlusion map, streaks, splashes, wet surfaces, puddles, ripples, shafts, rainbow) and its sound, the snow (flakes, the cover on surfaces, shafts, quiet), the wind (gusts and eddies, plants' sway, drag on bodies, its sound), lightning and thunder, phone defaults, cost, the demo section and tests, platforms, limitations |
 | [Particles](particles.md) | Stage 14: particle systems in the retained scene (spawning, motion with curl noise and the weather's wind, the look, GPU and CPU simulation), trails behind moving points, paths, where they are in the frame, budgets, cost, the demo section and tests, platforms, limitations |
 | [Network](net.md) | `quench_net`: asynchronous HTTPS requests (streamed bodies, cancel, timeouts, a size limit) delivered on the main thread, the HTTPS rule, the log's redaction, redirects, the backends per platform (NSURLSession, fetch, none), the fake for tests, what is not there |
+| [Assistant](assistant.md) | `quench_assistant`: a language model that operates a game through its tools (OpenAI-compatible chat with tool calls, speech-to-text, text-to-speech; OpenRouter, OpenAI or a local server by settings), tools in MCP's shape and their schema check, the turn and its states, cancel, the history, the errors, privacy, the manual check against OpenRouter, what is not there |
 | [Render module](render.md) | The retained scene, the standard frame, sky and sun, tone mapping and HDR output, fallbacks, game passes, surface shaders, the shader library, skinned meshes, limitations |
 | [Engine demo](demo.md) | The demo's code, sections, coverage, layouts and controls, its modes (tour, check mode, benchmark of every section), flags and files, About and settings, the check mode on the iPhone, its checks and golden images, its benchmark, packaged builds (`tools/package_demo.sh`) |
 | [Performance](performance.md) | The benchmark, how to run and compare it, GPU time per pass, budgets per device, the thermal state |

@@ -37,7 +37,7 @@ set(QUENCH_IOS_BUNDLE_ID_SUFFIX "${_quench_bundle_suffix}" CACHE STRING "Appende
 # terminal's or the launching app's.
 # CUSTOM_MAIN: the target defines main itself instead of linking quench_main (the device test app).
 # The sources get QUENCH_GAME_NAME and QUENCH_GAME_VERSION (string literals) for AppDesc. Every game links quench_net
-# (HTTPS requests, docs/net.md) besides quench_main.
+# (HTTPS requests, docs/net.md) and quench_assistant (docs/assistant.md) besides quench_main.
 function(quench_add_game target)
     cmake_parse_arguments(PARSE_ARGV 1 arg "CUSTOM_MAIN"
                           "NAME;OUTPUT_NAME;BUNDLE_ID;VERSION;ASSETS;ICON;ORIENTATIONS;MICROPHONE"
@@ -116,9 +116,9 @@ namespace {
     else()
         target_link_libraries(${target} PRIVATE quench_main)
     endif()
-    # HTTPS requests (quench/net/Http.h, docs/net.md) for every game: a static library, so a game that does not use
-    # it links none of it.
-    target_link_libraries(${target} PRIVATE quench_net)
+    # HTTPS requests (quench/net/Http.h, docs/net.md) and the assistant on them (quench/assistant/Assistant.h,
+    # docs/assistant.md) for every game: static libraries, so a game that does not use them links none of them.
+    target_link_libraries(${target} PRIVATE quench_net quench_assistant)
     set_target_properties(${target} PROPERTIES OUTPUT_NAME ${arg_OUTPUT_NAME})
     target_compile_definitions(${target} PRIVATE QUENCH_GAME_NAME="${arg_NAME}" QUENCH_GAME_VERSION="${arg_VERSION}")
 

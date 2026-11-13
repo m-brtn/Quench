@@ -4,8 +4,8 @@
 API, first of all an OpenAI-compatible one (OpenRouter, OpenAI, a local server) for an in-game assistant (chat
 completions with tool calls as JSON, optionally streamed as server-sent events; speech-to-text, a few seconds of
 recorded audio uploaded as JSON with base64 or as multipart; text-to-speech, audio bytes downloaded, possibly
-streamed). It is the transport only: the assistant is a later module on top of it. Nothing in it blocks a frame or
-waits through Asyncify.
+streamed). It is the transport only: the assistant is `quench_assistant` on top of it ([Assistant](assistant.md)).
+Nothing in it blocks a frame or waits through Asyncify.
 
 Public headers: `include/quench/net/Http.h` (the client) and `include/quench/net/FakeNetwork.h` (the fake). The
 target is headless (no SDL, no GPU); `quench_add_game()` links it into every game, so a game only includes it.
@@ -145,7 +145,11 @@ fake.respond("GET", "https://api.example.com/v1/models", net::FakeResponse::text
   `examples/hello/NetCheck.h` has its commands).
 
 No automated test leaves the machine. A hand check on 2026-11-13 on the Mac: `https://example.com/` answered 200
-over TLS through NSURLSession, and `https://expired.badssl.com/` ended with `Tls`.
+over TLS through NSURLSession, and `https://expired.badssl.com/` ended with `Tls`. The same evening the assistant's
+manual check ([Assistant](assistant.md#the-manual-check)) reached OpenRouter through NSURLSession: chat completions
+streamed as server-sent events arrived piece by piece (an answer's text in 4 deltas over about 140 ms, 760 ms after
+the request), a 369 KB speech answer and a 246 KB upload worked; whether NSURLSession held back the first 512 bytes
+of those streams was not measured (they start with events that carry no text).
 
 ## Cost
 

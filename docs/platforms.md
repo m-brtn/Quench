@@ -87,6 +87,10 @@ tests against a local HTTP server on 127.0.0.1; by hand, one GET of a public tes
 Chrome on the Mac (hello's check against `tools/web_check.mjs`'s server); the Apple backend's Objective-C is the same
 file on iOS but has not run there (neither the iOS Simulator nor an iPhone). [Network](net.md).
 
+The assistant (`quench_assistant`, 2026-11-13, after 0.17.0) on it: its tests with the fake network on the Mac and
+under Node.js; against a real provider (OpenRouter) only on the Mac, through NSURLSession, by its manual check. Not
+run in a browser against a provider, on iOS, against OpenAI's own API or a local server. [Assistant](assistant.md).
+
 Microphone capture (`audio::Microphone`, 2026-11-13, after 0.17.0; [Audio](audio.md#microphone)): miniaudio's capture
 device with AVFoundation's permission on macOS and iOS (iOS also switches the audio session to `PlayAndRecord` while
 recording), `getUserMedia` in a browser, miniaudio's capture with an unknown permission on Windows and Linux. Run with

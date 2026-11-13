@@ -17,6 +17,7 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 - Navigation
 - Microphone
 - HTTP requests
+- Assistant
 - Jobs
 - Heat
 - Profiling
@@ -711,6 +712,51 @@ fake.respond("POST", "https://api.example.com/v1/chat/completions", sse);
 ```
 
 `docs/net.md` (the rules, the backends per platform, what is not there).
+
+## Assistant
+
+```cpp
+#include <quench/assistant/Assistant.h>
+
+assistant::Assistant m_assistant; // member; m_assistant.update() once a frame in Game::update
+
+void initAssistant(const std::string& playerKey) {
+    m_assistant.settings() = assistant::openRouterPreset(); // or openAiPreset(), localPreset("http://localhost:8080/v1")
+    m_assistant.settings().apiKey = playerKey;              // memory only: never in a save or a log line
+    m_assistant.setSystemPrompt("You are the station's assistant. Use the tools. Answer in one short sentence.");
+    m_assistant.setStateSummary([this] { return colonySummary(); }); // once per turn, before the player's words
+    (void)m_assistant.tools().add({.name = "get_power",
+                                   .description = "The colony's power balance in kW.",
+                                   .annotations = {.readOnly = true},
+                                   .handler = [this](const json::Value&) {
+                                       return assistant::ToolResult::ok(json::parse(powerJson()).value());
+                                   }});
+    (void)m_assistant.tools().add(
+        {.name = "order_collect",
+         .description = "Send a walker to collect an energy cell by its id.",
+         .inputSchema = json::parse(R"({"type":"object","properties":{"unit":{"type":"string"},)"
+                                    R"("item":{"type":"string"}},"required":["unit","item"]})")
+                            .value(),
+         .handler = [this](const json::Value& a) {
+             if (!hasUnit(a["unit"].string)) return assistant::ToolResult::error("no such walker; walkers: 1, 2");
+             return assistant::ToolResult::ok(collect(a["unit"].string, a["item"].string));
+         }});
+}
+
+void onTyped(std::string text) {
+    if (Result<void> r = m_assistant.ask(std::move(text)); !r) showError(r.error()); // busy, not configured
+}
+void onRecording(const audio::MicRecording& recording) {
+    (void)m_assistant.askByVoice(recording.wav()); // transcribe, the turn, speech
+}
+// Each frame: m_assistant.state() (assistant::stateName), toolName(), partialText(), answer(), failure().message;
+// takeSpeech() once it is ready: mono float samples at their sampleRate, for a game-generated source.
+```
+
+Tests of the game's tools and prompts against canned answers: `assistant::Assistant a({.fake = &fake, .clock =
+[&] { return now; }})` and `fake.respond("POST", ".../chat/completions", ...)` with server-sent events as in "HTTP
+requests" above; `tests/assistant/Rig.h` in the engine builds such answers. `docs/assistant.md` (settings, the turn
+and its states, errors, privacy, what is not there).
 
 ## Jobs
 

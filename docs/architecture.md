@@ -35,6 +35,8 @@ src/<module>/              sources and internal headers, per module:
   particles/  particle systems' descs, spawns (emitters), the CPU simulation, trails, paths (docs/particles.md)
   net/        HTTPS requests: the client, the rules, the fake; backends NSURLSession (Apple), fetch (web), none
               (docs/net.md)
+  assistant/  a language model operating a game: provider settings, tools in MCP's shape, the chat request and
+              its stream parser, transcription and speech, the turn (docs/assistant.md)
   audio/      mixer, sounds, streams, 3D sound, WAV writer, analysis (headless); the playback device and the
               iOS audio session (miniaudio)
   gpu/        the GPU layer (resources, pipelines, command recording, captures, timing) and its backends:
@@ -70,6 +72,7 @@ docs/releases/        release notes per version
 | `quench_weather` | the weather map (coverage, cloud type, precipitation, cirrus) with wind and evolution, cells, queries (precipitation, its snow share and the temperature, distance to rain or snow, cover, wind with gusts and eddies, lightning strikes), the wetness and snow cover it remembers | core, gpu_shaders (the field's shared header), GLM | yes |
 | `quench_particles` | particle system descs, spawns by rate, distance and bursts in shapes and along paths, the CPU simulation (the same functions as the GPU's step, `quench/ParticleField.h`), trails behind moving points, centripetal Catmull-Rom paths | core, gpu_shaders (the field's shared header), GLM | yes |
 | `quench_net` | asynchronous HTTPS requests (`net::Client`, delivered on the main thread by `update()`), the HTTPS rule, the log's redaction, redirects, size limits; backends NSURLSession (Apple), fetch (web), none elsewhere; `net::FakeNetwork` for tests | core; Foundation on Apple platforms | yes |
+| `quench_assistant` | a client for OpenAI-compatible APIs (chat with tool calls, streamed; speech-to-text; text-to-speech), provider presets, tools in MCP's shape with a schema check, the turn of rounds and tool calls (`assistant::Assistant`, its states, cancel, history) | core, net; audio (the MP3 decoder) | yes |
 | `quench_audio` | mixer, buses, sounds (the `"sound"` asset type), streams, generators, 3D sound, WAV writer, signal analysis | core, assets, GLM, miniaudio (decoders) | yes |
 | `quench_audio_device` | playback device, iOS audio session | audio, miniaudio (device API), Core Audio, AVFoundation on iOS | no |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
@@ -721,6 +724,15 @@ log (never a header's value or the query string); a backend behind `src/net/Back
 on Apple platforms, the browser's fetch in web builds, none elsewhere (a libcurl or WinHTTP backend is one more file),
 and the fake (`net::FakeNetwork`) in every build. Handlers are called from `update()` once a frame on the main
 thread, like the asset manager's finishing work. Details: [Network](net.md).
+
+`quench_assistant` (2026-11-13) is the in-game assistant on top of it, for any OpenAI-compatible provider: the game
+registers tools (a name, a description, a JSON Schema, MCP's annotations, a handler), and a turn sends the player's
+words with the game's system prompt, a state summary and the history, executes the tool calls the model asks for
+through the registry and sends their results back, round after round, until the model answers; optionally the
+recording is transcribed first and the answer turned into speech. The tools have MCP's shape so that an MCP
+transport can serve the same registry later. It owns no thread and blocks nothing: the answers arrive through
+`net::Client::update()` and the handlers run in `Assistant::update()`, one tool call per frame, on the main thread.
+It neither records nor plays (the app's microphone and audio system do). Details: [Assistant](assistant.md).
 
 ## Coordinate system and units
 

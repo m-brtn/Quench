@@ -1,0 +1,22 @@
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-0000000000-fixture000000000002","object":"chat.completion.chunk","created":1794591615,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning_details":[{"type":"reasoning.text","signature":"fixture-signature-not-a-secret","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+data: {"id":"gen-0000000000-fixture000000000002","object":"chat.completion.chunk","created":1794591615,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"Walker 1","role":"assistant"},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+data: {"id":"gen-0000000000-fixture000000000002","object":"chat.completion.chunk","created":1794591615,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":" is collecting E7","role":"assistant"},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+data: {"id":"gen-0000000000-fixture000000000002","object":"chat.completion.chunk","created":1794591615,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":" — the nearest energy","role":"assistant"},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+data: {"id":"gen-0000000000-fixture000000000002","object":"chat.completion.chunk","created":1794591615,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":" cell, 40 m north.","role":"assistant"},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+data: {"id":"gen-0000000000-fixture000000000002","object":"chat.completion.chunk","created":1794591615,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":" Power: +12 kW (net).","role":"assistant"},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
+
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-0000000000-fixture000000000002","object":"chat.completion.chunk","created":1794591615,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":null},"finish_reason":"stop","native_finish_reason":"end_turn","logprobs":null}]}
+
+data: {"id":"gen-0000000000-fixture000000000002","object":"chat.completion.chunk","created":1794591615,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"end_turn","logprobs":null}],"service_tier":"default","usage":{"prompt_tokens":1356,"completion_tokens":17,"total_tokens":1373,"cost":2.233e-05,"is_byok":false}}
+
+data: [DONE]
+

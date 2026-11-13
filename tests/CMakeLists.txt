@@ -22,6 +22,10 @@ endfunction()
 # The audio tests' decoder files and the assets tests' Basis Universal files.
 set(audio_test_data ${CMAKE_CURRENT_BINARY_DIR}/AudioTestData.cpp)
 quench_embed_test_data(${audio_test_data} audio/data tone.flac:toneFlac tone.mp3:toneMp3 loop.ogg:loopOgg)
+# The assistant tests' streams (tests/assistant/data/README.md).
+set(assistant_test_data ${CMAKE_CURRENT_BINARY_DIR}/AssistantTestData.cpp)
+quench_embed_test_data(${assistant_test_data} assistant/data parallel_tools.sse:parallelToolsSse
+    text_answer.sse:textAnswerSse)
 set(basis_test_data ${CMAKE_CURRENT_BINARY_DIR}/BasisTestData.cpp)
 quench_embed_test_data(${basis_test_data} assets/data color_etc1s.ktx2:basisColorEtc1s
     alpha_etc1s.ktx2:basisAlphaEtc1s color_uastc.ktx2:basisColorUastc alpha_uastc.ktx2:basisAlphaUastc
@@ -59,6 +63,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             weather/WeatherTests.cpp
             particles/ParticlesTests.cpp
             net/NetTests.cpp
+            assistant/AssistantTests.cpp
+            assistant/SpeechTests.cpp
+            assistant/StreamTests.cpp
+            assistant/ToolsTests.cpp
+            ${assistant_test_data}
             app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
             app/LoadGovernorTests.cpp
@@ -110,8 +119,8 @@ target_include_directories(quench_test_harness PUBLIC harness)
 target_compile_definitions(quench_test_harness PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
 # Every test has the label of the module it checks (ctest -L <label>; tools/check.sh quick picks them from the changed
-# files): core, physics, assets, audio, animation, navigation, weather, particles, net, cook, gpu, render, app, hello,
-# demo. The variants on Vulkan through MoltenVK also have the label vulkan: tools/check.sh quick leaves them out
+# files): core, physics, assets, audio, animation, navigation, weather, particles, net, assistant, cook, gpu, render,
+# app, hello, demo. The variants on Vulkan through MoltenVK also have the label vulkan: tools/check.sh quick leaves them out
 # (-LE vulkan), full and release run them.
 # quench_add_test_executable(<name> PREFIX <ctest prefix> LABEL <label> SOURCES <file>... LIBS <target>...
 #                            [ENVIRONMENT <NAME=value>...])
@@ -223,6 +232,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
             LAUNCHER ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/net/net_test_server.py --run)
     endif()
 endif()
+
+# quench_assistant with the fake network (every build, the Node.js one included); the MP3 answer is the audio tests'
+# tone.
+quench_add_test_executable(quench_assistant_tests PREFIX assistant LABEL assistant
+    SOURCES
+        assistant/AssistantTests.cpp
+        assistant/SpeechTests.cpp
+        assistant/StreamTests.cpp
+        assistant/ToolsTests.cpp
+        ${assistant_test_data}
+        ${audio_test_data}
+    LIBS quench_assistant quench_audio)
 
 # quench_cook (host builds that build the cook themselves): the library's cases, and the command line run twice on the
 # demo's sources and its generated character with byte-identical outputs.
@@ -660,7 +681,7 @@ add_library(quench_header_check OBJECT ${header_sources})
 quench_configure_target(quench_header_check)
 target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_assets quench_audio
                                                   quench_animation quench_navigation quench_particles
-                                                  quench_weather quench_net quench_gpu_shaders)
+                                                  quench_weather quench_net quench_assistant quench_gpu_shaders)
 if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_header_check PRIVATE quench_app quench_render)
 endif()

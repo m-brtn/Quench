@@ -1,2 +1,5 @@
 add_subdirectory(hello)
 add_subdirectory(demo)
+if(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    add_subdirectory(assistant_check)
+endif()
