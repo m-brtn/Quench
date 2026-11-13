@@ -1,0 +1,1 @@
+A deferred asset that tools/check.sh step web does not serve (web_check --not-found): its fetch fails.
