@@ -157,8 +157,9 @@ compare across runs. `App::scripted()` tells a game that a scenario runs, for ex
 and keep the user's files untouched.
 
 The user directory is `SDL_GetPrefPath(organization, name)`: `~/Library/Application Support/<organization>/<name>/` on
-macOS, `Library/Application Support/<organization>/<name>/` in the app's data container on iOS; `--user-dir`
-replaces it.
+macOS, `Library/Application Support/<organization>/<name>/` in the app's data container on iOS,
+`/libsdl/<organization>/<name>/` kept in IndexedDB in a browser ([User files in a browser](#web-runs));
+`--user-dir` replaces it.
 
 ### Offscreen runs
 
@@ -605,8 +606,9 @@ The page needs HTTP (`file://` cannot fetch the `.wasm` and `.data` files) and a
   it creates the window (offscreen: the `--window` size; the scenario command `resize` sets it too), and SDL takes
   the size from the page (SDL's fill-document window is not used: under a page zoom SDL measured the canvas as
   0 x 0). The frame size follows the page and its device pixel ratio.
-- `quench::fs` reads the preloaded assets; the user directory is in memory (SDL's `/libsdl/<organization>/<name>/`,
-  or what `--user-dir` names) and is empty again after a reload.
+- `quench::fs` reads the preloaded assets. The default user directory, SDL's `/libsdl/<organization>/<name>/`, is
+  kept in the browser's IndexedDB (since 2026-11-13; "User files in a browser" below); what
+  `--user-dir` names stays in memory and is empty again after a reload (the scripted checks use `/user`).
 - Sound starts with the first click, key or touch (the browser's rule). `--audio-device null` does not exist there;
   `--no-audio` does.
 - The page keeps the program's log lines and the browser's warnings and errors in `quenchLog` (an array of strings,
@@ -621,6 +623,32 @@ The page needs HTTP (`file://` cannot fetch the `.wasm` and `.data` files) and a
   moved SDL's callbacks onto a timer, which paces frames poorly in a browser.)
 - No HDR output (the backend's surface is SDR only), GPU timing or ray tracing there; `--gpu-driver` has no meaning;
   `--hot-reload` and the relaunch were not tried.
+
+**User files in a browser.** Every game built with `quench_add_game()` keeps its default user directory (settings,
+saves, relative captures) between visits of its page, with no code of its own (`src/app/SdlFileSystem.cpp`):
+
+- **Where.** Emscripten's IDBFS is mounted at the user directory itself, so the IndexedDB database is named after
+  it: `/libsdl/<organization>/<name>` (`AppDesc::organization`, `AppDesc::name`), one object store `FILE_DATA` with
+  a record per file and directory (IDBFS names the database after its mount point; read in Emscripten 6.0.13's
+  `src/lib/libidbfs.js`). IndexedDB belongs to the page's origin, which all the pages of one GitHub Pages account
+  share: one database per app keeps the demo's files and a game's apart.
+- **Loaded before the first read.** When the file system is created (in `SDL_AppInit`, before the game's `init`),
+  the app waits for the stored files (Asyncify) at most **5 seconds** (`kUserFilesLoadTimeoutMs`). The log says
+  "user files: kept in this browser (IndexedDB database ..., N entries loaded in M ms)".
+- **Stored after each write.** After every successful `fs::writeUser` the whole directory is compared with the
+  database and the changed files are written to it (`IDBFS.syncfs`), in the background: one store at a time, and a
+  write during a store starts one more when it ends. The write itself does not wait.
+- **Without IndexedDB** (none in the context, storage disabled, an error, or no answer within the 5 s) the program
+  starts with the directory in memory, as before 2026-11-13, and the log says once why: "user files: in memory
+  only, lost when the page closes: ...". A failed store later is a warning (once until a store succeeds again);
+  the write has succeeded and the file is there until the page closes.
+- **Not kept.** Files written in the moment before the tab closes (their store had not ended); what another
+  browser, profile or device has; a private window's files after it closes; anything after the site's data is
+  cleared or the browser evicts it (IndexedDB is best-effort storage unless the page asks for persistent storage,
+  which the engine does not). Two tabs of the same app share one database and each stores its own directory, so
+  a store of one can overwrite or remove the other's files.
+- **State for scripts.** `Module.quenchUserFiles` is `{dir, kept, busy, again, failed, entries, ms, error}`;
+  `tools/web_check.mjs` waits until `busy` and `again` are false before it loads the page again.
 
 **Scripted runs.** `--script` takes a URL when the path is not in the virtual file system, and the files it
 includes are read the same way; `--offscreen` (not the default in a browser) keeps the `--window` size instead of filling the
@@ -637,14 +665,21 @@ the golden image of the same name. It exits with 1 when the program's exit code 
 logged or a comparison failed. `--onscreen` leaves `--offscreen` out: the page runs as one a person opened (the
 canvas fills the page, frames at the display's rate, the sound output opened), still in headless Chrome, until its
 `--quit-after`. A game runs it on its own build: `--build build/web --repo .` (the game's directory at `/repo/`).
-Node.js 22 or newer.
+Node.js 22 or newer. Several argument lists separated by `--` load the page once each in the same browser profile
+(the captures and the exit code are the last load's, every load must end with 0); `--system-user-dir` leaves out
+the `--user-dir /user` it adds otherwise, and `--databases N,N,...` is the number of IndexedDB databases the
+origin must have after each load (the script waits for the program's stores first). The persistence check of
+`step web` loads the demo three times this way: with `--user-dir /user` and `settings_save.txt` (no database
+afterwards), without it and `settings_save.txt` (`settings_loaded == 0`: nothing left behind; one database), then
+`settings_load.txt` (the settings read back through `quench::fs`; still one database).
 
 ```sh
 node tools/web_check.mjs --page examples/demo/quench-demo.html --out build/web/check/demo \
     --golden tests/golden/metal/apple-m4-pro --compare build/release/tests/quench_image_compare \
     -- --window 960x540 --hdr-headroom 4 --script /repo/examples/demo/scenarios/batch.txt
-tools/check.sh step web   # host-tools, the web build, hello's check scenario, the demo's batch and a few seconds
-                          # of each page with --onscreen (about 2 minutes after the first build); not in `full`
+tools/check.sh step web   # host-tools, the web build, hello's check scenario, the demo's batch, the user files
+                          # across three loads of the demo and a few seconds of each page with --onscreen (about
+                          # 2 minutes after the first build); not in `full`
 ```
 
 The web captures are compared with the Mac's Metal golden images (there are no web ones): the demo's 41 are within

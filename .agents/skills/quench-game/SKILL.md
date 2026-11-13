@@ -261,7 +261,10 @@ demo; a template game in headless Chrome). What differs there:
 - Never wait for the GPU in a frame on the screen (`Device::download`, `waitIdle`, `Fence::wait`, a `map()` before
   its fence): the browser takes the frame's swapchain texture back. Poll the fence across frames (a download
   recorded into the frame's command buffer: `commands.completionFence()`); take captures in offscreen runs.
-- The user directory is in memory and empty after a reload; sound starts with the first click, key or touch.
+- The default user directory (settings, saves) is kept in the browser's IndexedDB between visits (loaded before
+  `init`, stored after each `fs::writeUser`; not the last moment before a tab closes, not across browsers or private
+  windows; in memory when IndexedDB is missing or blocked; `docs/app.md`, "User files in a browser"); `--user-dir`
+  stays in memory. Sound starts with the first click, key or touch.
 - Cooked textures are BC7 there (`TEXTURE_FORMAT auto`), which desktop browsers have; phones' browsers need
   `TEXTURE_FORMAT basis` (not tried in a browser).
 - Checks: the same scenarios, run in headless Chrome by the engine's `tools/web_check.mjs`

@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-10, version 0.15.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-13, version 0.16.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -239,7 +239,14 @@ the batches, and, after the tag, Outpost's low detail for phones. On its code be
 tests each with 70 skipped, Release 832 with 69 skipped on the Mac's three backends, Vulkan through MoltenVK,
 `wasm-node` 205 under Node.js with 9 skipped, the iOS Simulator 523 with 70 skipped, the Xcode project, a new
 game) and `step web` passes in headless Chrome on the Mac (the demo's batch 806 passed, 0 failed, 41 captures
-within the thresholds). None of it has run on a phone.
+within the thresholds). None of it has run on a phone. Version 0.16.0 (2026-11-13; `docs/releases/v0.16.0.md`)
+keeps the default user directory of a browser build in IndexedDB (IDBFS, one database per app, loaded before the
+game's `init` within 5 s, stored after each write; in memory without IndexedDB): asked for after Outpost 0.2.0's
+save was lost at a reload of its page. On its tree before the commit `tools/check.sh release` passes (Debug, ASan and
+TSan 689 tests each with 70 skipped, Release 832 with 69 skipped on the Mac's three backends, `wasm-node` 205 with 9
+skipped, the iOS Simulator 523 with 70 skipped, the Xcode project, a new game, the demo's package) and `step web`
+passes in headless Chrome on the Mac (the demo's batch 806 passed, 41 captures within the thresholds, the user files
+kept across three loads of the demo).
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the

@@ -20,7 +20,8 @@
 #                               into a temporary directory), package, web (not a part of full: host-tools and
 #                               release for the tools, the web preset, then the sample's and the demo's scripted
 #                               checks in headless Chrome through tools/web_check.mjs, the demo's captures against
-#                               the Metal golden images; needs Homebrew's emscripten, Node.js and Google Chrome)
+#                               the Metal golden images, the user files kept in IndexedDB across loads of the
+#                               demo; needs Homebrew's emscripten, Node.js and Google Chrome)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -94,6 +95,20 @@ run_step() {
             fail "web: the demo (log: $demo_log)"
         }
         grep -E "scenario: [^ ]*batch.txt: |web_check: ([0-9]+ captures compared|passed|[0-9]+ failed)" "$demo_log"
+        # The user files in IndexedDB: three loads of the demo in one browser profile. A run with --user-dir writes
+        # its settings and leaves no database; a run in the default user directory starts without them (none left
+        # behind) and writes them; the next load reads them back (settings_load.txt's expectations).
+        local files_log=build/web/check_user_files.log
+        local settings=(--window 640x360 --settings-file web_check_settings.json --script)
+        node tools/web_check.mjs --page examples/demo/quench-demo.html --out build/web/check/user_files --timeout 300 \
+            --system-user-dir --databases 0,1,1 -- \
+            "${settings[@]}" /repo/examples/demo/scenarios/settings_save.txt --user-dir /user -- \
+            "${settings[@]}" /repo/examples/demo/scenarios/settings_save.txt -- \
+            "${settings[@]}" /repo/examples/demo/scenarios/settings_load.txt >"$files_log" 2>&1 || {
+            grep -E "FAIL|user files|web_check:" "$files_log" | tail -40
+            fail "web: the user files in IndexedDB (log: $files_log)"
+        }
+        grep -E "fs: user files|settings_(save|load).txt: |web_check: (after load|passed|[0-9]+ failed)" "$files_log"
         # As on a page a person opened (the canvas fills the page, frames at the display's rate, the sound output):
         # the start, a few seconds of frames without a WebGPU error and the end. The weather section reads the
         # rain's cover back every other frame.

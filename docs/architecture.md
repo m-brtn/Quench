@@ -586,7 +586,7 @@ they are deterministic, except inside a scenario's `perf_begin` .. `perf_end` re
 ## Files
 
 All runtime file access goes through `quench::fs`: read-only assets (app bundle on Apple platforms, APK on Android,
-virtual file system on the web) and a writable user directory (`SDL_GetPrefPath`; on the web in memory so far, IndexedDB-backed later).
+virtual file system on the web) and a writable user directory (`SDL_GetPrefPath`; on the web kept in IndexedDB through IDBFS since 2026-11-13, [App shell](app.md#web-runs)).
 TrailForge has 18 and Ashfall 5 uses of `std::ifstream`, `std::ofstream` or `fopen` that move to it when their code
 moves to the engine.
 

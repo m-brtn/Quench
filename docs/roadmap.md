@@ -857,8 +857,9 @@ hardware or CI),
 Android (Vulkan, ASTC / ETC2 textures through Basis Universal (built; ETC2 needs a backend that offers it), APK
 assets). The web: an experimental build since 2026-11-10 (the user's request: the engine's own WebGPU backend, WGSL
 shaders through Tint, single-thread jobs; the demo's scripted checks pass in Chrome on the Mac, headless). Open
-there: other browsers and phones, a person's look and play, sound by ear, a persistent user directory, threads,
-download size, hosting.
+there: other browsers and phones, a person's look and play, sound by ear, threads, download size, hosting. The
+user directory is kept in IndexedDB since 2026-11-13, released with 0.16.0 ([its notes](releases/v0.16.0.md);
+checked in headless Chrome on the Mac only).
 See [Platforms](platforms.md#web-webassembly).
 
 ## Requested features

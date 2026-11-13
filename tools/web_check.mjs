@@ -4,7 +4,7 @@
 //
 //   node tools/web_check.mjs --page examples/demo/quench-demo.html [--build build/web] [--out DIR]
 //        [--golden DIR --compare quench_image_compare] [--timeout SECONDS] [--chrome PATH] [--repo DIR]
-//        [--onscreen] -- APP ARGUMENTS...
+//        [--onscreen] [--system-user-dir] [--databases N,N,...] -- APP ARGUMENTS... [-- APP ARGUMENTS...]
 //
 // The script serves the build directory at / and the repository at /repo/ on 127.0.0.1, so that a scenario is named
 // by its URL (--script /repo/examples/demo/scenarios/batch.txt: the page fetches what its virtual file system does
@@ -17,6 +17,13 @@
 // capture that has a golden image of its name is compared with it. With --onscreen the program runs as on a page a
 // person opened (no --offscreen: the canvas fills the page, the frames follow the display, the sound output opens),
 // still in headless Chrome; give it a --quit-after.
+//
+// Several argument lists, separated by `--`, load the page once each, one after another, in the same browser profile
+// (the captures and the exit code are the last load's; every load must end with 0). --system-user-dir leaves out
+// --user-dir /user, so a load without its own --user-dir uses the default user directory, which the browser keeps
+// in IndexedDB. After each load the script waits for the program's stores to IndexedDB to end; --databases gives the
+// number of IndexedDB databases the page's origin must have after each load (the persistence check of
+// tools/check.sh step web). Without these options a run is one load in a fresh profile, as before.
 //
 // Exit code: 0 when the program ended with 0, no WebGPU error was logged and every compared capture passed; 1
 // otherwise; 2 when the page did not reach the program's end.
@@ -42,16 +49,35 @@ const options = {
     chrome: process.env.QUENCH_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 };
 let onscreen = false;
-let appArgs = [];
+let systemUserDir = false;
+let databases = [];
+const loads = [];
 {
     const argv = process.argv.slice(2);
     for (let i = 0; i < argv.length; ++i) {
         if (argv[i] === '--') {
-            appArgs = argv.slice(i + 1);
+            let current = [];
+            for (const arg of argv.slice(i + 1)) {
+                if (arg === '--') {
+                    loads.push(current);
+                    current = [];
+                } else {
+                    current.push(arg);
+                }
+            }
+            loads.push(current);
             break;
         }
         if (argv[i] === '--onscreen') {
             onscreen = true;
+            continue;
+        }
+        if (argv[i] === '--system-user-dir') {
+            systemUserDir = true;
+            continue;
+        }
+        if (argv[i] === '--databases' && i + 1 < argv.length) {
+            databases = argv[++i].split(',').map(Number);
             continue;
         }
         const key = argv[i].replace(/^--/, '');
@@ -61,6 +87,11 @@ let appArgs = [];
         }
         options[key] = key === 'timeout' ? Number(argv[++i]) : argv[++i];
     }
+}
+if (loads.length === 0) loads.push([]);
+if (databases.length && (databases.length !== loads.length || databases.some((n) => !Number.isInteger(n)))) {
+    console.error(`web_check: --databases needs one whole number per load (${loads.length})`);
+    process.exit(2);
 }
 if (!options.page) {
     console.error('web_check: --page PATH (relative to the build directory) is required');
@@ -182,37 +213,70 @@ async function evaluate(expression) {
 
 // ---------------------------------------------------------------- the run
 
-const args = [...appArgs, ...(onscreen ? [] : ['--offscreen']), '--user-dir', '/user'];
-const url = `${origin}/${options.page}?${args.map(encodeURIComponent).join('&')}`;
-console.log(`web_check: ${options.page} ${args.join(' ')}`);
-await send('Page.navigate', { url });
-
 const log = [];
 let exitCode;
 let stopped = '';
+let failures = 0;
 const deadline = Date.now() + options.timeout * 1000;
-while (Date.now() < deadline) {
-    await new Promise((done) => setTimeout(done, 500));
-    let state;
-    try {
-        state = JSON.parse(await evaluate(`JSON.stringify({
-            lines: (window.quenchLog || []).slice(${log.length}),
-            exit: window.quenchExit,
-            status: (document.getElementById('status') || {}).textContent || ''})`));
-    } catch {
-        continue; // the page is loading
+let previousPage = 0; // performance.timeOrigin of the last load's document: its state is not the new one's
+for (let load = 0; load < loads.length; ++load) {
+    const args = [...loads[load], ...(onscreen ? [] : ['--offscreen']),
+        ...(systemUserDir ? [] : ['--user-dir', '/user'])];
+    const url = `${origin}/${options.page}?${args.map(encodeURIComponent).join('&')}`;
+    const name = loads.length > 1 ? ` (load ${load + 1} of ${loads.length})` : '';
+    console.log(`web_check: ${options.page} ${args.join(' ')}${name}`);
+    await send('Page.navigate', { url });
+
+    exitCode = undefined;
+    let seen = 0;
+    while (Date.now() < deadline) {
+        await new Promise((done) => setTimeout(done, 500));
+        let state;
+        try {
+            state = JSON.parse(await evaluate(`JSON.stringify({
+                lines: (window.quenchLog || []).slice(${seen}),
+                page: performance.timeOrigin,
+                exit: window.quenchExit,
+                status: (document.getElementById('status') || {}).textContent || ''})`));
+        } catch {
+            continue; // the page is loading
+        }
+        if (state.page === previousPage) continue; // the previous load's document, before the new one is there
+        for (const line of state.lines) {
+            ++seen;
+            log.push(line);
+            console.log(line);
+        }
+        if (state.exit !== undefined && state.exit !== null) {
+            exitCode = state.exit;
+            break;
+        }
+        if (/^(Error:|The program stopped|This browser has no WebGPU)/.test(state.status)) {
+            stopped = state.status;
+            break;
+        }
     }
-    for (const line of state.lines) {
-        log.push(line);
-        console.log(line);
+    if (stopped || exitCode === undefined) break;
+    previousPage = await evaluate('performance.timeOrigin');
+    if (load + 1 < loads.length && exitCode !== 0) {
+        console.error(`web_check: FAIL load ${load + 1} ended with exit code ${exitCode}`);
+        ++failures;
     }
-    if (state.exit !== undefined && state.exit !== null) {
-        exitCode = state.exit;
-        break;
-    }
-    if (/^(Error:|The program stopped|This browser has no WebGPU)/.test(state.status)) {
-        stopped = state.status;
-        break;
+    if (loads.length > 1 || databases.length) {
+        // The program's stores to IndexedDB run after its writes, in the background (src/app/SdlFileSystem.cpp).
+        let pending = true;
+        while (pending && Date.now() < deadline) {
+            pending = await evaluate(`(() => { const s = window.Module && Module.quenchUserFiles;
+                return !!(s && (s.busy || s.again)); })()`);
+            if (pending) await new Promise((done) => setTimeout(done, 100));
+        }
+        const files = await evaluate(`JSON.stringify((window.Module && Module.quenchUserFiles) || null)`);
+        const names = await evaluate(`indexedDB.databases().then((list) => JSON.stringify(list.map((d) => d.name)))`);
+        console.log(`web_check: after load ${load + 1}: user files ${files}, IndexedDB databases ${names}`);
+        if (databases.length && JSON.parse(names).length !== databases[load]) {
+            console.error(`web_check: FAIL ${databases[load]} IndexedDB databases expected after load ${load + 1}`);
+            ++failures;
+        }
     }
 }
 
@@ -253,7 +317,6 @@ if (exitCode === undefined) {
     process.exit(2);
 }
 
-let failures = 0;
 const gpuErrors = log.filter((line) => /ERROR: gpu: WebGPU|WebGPU device lost/.test(line));
 if (gpuErrors.length) {
     console.error(`web_check: FAIL ${gpuErrors.length} WebGPU errors, the first: ${gpuErrors[0]}`);
