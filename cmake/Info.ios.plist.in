@@ -79,5 +79,6 @@
         </dict>
     </array>
     @QUENCH_GAME_ICONS@
+    @QUENCH_GAME_MICROPHONE@
 </dict>
 </plist>

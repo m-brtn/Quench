@@ -52,6 +52,29 @@ bool quench_audio_session_activate(bool active, char* error, int errorSize) {
     }
 }
 
+bool quench_audio_session_record(bool record, int category, char* error, int errorSize) {
+    if (!record) return quench_audio_session_configure(category, error, errorSize);
+    @autoreleasepool {
+        // PlayAndRecord sends the output to the receiver (the earpiece) unless DefaultToSpeaker says otherwise;
+        // headphones and AirPods still take it (a route the user chose wins over the default).
+        // AVAudioSessionModeDefault: no voice processing (VoiceChat and VideoChat modes would add echo cancellation and
+        // change the playback). PlayAndRecord is not silenced by the Ring/Silent switch: while recording, an ambient
+        // game is heard with the switch on silent.
+        AVAudioSessionCategoryOptions options =
+            AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetoothA2DP;
+        if (category == 0) options |= AVAudioSessionCategoryOptionMixWithOthers;
+        NSError* failure = nil;
+        if (![[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord
+                                                     mode:AVAudioSessionModeDefault
+                                                  options:options
+                                                    error:&failure]) {
+            copyText(failure.localizedDescription, error, errorSize);
+            return false;
+        }
+        return true;
+    }
+}
+
 void quench_audio_session_route(char* out, int size) {
     @autoreleasepool {
         NSMutableArray<NSString*>* outputs = [NSMutableArray array];

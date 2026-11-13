@@ -15,6 +15,8 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 - Input and ImGui
 - Animation
 - Navigation
+- Microphone
+- HTTP requests
 - Jobs
 - Heat
 - Profiling
@@ -42,6 +44,7 @@ quench_add_game(my_game
     ASSETS assets                           # copied as they are
     COOKED_ASSETS my_game_cooked            # cooked files win over plain ones of the same name
     DEFERRED_ASSETS music/*.mp3             # web: beside the page in my_game.assets/, fetched while it runs
+    MICROPHONE "My Game listens to your spoken commands."  # only a game that records; iOS's prompt shows it
     ORIENTATIONS landscape
     SOURCES src/Game.cpp)
 target_link_libraries(my_game PRIVATE quench_render quench_physics) # quench_animation for characters
@@ -622,6 +625,92 @@ if (!m_navMesh && m_levelNav->data())                                         //
 ```
 
 `docs/navigation.md`; `examples/demo/sections/NavigationSection.cpp` (two groups, links, obstacles, debug lines).
+
+## Microphone
+
+Push to talk: hold a key, speak, release; the recording goes to a speech-to-text service as a 16 kHz mono WAV.
+
+```cpp
+#include <quench/audio/Microphone.h>
+
+void update(App& app, double) override {
+    audio::Microphone& mic = app.microphone();
+    if (input.pressed(m_talk)) {
+        if (mic.permission() == audio::MicPermission::NotAsked) mic.requestPermission(); // the prompt, once
+        else if (Result<void> r = mic.start({.sampleRate = 16000, .maxSeconds = 15.0}); !r) m_hint = r.error();
+    }
+    if (input.released(m_talk)) mic.stop();
+    if (std::optional<audio::MicRecording> r = mic.takeRecording(); r && r->seconds() > 0.3)
+        upload(r->wav()); // fs::Bytes: a WAV file in memory (quench_net's Request::body)
+}
+void ui(App& app) override {
+    const audio::Microphone& mic = app.microphone();
+    if (mic.permission() == audio::MicPermission::Denied) ImGui::TextUnformatted("Microphone off in the settings");
+    if (mic.active()) ImGui::ProgressBar(std::sqrt(mic.level()), ImVec2(120, 0), "");
+}
+```
+
+`state()`: `Idle`, `Opening` (the device opens on a job, or the browser waits for a gesture), `Recording`,
+`Finished` (by `stop()`, the limit, `limitReached()`, or a lost input, `error()`), `Failed`. `Unknown` permission
+(Windows, Linux) may start. A scenario of the game speaks through the fake source:
+
+```
+mic_request
+until mic_permission == 3 1
+mic_feed voice/open_the_door.wav     # a sound asset of the game
+mic_start
+until mic_seconds >= 1.5 3
+mic_stop
+expect mic_state == 3                # finished: the game takes it in its next update
+```
+
+A unit test of the game's own code makes an `audio::Microphone` (the fake source), calls
+`audio::declareMicrophoneUsage("test")`, `setFakePermission(audio::MicPermission::Granted)`, `feed(...)`, and drives
+it with `update(dt)`. `docs/audio.md`, "Microphone" (per platform: the prompt, the iOS session, the browser).
+
+## HTTP requests
+
+```cpp
+#include <quench/net/Http.h>
+
+net::Client m_net; // member; m_net.update() first thing in Game::update
+
+void ask(const std::string& apiKey, std::string json) {
+    net::Request request;
+    request.method = "POST";
+    request.url = "https://api.example.com/v1/chat/completions";
+    request.headers = {{"Authorization", "Bearer " + apiKey}, {"Content-Type", "application/json"}};
+    request.setBody(json);
+    request.streamBody = true;    // server-sent events, piece by piece
+    request.timeoutSeconds = 60.0;
+    const Result<net::RequestId> id = m_net.send(std::move(request), {
+        .onHeaders = [this](const net::Response& head) { m_streaming = head.status == 200; },
+        .onChunk = [this](std::span<const std::uint8_t> chunk) { m_sse.append(chunk.begin(), chunk.end()); },
+        .onDone = [this](const net::Response& r) {
+            if (!r.ok()) log::warning("game", "assistant: {} ({})", net::errorKindName(r.error), r.message);
+        },
+    });
+    if (!id) log::warning("game", "assistant: {}", id.error()); // a refused URL, no backend on this platform
+    else m_request = *id;  // m_net.cancel(m_request) stops it; onDone then gets ErrorKind::Cancelled
+}
+```
+
+A test of the game's own code against canned answers, with time it moves itself:
+
+```cpp
+#include <quench/net/FakeNetwork.h>
+
+net::FakeNetwork fake;
+double now = 0.0;
+net::Client client(net::ClientDesc{.fake = &fake, .clock = [&] { return now; }});
+net::FakeResponse sse;
+sse.headers = {{"Content-Type", "text/event-stream"}};
+sse.body = {{0.1, "data: {...}\n\n"}, {0.2, "data: [DONE]\n\n"}}; // each piece's delay after the previous one
+fake.respond("POST", "https://api.example.com/v1/chat/completions", sse);
+// ... send, then now += 0.1; client.update(); ... and check fake.last()->request (its headers and body)
+```
+
+`docs/net.md` (the rules, the backends per platform, what is not there).
 
 ## Jobs
 

@@ -1,0 +1,28 @@
+# HTTP requests from the page through quench::net's fetch backend (tools/check.sh step web; docs/net.md). The page is
+# served on 127.0.0.1 by tools/web_check.mjs, whose server answers /net/echo, /net/chunks and /net/stall; any other
+# /net/ path is 404. Commands and values: examples/hello/NetCheck.h (net_state: 0 running, 1 ended, 2 an error).
+net_request get GET /net/echo
+until net_state:get != 0 10
+expect net_state:get == 1
+expect net_status:get == 200
+net_request post POST /net/echo quench-body-0123456789
+until net_state:post != 0 10
+expect net_status:post == 200
+expect net_echo:post == 1           # the body came back
+expect net_bytes:post == 22
+net_stream chunks /net/chunks
+until net_state:chunks != 0 10
+expect net_state:chunks == 1
+expect net_bytes:chunks == 256      # 4 chunks of 64 bytes
+expect net_chunks:chunks >= 3       # delivered as they came, not at once
+expect net_spread:chunks >= 0.5     # the first one at least 0.5 s before the end
+net_request missing GET /net/missing
+until net_state:missing != 0 10
+expect net_state:missing == 1
+expect net_status:missing == 404
+net_stream stall /net/stall
+until net_bytes:stall > 0 10        # its first chunk, then the server waits
+net_cancel stall
+until net_state:stall != 0 5
+expect net_error:stall == 6         # net::ErrorKind::Cancelled
+quit

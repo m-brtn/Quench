@@ -1,0 +1,25 @@
+# The microphone's device path in a browser (tools/check.sh step web; docs/audio.md, "Microphone"): run with
+# --microphone device in headless Chrome started by tools/web_check.mjs --fake-microphone, whose fake media device
+# answers getUserMedia without a prompt and plays Chrome's test tone. The page asks for the permission, records about
+# a second, and the recording has the length asked for and a level above silence; then a recording into its limit.
+# Values: examples/hello/scenarios/mic.txt.
+expect mic_fake == 0
+mic_request
+until mic_permission == 3 10        # granted (Chrome's fake prompt)
+mic_start 30 16000
+until mic_state == 2 10             # the AudioContext runs
+until mic_seconds >= 1 10
+mic_stop
+mic_take
+expect mic_recorded >= 1
+expect mic_recorded < 1.25
+expect mic_recorded_rate == 16000
+expect mic_device_rate >= 8000
+expect mic_level_max > 0.01         # the fake device's tone, not silence
+expect mic_rms > 0.001
+mic_start 0.5
+until mic_state == 3 10
+expect mic_limit == 1
+mic_take
+expect mic_recorded == 0.5
+quit

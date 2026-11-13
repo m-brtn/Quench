@@ -110,8 +110,9 @@ struct AppState {
     std::unique_ptr<JobSystem> jobs;
     std::unique_ptr<assets::AssetManager> assets;
     std::unique_ptr<audio::AudioSystem> audio;
-    std::unique_ptr<audio::Device> audioDevice; // null: offline mixing on the frame clock
-    std::vector<float> audioCapture;            // --audio-capture: the whole mix
+    std::unique_ptr<audio::Device> audioDevice;    // null: offline mixing on the frame clock
+    std::vector<float> audioCapture;               // --audio-capture: the whole mix
+    std::unique_ptr<audio::Microphone> microphone; // App::microphone(): the system's input or the fake source
     std::unique_ptr<SDL_Window, WindowDeleter> window;
     std::optional<gpu::Device> device;
     ImGuiContextGuard imgui;
@@ -189,6 +190,8 @@ struct AppState {
     bool passTimingRequested = false; // App::requestPassTiming in this frame
     std::map<std::string, double, std::less<>> perfValues;  // of the last finished region: perf_frame_avg, ...
     std::map<std::string, double, std::less<>> audioValues; // of the last audio_measure: audio_rms, ...
+    std::map<std::string, double, std::less<>> micValues;   // of the last mic_take: mic_recorded, mic_rms, ...
+    double micLevelMax = 0.0;                               // the highest App::microphone().level() of a recording
 
     ~AppState();
 };

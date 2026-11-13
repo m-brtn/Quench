@@ -33,6 +33,8 @@ src/<module>/              sources and internal headers, per module:
   weather/    the weather map (clouds, precipitation, cirrus) drifting with the wind and evolving, cells, queries,
               the ground's wetness and snow cover, rain or snow by the temperature, the wind's gusts, lightning
   particles/  particle systems' descs, spawns (emitters), the CPU simulation, trails, paths (docs/particles.md)
+  net/        HTTPS requests: the client, the rules, the fake; backends NSURLSession (Apple), fetch (web), none
+              (docs/net.md)
   audio/      mixer, sounds, streams, 3D sound, WAV writer, analysis (headless); the playback device and the
               iOS audio session (miniaudio)
   gpu/        the GPU layer (resources, pipelines, command recording, captures, timing) and its backends:
@@ -67,6 +69,7 @@ docs/releases/        release notes per version
 | `quench_navigation` | navmeshes built on jobs or cooked (the `"navmesh"` asset type, `.qnav`), obstacles, queries, crowds, debug geometry | core, assets, GLM, Recast & Detour (`quench_recast`) | yes |
 | `quench_weather` | the weather map (coverage, cloud type, precipitation, cirrus) with wind and evolution, cells, queries (precipitation, its snow share and the temperature, distance to rain or snow, cover, wind with gusts and eddies, lightning strikes), the wetness and snow cover it remembers | core, gpu_shaders (the field's shared header), GLM | yes |
 | `quench_particles` | particle system descs, spawns by rate, distance and bursts in shapes and along paths, the CPU simulation (the same functions as the GPU's step, `quench/ParticleField.h`), trails behind moving points, centripetal Catmull-Rom paths | core, gpu_shaders (the field's shared header), GLM | yes |
+| `quench_net` | asynchronous HTTPS requests (`net::Client`, delivered on the main thread by `update()`), the HTTPS rule, the log's redaction, redirects, size limits; backends NSURLSession (Apple), fetch (web), none elsewhere; `net::FakeNetwork` for tests | core; Foundation on Apple platforms | yes |
 | `quench_audio` | mixer, buses, sounds (the `"sound"` asset type), streams, generators, 3D sound, WAV writer, signal analysis | core, assets, GLM, miniaudio (decoders) | yes |
 | `quench_audio_device` | playback device, iOS audio session | audio, miniaudio (device API), Core Audio, AVFoundation on iOS | no |
 | `quench_gpu_shaders` | the table type of embedded shaders (`ShaderBlob`, used by `quench_add_shaders`) | none | yes |
@@ -613,6 +616,13 @@ its statistics from atomics; decoding and stream refills run on the job system. 
 not by `raiseWorkerThreadPriority()`. Offline mixing (tests, `--audio-capture`, `--no-audio`) runs the same code on
 the main thread instead. Details: [Audio](audio.md#threads).
 
+The other thread the engine does not start is NSURLSession's delegate queue (`quench_net` on Apple platforms, since
+2026-11-13): a serial queue the system runs, on which the session reports a request's headers, the pieces of its
+body and its end. The delegate only copies them into a locked queue (and stops a request over its size limit or
+refused by the redirect policy); `net::Client::update()` takes them on the main thread and calls the game's
+handlers there. In a browser, fetch's promises run on the main thread between frames and only queue events in
+JavaScript. Details: [Network](net.md).
+
 ## Assets
 
 As built in stage 6 ([Jobs, assets and the cook](assets.md)):
@@ -701,6 +711,16 @@ navmesh tiles; Detour answers queries and DetourCrowd moves agents. Recast and D
 - crowd events for off-mesh links (start, finish, the link's id) and arrivals, and area costs kept by crowd agents
   (Detour's straight-line shortcut ignores them; the engine leaves it off where costs differ);
 - debug geometry as plain vertex lists for any renderer.
+
+## Network
+
+`quench_net` (2026-11-13): HTTP requests for a game that talks to a web API, first an OpenAI-compatible one for an
+in-game assistant. A `net::Client` keeps the requests' state, the rules (HTTPS only except the loopback address, no
+credentials in a URL, secret headers dropped on a redirect to another origin), the timeouts, the size limit and the
+log (never a header's value or the query string); a backend behind `src/net/Backend.h` only moves bytes: NSURLSession
+on Apple platforms, the browser's fetch in web builds, none elsewhere (a libcurl or WinHTTP backend is one more file),
+and the fake (`net::FakeNetwork`) in every build. Handlers are called from `update()` once a frame on the main
+thread, like the asset manager's finishing work. Details: [Network](net.md).
 
 ## Coordinate system and units
 

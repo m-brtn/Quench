@@ -114,13 +114,15 @@ target_link_libraries(quench_assets PUBLIC quench_core quench_glm PRIVATE quench
                                                                           quench_basisu_transcoder)
 
 # ------------------------------------------------------------------ audio
-# Headless: the mixer (buses, voices, streams, 3D sound), sounds as assets, WAV writing and signal analysis. The device
-# (miniaudio's playback API and the iOS audio session) is quench_audio_device below.
+# Headless: the mixer (buses, voices, streams, 3D sound), sounds as assets, WAV writing and signal analysis, and the
+# microphone's recording side (ring, resampler, meter, limit; the fake source). The device (miniaudio's playback and
+# capture APIs, the microphone permission and the iOS audio session) is quench_audio_device below.
 add_library(quench_audio STATIC
     src/audio/Analysis.cpp
     src/audio/AudioSystem.cpp
     src/audio/Decoder.cpp
     src/audio/Hrtf.cpp
+    src/audio/Microphone.cpp
     src/audio/Mixer.cpp
     src/audio/Sound.cpp
     src/audio/Spatial.cpp
@@ -180,6 +182,24 @@ add_library(quench_particles STATIC
 quench_configure_target(quench_particles)
 target_link_libraries(quench_particles PUBLIC quench_core quench_gpu_shaders quench_glm)
 
+# ------------------------------------------------------------------ net
+# Headless: asynchronous HTTPS requests (docs/net.md), their rules, limits and log, delivered on the main thread by
+# Client::update(); the fake network for tests. One platform backend per build: NSURLSession on Apple platforms
+# (AppleBackend.cpp and .m), the browser's fetch in web builds (WebBackend.cpp), none elsewhere yet (NonePlatform.cpp,
+# where a libcurl or WinHTTP backend would go). Nothing to add for a game: HTTPS needs no Info.plist entry on iOS,
+# and EM_JS needs no link option.
+add_library(quench_net STATIC src/net/Client.cpp src/net/FakeNetwork.cpp src/net/NoneBackend.cpp src/net/Rules.cpp)
+if(APPLE)
+    target_sources(quench_net PRIVATE src/net/AppleBackend.cpp src/net/AppleBackend.m)
+    target_link_libraries(quench_net PRIVATE "-framework Foundation")
+elseif(EMSCRIPTEN AND QUENCH_WEB)
+    target_sources(quench_net PRIVATE src/net/WebBackend.cpp)
+else()
+    target_sources(quench_net PRIVATE src/net/NonePlatform.cpp)
+endif()
+quench_configure_target(quench_net)
+target_link_libraries(quench_net PUBLIC quench_core)
+
 # The asset cooker (host tool, tools/cook) and quench_cook_assets().
 include(cmake/QuenchCook.cmake)
 
@@ -232,11 +252,21 @@ if(NOT QUENCH_HEADLESS)
         QUENCH_SHADERS_DXIL=$<BOOL:${QUENCH_SHADER_DXC}>)
 
     # ------------------------------------------------------------------ audio device
-    # miniaudio's playback device pulling the mix of quench_audio; on iOS also the audio session (AVAudioSession).
+    # miniaudio's playback device pulling the mix of quench_audio; on iOS also the audio session (AVAudioSession). The
+    # microphone's input: miniaudio's capture device (MicrophoneDevice.cpp), in a browser getUserMedia
+    # (MicrophoneWeb.cpp); its permission through AVFoundation on Apple platforms (MicPermissionApple.m).
     add_library(quench_audio_device STATIC src/audio/Device.cpp)
+    if(EMSCRIPTEN)
+        target_sources(quench_audio_device PRIVATE src/audio/MicrophoneWeb.cpp)
+    else()
+        target_sources(quench_audio_device PRIVATE src/audio/MicrophoneDevice.cpp)
+    endif()
+    if(APPLE)
+        target_sources(quench_audio_device PRIVATE src/audio/MicPermissionApple.m)
+        target_link_libraries(quench_audio_device PRIVATE "-framework AVFoundation" "-framework Foundation")
+    endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         target_sources(quench_audio_device PRIVATE src/audio/AudioSessionApple.m)
-        target_link_libraries(quench_audio_device PRIVATE "-framework AVFoundation")
     endif()
     quench_configure_target(quench_audio_device)
     target_link_libraries(quench_audio_device PUBLIC quench_audio PRIVATE quench_miniaudio)

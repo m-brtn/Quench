@@ -8,6 +8,8 @@
 #include "core/Platform.h"
 
 #include <quench/audio/Analysis.h>
+#include <quench/audio/Microphone.h>
+#include <quench/audio/Sound.h>
 #include <quench/core/FileSystem.h>
 #include <quench/core/Log.h>
 #include <quench/core/Parse.h>
@@ -19,6 +21,7 @@
 #include <cmath>
 #include <cstring>
 #include <format>
+#include <numbers>
 
 namespace quench::app::detail {
 namespace {
@@ -430,6 +433,162 @@ Scenario::Exec audioMeasure(AppState& s, const ScenarioCommand& c) {
     return Scenario::Exec::Done;
 }
 
+std::optional<audio::MicPermission> parseMicPermission(std::string_view text) {
+    using audio::MicPermission;
+    if (text == "unknown") return MicPermission::Unknown;
+    if (text == "not_asked") return MicPermission::NotAsked;
+    if (text == "granted") return MicPermission::Granted;
+    if (text == "denied") return MicPermission::Denied;
+    if (text == "unavailable") return MicPermission::Unavailable;
+    return std::nullopt;
+}
+
+// The microphone (docs/audio.md, "Microphone"; docs/app.md, "Scenarios"):
+//   mic_permission unknown|not_asked|granted|denied|unavailable   the fake source's permission
+//   mic_request                                 requestPermission()
+//   mic_start [MAX_SECONDS [RATE]]              start() (defaults 30 s, 16000 Hz)
+//   mic_stop, mic_cancel
+//   mic_feed PATH                               queues a sound asset (WAV, FLAC, MP3, Ogg Vorbis) into the fake source
+//   mic_tone HZ SECONDS [AMPLITUDE]             queues a sine (0 Hz: silence; amplitude 0.5 by default)
+//   mic_clear                                   drops what is queued and not played yet
+//   mic_take [FILE.wav]                         takes the finished recording, measures it (mic_recorded, mic_rms,
+//                                               mic_peak, mic_freq, mic_dropped), writes it as 16-bit WAV
+Scenario::Exec micCommand(AppState& s, const ScenarioCommand& c) {
+    using Exec = Scenario::Exec;
+    audio::Microphone& mic = *s.microphone;
+    const std::string first = c.args.empty() ? std::string() : c.args[0];
+    const std::string& op = c.op;
+    if (op == "mic_permission") {
+        const auto permission = parseMicPermission(first);
+        if (c.args.size() != 1 || !permission) {
+            log::error("scenario", "line {}: mic_permission unknown|not_asked|granted|denied|unavailable", c.line);
+            return Exec::Failed;
+        }
+        if (!mic.fake()) {
+            log::error("scenario", "line {}: mic_permission sets the fake source's (this run uses the device)", c.line);
+            return Exec::Failed;
+        }
+        mic.setFakePermission(*permission);
+        return Exec::Done;
+    }
+    if (op == "mic_request") {
+        mic.requestPermission();
+        return Exec::Done;
+    }
+    if (op == "mic_start") {
+        const auto seconds = c.args.size() > 0 ? number(c.args, 0) : std::optional<double>(30.0);
+        const auto rate = c.args.size() > 1 ? number(c.args, 1) : std::optional<double>(16000.0);
+        if (!seconds || !rate || c.args.size() > 2) {
+            log::error("scenario", "line {}: mic_start [MAX_SECONDS [RATE]]", c.line);
+            return Exec::Failed;
+        }
+        if (Result<void> r = mic.start({.sampleRate = std::uint32_t(*rate), .maxSeconds = *seconds}); !r) {
+            log::error("scenario", "line {}: mic_start: {}", c.line, r.error());
+            return Exec::Failed;
+        }
+        return Exec::Done;
+    }
+    if (op == "mic_stop" || op == "mic_cancel") {
+        if (op == "mic_stop")
+            mic.stop();
+        else
+            mic.cancel();
+        return Exec::Done;
+    }
+    if (op == "mic_clear") {
+        mic.clearFeed();
+        return Exec::Done;
+    }
+    if (op == "mic_feed" || op == "mic_tone") {
+        if (!mic.fake()) {
+            log::error("scenario", "line {}: {} feeds the fake source (this run uses the device)", c.line, op);
+            return Exec::Failed;
+        }
+        if (op == "mic_feed") {
+            if (c.args.size() != 1) {
+                log::error("scenario", "line {}: mic_feed PATH (a sound asset)", c.line);
+                return Exec::Failed;
+            }
+            Result<fs::Bytes> bytes = fs::readAsset(first);
+            Result<audio::SoundData> sound =
+                bytes ? audio::decodeSound(*bytes) : Result<audio::SoundData>(Error{bytes.error()});
+            if (!sound) {
+                log::error("scenario", "line {}: mic_feed {}: {}", c.line, first, sound.error());
+                return Exec::Failed;
+            }
+            mic.feed(*sound);
+            log::info("scenario", "mic_feed {}: {:.3f} s", first, sound->duration());
+            return Exec::Done;
+        }
+        const auto hz = number(c.args, 0), seconds = number(c.args, 1);
+        const auto amplitude = c.args.size() > 2 ? number(c.args, 2) : std::optional<double>(0.5);
+        if (c.args.size() < 2 || c.args.size() > 3 || !hz || !seconds || !amplitude || *hz < 0.0 || *seconds <= 0.0 ||
+            *seconds > 600.0) {
+            log::error("scenario", "line {}: mic_tone HZ SECONDS [AMPLITUDE]", c.line);
+            return Exec::Failed;
+        }
+        constexpr std::uint32_t kRate = 48000;
+        std::vector<float> tone(std::size_t(*seconds * kRate));
+        for (std::size_t i = 0; i < tone.size(); ++i)
+            tone[i] = float(*amplitude * std::sin(2.0 * std::numbers::pi * *hz * double(i) / kRate));
+        mic.feed(tone, 1, kRate);
+        return Exec::Done;
+    }
+    if (op == "mic_take") {
+        if (c.args.size() > 1) {
+            log::error("scenario", "line {}: mic_take [FILE.wav]", c.line);
+            return Exec::Failed;
+        }
+        std::optional<audio::MicRecording> r = mic.takeRecording();
+        if (!r) {
+            log::error("scenario", "line {}: mic_take: no finished recording (state {})", c.line,
+                       audio::micStateName(mic.state()));
+            return Exec::Failed;
+        }
+        const audio::Levels levels = audio::measureLevels(r->samples, 1);
+        const audio::Peak peak =
+            audio::dominantFrequency(r->samples, 1, r->sampleRate, 50.0f, float(r->sampleRate) / 2.0f);
+        auto& v = s.micValues;
+        v["mic_recorded"] = r->seconds();
+        v["mic_samples"] = double(r->samples.size());
+        v["mic_rms"] = levels.rmsMono();
+        v["mic_peak"] = levels.peak[0];
+        v["mic_freq"] = peak.frequency;
+        v["mic_dropped"] = double(r->droppedFrames);
+        v["mic_recorded_limit"] = r->limitReached ? 1.0 : 0.0;
+        v["mic_recorded_rate"] = r->sampleRate;
+        log::info("scenario", "mic_take: {:.3f} s at {} Hz, rms {:.4f}, peak {:.4f}, strongest {:.1f} Hz{}{}",
+                  r->seconds(), r->sampleRate, levels.rmsMono(), levels.peak[0], peak.frequency,
+                  r->limitReached ? ", the limit" : "", r->error.empty() ? "" : ", ended: " + r->error);
+        if (c.args.size() == 1) {
+            const fs::Bytes wav = r->wav();
+            if (Result<void> written = writeCaptureFile(first, wav); !written) {
+                log::error("scenario", "line {}: mic_take {}: {}", c.line, first, written.error());
+                return Exec::Failed;
+            }
+            log::info("scenario", "mic_take: wrote {} ({} bytes)", first, wav.size());
+        }
+        return Exec::Done;
+    }
+    return Exec::Failed;
+}
+
+std::optional<double> micValue(AppState& s, std::string_view name) {
+    const audio::Microphone& mic = *s.microphone;
+    if (const auto it = s.micValues.find(name); it != s.micValues.end()) return it->second;
+    if (name == "mic_state") return double(int(mic.state()));
+    if (name == "mic_permission") return double(int(mic.permission()));
+    if (name == "mic_level") return double(mic.level());
+    if (name == "mic_level_max") return s.micLevelMax;
+    if (name == "mic_seconds") return mic.seconds();
+    if (name == "mic_limit") return mic.limitReached() ? 1.0 : 0.0;
+    if (name == "mic_fake") return mic.fake() ? 1.0 : 0.0;
+    if (name == "mic_queued") return mic.queuedSeconds();
+    if (name == "mic_device_rate") return double(mic.info().deviceSampleRate);
+    if (name == "mic_error") return mic.error().empty() ? 0.0 : 1.0;
+    return std::nullopt;
+}
+
 } // namespace
 
 void releaseScenarioInput(AppState& s) {
@@ -493,6 +652,8 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
         if (name == "thermal_reaction_changes") return double(governor.changes());
     }
     if (const auto it = s.perfValues.find(name); it != s.perfValues.end()) return it->second;
+    if (name.starts_with("mic_"))
+        if (const std::optional<double> value = micValue(s, name)) return value;
     if (name.starts_with("audio_")) {
         if (const auto it = s.audioValues.find(name); it != s.audioValues.end()) return it->second;
         const audio::AudioStats stats = s.audio->stats();
@@ -675,6 +836,12 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
         return Exec::Done;
     }
     if (op == "audio_measure") return audioMeasure(s, c);
+    if (op.starts_with("mic_")) {
+        static constexpr std::string_view kMic[] = {"mic_permission", "mic_request", "mic_start",
+                                                    "mic_stop",       "mic_cancel",  "mic_feed",
+                                                    "mic_tone",       "mic_clear",   "mic_take"};
+        if (std::ranges::find(kMic, op) != std::end(kMic)) return micCommand(s, c);
+    }
     if (op == "max_frame_rate") {
         const auto hz = number(c.args, 0);
         if (c.args.size() != 1 || !hz || *hz < 0.0 || *hz > 1000.0) {

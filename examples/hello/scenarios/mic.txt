@@ -1,0 +1,52 @@
+# The microphone with the fake source (ctest: hello_mic_<backend>, a part of check.txt, also in headless Chrome in
+# tools/check.sh step web): no device opens and no prompt appears in a scripted run (docs/audio.md, "Microphone").
+# mic_permission: 0 unknown, 1 not asked, 2 asking, 3 granted, 4 denied, 5 unavailable; mic_state: 0 idle,
+# 1 opening, 2 recording, 3 finished, 4 failed. hello declares MICROPHONE (examples/hello/CMakeLists.txt).
+expect mic_fake == 1
+expect mic_permission == 1          # not asked
+mic_request
+expect mic_permission == 2          # the request is on its way, as a prompt would be
+until mic_permission == 3 1         # granted a frame later
+# A sound asset "spoken" into the input: 0.6 s of 660 Hz at 16 kHz, resampled to the fake input's 48 kHz and back.
+mic_feed mic/tone.wav
+expect mic_queued > 0.59
+mic_start
+until mic_state == 2 1
+until mic_seconds >= 0.5 2
+expect mic_level > 0.3              # the meter follows the tone's peak of 0.4
+expect mic_level < 0.45
+mic_stop
+expect mic_state == 3
+mic_take
+expect mic_state == 0
+expect mic_recorded >= 0.5
+expect mic_recorded < 0.53
+expect mic_recorded_rate == 16000
+expect mic_recorded_limit == 0
+expect mic_freq > 655
+expect mic_freq < 665
+expect mic_peak > 0.37
+expect mic_peak < 0.43
+expect mic_dropped == 0
+# The limit: a recording that runs into it ends there, exactly.
+mic_clear
+mic_tone 440 2 0.25
+mic_start 0.25
+until mic_state == 3 2
+expect mic_limit == 1
+mic_take
+expect mic_recorded == 0.25
+expect mic_recorded_limit == 1
+expect mic_freq > 435
+expect mic_freq < 445
+# Silence after the feed: the level falls, the recording goes on.
+mic_clear
+mic_start 5 8000
+until mic_seconds >= 0.3 2
+expect mic_level < 0.01
+mic_cancel
+expect mic_state == 0
+# A refusal is a state, not a failure.
+mic_permission denied
+expect mic_permission == 4
+mic_permission granted

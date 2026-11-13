@@ -52,11 +52,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             ${basis_test_data}
             audio/AudioTests.cpp
             audio/DeviceTests.cpp
+            audio/MicrophoneTests.cpp
             ${audio_test_data}
             animation/AnimationTests.cpp
             navigation/NavigationTests.cpp
             weather/WeatherTests.cpp
             particles/ParticlesTests.cpp
+            net/NetTests.cpp
             app/DisplayHeadroomTests.cpp
             app/InputTests.cpp
             app/LoadGovernorTests.cpp
@@ -108,7 +110,7 @@ target_include_directories(quench_test_harness PUBLIC harness)
 target_compile_definitions(quench_test_harness PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
 # Every test has the label of the module it checks (ctest -L <label>; tools/check.sh quick picks them from the changed
-# files): core, physics, assets, audio, animation, navigation, weather, particles, cook, gpu, render, app, hello,
+# files): core, physics, assets, audio, animation, navigation, weather, particles, net, cook, gpu, render, app, hello,
 # demo. The variants on Vulkan through MoltenVK also have the label vulkan: tools/check.sh quick leaves them out
 # (-LE vulkan), full and release run them.
 # quench_add_test_executable(<name> PREFIX <ctest prefix> LABEL <label> SOURCES <file>... LIBS <target>...
@@ -123,21 +125,27 @@ endfunction()
 
 # Registers every case of a test executable under PREFIX, run with the given environment. A second call with another
 # prefix runs the same cases again (another GPU driver, for example). A case whose output matches FAIL_REGEX fails.
+# LAUNCHER: a command that starts each case (and the listing) instead of the emulator, with the executable and its
+# arguments after it (tests/net/net_test_server.py --run: the case with a local HTTP server).
 # quench_add_test_variant(<name> PREFIX <ctest prefix> LABEL <label>... [ENVIRONMENT <NAME=value>...]
-#                         [FAIL_REGEX <regex>])
+#                         [FAIL_REGEX <regex>] [LAUNCHER <command>...])
 function(quench_add_test_variant name)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "PREFIX;FAIL_REGEX" "LABEL;ENVIRONMENT")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "" "PREFIX;FAIL_REGEX" "LABEL;ENVIRONMENT;LAUNCHER")
     if(CMAKE_CROSSCOMPILING_EMULATOR MATCHES "simctl" AND arg_ENVIRONMENT)
         # simctl passes only SIMCTL_CHILD_ variables to the process, without the prefix.
         list(TRANSFORM arg_ENVIRONMENT PREPEND SIMCTL_CHILD_)
     endif()
     list(JOIN arg_ENVIRONMENT "|" environment)
     list(JOIN arg_LABEL "|" labels)
+    set(emulator "${CMAKE_CROSSCOMPILING_EMULATOR}")
+    if(arg_LAUNCHER)
+        set(emulator "${arg_LAUNCHER}")
+    endif()
     set(list_file ${CMAKE_CURRENT_BINARY_DIR}/${arg_PREFIX}_cases.cmake)
     add_custom_command(TARGET ${name} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:${name}> -DPREFIX=${arg_PREFIX} -DOUTPUT=${list_file}
                 -DWORKING_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR} -DSKIP_RETURN_CODE=77 "-DLABEL=${labels}"
-                "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" "-DENVIRONMENT=${environment}"
+                "-DEMULATOR=${emulator}" "-DENVIRONMENT=${environment}"
                 "-DFAIL_REGEX=${arg_FAIL_REGEX}" -P ${CMAKE_CURRENT_SOURCE_DIR}/DiscoverTests.cmake
         VERBATIM)
     set(include_file ${CMAKE_CURRENT_BINARY_DIR}/${arg_PREFIX}_include.cmake)
@@ -180,7 +188,7 @@ quench_add_test_executable(quench_assets_tests PREFIX assets LABEL assets
     LIBS quench_assets)
 
 quench_add_test_executable(quench_audio_tests PREFIX audio LABEL audio
-    SOURCES audio/AudioTests.cpp ${audio_test_data}
+    SOURCES audio/AudioTests.cpp audio/MicrophoneTests.cpp ${audio_test_data}
     LIBS quench_audio)
 
 quench_add_test_executable(quench_animation_tests PREFIX animation LABEL animation
@@ -198,6 +206,23 @@ quench_add_test_executable(quench_weather_tests PREFIX weather LABEL weather
 quench_add_test_executable(quench_particles_tests PREFIX particles LABEL particles
     SOURCES particles/ParticlesTests.cpp
     LIBS quench_particles)
+
+# quench_net with the fake network (every build); on macOS also the NSURLSession backend against a local HTTP server
+# on 127.0.0.1 (tests/net/net_test_server.py starts it for each case; without Python 3 those cases are not
+# registered).
+quench_add_test_executable(quench_net_tests PREFIX net LABEL net
+    SOURCES net/NetTests.cpp
+    LIBS quench_net)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_executable(quench_net_apple_tests net/AppleNetTests.cpp)
+        quench_configure_target(quench_net_apple_tests)
+        target_link_libraries(quench_net_apple_tests PRIVATE quench_test_harness quench_net)
+        quench_add_test_variant(quench_net_apple_tests PREFIX net_apple LABEL net
+            LAUNCHER ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/net/net_test_server.py --run)
+    endif()
+endif()
 
 # quench_cook (host builds that build the cook themselves): the library's cases, and the command line run twice on the
 # demo's sources and its generated character with byte-identical outputs.
@@ -294,7 +319,8 @@ if(NOT QUENCH_HEADLESS)
             app/ThermalStateTests.cpp
         LIBS quench_app)
 
-    # The audio device on miniaudio's null backend (no sound), the opt-in default output, the iOS audio session.
+    # The audio device on miniaudio's null backend (no sound), the opt-in default output, the iOS audio session; the
+    # microphone's capture device on the null backend (no input opens, no permission prompt).
     quench_add_test_executable(quench_audio_device_tests PREFIX audio_device LABEL audio
         SOURCES audio/DeviceTests.cpp
         LIBS quench_audio_device)
@@ -477,12 +503,12 @@ if(NOT QUENCH_HEADLESS)
             endforeach()
         endfunction()
 
-        # The hello example: its frame at 1 s against the golden image, the input check and the perf region check, on
-        # SDL GPU's Metal driver, on the native Metal backend (the same golden image) and on Vulkan through MoltenVK
-        # (--gpu-driver vulkan selects SDL GPU). Every backend is named: the default depends on the platform.
+        # The hello example: its frame at 1 s against the golden image, the input, perf region and fake microphone
+        # checks, on SDL GPU's Metal driver, on the native Metal backend (the same golden image) and on Vulkan through
+        # MoltenVK (--gpu-driver vulkan selects SDL GPU). Every backend is named: the default depends on the platform.
         if(QUENCH_TEST_CAPTURES)
             set(hello_args --window 640x360 --frame-size 1280x720 --gpu-debug)
-            set(hello_parts frame:hello input perf)
+            set(hello_parts frame:hello input perf mic)
             set(hello_script ${Quench_SOURCE_DIR}/examples/hello/scenarios/check.txt)
             quench_add_batch(hello metal APP quench_hello SCRIPT ${hello_script} BACKEND metal GPU sdl:metal
                 ARGS ${hello_args} --gpu-backend sdl ENVIRONMENT MTL_DEBUG_LAYER=1 PARTS ${hello_parts})
@@ -634,7 +660,7 @@ add_library(quench_header_check OBJECT ${header_sources})
 quench_configure_target(quench_header_check)
 target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_assets quench_audio
                                                   quench_animation quench_navigation quench_particles
-                                                  quench_weather quench_gpu_shaders)
+                                                  quench_weather quench_net quench_gpu_shaders)
 if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_header_check PRIVATE quench_app quench_render)
 endif()

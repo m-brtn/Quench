@@ -4,7 +4,8 @@
 //
 //   node tools/web_check.mjs --page examples/demo/quench-demo.html [--build build/web] [--out DIR]
 //        [--golden DIR --compare quench_image_compare] [--timeout SECONDS] [--chrome PATH] [--repo DIR]
-//        [--onscreen] [--system-user-dir] [--databases N,N,...] [--not-found PATH]... -- APP ARGUMENTS...
+//        [--onscreen] [--system-user-dir] [--databases N,N,...] [--not-found PATH]... [--fake-microphone]
+//        -- APP ARGUMENTS...
 //        [-- APP ARGUMENTS...]
 //
 // The script serves the build directory at / and the repository at /repo/ on 127.0.0.1, so that a scenario is named
@@ -28,7 +29,14 @@
 //
 // --not-found PATH (relative to the build directory, may be given several times) answers that file with 404 as if it
 // were not on the server: the check of a deferred asset whose download fails (tools/check.sh step web). Files beside
-// the page, such as a game's <OUTPUT_NAME>.assets/ of deferred assets, are served like the page itself.
+// the page, such as a game's <OUTPUT_NAME>.assets/ of deferred assets, are served like the page itself. Paths under
+// /net/ answer the HTTP requests of the quench::net check (answerNet below).
+//
+// --fake-microphone starts Chrome with its fake media device and its fake permission prompt
+// (--use-fake-device-for-media-stream: getUserMedia gets Chrome's test tone, no real input opens;
+// --use-fake-ui-for-media-stream: the prompt is accepted without being shown) and lets audio start without a user
+// gesture (--autoplay-policy=no-user-gesture-required): the microphone check of tools/check.sh step web
+// (examples/hello/scenarios/mic_web.txt with --microphone device). Only that check passes it.
 //
 // Exit code: 0 when the program ended with 0, no WebGPU error was logged and every compared capture passed; 1
 // otherwise; 2 when the page did not reach the program's end.
@@ -55,6 +63,7 @@ const options = {
 };
 let onscreen = false;
 let systemUserDir = false;
+let fakeMicrophone = false;
 let databases = [];
 const notFound = new Set();
 let notFoundAnswers = 0; // requests answered with 404 because of --not-found
@@ -77,6 +86,10 @@ const loads = [];
         }
         if (argv[i] === '--onscreen') {
             onscreen = true;
+            continue;
+        }
+        if (argv[i] === '--fake-microphone') {
+            fakeMicrophone = true;
             continue;
         }
         if (argv[i] === '--system-user-dir') {
@@ -125,8 +138,50 @@ const mime = {
     '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.txt': 'text/plain',
     '.png': 'image/png', '.json': 'application/json', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg',
 };
+// The paths of the quench::net check (examples/hello/scenarios/net_web.txt): /net/echo answers with the request's
+// body and its method in X-Echo-Method, /net/chunks sends 4 chunks of 64 bytes 250 ms apart, /net/stall one chunk
+// and then nothing until the client goes away; any other /net/ path is 404.
+let netRequests = 0;
+function answerNet(path, request, response) {
+    ++netRequests;
+    if (path === '/net/echo') {
+        const parts = [];
+        request.on('data', (part) => parts.push(part));
+        request.on('end', () => {
+            const body = Buffer.concat(parts);
+            response.writeHead(200, {
+                'Content-Type': 'application/octet-stream', 'Content-Length': body.length,
+                'X-Echo-Method': request.method, 'Cache-Control': 'no-store',
+            });
+            response.end(body);
+        });
+        return;
+    }
+    if (path === '/net/chunks' || path === '/net/stall') {
+        response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' });
+        const chunk = (i) => Buffer.from(`chunk ${i} `.padEnd(63, '.') + '\n');
+        response.write(chunk(0));
+        if (path === '/net/stall') return; // until the client cancels
+        let sent = 1;
+        const timer = setInterval(() => {
+            response.write(chunk(sent));
+            if (++sent === 4) {
+                clearInterval(timer);
+                response.end();
+            }
+        }, 250);
+        response.on('close', () => clearInterval(timer));
+        return;
+    }
+    response.writeHead(404).end('not found');
+}
+
 const server = createServer((request, response) => {
     let path = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+    if (path.startsWith('/net/')) {
+        answerNet(path, request, response);
+        return;
+    }
     let base = buildDir;
     if (path.startsWith('/repo/')) {
         base = repoDir;
@@ -156,7 +211,10 @@ const chrome = spawn(options.chrome, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
     '--no-default-browser-check', '--enable-unsafe-webgpu', '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--mute-audio',
-    '--window-size=1280,720', 'about:blank',
+    '--window-size=1280,720',
+    ...(fakeMicrophone ? ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
+        '--autoplay-policy=no-user-gesture-required'] : []),
+    'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
 let finished = false;
@@ -321,6 +379,7 @@ if (options.out) {
 socket.close();
 cleanUp();
 if (notFound.size) console.log(`web_check: ${notFoundAnswers} requests answered with 404 (--not-found)`);
+if (netRequests) console.log(`web_check: ${netRequests} requests to /net/ answered`);
 
 if (stopped) {
     console.error(`web_check: the page stopped: ${stopped}`);

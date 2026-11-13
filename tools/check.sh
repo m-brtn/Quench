@@ -5,7 +5,7 @@
 #   tools/check.sh quick [--preset NAME] [--base REF] [LABEL...]
 #       A small change: format the changed C and C++ files (check only), an incremental build of the preset
 #       (default: release, where the captures are compared), and ctest of the labels the changed files map to
-#       (or of the LABELs given): core physics assets audio animation navigation weather particles cook gpu app
+#       (or of the LABELs given): core physics assets audio animation navigation weather particles net cook gpu app
 #       render hello demo, without the variants on Vulkan through MoltenVK (label vulkan; full and release run
 #       them). The changed files are those that differ from HEAD (from REF with --base) and the untracked ones. A
 #       change to a shared foundation (core, gpu, app, the build) is reported: it needs the full gate; so is a change
@@ -20,7 +20,9 @@
 #                               into a temporary directory), package, web (not a part of full: host-tools and
 #                               release for the tools, the web preset, then the sample's and the demo's scripted
 #                               checks in headless Chrome through tools/web_check.mjs, the demo's captures against
-#                               the Metal golden images, hello's deferred assets fetched (and one that fails), the
+#                               the Metal golden images, hello's deferred assets fetched (and one that fails), its
+#                               HTTP requests through quench::net (GET, POST, chunks, 404, cancel), a recording
+#                               through the microphone's getUserMedia path with Chrome's fake device, the
 #                               user files kept in IndexedDB across loads of the demo; needs Homebrew's emscripten, Node.js and Google Chrome)
 set -euo pipefail
 
@@ -102,6 +104,25 @@ run_step() {
         grep -q "web_check: 2 requests answered with 404" "$deferred_log" ||
             fail "web: the failed deferred asset was not tried twice (log: $deferred_log)"
         grep -E "assets: |deferred_web.txt: |web_check: ([0-9]+ requests|passed|[0-9]+ failed)" "$deferred_log"
+        # HTTP requests through quench::net's fetch backend: a GET, a POST with its body echoed, a chunked body that
+        # arrives over 0.75 s, a 404 and a cancel in the middle, against the paths of web_check.mjs's server.
+        local net_log=build/web/check_net.log
+        node tools/web_check.mjs --page examples/hello/hello.html --out build/web/check/net --timeout 120 -- \
+            --window 320x180 --script /repo/examples/hello/scenarios/net_web.txt >"$net_log" 2>&1 || {
+            tail -40 "$net_log"
+            fail "web: quench::net (log: $net_log)"
+        }
+        grep -E "net: |net_web.txt: |web_check: ([0-9]+ requests|passed|[0-9]+ failed)" "$net_log"
+        # The microphone's device path (getUserMedia, the AudioContext, the resampling to 16 kHz, the limit) with
+        # Chrome's fake media device and fake prompt: no real input opens and nothing is shown.
+        local mic_log=build/web/check_mic.log
+        node tools/web_check.mjs --page examples/hello/hello.html --out build/web/check/mic --timeout 120 \
+            --fake-microphone -- --window 320x180 --microphone device \
+            --script /repo/examples/hello/scenarios/mic_web.txt >"$mic_log" 2>&1 || {
+            tail -40 "$mic_log"
+            fail "web: the microphone (log: $mic_log)"
+        }
+        grep -E "audio: microphone|mic_web.txt: |mic_take|web_check: (passed|[0-9]+ failed)" "$mic_log"
         # The demo's captures are compared with the Metal golden images (the sample's shows the backend's name).
         node tools/web_check.mjs --page examples/demo/quench-demo.html --out build/web/check/demo \
             --golden tests/golden/metal/apple-m4-pro --compare build/release/tests/quench_image_compare -- \
@@ -228,6 +249,7 @@ labels_for() {
     src/particles/* | include/quench/particles/* | tests/particles/* | shaders/quench/ParticleField.h)
         echo "particles render demo"
         ;;
+    src/net/* | include/quench/net/* | tests/net/*) echo "net" ;;
     cmake/QuenchCook.cmake) echo "cook hello demo" ;;
     tools/cook/* | tests/cook/* | tests/CookCli.cmake | cmake/CookToolchain.cmake) echo "cook" ;;
     src/gpu/* | include/quench/gpu/* | tests/gpu/*) echo "gpu render shared" ;;
@@ -312,7 +334,7 @@ quick() {
         echo "NOTE: the change touches CMake files: run tools/check.sh step xcode (it generates the ios-xcode project,"
         echo "which refuses some things Ninja accepts) before committing it."
     fi
-    if [[ $shared -eq 0 && " $labels " =~ \ (physics|assets|audio|animation|navigation|weather|particles)\  ]]; then
+    if [[ $shared -eq 0 && " $labels " =~ \ (physics|assets|audio|animation|navigation|weather|particles|net)\  ]]; then
         echo
         echo "NOTE: the change touches a headless module: run tools/check.sh step wasm (its tests as WebAssembly under"
         echo "Node.js) before committing it."

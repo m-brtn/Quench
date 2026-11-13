@@ -102,7 +102,8 @@ build directory without the override.
 
 Link what the game uses beside `quench_add_game()`:
 `target_link_libraries(my_game PRIVATE quench_render quench_physics quench_animation)`. `quench_main` already brings
-`quench_app`, `quench_assets`, `quench_audio`, `quench_gpu`, ImGui and GLM.
+`quench_app`, `quench_assets`, `quench_audio`, `quench_gpu`, ImGui and GLM; `quench_add_game()` also links
+`quench_net`.
 
 - **Drawing.** The template draws with `quench::gpu` (its own pipeline; HLSL through `quench_add_shaders()`, uniform
   structs in `shaders/*.h` with 16-byte members only). For lit 3D use `quench_render`: `render::Renderer::create`,
@@ -167,12 +168,33 @@ Link what the game uses beside `quench_add_game()`:
   `bodies()` with `PhysicsLayers::kStatic` or `kMoving`; `step(float(dt))` in `fixedStep`.
 - **Audio.** `app.audio()`: `load`, `play` with `PlayParams` (buses `"music"`, `"effects"`, `"ui"` by default;
   `spatial` with an `Emitter`), `setListener`, `playMusic`. The app calls its `update()`. `docs/audio.md`.
+- **Microphone.** Only with `quench_add_game(... MICROPHONE "the reason shown to the player")` (without it the
+  game has no usage string, which stores require to match a use, and recording fails with an error naming the
+  option). `app.microphone()` (the app updates it before `Game::update`): `permission()` (`Unknown`, `NotAsked`,
+  `Asking`, `Granted`, `Denied`, `Unavailable`), `requestPermission()` (the system's prompt; the answer comes in a
+  later frame), `start({.sampleRate = 16000, .maxSeconds = 30})`, `level()` (0..1, for a meter), `seconds()`,
+  `stop()`, then `takeRecording()` once `state()` is `Finished`: `MicRecording::wav()` is a 16-bit mono WAV in
+  memory for an upload. Nothing blocks a frame; a refusal or no device is a state to show, not an error to crash
+  on. In a browser call `start()` in the frame of the key press (a user gesture) and serve over https. Scripted
+  runs use the fake source (never a real input or a prompt): `mic_feed PATH`, `mic_tone`, `mic_permission`,
+  `mic_start`, `mic_stop`, `mic_take`. [reference.md](reference.md), "Microphone"; `docs/audio.md`, "Microphone".
 - **Animation.** The game owns an `animation::AnimationSystem` on `app.assets()` and `app.jobs()` and calls its
   `update(dt)` in `Game::update`; skinned models come through `SceneAssets`. `docs/animation.md`, "Use".
 - **Navigation.** Link `quench_navigation`. `navigation::NavMesh::build` on `app.jobs()` from the level's triangles
   (or a cooked `.qnav` through `navigation::NavMeshAsset`), `update()` every frame (it never waits; tiles appear as
   their jobs finish), `navigation::Crowd` stepped in `fixedStep`, `navigation::NavQuery` for paths. The mesh
   outlives its crowds and queries (declare it first). `docs/navigation.md`, "Use".
+- **HTTP requests.** `quench_net`, linked into every game: a `net::Client` member, `client.update()` once a frame in
+  `Game::update` (every handler runs there, on the main thread), `client.send(net::Request, net::Handlers)` with
+  `onHeaders`, `onChunk` (with `Request::streamBody`: server-sent events, streamed audio) and `onDone` (once per
+  sent request, also after `cancel(id)`; `Response::ok()` is the transport, `success()` a 2xx status). HTTPS only
+  (plain http to `localhost`, `127.0.0.1`, `[::1]` only); `send` fails at once for a refused URL and on platforms
+  without a backend (Linux, Windows, the Node.js build: `client.available()` is false; hide the feature there).
+  Every request has a timeout (30 s) and a body limit (16 MB) by default. The log never shows a header's value or
+  the query string, so keys go in headers; a player's API key is the player's: keep it in the user directory, never
+  in the repository, a scenario or a log line. Tests use `net::FakeNetwork` (`ClientDesc::fake`, a manual
+  `ClientDesc::clock`). In a browser the server must allow the page's origin (CORS). [reference.md](reference.md),
+  "HTTP requests"; `docs/net.md`.
 - **Jobs.** `app.jobs()`: `run`, `parallelFor`; poll `Job::done()` across frames for long work, `wait` only for work
   the frame needs now. Jobs must not throw. `docs/assets.md`, "Job system".
 - **Input.** `app.input().addAction(name, {bindings})` with `Binding::key("Space")` (returns an optional:
@@ -211,14 +233,15 @@ Link what the game uses beside `quench_add_game()`:
 
 `docs/app.md`, "Scenarios", "Offscreen runs", "Captures and golden images".
 
-- **Offscreen.** Runs with `--script`, `--capture` or `--quit-after` show no window, take no input from real devices
-  and play no sound (the mix runs offline). Never start a run with `--onscreen` or without those flags (it opens a
+- **Offscreen.** Runs with `--script`, `--capture` or `--quit-after` show no window, take no input from real devices,
+  play no sound (the mix runs offline) and open no microphone (the fake source). Never start a run with `--onscreen` or without those flags (it opens a
   window and plays sound) without asking the user.
 - **Scenarios** (`--script FILE`): `wait`, `until`, `expect`, `mark` (then `d_NAME`), `down`, `up`, `tap`, `touch`,
   `click`, `mouse`, `gamepad`, `resize`, `capture`, `audio_measure`, `perf_begin`, `perf_end`, `max_frame_rate`,
   `thermal_state` (a fake thermal state, `system` ends it; also `--thermal-state NAME`), `frame_load` (fake frame
-  times for the reaction to late frames, `system` ends it), `include`, `quit`.
-  Values: the game's (`scenarioValue`), `time`, `action:NAME`, `audio_played`, `audio_rms`, `gpu_resources`,
+  times for the reaction to late frames, `system` ends it), the fake microphone's `mic_*` commands, `include`, `quit`.
+  Values: the game's (`scenarioValue`), `time`, `action:NAME`, `audio_played`, `audio_rms`, `mic_state`,
+  `mic_seconds`, `mic_recorded`, `gpu_resources`,
   `thermal_reaction`, `frame_rate_limit`, `load_scale`, `mobile`, `imgui_id_conflicts` (ImGui items sharing an ID in one frame, each also
   logged as an error: `expect imgui_id_conflicts == 0` after showing a panel) and more.
   Each check logs `ok` or `FAIL line N`; the exit code is 1 when one failed. Scripted runs are deterministic: one
@@ -265,7 +288,8 @@ demo; a template game in headless Chrome). What differs there:
 - The default user directory (settings, saves) is kept in the browser's IndexedDB between visits (loaded before
   `init`, stored after each `fs::writeUser`; not the last moment before a tab closes, not across browsers or private
   windows; in memory when IndexedDB is missing or blocked; `docs/app.md`, "User files in a browser"); `--user-dir`
-  stays in memory. Sound starts with the first click, key or touch.
+  stays in memory. Sound starts with the first click, key or touch; so does the microphone's input, which also
+  needs an https page (or localhost) and the browser's own prompt.
 - Everything in `.data` loads before the first frame. Large files the game can start without (music) go into
   `quench_add_game(... DEFERRED_ASSETS music/*.mp3)`: beside the page in `<name>.assets/`, fetched while the game
   runs. Ask for them early with `fs::requestAsset(path, priority)` and use one only once `fs::assetState(path)` is

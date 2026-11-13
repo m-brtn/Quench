@@ -81,6 +81,19 @@ tunnel phone scenarios, with the same numbers as before ([Performance](performan
 | Android | Vulkan | SPIR-V | nothing | nothing |
 | Web | none: the engine's WebGPU backend (SDL GPU has none) | WGSL | headless tests under Node.js; hello and the demo with their scripted checks in Chrome on the Mac (headless, WebGPU over Metal), experimental | nothing |
 
+HTTPS requests (`quench_net`, 2026-11-13, after 0.17.0): NSURLSession on macOS and iOS, the browser's fetch in the
+web build, no backend on Linux, Windows, Android and under Node.js (a send fails at once there). Run on the Mac (its
+tests against a local HTTP server on 127.0.0.1; by hand, one GET of a public test host over TLS) and in headless
+Chrome on the Mac (hello's check against `tools/web_check.mjs`'s server); the Apple backend's Objective-C is the same
+file on iOS but has not run there (neither the iOS Simulator nor an iPhone). [Network](net.md).
+
+Microphone capture (`audio::Microphone`, 2026-11-13, after 0.17.0; [Audio](audio.md#microphone)): miniaudio's capture
+device with AVFoundation's permission on macOS and iOS (iOS also switches the audio session to `PlayAndRecord` while
+recording), `getUserMedia` in a browser, miniaudio's capture with an unknown permission on Windows and Linux. Run with
+the fake source and on miniaudio's null backend on the Mac, under Node.js (headless), and in headless Chrome on the
+Mac with Chrome's fake media device; no real input opened anywhere; iOS only compiled, Windows and Linux not built
+with it.
+
 TrailForge also ran on Vulkan through MoltenVK on the Mac as a test of the SPIR-V path. Ashfall has only run on macOS;
 its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewhere.
 
@@ -251,6 +264,15 @@ them) and only Web Audio in a browser build (the `web` preset).
 | Web | under Node.js none (`MA_NO_DEVICE_IO`); in a browser (the `web` preset) miniaudio's Web Audio backend through a `ScriptProcessorNode`, mixing on the main thread | the mixer, decoders and analysis under Node.js (`wasm-node`, single-threaded; the thread stress case is skipped). In a browser the output opens (Chrome on the Mac, 2026-11-10: 48 kHz, periods of 512 frames) and starts only after a user gesture; the scripted checks mix offline. Nobody has listened to it; no null device there (`--audio-device null` is not available, `--no-audio` is) |
 | Windows, Linux, Android | miniaudio's defaults for the platform (not configured or built yet) | nothing |
 
+The microphone ([Audio](audio.md#microphone)):
+
+| Where | Input and permission | Run so far |
+|---|---|---|
+| Mac | miniaudio's capture (Core Audio); `AVCaptureDevice`'s authorization, attributed to the responsible app (a bare game started from a terminal: the terminal, with the terminal's usage text) | the fake source (unit tests, hello's `mic` part on the three backends) and `audio_device.mic_null_device` on the null backend; no real input opened, the system's prompt never shown; the manual check `hello --mic-check SECONDS` is the user's |
+| iOS (Simulator, iPhone) | the same capture; `AVAudioApplication`'s record permission with the game's `MICROPHONE` reason; the session `PlayAndRecord` (`DefaultToSpeaker`, `AllowBluetoothA2DP`, `MixWithOthers` for an `Ambient` game) while recording, the game's category after it | **written from Apple's documentation, not run**: its Objective-C and capture code compiled against the iOS 26 SDK only; the Simulator's and the iPhone's runs (the prompt, the speaker staying the output, the switch back, Bluetooth headsets) need the user |
+| Web | `getUserMedia` into its own `AudioContext` (a `ScriptProcessorNode` on the main thread); the Permissions API's state; https or localhost only; starts after a user gesture | the fake source in hello's check and the device path with Chrome's fake media device and fake prompt (`mic_web.txt`, headless Chrome on the Mac); no real microphone, no other browser (Safari's repeated prompts not tried) |
+| Windows, Linux | miniaudio's capture; permission unknown (the device is tried) | not built with it, not run |
+
 ## Animation
 
 `quench_animation` is headless and portable C++ on ozz-animation, whose SIMD math is SSE and AVX only: on ARM (the
@@ -370,6 +392,12 @@ WebAssembly on the browser's WebGPU. Run so far only in Chromium on the Mac (Web
   indirect draws, depth clamp where the adapter has `depth-clip-control`. BC, ETC2 and ASTC textures by the
   adapter's features (Basis Universal files are transcoded to what it has; BC7 in Chrome on the Mac). The renderer
   takes its fallbacks as on any device without ray tracing.
+- **HTTP requests.** `quench_net` uses the browser's fetch (`src/net/WebBackend.cpp`): CORS applies to other
+  origins, cookies are not sent, the browser follows redirects; checked with hello's `scenarios/net_web.txt` in
+  headless Chrome on the Mac only ([Network](net.md)).
+- **Microphone.** `getUserMedia` (`src/audio/MicrophoneWeb.cpp`), only on https or localhost pages; the browser's
+  prompt; its input starts after a user gesture. Checked with Chrome's fake media device in headless Chrome on the
+  Mac only ([Audio](audio.md#microphone)).
 - **Threads.** None: the job system runs with zero workers (a build with threads needs cross-origin isolation, COOP
   and COEP headers on the host; not built). The program is linked with Asyncify: the backend waits for the browser
   when the device starts and when a download or a fence is waited for.

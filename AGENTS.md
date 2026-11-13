@@ -94,8 +94,15 @@ into the scene),
 per-sound sends, sounds as an asset
 type (WAV, FLAC, MP3, Ogg Vorbis), streamed music with crossfades, game-generated sources, 3D sound with Doppler and voice stealing,
 panned or through an HRTF for headphones (off by default), WAV writing
-and signal analysis), `quench_audio_device` (output through miniaudio, the iOS audio session; `App::audio()`,
-`--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`), `quench_animation`
+and signal analysis; since 2026-11-13 after 0.17.0, not released, the microphone's recording side: `audio::Microphone`,
+a lock-free ring the input fills, resampling to 16 kHz on the main thread, a level meter, a length limit, 16-bit WAV
+in memory, a fake source for tests and scenarios), `quench_audio_device` (output through miniaudio, the iOS audio
+session; `App::audio()`, `--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`;
+the microphone's input: miniaudio's capture opened and closed on jobs, the permission through AVFoundation on macOS
+and iOS, `PlayAndRecord` on iOS while recording, `getUserMedia` in a browser; `App::microphone()`, `--microphone`,
+`quench_add_game(... MICROPHONE "reason")`, the `mic_*` scenario commands; run with the fake source, on miniaudio's
+null backend and in headless Chrome with Chrome's fake media device, no real input opened yet, iOS only compiled;
+`docs/audio.md`, "Microphone"), `quench_animation`
 (headless, on ozz-animation: skeletons, clips and graphs as assets, blend trees, 2D blend spaces, JSON state machines with
 cross-fades, events, root motion, masked and additive layers, float channels in clips for blend shape weights, two-bone and aim IK, look-at, foot placement, bone
 attachments, the update in parallel on the job system, animation LOD by screen size), `quench_navigation` (headless,
@@ -151,7 +158,13 @@ size and HDR color over the life, twinkle, additive, alpha and lit blending, cam
 motion, procedural sprites; trails thin and fade toward the tail, a glow at the head, sparkles shed into a system;
 not in the ray tracing structures, off in the path tracer's frames; run on the Mac's three backends offscreen, in
 the iOS Simulator's tests and, the headless part, as WebAssembly under Node.js; nobody has looked at it in motion,
-nothing of it on a phone)
+nothing of it on a phone), `quench_net` (headless, 2026-11-13 after 0.17.0, not released; the user's request for an
+in-game AI assistant: asynchronous HTTPS requests with streamed bodies, cancel, timeouts and a size limit, delivered
+on the main thread by `net::Client::update()`, HTTPS only except the loopback address, a log without header values
+or query strings, secret headers dropped on redirects to another origin, no cookies; NSURLSession on Apple
+platforms, the browser's fetch in web builds, none elsewhere yet, `net::FakeNetwork` for tests; run on the Mac
+against a local server and in headless Chrome on the Mac, not in the iOS Simulator, on an iPhone or against a real
+provider; `docs/net.md`)
 and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons, clips and navmeshes).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (finished in stage 10: a section per feature,
@@ -198,7 +211,7 @@ the asset system, the engine's audio, animation, navigation, weather or particle
 remaining work) is built with the web build below and not listened to; what comes next is listed in
 `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
-`docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`, `docs/particles.md`, `docs/demo.md`,
+`docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`, `docs/particles.md`, `docs/net.md`, `docs/demo.md`,
 `docs/performance.md` and `docs/platforms.md` describe what is built, `docs/architecture.md` the design with the
 native backend and ray tracing as built; the rest of `docs/` is design and plan beyond stage 14. Update this paragraph whenever that changes.
 
@@ -382,7 +395,7 @@ build/debug/quench_cook --help
 ```
 
 Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...) with its
-module's label (`ctest -L animation`; labels: core, physics, assets, audio, animation, navigation, weather, particles, cook,
+module's label (`ctest -L animation`; labels: core, physics, assets, audio, animation, navigation, weather, particles, net, cook,
 gpu, app, render, hello, demo; the variants on Vulkan through MoltenVK also have `vulkan`). A test executable runs one case by
 name (`build/debug/tests/quench_core_tests json_round_trip`), all cases
 without arguments, and lists them with `--list`. A case that cannot run in a build (threads in the single-threaded
@@ -392,7 +405,10 @@ web build) calls `QUENCH_SKIP` and is reported as skipped, not passed.
 `--quit-after` are offscreen on desktops (a hidden window, frames rendered offscreen, no Dock icon, also as a bundled
 app, no focus), take no input from real devices and make no sound (`docs/app.md`, "Offscreen runs"); test
 executables create hidden windows only. Never start a run that shows a window (`--onscreen`, the benchmarks,
-`QUENCH_WINDOW_TESTS=1`) without telling the user first.
+`QUENCH_WINDOW_TESTS=1`) without telling the user first. **No automated run or test opens a real microphone**
+(2026-11-13): scripted runs use the fake source, the tests miniaudio's null backend, the web check Chrome's fake
+media device; on this Mac a real input can put a permission prompt on the user's screen. The manual check
+(`hello --mic-check SECONDS`, `docs/audio.md`) is the user's to run.
 
 GPU tests (`quench_gpu_device_tests`) render small offscreen targets and check the pixels they read back. On the Mac
 every case runs twice: `gpu_device.*` on the default driver (Metal, with the Metal API validation layer,
@@ -432,7 +448,7 @@ decision, 2026-11-06); `tools/check.sh` runs them, offscreen:
   that can break where the change can: `tools/check.sh step asan` or `step tsan` (threaded code), `step wasm` (a
   headless module), `step ios` (platform code), `step new-game` (what a game's build uses: `cmake/QuenchGame.cmake`,
   the template, the game skill), `step web` (the WebGPU backend, the WGSL shader path, the web parts of the app and
-  of `quench_add_game()`; about 2 minutes after the first build; not a part of `full`). A change to profiling code (`Profile.h`, `cmake/QuenchTracy.cmake`, the zones)
+  of `quench_add_game()`, `quench_net`'s fetch backend; about 2 minutes after the first build; not a part of `full`). A change to profiling code (`Profile.h`, `cmake/QuenchTracy.cmake`, the zones)
   also builds the `profile` preset and runs its `ctest -L "core|hello"` (`hello_tracy_capture` records a capture).
 - **Shared foundations (core, the job system and threads, the GPU layer, the app loop, the build and CMake) and the
   end of a stage: `tools/check.sh full`.** format; `debug`, `release`, `asan` and `tsan` (build and ctest each; the
@@ -474,7 +490,7 @@ Details and rationale: `docs/architecture.md`.
 - **Names.** Namespace `quench`; CMake prefix `QUENCH_`; targets `quench_<module>`; shader entry guards
   `QUENCH_ENTRY_<name>` and `QUENCH_STAGE_VERTEX` / `QUENCH_STAGE_FRAGMENT` / `QUENCH_STAGE_COMPUTE`. Games keep
   their own namespaces and prefixes.
-- **Headless core.** Simulation, physics, assets, animation, navigation, weather, particles and the audio mixer must not depend on
+- **Headless core.** Simulation, physics, assets, animation, navigation, weather, particles, network requests and the audio mixer must not depend on
   windowing, the GPU or rendering, so they run in CTest without a window (and under Node.js for the web check).
 - **Graphics goes through `quench::gpu`.** Backends: SDL GPU (portable, the first one, the default off Apple
   platforms, `--gpu-backend sdl`), native Metal (since stage 9, `--gpu-backend metal`; the default on Apple
@@ -510,8 +526,11 @@ Details and rationale: `docs/architecture.md`.
   priority inversion. The one exception is the audio device's callback thread, owned by the operating system's audio
   API (Core Audio through miniaudio) and scheduled by it with a real-time deadline: it only mixes
   (`AudioSystem::render`), with no allocation, freeing, locks, logging, file access or waits, and talks to the game
-  thread through lock-free queues and atomics; decoding and stream refills run on the job system
-  (`docs/architecture.md`, "Threads and jobs"; `docs/audio.md`, "Threads").
+  thread through lock-free queues and atomics (the microphone's capture callback only copies into a lock-free ring
+  that `audio::Microphone::update()` drains on the main thread); decoding and stream refills run on the job system
+  (`docs/architecture.md`, "Threads and jobs"; `docs/audio.md`, "Threads"). The other is NSURLSession's delegate
+  queue (`quench_net` on Apple platforms): it only copies a request's headers and body pieces into a locked queue
+  that `net::Client::update()` takes on the main thread (`docs/net.md`).
 - **No ECS in the core, no plugin system.** Engine APIs take plain handles; a game may put an ECS on top (Flecs is the
   candidate, as an optional module). Modules are linked statically.
 - **No abstraction without a concrete need.** The GPU layer above is the decided exception, for the reasons given.
@@ -749,20 +768,26 @@ cmake/                 Dependencies (runtime pins), ShaderToolchain (shader comp
                        SdlLevelSize: SDL GPU's shader blit and render passes with levels at least 1 x 1;
                        SdlVulkanDefrag: no Vulkan defragmentation while another command buffer is open)
 include/quench/        public headers per module: core/, physics/, assets/, audio/, animation/, navigation/,
-                       weather/, particles/, gpu/, app/, render/
+                       weather/, particles/, net/, gpu/, app/, render/
 src/                   sources and internal headers per module (src/core/Platform.h: QUENCH_PLATFORM_*;
                        src/core/Jobs.cpp: the job system; src/physics/JoltJobSystem: Jolt's jobs on it;
                        src/physics/WindDrag: the wind's drag on chosen bodies;
                        src/assets/: the asset manager, KTX2, Basis Universal (Basis.cpp; BasisTranscoder.cpp and
                        BasisZstd.c build the transcoder), cooked models, tangents, streaming; src/audio/: the mixer,
                        decoders, streams, the HRTF (Hrtf; HrtfTable.inc: the reduced SADIE set), the weather's
-                       sounds (WeatherAudio), the device and the iOS audio session (AudioSessionApple.m);
+                       sounds (WeatherAudio), the device and the iOS audio session (AudioSessionApple.m), the
+                       microphone (Microphone.cpp and MicBackend.h: the recording and the fake source;
+                       MicrophoneDevice.cpp: miniaudio's capture; MicrophoneWeb.cpp: getUserMedia;
+                       MicPermissionApple.m: the permission);
                        src/animation/: skeletons, clips, graphs, the character update, IK, the animation system
                        (ozz-animation inside); src/navigation/: navmesh builds on jobs (Build.cpp), tiles and
                        obstacles (NavMesh.cpp), .qnav data and the asset type, queries, the crowd, debug geometry
                        (Recast & Detour inside); src/weather/: the weather map, its cells, queries, wetness,
                        the wind and lightning; src/particles/: descs and curves (Particles.cpp), spawns
-                       (Emitter.cpp), the CPU simulation, trails, paths;
+                       (Emitter.cpp), the CPU simulation, trails, paths; src/net/: the HTTP client, its rules and
+                       log (Client.cpp, Rules.cpp), the backend interface (Backend.h), NSURLSession
+                       (AppleBackend.m and .cpp), fetch (WebBackend.cpp), none (NoneBackend.cpp,
+                       NonePlatform.cpp), the fake (FakeNetwork.cpp);
                        src/gpu/Backend.h: the backend interface; src/gpu/sdlgpu/: the
                        SDL GPU backend; src/gpu/metal/: the native Metal backend (Objective-C++, ARC; Apple
                        platforms); src/gpu/webgpu/: the WebGPU backend (web builds); src/gpu/shaders/: the backends' own shaders (blit); src/app/Main.cpp: quench_main;
@@ -783,7 +808,10 @@ shaders/quench/        the engine shader library (#include "quench/..."): BRDF (
                        the field in a shader, sway); SceneUniforms.h, the uniform structs shared by C++ and HLSL;
                        WeatherField.h, the weather and wind field shared by quench_weather and the shaders;
                        ParticleField.h, the particles' motion and look shared by quench_particles and the shaders
-examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon
+examples/hello/        the sample game: lit mesh, ImGui, input and benchmark scenarios, icon; NetCheck.h: HTTP requests
+                       for the web check (scenarios/net_web.txt); MicCheck.h: the manual microphone check
+                       (--mic-check SECONDS); scenarios/mic.txt (the fake microphone), mic_web.txt (Chrome's fake
+                       device)
 examples/demo/         the engine demo: a menu of sections (rendering features, HDR output, physics, input, assets,
                        audio, animation, ray tracing, the tunnel, navigation, weather, particles), one file each in sections/ behind
                        Demo.h's Section interface (shaders/: the checker and plant surfaces); the app around them (DemoGame.h: the layouts in Ui.cpp, the camera in
@@ -823,13 +851,15 @@ tools/publish_web.sh   assembles the web demo and sample in dist/web, checks it 
 tools/format.sh        clang-format over the C and C++ sources (--check)
 tests/                 harness/, core/ (job system included), physics/, assets/ (data/: CC0 Basis Universal test files
                        written by cook.cook_basis_test_data), audio/ (mixer, streams, decoders, device; data/: CC0 test
-                       sounds), animation/, navigation/, weather/, particles/, cook/ (and CookCli.cmake), gpu/ (shader tests; GPU
+                       sounds; MicrophoneTests.cpp: the microphone with the fake source), animation/, navigation/,
+                       weather/, particles/, net/ (the fake's cases; the
+                       NSURLSession cases and net_test_server.py, their local HTTP server), cook/ (and CookCli.cmake), gpu/ (shader tests; GPU
                        device tests and their shaders; RayTracingTests: acceleration structures, MetalFX;
                        VolumeTests: 3D textures from 2D array layers, cube faces), app/, render/ (scene,
                        scene assets, skinning, particle and frame tests), header check, RunBatch.cmake and CheckPart.cmake (the
                        apps' batch runs and their parts); golden/ (reference captures)
 docs/                  documentation (index docs/README.md): architecture, app shell, jobs, assets and the cook, audio,
-                       animation, navigation, weather, particles, render module, engine demo, performance, platforms, dependencies,
+                       animation, navigation, weather, particles, network, render module, engine demo, performance, platforms, dependencies,
                        migration, roadmap, releases/
 docs/images/           the README's screenshots (a few small JPEG files from the demo, each under about 300 KB)
 dist/                  demo packages from tools/package_demo.sh, the web site from tools/publish_web.sh (not committed)

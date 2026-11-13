@@ -59,6 +59,7 @@ JobSystem& App::jobs() { return *m_state.jobs; }
 assets::AssetManager& App::assets() { return *m_state.assets; }
 audio::AudioSystem& App::audio() { return *m_state.audio; }
 audio::Device* App::audioDevice() { return m_state.audioDevice.get(); }
+audio::Microphone& App::microphone() { return *m_state.microphone; }
 SDL_Window* App::window() const { return m_state.window.get(); }
 Input& App::input() { return m_state.input; }
 const Input& App::input() const { return m_state.input; }
@@ -566,6 +567,26 @@ void updateStats(AppState& s, double realDt, double cpuMs, double waitMs, int ti
     }
 }
 
+// App::microphone(): the fake source in runs nobody watches (a real input never opens offscreen on a desktop, so no
+// permission prompt appears there), the system's input otherwise; --microphone chooses (docs/audio.md,
+// "Microphone"). Nothing is opened until the game (or a scenario) asks for a recording.
+void startMicrophone(AppState& s) {
+    constexpr bool kDesktop = QUENCH_PLATFORM_MACOS || QUENCH_PLATFORM_WINDOWS || QUENCH_PLATFORM_LINUX;
+    bool device = s.options.microphone.empty() ? !s.options.automated() : s.options.microphone == "device";
+    if (device && s.offscreen && kDesktop) {
+        log::warning("audio", "--microphone device: an offscreen run on a desktop never opens a real input; the fake "
+                              "source");
+        device = false;
+    }
+    if (device) {
+        s.microphone = audio::makeMicrophone(*s.jobs, {.session = s.desc.audioDevice.session});
+    } else {
+        s.microphone = std::make_unique<audio::Microphone>();
+        if (!s.options.microphone.empty() || s.options.automated())
+            log::info("audio", "microphone: the fake source (scenario commands mic_feed, mic_tone, mic_permission)");
+    }
+}
+
 // The mixer and its output: a device, or offline mixing on the frame clock (--no-audio, --audio-capture, or no
 // device could be opened).
 void startAudio(AppState& s) {
@@ -594,6 +615,15 @@ void startAudio(AppState& s) {
         s.audio->setOffline(true);
         log::info("audio", "offline mixing on the frame clock ({}), {} Hz", offline, s.audio->sampleRate());
     }
+    startMicrophone(s);
+}
+
+void updateMicrophone(AppState& s, double frameDt) {
+    audio::Microphone& mic = *s.microphone;
+    mic.update(frameDt);
+    // mic_level_max (scenario value): the highest level since the recording began.
+    if (mic.state() == audio::MicState::Opening) s.micLevelMax = 0.0;
+    s.micLevelMax = std::max(s.micLevelMax, double(mic.level()));
 }
 
 void updateAudio(AppState& s, double frameDt) {
@@ -979,6 +1009,7 @@ SDL_AppResult iterate(AppState& s) {
     }
     s.assets->update();
     s.device->pollShaderHotReload();
+    updateMicrophone(s, frameDt);
     {
         QUENCH_PROFILE_ZONE("app.update");
         s.game->update(s.app, frameDt);
@@ -1039,6 +1070,7 @@ SDL_AppResult event(AppState& s, SDL_Event& e) {
     case SDL_EVENT_WILL_ENTER_BACKGROUND:
         s.background = true;
         if (s.audioDevice) s.audioDevice->suspend();
+        if (s.microphone) s.microphone->stop(); // the recording so far stays; the input closes
         log::info("app", "entering background");
         break;
     case SDL_EVENT_DID_ENTER_FOREGROUND:
@@ -1067,6 +1099,7 @@ void quit(AppState& s, SDL_AppResult result) {
     if (s.gameStarted) s.game->shutdown(s.app);
     s.gameStarted = false;
     s.game.reset();
+    s.microphone.reset(); // waits for its open or close job
     s.audio.reset();
     // Loads and jobs a game left behind may still read files: they finish before the file system backend goes.
     s.assets.reset();

@@ -775,6 +775,22 @@ runner (WARP); next the user's run on their PC, then part 2 (a native Vulkan bac
 (a native Direct3D 12 backend with DXR), then part 4 (the native backend as the default there, so that ray tracing
 runs without a flag; added 2026-11-10).
 
+Asked by the user on 2026-11-13, for an in-game AI assistant (a player's own API key for an OpenAI-compatible API:
+chat completions with tool calls, speech-to-text, text-to-speech): its transport first, built the same day after
+0.17.0 and not yet released: `quench_net`, asynchronous HTTPS requests with streamed bodies on NSURLSession (macOS
+and iOS) and the browser's fetch, a fake for tests, none elsewhere yet ([Network](net.md)). Checked on the Mac
+against a local server and in headless Chrome on the Mac; not on an iPhone, the iOS Simulator or against a real
+provider. Next: the assistant module on top of it; open for the transport: a backend for Windows and Linux
+(WinHTTP or libcurl), its run on an iPhone.
+Its recording side, the same day: microphone capture in `quench_audio` and `quench_audio_device`
+([Audio](audio.md#microphone)): `App::microphone()`, the permission per platform (AVFoundation on macOS and iOS,
+`getUserMedia` in a browser), short mono recordings resampled to 16 kHz with a length limit and a level meter, 16-bit
+WAV in memory, `quench_add_game(... MICROPHONE "reason")`, a fake source for scripted checks. Checked with the fake
+source, on miniaudio's null backend and in headless Chrome with Chrome's fake media device; no real microphone yet
+(the user's manual check, `hello --mic-check 5`), iOS written from the documentation and only compiled. Open: device
+selection, echo cancellation and voice activity detection, a headset's microphone over Bluetooth on iOS (the session
+keeps Bluetooth output in A2DP, so the phone's microphone records), the iOS run.
+
 Asked by the user on 2026-11-10 (evening, after 0.14.0): phones in a browser, after the Outpost micro game ran at
 30 to 40 frames per second on an iPhone and warmed it. Built the same evening and released with 0.15.0 ([its notes](releases/v0.15.0.md)):
 `App::mobile()` in a phone's browser and `--mobile`, a frame rate limit that stays on the browser's animation

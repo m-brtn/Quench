@@ -39,7 +39,8 @@ minimized desktop window also skips rendering (its sound keeps playing).
 (`assets()`, updated every frame before `Game::update`; both created before `Game::init` and destroyed after the
 game, [Jobs, assets and the cook](assets.md)), the audio system (`audio()`, created after the asset manager with
 `AppDesc::audio`, its output from `AppDesc::audioDevice`; `audioDevice()` is null while the mix runs offline;
-[Audio](audio.md)), the window, `Input`, sizes in points and pixels, the safe area
+[Audio](audio.md)), the microphone (`microphone()`, updated every frame before `Game::update`: the system's input,
+or the fake source in automated runs and with `--microphone fake`; [Audio](audio.md#microphone)), the window, `Input`, sizes in points and pixels, the safe area
 (notches, rounded corners),
 time, frame and tick counters, frame statistics (`FrameStats`: frame time, CPU time until the submit without the wait
 for a swapchain texture, GPU time where `gpu::Caps::gpuTiming`, and GPU time per timed range where
@@ -133,6 +134,7 @@ error with its label and window and counted in the scenario value `imgui_id_conf
 | `--no-audio` | no audio device: the mix runs offline on the frame clock and is discarded |
 | `--audio-device NAME` | `default`, `null` (miniaudio's null backend: a device thread without sound, for tests and benchmarks) or the first output whose name contains NAME; default `AppDesc::audioDevice` |
 | `--audio-capture FILE.wav` | mix offline on the frame clock and write the whole mix as a 16-bit stereo WAV at exit (paths as for `--capture`); nothing is played |
+| `--microphone device\|fake` | the source of `App::microphone()` ([Audio](audio.md#microphone)): `device`, the system's input (the default of runs a person plays), or `fake`, the fake source a game or a scenario feeds (the default of runs with `--script`, `--capture` or `--quit-after`). `device` is refused in an offscreen run on a desktop (a warning, then the fake source): no real input opens and no permission prompt appears there. A browser allows it (the microphone check of `tools/check.sh step web`) |
 | `--user-dir DIR` | the user directory (settings, saves, relative captures) instead of the system's, created if missing: tests start from an empty one |
 | `--version` | print the version and exit |
 
@@ -180,6 +182,8 @@ Automated runs (`--script`, `--capture`, `--quit-after`) are offscreen on deskto
   the screen.
 - **No sound:** the mix runs offline, as with `--no-audio`, unless `--audio-device` names a device (`null` for
   miniaudio's null device thread).
+- **No microphone:** `App::microphone()` is the fake source (`mic_feed`, `mic_tone`, `mic_permission` below): no
+  input device opens and no permission prompt appears, also with `--microphone device`.
 
 What stays on the screen: the window tests of `quench_gpu_device_tests` (`window_present`,
 `window_swapchain_compositions`) need a real window and a swapchain; they run only with `QUENCH_WINDOW_TESTS=1`, never
@@ -214,6 +218,14 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `thermal_state NAME` | a fake thermal state (`nominal`, `fair`, `serious`, `critical`, `unknown`) in place of the system's, read at once, so the thermal reaction follows in the same frame; `thermal_state system` gives the state back to the system ([Thermal state](#thermal-state)) |
 | `frame_load FRAME_MS [CPU_MS [GPU_MS]]` | fake frames for the reaction to late frames ([Frame load](#frame-load)): from now on every frame counts as FRAME_MS long, with CPU_MS of main thread work (default 0) and GPU_MS on the GPU (default: unknown), against the game's frame rate or 60 Hz whatever the display; also offscreen, where no real frame counts. `frame_load system`: the measured frames again |
 | `asset_request PATH [PRIORITY]` | `fs::requestAsset`: in a browser build a deferred asset is fetched ([Deferred assets](assets.md#deferred-assets)); elsewhere nothing happens |
+| `mic_permission STATE` | the fake microphone's permission: `unknown`, `not_asked`, `granted`, `denied` or `unavailable` (fails with the device's microphone) |
+| `mic_request` | `Microphone::requestPermission()`; the fake source answers granted in the next frame |
+| `mic_start [MAX_SECONDS [RATE]]` | `Microphone::start()` (default 30 s, 16000 Hz); fails when the microphone refuses (the permission, no `MICROPHONE`, a recording under way) |
+| `mic_stop`, `mic_cancel` | end the recording, keeping or dropping it |
+| `mic_feed PATH` | queue a sound asset (WAV, FLAC, MP3, Ogg Vorbis) into the fake source, after what is queued; it plays into the input at the frames' pace while a recording runs |
+| `mic_tone HZ SECONDS [AMPLITUDE]` | queue a sine (amplitude 0.5 by default; 0 Hz: silence) into the fake source |
+| `mic_clear` | drop what the fake source has queued |
+| `mic_take [FILE.wav]` | take the finished recording, measure it (the `mic_recorded*`, `mic_rms`, `mic_peak`, `mic_freq`, `mic_samples`, `mic_dropped` values; a log line) and write it as a 16-bit mono WAV (paths as for `capture`); fails without a finished recording |
 | `audio_measure S [MIN_HZ MAX_HZ]` | measure the newest S seconds (at most 4) of the mix: RMS per channel and of both, peak, and the strongest frequency between MIN_HZ and MAX_HZ (default 20 to 20000; a Hann-windowed FFT with interpolation between bins); logs a line and sets the `audio_rms*`, `audio_peak`, `audio_freq*` and `audio_measured` values. A script with this command keeps the last 4 s of the mix for it |
 
 A point P is `X Y` in window points (`480 420`), in percent of the window's width and height (`50% 75%`; the two
@@ -250,6 +262,13 @@ for a full-scale sine) and `audio_measured` (seconds actually measured); at any 
 `audio_hrtf_voices`, `audio_sounds`,
 `audio_pending`, `audio_streams`, `audio_played`, `audio_stolen`, `audio_rejected`, `audio_failed`,
 `audio_underruns`, `audio_clipped` (the `AudioStats` counters) and `audio_device` (1 with a device, 0 offline);
+the microphone's `mic_state` (0 idle, 1 opening, 2 recording, 3 finished, 4 failed), `mic_permission` (0 unknown,
+1 not asked, 2 asking, 3 granted, 4 denied, 5 unavailable), `mic_level` (0 to 1), `mic_level_max` (the highest
+level since the last recording began), `mic_seconds`, `mic_limit` (1 when the limit ended it), `mic_fake`,
+`mic_queued` (seconds the fake source has queued), `mic_device_rate` (the input's rate), `mic_error` (1 when
+`Microphone::error()` says something) and, after `mic_take`, `mic_recorded` (seconds), `mic_recorded_rate`,
+`mic_recorded_limit`, `mic_samples`, `mic_rms`, `mic_peak`, `mic_freq` (the strongest frequency, Hz) and
+`mic_dropped` (input frames lost);
 `asset_state:PATH` (`fs::assetState`: 0 missing, 1 present, 2 deferred, 3 fetching, 4 failed) and
 `asset_size:PATH` (the bytes `fs::readAsset` reads; -1 when it cannot); `memory_mb` (`App::memoryFootprint` in MiB; -1 where unknown) and `gpu_resources` (`gpu::Device::liveResources`:
 textures, buffers, samplers, pipelines, transfer buffers and fences alive; fences and transfer buffers come and go
@@ -619,6 +638,8 @@ The page needs HTTP (`file://` cannot fetch the `.wasm` and `.data` files) and a
   `--user-dir` names stays in memory and is empty again after a reload (the scripted checks use `/user`).
 - Sound starts with the first click, key or touch (the browser's rule). `--audio-device null` does not exist there;
   `--no-audio` does.
+- The microphone is `getUserMedia` ([Audio](audio.md#microphone)): the page must be https or on localhost (else
+  its permission is unavailable), the browser shows its own prompt, and its input starts after a user gesture.
 - The page keeps the program's log lines and the browser's warnings and errors in `quenchLog` (an array of strings,
   at most 20000) and sets `window.quenchExit` to the exit code when the program ends; `Module.FS` is exported, so
   a script on the page can read files the program wrote.

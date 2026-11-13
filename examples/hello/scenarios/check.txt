@@ -1,7 +1,8 @@
-# The hello example's checks in one run per GPU backend (ctest: hello_batch_<backend>, then hello_frame_<backend> and
-# hello_input_<backend>): each file below is a part with its own time from 0 and its own checks (docs/app.md,
-# "Scenarios").
+# The hello example's checks in one run per GPU backend (ctest: hello_batch_<backend>, then hello_frame_<backend>,
+# hello_input_<backend>, hello_perf_<backend> and hello_mic_<backend>): each file below is a part with its own time
+# from 0 and its own checks (docs/app.md, "Scenarios").
 include frame.txt
 include input.txt
 include perf.txt
+include mic.txt
 quit

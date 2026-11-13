@@ -18,14 +18,8 @@ void put32(fs::Bytes& out, std::uint32_t v) {
 
 void tag(fs::Bytes& out, const char (&name)[5]) { out.insert(out.end(), name, name + 4); }
 
-} // namespace
-
-fs::Bytes encodeWav(std::span<const float> samples, std::uint32_t channels, std::uint32_t sampleRate,
-                    WavSampleFormat format) {
-    const bool pcm = format == WavSampleFormat::Pcm16;
-    const std::uint32_t bytesPerSample = pcm ? 2 : 4;
-    const auto dataBytes = std::uint32_t(samples.size() * bytesPerSample);
-    fs::Bytes out;
+void header(fs::Bytes& out, bool pcm, std::uint32_t channels, std::uint32_t sampleRate, std::uint32_t bytesPerSample,
+            std::uint32_t dataBytes) {
     out.reserve(44 + dataBytes);
     tag(out, "RIFF");
     put32(out, 36 + dataBytes);
@@ -40,6 +34,16 @@ fs::Bytes encodeWav(std::span<const float> samples, std::uint32_t channels, std:
     put16(out, std::uint16_t(bytesPerSample * 8));
     tag(out, "data");
     put32(out, dataBytes);
+}
+
+} // namespace
+
+fs::Bytes encodeWav(std::span<const float> samples, std::uint32_t channels, std::uint32_t sampleRate,
+                    WavSampleFormat format) {
+    const bool pcm = format == WavSampleFormat::Pcm16;
+    const std::uint32_t bytesPerSample = pcm ? 2 : 4;
+    fs::Bytes out;
+    header(out, pcm, channels, sampleRate, bytesPerSample, std::uint32_t(samples.size() * bytesPerSample));
     for (float s : samples) {
         if (pcm) {
             const float clamped = std::isnan(s) ? 0.0f : std::clamp(s, -1.0f, 1.0f);
@@ -50,6 +54,13 @@ fs::Bytes encodeWav(std::span<const float> samples, std::uint32_t channels, std:
             put32(out, bits);
         }
     }
+    return out;
+}
+
+fs::Bytes encodeWavPcm16(std::span<const std::int16_t> samples, std::uint32_t channels, std::uint32_t sampleRate) {
+    fs::Bytes out;
+    header(out, true, channels, sampleRate, 2, std::uint32_t(samples.size() * 2));
+    for (std::int16_t s : samples) put16(out, std::uint16_t(s));
     return out;
 }
 

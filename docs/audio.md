@@ -3,7 +3,7 @@
 Stage 7 of the [Roadmap](roadmap.md): `quench_audio`, a headless mixer (buses, reverb buses with sends, sounds in
 memory, streamed music with crossfades, sources the game computes, 3D sound with a voice limit, panned or through an
 HRTF for headphones), and `quench_audio_device`, the playback device
-on miniaudio with the iOS audio session. The app shell owns one of each ([App shell](app.md)); the engine demo's
+on miniaudio with the iOS audio session, and [microphone capture](#microphone) (2026-11-13). The app shell owns one of each ([App shell](app.md)); the engine demo's
 "Audio" section shows them ([Engine demo](demo.md)). What was run where is under [Platforms](#platforms); nothing in
 this stage was listened to by the user yet (the weather's sounds of stage 13 were, on the Mac and the iPhone 17 on
 2026-11-08: fine). All documentation: [index](README.md).
@@ -245,6 +245,139 @@ device; `Device::update()` starts it again when the interruption ends. Route cha
 followed by the system and logged; `interruptions()` and `routeChanges()` count them. On other platforms the session
 settings are ignored.
 
+## Microphone
+
+Short recordings from the default input (2026-11-13 after 0.17.0, not released; the recording side of the in-game
+voice assistant the user asked for: a player holds a key, speaks a few seconds, the game uploads a 16 kHz mono WAV
+to a speech-to-text service). `quench/audio/Microphone.h` (headless, `quench_audio`) records; its input is a backend
+of `quench_audio_device` (`audio::makeMicrophone` in `Device.h`), or the fake source.
+
+```cpp
+quench::audio::Microphone& mic = app.microphone();   // needs quench_add_game(... MICROPHONE "reason")
+if (talkPressed) {
+    if (mic.permission() == MicPermission::NotAsked) mic.requestPermission();   // the system's prompt
+    else if (Result<void> r = mic.start({.sampleRate = 16000, .maxSeconds = 15.0}); !r) showError(r.error());
+}
+meter.set(mic.level());                                // every frame while recording, 0 .. 1
+if (talkReleased) mic.stop();
+if (std::optional<MicRecording> r = mic.takeRecording()) upload(r->wav());   // 16-bit mono WAV in memory
+```
+
+- **States** (`MicState`): `Idle`, `Opening` (after `start()`), `Recording` (frames arrive), `Finished` (`stop()`,
+  the limit, or a lost input: `takeRecording()` has it, once), `Failed` (the input did not open: `error()`). `stop()`
+  keeps what arrived and returns at once; `cancel()` drops it. One recording at a time.
+- **The recording** (`MicRecording`): mono float samples at `MicDesc::sampleRate` (8000 to 48000 Hz, 16000 by
+  default), `pcm16()`, `wav()` (`encodeWav`, 16-bit; `encodeWavPcm16` takes 16-bit samples; `decodeSound` reads a
+  WAV back from memory), `limitReached`, `error` (why it ended early), `droppedFrames`. A full-scale input can
+  overshoot 1 slightly after the resampler's filter; `pcm16()` and `wav()` clamp.
+- **The limit** (`MicDesc::maxSeconds`, 30 s by default, at most 600): a recording that reaches it ends with exactly
+  that many samples, `limitReached()` true. Memory: 4 bytes a sample, 1.9 MB for 30 s at 16 kHz while it records.
+- **The level** (`level()`): a peak meter of the input before resampling, rising at once and falling by half in
+  0.1 s; linear (a meter reads better in dB, `20 log10`, or as its square root); 0 when not recording.
+- **Resampling**: miniaudio's linear resampler with its low-pass filter at its highest order (8) on the main thread.
+  A 14 kHz tone at 48 kHz (which would fold to 2 kHz) comes out below 0.01 RMS from 0.354 (`audio.mic_resample_*`).
+- **Threads**: the device's callback thread (Core Audio's, through miniaudio) only copies its frames into a
+  lock-free ring (`SampleRing`, 4 s of input); `update()`, which the app calls every frame before `Game::update`,
+  drains it, measures the level, resamples and applies the limit. Frames that do not fit (a main thread stalled for
+  over 4 s) are counted in `droppedFrames`. Opening and closing the device are jobs on `App::jobs()`, one after the
+  other (`ma_device_init` and `ma_device_start`; on iOS the session category first), so `start()` and `stop()` never
+  wait for the device. How long the opening takes on a real device was not measured (on miniaudio's null backend it
+  is within a frame); expect tens of milliseconds with Core Audio, more when a Bluetooth headset changes profile.
+- **The input**: the system's default input as mono float at its own rate (miniaudio averages its channels). No
+  device selection, no echo cancellation, noise suppression, gain control or voice activity detection, no stereo:
+  none of them is there. In a browser the engine asks the browser's own echo cancellation, noise suppression and
+  gain control off (the same raw input as elsewhere).
+
+### Permission
+
+`permission()` (`MicPermission`): `Unknown` (no query on this platform, or no answer yet: `start()` tries the
+device), `NotAsked`, `Asking`, `Granted`, `Denied`, `Unavailable` (no input device, no capture API, or the game was
+built without `MICROPHONE`). `requestPermission()` shows the system's prompt; the answer arrives in a later frame.
+`start()` needs `Granted` or `Unknown`. A refusal or a missing device is a state, not a failure of the program.
+
+- **macOS**: AVFoundation's `AVCaptureDevice` authorization for audio (`authorizationStatusForMediaType:` read once,
+  then `requestAccessForMediaType:`; `src/audio/MicPermissionApple.m`). The system's TCC asks for the *responsible*
+  process. Engine games on macOS are bare executables (no bundle, no Info.plist): started from a terminal, the
+  prompt is the terminal's ("Terminal" would like to access the microphone) with the terminal's own usage text, and
+  the answer, kept in System Settings, Privacy & Security, Microphone under the terminal's name, applies to everything
+  started from it (no prompt at all if it already has access); started from another app (an editor's terminal), that
+  app's. The `MICROPHONE` reason is not shown on macOS. In an app bundle without `NSMicrophoneUsageDescription` the
+  engine reports `Unavailable` and asks nothing (the system would refuse the access); `quench_add_game()` makes no
+  macOS bundles, and `tools/package_demo.sh`'s demo bundle does not record. Restricted (a policy) counts as denied. A
+  change in System Settings while the game runs is not followed (the status is read once). Not hardened-runtime
+  signed: a notarized build would also need the `com.apple.security.device.audio-input` entitlement (not there).
+- **iOS** (written from Apple's documentation; **not run**: not in the Simulator, not on an iPhone): AVAudioApplication's
+  `recordPermission` and `requestRecordPermissionWithCompletionHandler:`; the prompt shows the app's name and the
+  `MICROPHONE` reason (Info.plist's `NSMicrophoneUsageDescription`). The session: while a recording is wanted
+  (from the open job to the close job) the category is `PlayAndRecord` with `DefaultToSpeaker` (the game's sound
+  stays on the speaker, not the earpiece; headphones and AirPods still take it), `AllowBluetoothA2DP` (Bluetooth
+  output keeps its high-quality profile; the input is then the phone's microphone, not the headset's) and, when the
+  game's category is `Ambient`, `MixWithOthers` (other apps' audio keeps playing as before; `SoloAmbient` and
+  `Playback` silence them as before). Mode `Default` (no voice processing). Afterwards the game's category is set
+  again (`DeviceDesc::session`). While recording, an `Ambient` game is not silenced by the Ring/Silent switch
+  (`PlayAndRecord` ignores it). An interruption ends the recording (`error`). Only compiled: the two Objective-C
+  files and the capture code were compiled against the iOS 26 SDK with `-Werror`.
+- **Web**: `getUserMedia` directly (`src/audio/MicrophoneWeb.cpp`), not miniaudio's Web Audio capture, which reports
+  a denial, a missing device and an insecure page as one generic error. The permission comes from the Permissions
+  API (`microphone`: granted, denied, prompt as not asked) where the browser has it; a page that is not https or on
+  localhost has no `getUserMedia` (`Unavailable`). The browser's prompt appears at `requestPermission()` (and at the
+  opening, which calls `getUserMedia` again; a browser that remembers the answer does not ask twice; Safari's
+  behaviour there was not tried). `NotAllowedError` is `Denied`; `NotFoundError` and `OverconstrainedError` are
+  `Unavailable` (no device); another error (a busy device) fails the opening. The input feeds its own
+  `AudioContext` through a `ScriptProcessorNode` on the page's main thread, which starts only after a user gesture
+  (a key, a click, a touch: call `start()` in the frame of the key press); until then the state stays `Opening`
+  (one log line).
+- **Windows, Linux**: miniaudio's capture device, permission `Unknown` (built where the engine builds; not run).
+
+**`quench_add_game(... MICROPHONE "reason")`**: only a game that asks gets `NSMicrophoneUsageDescription` (the
+reason) in its iOS Info.plist; a game without it has no microphone entry at all (stores reject usage strings an
+app does not use), and `requestPermission()` and `start()` there fail with an error that names the option. The
+option also generates a source that declares the reason before main (`audio::declareMicrophoneUsage`); tests and
+tools without `quench_add_game()` declare it themselves.
+
+### The fake source and scripted runs
+
+`audio::Microphone()` without a backend, and `App::microphone()` in runs with `--script`, `--capture` or
+`--quit-after` (`--microphone fake|device` chooses; `device` is refused offscreen on desktops): no device opens and
+no prompt appears. It plays what is fed to it (`feed(samples, channels, rate)`, `feed(SoundData)`: averaged to mono,
+resampled to its 48 kHz input) at the pace of `update(dt)`'s time while a recording runs, then silence;
+`setFakePermission()` sets its permission (a request turns `NotAsked` into `Granted` in the next update). Scenario
+commands ([App shell](app.md#scenarios)): `mic_permission STATE`, `mic_request`, `mic_start [MAX_SECONDS [RATE]]`,
+`mic_stop`, `mic_cancel`, `mic_feed PATH` (a sound asset), `mic_tone HZ SECONDS [AMPLITUDE]`, `mic_clear`,
+`mic_take [FILE.wav]`; values `mic_state`, `mic_permission`, `mic_level`, `mic_level_max`, `mic_seconds`,
+`mic_limit`, `mic_fake` and, after `mic_take`, `mic_recorded`, `mic_rms`, `mic_peak`, `mic_freq`.
+`examples/hello/scenarios/mic.txt` (a part of hello's batches, `hello_mic_<backend>`, and of its check in headless
+Chrome) "speaks" a 660 Hz tone file and checks the recording's length, rate, frequency and peak, the limit, the
+meter in silence and a refusal.
+
+### The manual check
+
+Not run by the automated checks or by agents: it opens the real input and, the first time, shows the system's
+prompt. In a terminal on the Mac, after a release build:
+
+```sh
+build/release/examples/hello/hello --mic-check 5
+```
+
+A window with the sample opens (its panel shows the state, a level bar and the seconds). The terminal prints:
+
+```
+mic-check: permission not asked          (or granted, when the terminal already has access)
+mic-check: permission asking             (the prompt: "Terminal" would like to access the microphone)
+mic-check: permission granted
+mic-check: recording 5.0 s, speak now
+mic-check:  0.00 s  level 0.000  |                                        |
+mic-check:  0.25 s  level 0.004  |                                        |   (a quiet room: about 0.001 to 0.02)
+mic-check:  1.50 s  level 0.310  |############                            |   (speech: about 0.1 to 0.8)
+...
+mic-check: recorded 5.00 s at 16000 Hz from '<the input's name>' (Core Audio, 48000 Hz): rms ..., peak ..., 0 input frames lost
+mic-check: wrote mic_check.wav (160044 bytes) in the user directory (~/Library/Application Support/Quench/Quench Hello/ unless --user-dir)
+```
+
+and quits with exit code 0. `mic_check.wav` plays back what was said (16-bit mono 16 kHz, 5 s, 160044 bytes). A
+refusal prints `mic-check: no recording (denied)` with where to change it and exits with 1. Check: the level moves
+with the voice, the length is the one asked for, nothing is lost, and the WAV sounds right.
+
 ## Weather sounds
 
 `audio::WeatherAudio` (`quench/audio/WeatherAudio.h`, in `quench_audio`, headless) plays the weather's sounds from
@@ -373,10 +506,16 @@ voice cap, a moving source switched on and off), the opt-in mix cost, streams ac
 boundaries, on jobs, gapless loops, crossfades, Vorbis streams, loops and music, missing files, decoders and their
 errors, the sound asset type, the analysis functions; the weather's sounds: their gains, a mix of sine layers by its
 strongest frequency with a game's sound, a hot reload, a bus and off, and the default loops measured, a case that
-skips where the build has no Python) and `audio_device.*` (`null_device`: the null backend renders and suspends;
+skips where the build has no Python; the microphone's recording side with the fake source: `mic_ring_buffer`,
+`mic_ring_buffer_threads` (2 million frames through the ring from another thread, in order; skipped without
+threads), `mic_resample_to_16k` (1 kHz at 48 and 44.1 kHz in, 1000 Hz within 1 Hz out at 16 kHz, the length and the
+RMS kept), `mic_resample_filters_aliases`, `mic_level_meter`, `mic_length_limit`, `mic_wav_round_trip` (decoded back
+within 1/16384), `mic_fake_source_from_sound` (the FLAC tone in, 440 Hz out), `mic_permission_states`) and
+`audio_device.*` (`mic_null_device`: the microphone's open and close jobs, the capture callback and the limit on
+miniaudio's null backend, which needs no permission; `null_device`: the null backend renders and suspends;
 `default_output`: plays 0.5 s of a quiet 440 Hz tone through the default output, only with
 `QUENCH_TEST_AUDIO_DEVICE=1` in the environment; `audio_session_category`: iOS only). No automated test plays
-through the speakers: the app tests and capture checks run offscreen, where the mix is offline
+through the speakers and none opens a real input: the app tests and capture checks run offscreen, where the mix is offline
 ([App shell](app.md#offscreen-runs)), or with `--audio-device null` or `--audio-capture`. The test
 decoder files (`tests/audio/data/`, a FLAC and an MP3 tone and an Ogg Vorbis loop) are CC0, made with sox (with
 libvorbis) and lame (`CREDITS.md` there). `audio.decode_vorbis` decodes the loop (1 s, 440 Hz left and 880 Hz right
@@ -401,6 +540,13 @@ the sines it was encoded from.
   the browser starts it only after a user gesture. It opens in Chrome on the Mac (headless: 48000 Hz, periods of
   512 frames); nobody has listened to it, and underruns under load were not measured. No null device there:
   `--no-audio`, or an offscreen run, mixes offline.
+- **Microphone** (2026-11-13): run on the Mac with the fake source (the unit tests, hello's `mic` part on the three
+  backends) and on miniaudio's null backend (`audio_device.mic_null_device`); its headless tests under Node.js; the
+  `getUserMedia` path in headless Chrome on the Mac with Chrome's fake media device and fake prompt
+  (`examples/hello/scenarios/mic_web.txt` in `tools/check.sh step web`: granted, about a second of Chrome's test
+  tone recorded, 1.024 s at 16 kHz from its 48 kHz, level up to 1, RMS 0.139, and 0.5 s exactly at the limit). No
+  real input has been opened by anyone yet: Core Audio's capture, the macOS prompt and the manual check
+  (`hello --mic-check`) are the user's to run. iOS is only compiled (not built into an app, not run).
 
 ## Limitations
 
@@ -429,5 +575,8 @@ the sines it was encoded from.
   Only a file from libvorbis (through sox) was tried. A streamed Vorbis loop opens its decoder again at every loop
   point, on the stream's job (miniaudio's push mode seeks back that way); the cost of that was not timed.
 - **Resampling** is linear interpolation (some aliasing at high pitch; cheap). The cook does not resample.
+- **Microphone**: the default input only (no device selection), mono only, no echo cancellation, noise suppression,
+  gain control or voice activity detection; one recording at a time; the opening's latency on real devices is not
+  measured; the macOS permission is read once per run; iOS not run. The recording is kept whole in memory.
 - **Offline mode** decodes streams on the main thread (meant for tests, captures and `--no-audio`, not for play).
 - **Mix time** is measured per `render` call on the audio thread; there is no per-bus or per-voice profile.

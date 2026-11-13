@@ -5,14 +5,21 @@
 // category) and activated by the engine; an interruption (a call, Siri, an alarm) stops the device and update()
 // starts it again when the interruption ends; route changes (headphones, Bluetooth) are followed by the system and
 // logged. Main thread only.
+//
+// Also the microphone's device side (makeMicrophone below; the recording itself is quench/audio/Microphone.h).
 
 #include <quench/audio/AudioSystem.h>
+#include <quench/audio/Microphone.h>
 #include <quench/core/Result.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
+
+namespace quench {
+class JobSystem;
+}
 
 namespace quench::audio {
 
@@ -68,5 +75,21 @@ private:
     explicit Device(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> m_impl;
 };
+
+struct MicDeviceDesc {
+    // "" or "default": the system's default input; "null": miniaudio's null backend (silence at 48 kHz, no permission
+    // to ask; tests). Choosing another input is not there yet (a warning, then the default).
+    std::string name{};
+    // iOS: the session category to go back to after a recording (AppDesc::audioDevice.session). While recording the
+    // session is PlayAndRecord (AudioSession.h): playback stays on the speaker, other apps' audio stays as the
+    // category has it.
+    SessionCategory session = SessionCategory::Ambient;
+};
+
+// A Microphone on the system's input: miniaudio's capture device (Core Audio on Apple platforms), opened and closed
+// on `jobs` (which must outlive it); getUserMedia in a browser. Its permission is the system's (MicPermission.h on
+// Apple platforms, the Permissions API in a browser; unknown on Windows and Linux). App::microphone() is one of these
+// outside scripted runs (docs/audio.md, "Microphone").
+std::unique_ptr<Microphone> makeMicrophone(JobSystem& jobs, const MicDeviceDesc& desc = {});
 
 } // namespace quench::audio

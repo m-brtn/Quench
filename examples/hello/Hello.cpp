@@ -1,11 +1,15 @@
 // The smallest Quench game: a lit, procedurally built torus over a checkered ground, an ImGui window, input actions
-// for keyboard, mouse, gamepad and touch, and scenario values for the checks (examples/hello/scenarios).
+// for keyboard, mouse, gamepad and touch, and scenario values for the checks (examples/hello/scenarios), with HTTP
+// requests for the web check (NetCheck.h) and a microphone check for a person (MicCheck.h, --mic-check SECONDS).
 
+#include "MicCheck.h"
+#include "NetCheck.h"
 #include "shaders/HelloUniforms.h"
 
 #include <quench/app/App.h>
 #include <quench/app/Input.h>
 #include <quench/core/Log.h>
+#include <quench/core/Parse.h>
 #include <quench/gpu/Device.h>
 
 #include <hello_shaders.h>
@@ -19,6 +23,7 @@
 #include <cstdio>
 #include <format>
 #include <numbers>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -92,6 +97,10 @@ glm::vec3 linearToSrgb(glm::vec3 c) {
 
 class Hello final : public app::Game {
 public:
+    explicit Hello(std::optional<double> micCheck) {
+        if (micCheck) m_mic.emplace(*micCheck);
+    }
+
     Result<void> init(App& app) override {
         gpu::Device& device = app.device();
         if (!device.supportsFormat(kDepthFormat, gpu::TextureType::Texture2D, gpu::TextureUsage::DepthStencilTarget))
@@ -150,7 +159,8 @@ public:
     }
 
     void update(App& app, double frameDt) override {
-        (void)frameDt;
+        m_net.update();
+        if (m_mic) m_mic->update(app, frameDt);
         const app::Input& input = app.input();
         if (input.pressed(m_pause)) m_paused = !m_paused;
         // Dragging turns the torus directly (finger or mouse; mouse events SDL makes from touches are ignored).
@@ -184,6 +194,7 @@ public:
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 9.0f);
         if (ImGui::SliderFloat("Spin (rad/s)", &speed, -3.0f, 3.0f)) m_speed = speed;
         if (app.input().gamepadConnected()) ImGui::Text("Gamepad: %s", app.input().gamepadName().c_str());
+        if (m_mic) m_mic->ui(app);
         ImGui::End();
     }
 
@@ -252,7 +263,12 @@ public:
         if (name == "yaw") return m_yaw;
         if (name == "paused") return m_paused ? 1.0 : 0.0;
         if (name == "speed") return m_speed;
-        return std::nullopt;
+        return m_net.value(name);
+    }
+
+    app::ScenarioExec scenarioCommand(App& app, const app::ScenarioCommand& command) override {
+        (void)app;
+        return m_net.command(command);
     }
 
 private:
@@ -282,6 +298,8 @@ private:
     double m_previousYaw = -0.5;
     double m_speed = 0.8;
     bool m_paused = false;
+    NetCheck m_net;
+    std::optional<MicCheck> m_mic;
 };
 
 } // namespace
@@ -291,12 +309,23 @@ Result<std::unique_ptr<quench::app::Game>> quench::app::createGame(AppDesc& desc
     desc.name = QUENCH_GAME_NAME;
     desc.organization = "Quench";
     desc.version = QUENCH_GAME_VERSION;
-    for (const std::string_view arg : args) {
+    std::optional<double> micCheck;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        const std::string_view arg = args[i];
         if (arg == "--help") {
-            std::printf("hello: no options of its own.\n");
+            std::printf("hello options:\n"
+                        "  --mic-check SECONDS  ask for the microphone, record SECONDS (1 to 30) from the default\n"
+                        "                       input, print the level and the length, write mic_check.wav into the\n"
+                        "                       user directory and quit (docs/audio.md, \"The manual check\")\n");
+            continue;
+        }
+        if (arg == "--mic-check") {
+            const std::optional<double> seconds = i + 1 < args.size() ? parseDouble(args[++i]) : std::nullopt;
+            if (!seconds || *seconds < 1.0 || *seconds > 30.0) return Error{"hello: --mic-check SECONDS (1 to 30)"};
+            micCheck = *seconds;
             continue;
         }
         return Error{std::format("hello: unknown argument '{}' (--help lists the options)", arg)};
     }
-    return std::unique_ptr<Game>(std::make_unique<Hello>());
+    return std::unique_ptr<Game>(std::make_unique<Hello>(micCheck));
 }

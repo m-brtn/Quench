@@ -9,12 +9,14 @@
 #include <quench/audio/Analysis.h>
 #include <quench/audio/AudioSystem.h>
 #include <quench/audio/Device.h>
+#include <quench/audio/Microphone.h>
 #include <quench/core/Jobs.h>
 
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <numbers>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -110,4 +112,43 @@ QUENCH_TEST(audio_session_category) {
     CHECK(text[0] != '\0', "route");
     std::printf("route: %s\n", text);
 #endif
+}
+
+// The microphone's device path on miniaudio's null backend: the open and close jobs, the capture callback into the
+// ring, the resampling of its 48 kHz silence and the limit. No real input opens and no permission is asked: the
+// null backend needs none, and the system's permission query is not called for it.
+QUENCH_TEST(mic_null_device) {
+    JobSystem jobs;
+    declareMicrophoneUsage("tests");
+    std::unique_ptr<Microphone> mic = makeMicrophone(jobs, {.name = "null"});
+    CHECK(!mic->fake() && mic->permission() == MicPermission::Granted, "permission %s",
+          micPermissionName(mic->permission()));
+    REQUIRE(mic->start({.sampleRate = 16000, .maxSeconds = 30.0}), "start");
+    const auto pumpUntil = [&](double seconds, auto done) {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+        while (std::chrono::steady_clock::now() < end && !done()) {
+            mic->update(0.005);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return done();
+    };
+    REQUIRE(pumpUntil(5.0, [&] { return mic->state() != MicState::Opening; }), "opened");
+    REQUIRE(mic->state() == MicState::Recording, "%s: %s", micStateName(mic->state()), mic->error().c_str());
+    CHECK(mic->info().backend == "Null" && mic->info().deviceSampleRate == 48000, "%s, %u Hz",
+          mic->info().backend.c_str(), mic->info().deviceSampleRate);
+    CHECK(pumpUntil(5.0, [&] { return mic->seconds() >= 0.3; }), "0.3 s recorded (%f)", mic->seconds());
+    mic->stop();
+    std::optional<MicRecording> r = mic->takeRecording();
+    REQUIRE(r, "a recording");
+    CHECK(r->sampleRate == 16000 && r->seconds() >= 0.3 && r->seconds() < 1.0, "%f s at %u Hz", r->seconds(),
+          r->sampleRate);
+    CHECK(measureLevels(r->samples, 1).peak[0] == 0.0f, "the null backend's silence");
+
+    // Again, into the limit, right after the close job of the first recording.
+    REQUIRE(mic->start({.sampleRate = 8000, .maxSeconds = 0.2}), "second start");
+    CHECK(pumpUntil(5.0, [&] { return mic->state() == MicState::Finished; }), "ended (%s)", micStateName(mic->state()));
+    r = mic->takeRecording();
+    REQUIRE(r, "the second recording");
+    CHECK(r->limitReached && r->samples.size() == 1600, "%zu samples", r->samples.size());
+    mic.reset(); // waits for the close job
 }

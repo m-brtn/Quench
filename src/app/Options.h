@@ -43,6 +43,7 @@ struct Options {
     bool noAudio = false;                   // no audio device: the mix runs offline and is discarded
     std::optional<std::string> audioDevice; // DeviceDesc::name
     std::string audioCapture;               // WAV path: the mix runs offline and is written at the end
+    std::string microphone;                 // "device", "fake"; empty: fake in automated runs, else the device
     std::string userDir;                    // the user directory instead of SDL_GetPrefPath's (tests)
     bool printVersion = false;
     bool printHelp = false;

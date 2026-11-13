@@ -82,6 +82,10 @@ const char* optionsHelp() {
            "  --audio-capture FILE.wav  no audio output: the mix runs offline on the frame clock (with --script or\n"
            "                       --capture: exactly one fixed step per frame) and is written as a 16-bit WAV at\n"
            "                       the end; relative paths go to the user directory\n"
+           "  --microphone device|fake  App::microphone()'s source: the system's input (the default of runs a\n"
+           "                       person plays), or the fake source fed by the game or the scenario (the default\n"
+           "                       of runs with --script, --capture or --quit-after); device is refused offscreen on\n"
+           "                       desktops (a real input never opens there) and allowed in a browser\n"
            "  --user-dir DIR       the user directory (settings, saves, captures) instead of the system's, created if\n"
            "                       missing (tests and scripted runs)\n"
            "  --version            print the version and exit\n"
@@ -138,6 +142,12 @@ Result<Options> parseOptions(std::span<const std::string_view> args) {
             if (!v) return Error{v.error()};
             if (v->empty()) return Error{std::format("{} needs a value", flag)};
             options.audioDevice = std::string(*v);
+        } else if (flag == "--microphone") {
+            Result<std::string_view> v = value();
+            if (!v) return Error{v.error()};
+            if (*v != "device" && *v != "fake")
+                return Error{std::format("--microphone: '{}' is not device or fake", *v)};
+            options.microphone = std::string(*v);
         } else if (flag == "--no-audio" && !inlineValue) {
             options.noAudio = true;
         } else if (flag == "--window" || flag == "--frame-size") {

@@ -196,6 +196,12 @@ public:
     // The audio output; null when the mix runs offline on the frame clock instead: --no-audio, --audio-capture, or
     // no device could be opened. It stops in the background and starts again in the foreground.
     audio::Device* audioDevice();
+    // The microphone (quench/audio/Microphone.h; docs/audio.md, "Microphone"), updated every frame before
+    // Game::update. The system's input in runs a person plays, the fake source in runs with --script, --capture or
+    // --quit-after (never a real input offscreen on a desktop); --microphone device|fake chooses. Nothing opens until
+    // a recording starts; a game needs quench_add_game(... MICROPHONE "reason") to record. A recording stops when the
+    // app goes to the background.
+    audio::Microphone& microphone();
     SDL_Window* window() const;
     Input& input();
     const Input& input() const;
