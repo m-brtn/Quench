@@ -40,6 +40,41 @@ QUENCH_TEST(json_escapes) {
     CHECK(out.find(R"("a\"b\\c\n")") != std::string::npos, "written '%s'", out.c_str());
 }
 
+QUENCH_TEST(json_surrogate_pairs) {
+    const auto text = [](const char* doc) {
+        const Result<json::Value> v = json::parse(doc);
+        return v ? v->string : "error: " + v.error();
+    };
+    // U+1F600 and U+1F680 as pairs, lower and upper case hex: four UTF-8 bytes each.
+    CHECK(text(R"("\ud83d\ude00")") == "\xF0\x9F\x98\x80", "pair '%s'", text(R"("\ud83d\ude00")").c_str());
+    CHECK(text(R"("a\uD83D\uDE80b")") == "a\xF0\x9F\x9A\x80"
+                                         "b",
+          "pair in text");
+    CHECK(text(R"("\udbff\udfff")") == "\xF4\x8F\xBF\xBF", "U+10FFFF");
+    // Lone surrogates: U+FFFD each, the text around them kept.
+    CHECK(text(R"("x\ud800y")") == "x\xEF\xBF\xBDy", "lone high '%s'", text(R"("x\ud800y")").c_str());
+    CHECK(text(R"("\ud800")") == "\xEF\xBF\xBD", "lone high at the end");
+    CHECK(text(R"("x\udc00y")") == "x\xEF\xBF\xBDy", "lone low");
+    CHECK(text(R"("\ude00\ud83d")") == "\xEF\xBF\xBD\xEF\xBF\xBD", "low before high");
+    // A pair split by other text is two lone surrogates; a high one followed by another escape keeps that escape.
+    CHECK(text(R"("\ud83d \ude00")") == "\xEF\xBF\xBD \xEF\xBF\xBD", "split '%s'", text(R"("\ud83d \ude00")").c_str());
+    CHECK(text(R"("\ud83d\u00e9")") == "\xEF\xBF\xBD\xC3\xA9", "high before a BMP escape");
+    CHECK(text(R"("\ud83d\n")") == "\xEF\xBF\xBD\n", "high before \\n");
+    CHECK(text(R"("\ud83d\ud83d\ude00")") == "\xEF\xBF\xBD\xF0\x9F\x98\x80", "two highs, then a low");
+    // Bad hex digits are an error, also in the second half of a pair.
+    CHECK(!json::parse(R"("\u12g4")"), "bad hex accepted");
+    CHECK(!json::parse(R"("\ud83d\uzz00")"), "bad hex after a high surrogate accepted");
+    CHECK(!json::parse(R"("\u12")"), "short escape accepted");
+    // Round trip: the writer keeps the four bytes as they are, the parser reads them back.
+    const std::string emoji = "ok \xF0\x9F\x98\x80 \xF0\x9F\x9A\x80";
+    const std::string written = json::write(json::Value::makeString(emoji));
+    CHECK(written == "\"" + emoji + "\"\n", "written '%s'", written.c_str());
+    const Result<json::Value> back = json::parse(written);
+    CHECK(back && back->string == emoji, "read back");
+    const Result<json::Value> escaped = json::parse(R"("ok \ud83d\ude00 \ud83d\ude80")");
+    CHECK(escaped && json::write(*escaped) == written, "escaped pairs written as UTF-8");
+}
+
 QUENCH_TEST(json_errors) {
     const Result<json::Value> missing = json::parse(R"({"a": })");
     CHECK(!missing && missing.error().find("offset 6") != std::string::npos, "error '%s'", missing.error().c_str());

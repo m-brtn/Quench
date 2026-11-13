@@ -1,7 +1,7 @@
 # Network: HTTPS requests
 
-`quench_net` (since 2026-11-13, after 0.17.0) sends asynchronous HTTP requests: what a game needs to talk to a web
-API, first of all an OpenAI-compatible one (OpenRouter, OpenAI, a local server) for an in-game assistant (chat
+`quench_net` (since 2026-11-13, released with 0.18.0) sends asynchronous HTTP requests: what a game needs to talk to a
+web API, first of all an OpenAI-compatible one (OpenRouter, OpenAI, a local server) for an in-game assistant (chat
 completions with tool calls as JSON, optionally streamed as server-sent events; speech-to-text, a few seconds of
 recorded audio uploaded as JSON with base64 or as multipart; text-to-speech, audio bytes downloaded, possibly
 streamed). It is the transport only: the assistant is `quench_assistant` on top of it ([Assistant](assistant.md)).

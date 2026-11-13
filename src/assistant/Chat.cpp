@@ -178,7 +178,6 @@ void ChatStreamParser::chunk(const json::Value& v) {
     if (!v.isObject()) return;
     if (const json::Value& error = v["error"]; !error.isNull()) {
         std::string message = error.isObject() ? error["message"].stringOr("") : error.stringOr("");
-        detail::repairSurrogates(message);
         std::string code;
         if (error["code"].isNumber()) code = std::format(" ({})", writeCompactJson(error["code"]));
         if (error["code"].type == json::Value::Type::String) code = " (" + error["code"].string + ")";
@@ -204,8 +203,7 @@ void ChatStreamParser::chunk(const json::Value& v) {
     const json::Value& delta = streamed ? choice["delta"] : choice["message"];
     if (delta.isObject()) {
         if (delta["content"].type == json::Value::Type::String && !delta["content"].string.empty()) {
-            std::string piece = delta["content"].string;
-            detail::repairSurrogates(piece);
+            const std::string& piece = delta["content"].string;
             m_result.text += piece;
             if (onText) onText(piece);
         }
@@ -228,9 +226,7 @@ void ChatStreamParser::chunk(const json::Value& v) {
                 if (call.name.empty()) call.name = fn["name"].stringOr("");
                 const json::Value& args = fn["arguments"];
                 if (args.type == json::Value::Type::String) {
-                    std::string piece = args.string;
-                    detail::repairSurrogates(piece);
-                    call.arguments += piece;
+                    call.arguments += args.string;
                 } else if (args.isObject()) {
                     call.arguments += writeCompactJson(args); // a server that sends the object itself
                 }

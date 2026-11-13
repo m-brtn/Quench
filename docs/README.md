@@ -2,7 +2,7 @@
 
 Stages 1 to 3 and 5 to 14 of the [Roadmap](roadmap.md) are implemented (stages 11 and 12 except their runs on the iPhone
 18 Pro Max and the checks by eye, stage 13 except its costs on a phone and its runs on the iPhone 18 Pro Max, stage 14
-except its runs on a phone and the checks by eye; browser audio still open), stage 4 (games on the engine) for one game (version 0.17.0): the core and physics modules (with the
+except its runs on a phone and the checks by eye; browser audio still open), stage 4 (games on the engine) for one game (version 0.18.0): the core and physics modules (with the
 wind's drag on chosen bodies), the job system, profiling with Tracy (opt-in), the asset system and the asset cooker
 (BC7, ASTC in iOS builds, Basis Universal as an option, transcoded at load time; asset hot reload on the Mac and on a
 device), the GPU layer over SDL GPU and a native Metal backend with GPU timestamps per pass, acceleration structures and
@@ -26,11 +26,11 @@ and that sounds, lightning and thunder; looked at in motion and listened to by t
 its costs on a phone not measured), stage 14, particles and trails (systems stepped by compute or on the CPU, spawns in
 shapes and along paths, curl noise and the weather's wind, twinkling glows, sparks and smoke, ribbons of light with
 bright heads and fading tails that shed sparkles; not yet run on a phone or looked at in motion), HTTPS requests
-(`quench_net`, after 0.17.0, not released: NSURLSession on Apple platforms, fetch in a browser, a fake for tests;
-checked on the Mac and in headless Chrome only, [Network](net.md)), the assistant on it (`quench_assistant`, the same
-day, not released: a language model that operates a game through tools it registers, typed or spoken turns, speech;
-checked with a fake network and once against OpenRouter on the Mac, [Assistant](assistant.md)), the sample, the
-engine demo (finished in stage 10, with a tour, a check mode and a
+(`quench_net`, released with 0.18.0: NSURLSession on Apple platforms, fetch in a browser, a fake for tests;
+checked on the Mac and in headless Chrome only, [Network](net.md)), the assistant on it (`quench_assistant`, also
+released with 0.18.0: a language model that operates a game through tools it registers, typed or spoken turns, speech;
+checked with a fake network, in the iOS Simulator's tests and against OpenRouter on the Mac, [Assistant](assistant.md)),
+the sample, the engine demo (finished in stage 10, with a tour, a check mode and a
 benchmark of every section) and the game template. Where a document describes something planned, it says so.
 [Migration](migration.md) describes the engine code in the two games, what has moved and what is not moved yet.
 
@@ -67,6 +67,6 @@ in `images/`.
 | [Dependencies](dependencies.md) | Pinned libraries, planned libraries with licences and verified capabilities |
 | [Migration](migration.md) | Inventory of the engine code in TrailForge and Ashfall, how far the copies diverged, the procedure for moving code, progress per game |
 | [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, the weather stage (its four parts built), particles and trails, what is next, the requested features and their priorities |
-| [Releases](releases/) | Release notes per version, the latest [0.17.0](releases/v0.17.0.md) |
+| [Releases](releases/) | Release notes per version, the latest [0.18.0](releases/v0.18.0.md) |
 
 Coding agents: see [AGENTS.md](../AGENTS.md). The daily development log is in [devlog/](../devlog/).

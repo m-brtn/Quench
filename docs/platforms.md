@@ -11,7 +11,7 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.17.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+The engine (version 0.18.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases (those
 of 0.13.1: 0.13.2, a patch of the renderer, ran the render and demo tests only, [its notes](releases/v0.13.2.md);
 0.14.0, the weather's look and sound, ran no gate, [its notes](releases/v0.14.0.md); after its tag the golden
@@ -20,7 +20,8 @@ skipped, and the web check in headless Chrome on the Mac pass again; 0.15.0, pho
 gate and the web check before its version number changed, [its notes](releases/v0.15.0.md); 0.16.0, the user files
 of a browser build kept in IndexedDB, ran the release gate, [its notes](releases/v0.16.0.md); 0.17.0, deferred
 assets of a web page, ran the full gate and the web check before its version number changed, [its
-notes](releases/v0.17.0.md)).
+notes](releases/v0.17.0.md); 0.18.0, HTTPS requests, microphone capture and the assistant, ran the full gate and the
+web check before its version number changed, [its notes](releases/v0.18.0.md)).
 Its GPU tests render offscreen and check the
 pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
 Mac (with the Khronos validation layer; a test of
@@ -81,22 +82,24 @@ tunnel phone scenarios, with the same numbers as before ([Performance](performan
 | Android | Vulkan | SPIR-V | nothing | nothing |
 | Web | none: the engine's WebGPU backend (SDL GPU has none) | WGSL | headless tests under Node.js; hello and the demo with their scripted checks in Chrome on the Mac (headless, WebGPU over Metal), experimental | nothing |
 
-HTTPS requests (`quench_net`, 2026-11-13, after 0.17.0): NSURLSession on macOS and iOS, the browser's fetch in the
-web build, no backend on Linux, Windows, Android and under Node.js (a send fails at once there). Run on the Mac (its
-tests against a local HTTP server on 127.0.0.1; by hand, one GET of a public test host over TLS) and in headless
-Chrome on the Mac (hello's check against `tools/web_check.mjs`'s server); the Apple backend's Objective-C is the same
-file on iOS but has not run there (neither the iOS Simulator nor an iPhone). [Network](net.md).
+HTTPS requests (`quench_net`, 2026-11-13, released with 0.18.0): NSURLSession on macOS and iOS, the browser's fetch in
+the web build, no backend on Linux, Windows, Android and under Node.js (a send fails at once there). Run on the Mac (its
+tests against a local HTTP server on 127.0.0.1; by hand, one GET of a public test host over TLS) and in headless Chrome
+on the Mac (hello's check against `tools/web_check.mjs`'s server); the Apple backend's Objective-C is the same file on
+iOS; there it is built and its fake-network tests run in the iOS Simulator, but it has sent no request (the local-server
+cases are macOS only; no iPhone). [Network](net.md).
 
-The assistant (`quench_assistant`, 2026-11-13, after 0.17.0) on it: its tests with the fake network on the Mac and
-under Node.js; against a real provider (OpenRouter) only on the Mac, through NSURLSession, by its manual check. Not
-run in a browser against a provider, on iOS, against OpenAI's own API or a local server. [Assistant](assistant.md).
+The assistant (`quench_assistant`, 2026-11-13, released with 0.18.0) on it: its tests with the fake network on the Mac
+(also under the address and thread sanitizers), in the iOS Simulator and under Node.js; against a real provider
+(OpenRouter) only on the Mac, through NSURLSession, by its manual check. Not run in a browser against a provider, on an
+iPhone, against OpenAI's own API or a local server. [Assistant](assistant.md).
 
-Microphone capture (`audio::Microphone`, 2026-11-13, after 0.17.0; [Audio](audio.md#microphone)): miniaudio's capture
-device with AVFoundation's permission on macOS and iOS (iOS also switches the audio session to `PlayAndRecord` while
-recording), `getUserMedia` in a browser, miniaudio's capture with an unknown permission on Windows and Linux. Run with
-the fake source and on miniaudio's null backend on the Mac, under Node.js (headless), and in headless Chrome on the
-Mac with Chrome's fake media device; no real input opened anywhere; iOS only compiled, Windows and Linux not built
-with it.
+Microphone capture (`audio::Microphone`, 2026-11-13, released with 0.18.0; [Audio](audio.md#microphone)): miniaudio's
+capture device with AVFoundation's permission on macOS and iOS (iOS also switches the audio session to `PlayAndRecord`
+while recording), `getUserMedia` in a browser, miniaudio's capture with an unknown permission on Windows and Linux. Run
+with the fake source and on miniaudio's null backend on the Mac and in the iOS Simulator, under Node.js (headless), and
+in headless Chrome on the Mac with Chrome's fake media device; a real input only by the user's manual check on a Mac
+(`hello --mic-check`); the iOS permission and audio session switch not run, Windows and Linux not built with it.
 
 TrailForge also ran on Vulkan through MoltenVK on the Mac as a test of the SPIR-V path. Ashfall has only run on macOS;
 its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewhere.

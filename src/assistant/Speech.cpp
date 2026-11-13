@@ -96,7 +96,6 @@ Result<Transcript> parseTranscription(std::string_view body) {
     if ((*v)["text"].type != json::Value::Type::String) return Error{"the transcription has no text"};
     Transcript t;
     t.text = std::string(detail::trimSpace((*v)["text"].string));
-    detail::repairSurrogates(t.text);
     const json::Value& usage = (*v)["usage"];
     t.audioSeconds = usage["seconds"].numberOr((*v)["duration"].numberOr(0.0));
     t.usage.promptTokens = std::int64_t(usage["input_tokens"].numberOr(usage["prompt_tokens"].numberOr(0.0)));

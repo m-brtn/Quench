@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-13, version 0.17.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-13, version 0.18.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -94,7 +94,7 @@ into the scene),
 per-sound sends, sounds as an asset
 type (WAV, FLAC, MP3, Ogg Vorbis), streamed music with crossfades, game-generated sources, 3D sound with Doppler and voice stealing,
 panned or through an HRTF for headphones (off by default), WAV writing
-and signal analysis; since 2026-11-13 after 0.17.0, not released, the microphone's recording side: `audio::Microphone`,
+and signal analysis; since 2026-11-13 (0.18.0) the microphone's recording side: `audio::Microphone`,
 a lock-free ring the input fills, resampling to 16 kHz on the main thread, a level meter, a length limit, 16-bit WAV
 in memory, a fake source for tests and scenarios), `quench_audio_device` (output through miniaudio, the iOS audio
 session; `App::audio()`, `--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`;
@@ -158,15 +158,15 @@ size and HDR color over the life, twinkle, additive, alpha and lit blending, cam
 motion, procedural sprites; trails thin and fade toward the tail, a glow at the head, sparkles shed into a system;
 not in the ray tracing structures, off in the path tracer's frames; run on the Mac's three backends offscreen, in
 the iOS Simulator's tests and, the headless part, as WebAssembly under Node.js; nobody has looked at it in motion,
-nothing of it on a phone), `quench_net` (headless, 2026-11-13 after 0.17.0, not released; the user's request for an
+nothing of it on a phone), `quench_net` (headless, 2026-11-13, released with 0.18.0; the user's request for an
 in-game AI assistant: asynchronous HTTPS requests with streamed bodies, cancel, timeouts and a size limit, delivered
 on the main thread by `net::Client::update()`, HTTPS only except the loopback address, a log without header values
 or query strings, secret headers dropped on redirects to another origin, no cookies; NSURLSession on Apple
 platforms, the browser's fetch in web builds, none elsewhere yet, `net::FakeNetwork` for tests; run on the Mac
 against a local server and in headless Chrome on the Mac, against a real provider only through the assistant's manual
-check (OpenRouter, on the Mac, with a server-sent event stream that arrived piece by piece), not in the iOS Simulator
-or on an iPhone; `docs/net.md`), `quench_assistant` (headless, 2026-11-13 after 0.17.0, not released; on
-`quench_net`: a language model that operates a game through tools it registers, for OpenAI-compatible APIs
+check (OpenRouter, on the Mac, with a server-sent event stream that arrived piece by piece), in the iOS Simulator only
+with the fake network, not on an iPhone; `docs/net.md`), `quench_assistant` (headless, 2026-11-13, released with 0.18.0;
+on `quench_net`: a language model that operates a game through tools it registers, for OpenAI-compatible APIs
 (OpenRouter, OpenAI, a local server by settings only): tools in MCP's shape (`tools/list` and `tools/call` results,
 annotations, a JSON Schema check before a handler runs, bad calls as error results), the chat request and an
 incremental parser of its streamed answer, the turn of rounds of tool calls on the main thread (a round limit,
@@ -277,7 +277,14 @@ time, one retry): asked for so that Outpost's page loads 21 MB before its first 
 fetched later). On its code before the version number changed `tools/check.sh full` passes (Debug, ASan and TSan 690
 tests each with 70 skipped, Release 833 with 69 skipped, `wasm-node` 206 with 9 skipped, the iOS Simulator 524 with
 70 skipped, the Xcode project, a new game) and `step web` passes in headless Chrome on the Mac (the deferred case
-10 of 10: one file fetched and read, one answered with 404 ends failed).
+10 of 10: one file fetched and read, one answered with 404 ends failed). Version 0.18.0 (2026-11-13;
+`docs/releases/v0.18.0.md`) adds the foundation of an in-game assistant, asked for Outpost (a player's own API key, a
+typed or spoken request, a language model that operates the game through tools the game registers): `quench_net`,
+microphone capture (`audio::Microphone`, `quench_add_game(... MICROPHONE "reason")`) and `quench_assistant`, and
+`quench::json` decodes `\u` surrogate pairs. On its code before the version number changed `tools/check.sh full`
+passes (Debug, ASan and TSan 771 tests each with 70 skipped, Release 917 with 69 skipped, `wasm-node` 275 with 11
+skipped, the iOS Simulator 594 with 70 skipped after one test's bound was fixed, the Xcode project, a new game) and
+`step web` passes in headless Chrome on the Mac (hello's network check 18 of 18, the fake microphone 13 of 13).
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the

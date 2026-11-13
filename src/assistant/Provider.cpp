@@ -189,7 +189,6 @@ std::string providerMessage(std::string_view body) {
         }
     }
     if (text.empty() && body.front() != '{' && body.front() != '<') text = std::string(body); // plain text
-    detail::repairSurrogates(text);
     return detail::trimText(detail::trimSpace(text), 300);
 }
 

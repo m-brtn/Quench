@@ -247,7 +247,7 @@ settings are ignored.
 
 ## Microphone
 
-Short recordings from the default input (2026-11-13 after 0.17.0, not released; the recording side of the in-game
+Short recordings from the default input (2026-11-13, released with 0.18.0; the recording side of the in-game
 voice assistant the user asked for: a player holds a key, speaks a few seconds, the game uploads a 16 kHz mono WAV
 to a speech-to-text service). `quench/audio/Microphone.h` (headless, `quench_audio`) records; its input is a backend
 of `quench_audio_device` (`audio::makeMicrophone` in `Device.h`), or the fake source.

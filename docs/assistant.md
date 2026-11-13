@@ -1,6 +1,6 @@
 # Assistant: a language model that operates a game
 
-`quench_assistant` (since 2026-11-13, after 0.17.0, not released) lets a language model operate a game through tools
+`quench_assistant` (since 2026-11-13, released with 0.18.0) lets a language model operate a game through tools
 the game registers: the player types or says something ("send walker one to the nearest cell", "what is my power
 balance?"), the model calls the game's tools, the game executes them, and the model answers, as text and optionally as
 speech. It is a client for OpenAI-compatible APIs (chat completions with tool calls, speech-to-text, text-to-speech)
@@ -138,8 +138,8 @@ deltas, tool calls gathered by their `index` (the first delta has the id and the
 fragments; sorted by index at the end), the finish reason, the usage of the last chunk (`prompt_tokens`,
 `completion_tokens`, OpenRouter's `cost`). A body that starts with `{` is read as one JSON answer (a server that does
 not stream, `stream: false`). A stream that ends without `[DONE]` is complete when it had a finish reason; without
-either it is a `StreamError`. JSON's `\u` surrogate pairs (an emoji from a server that escapes non-ASCII) are
-repaired to UTF-8 (`quench::json` decodes them as two three-byte sequences).
+either it is a `StreamError`. JSON's `\u` surrogate pairs (an emoji from a server that escapes non-ASCII) arrive as
+UTF-8: `quench::json` decodes a pair to one code point and a lone surrogate to U+FFFD.
 
 ## Errors
 

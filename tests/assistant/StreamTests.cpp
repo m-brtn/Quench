@@ -227,9 +227,9 @@ QUENCH_TEST(stream_whole_json_body) {
     CHECK(parseAll(R"({"object":"something else"})").failure.kind == ErrorKind::BadResponse, "no choices");
 }
 
-QUENCH_TEST(stream_surrogate_pairs_repaired) {
-    // A server that writes JSON with ASCII escapes sends an emoji as a surrogate pair.
-    const std::string body = "data: " + std::string(R"({"choices":[{"delta":{"content":"ok 🚀 \ud800 x"},)") +
+QUENCH_TEST(stream_surrogate_pairs) {
+    // A server that writes JSON with ASCII escapes sends an emoji as a surrogate pair (decoded by quench::json).
+    const std::string body = "data: " + std::string(R"({"choices":[{"delta":{"content":"ok \ud83d\ude80 \ud800 x"},)") +
                              R"("finish_reason":"stop"}]})" + "\n\n";
     const ChatResult r = parseAll(body);
     CHECK(r.text == "ok \xF0\x9F\x9A\x80 \xEF\xBF\xBD x", "'%s'", r.text.c_str());

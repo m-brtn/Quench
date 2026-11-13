@@ -50,19 +50,27 @@ private:
                 case 'b': c = '\b'; break;
                 case 'f': c = '\f'; break;
                 case 'u': {
-                    if (m_i + 4 > m_t.size()) return fail("bad \\u escape");
-                    const unsigned cp = unsigned(std::strtoul(m_t.substr(m_i, 4).c_str(), nullptr, 16));
-                    m_i += 4;
-                    if (cp < 0x80) {
-                        out += char(cp);
-                    } else if (cp < 0x800) {
-                        out += char(0xC0 | (cp >> 6));
-                        out += char(0x80 | (cp & 0x3F));
-                    } else {
-                        out += char(0xE0 | (cp >> 12));
-                        out += char(0x80 | ((cp >> 6) & 0x3F));
-                        out += char(0x80 | (cp & 0x3F));
+                    unsigned cp = 0;
+                    if (!hex4(cp)) return fail("bad \\u escape");
+                    if (cp >= 0xD800 && cp < 0xDC00) {
+                        // A high surrogate: with the low one of a following \u escape, one code point outside the
+                        // Basic Multilingual Plane; without it, U+FFFD (a following escape is then read on its own).
+                        unsigned low = 0;
+                        const std::size_t at = m_i;
+                        if (m_i + 1 < m_t.size() && m_t[m_i] == '\\' && m_t[m_i + 1] == 'u') {
+                            m_i += 2;
+                            if (!hex4(low)) return fail("bad \\u escape");
+                        }
+                        if (low >= 0xDC00 && low < 0xE000) {
+                            cp = 0x10000u + ((cp - 0xD800u) << 10) + (low - 0xDC00u);
+                        } else {
+                            cp = 0xFFFD;
+                            m_i = at;
+                        }
+                    } else if (cp >= 0xDC00 && cp < 0xE000) {
+                        cp = 0xFFFD; // a lone low surrogate
                     }
+                    appendUtf8(out, cp);
                     continue;
                 }
                 default: c = e; break; // \" \\ \/
@@ -73,6 +81,44 @@ private:
         if (m_i >= m_t.size()) return fail("unterminated string");
         ++m_i;
         return true;
+    }
+    // Four hex digits at m_i (consumed only when all four are digits).
+    bool hex4(unsigned& cp) {
+        if (m_i + 4 > m_t.size()) return false;
+        cp = 0;
+        for (std::size_t k = 0; k < 4; ++k) {
+            const char h = m_t[m_i + k];
+            unsigned d = 0;
+            if (h >= '0' && h <= '9') {
+                d = unsigned(h - '0');
+            } else if (h >= 'a' && h <= 'f') {
+                d = unsigned(h - 'a' + 10);
+            } else if (h >= 'A' && h <= 'F') {
+                d = unsigned(h - 'A' + 10);
+            } else {
+                return false;
+            }
+            cp = cp << 4 | d;
+        }
+        m_i += 4;
+        return true;
+    }
+    static void appendUtf8(std::string& out, unsigned cp) {
+        if (cp < 0x80) {
+            out += char(cp);
+        } else if (cp < 0x800) {
+            out += char(0xC0 | (cp >> 6));
+            out += char(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            out += char(0xE0 | (cp >> 12));
+            out += char(0x80 | ((cp >> 6) & 0x3F));
+            out += char(0x80 | (cp & 0x3F));
+        } else {
+            out += char(0xF0 | (cp >> 18));
+            out += char(0x80 | ((cp >> 12) & 0x3F));
+            out += char(0x80 | ((cp >> 6) & 0x3F));
+            out += char(0x80 | (cp & 0x3F));
+        }
     }
     bool value(Value& v, int depth) {
         if (depth > 64) return fail("nesting too deep");

@@ -1,7 +1,6 @@
 #pragma once
 
-// Text helpers of quench_assistant: UTF-8 cuts and counts, the repair of surrogate pairs that quench::json decodes
-// as two three-byte sequences, the trimming of tool results.
+// Text helpers of quench_assistant: UTF-8 cuts and counts, the trimming of tool results.
 
 #include <quench/assistant/Provider.h>
 #include <quench/net/Http.h>
@@ -16,10 +15,6 @@ namespace quench::assistant::detail {
 net::Headers requestHeaders(const ProviderSettings& settings, std::string contentType);
 // The base URL without its trailing '/' and `path` ("/chat/completions").
 std::string endpointUrl(const ProviderSettings& settings, std::string_view path);
-
-// Replaces each pair of three-byte surrogate sequences (what json::parse makes of "😀") with the four-byte
-// UTF-8 sequence of its code point, and a lone surrogate with U+FFFD.
-void repairSurrogates(std::string& text);
 
 // The code points of `text` (a byte that does not continue a sequence counts as one).
 std::size_t codePoints(std::string_view text);

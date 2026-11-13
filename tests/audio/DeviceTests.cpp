@@ -123,6 +123,7 @@ QUENCH_TEST(mic_null_device) {
     std::unique_ptr<Microphone> mic = makeMicrophone(jobs, {.name = "null"});
     CHECK(!mic->fake() && mic->permission() == MicPermission::Granted, "permission %s",
           micPermissionName(mic->permission()));
+    const auto started = std::chrono::steady_clock::now();
     REQUIRE(mic->start({.sampleRate = 16000, .maxSeconds = 30.0}), "start");
     const auto pumpUntil = [&](double seconds, auto done) {
         const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
@@ -138,10 +139,14 @@ QUENCH_TEST(mic_null_device) {
           mic->info().backend.c_str(), mic->info().deviceSampleRate);
     CHECK(pumpUntil(5.0, [&] { return mic->seconds() >= 0.3; }), "0.3 s recorded (%f)", mic->seconds());
     mic->stop();
+    // At most the time the input was open (and a period of the null backend), not a fixed bound: on iOS miniaudio's
+    // null backend reads its clock in whole seconds (its mach_absolute_time timer, chosen because
+    // MAC_OS_X_VERSION_MIN_REQUIRED is not defined there, divides integers), so it delivers a second of frames at once.
+    const double open = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     std::optional<MicRecording> r = mic->takeRecording();
     REQUIRE(r, "a recording");
-    CHECK(r->sampleRate == 16000 && r->seconds() >= 0.3 && r->seconds() < 1.0, "%f s at %u Hz", r->seconds(),
-          r->sampleRate);
+    CHECK(r->sampleRate == 16000 && r->seconds() >= 0.3 && r->seconds() <= open + 0.1, "%f s at %u Hz in %f s",
+          r->seconds(), r->sampleRate, open);
     CHECK(measureLevels(r->samples, 1).peak[0] == 0.0f, "the null backend's silence");
 
     // Again, into the limit, right after the close job of the first recording.

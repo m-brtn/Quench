@@ -8,9 +8,12 @@
 
 namespace quench::json {
 
-// Minimal JSON document model, parser and writer. UTF-8 passthrough; \u escapes of the Basic Multilingual Plane only
-// (no surrogate pairs). Object keys are kept sorted (std::map). Numbers are parsed and written with the C library, so
-// the process must keep the "C" numeric locale.
+// Minimal JSON document model, parser and writer. UTF-8 passthrough: the writer escapes only '"', '\\' and the control
+// characters, so text outside the Basic Multilingual Plane is written as its four UTF-8 bytes. The parser decodes \u
+// escapes to UTF-8, a surrogate pair ("\ud83d\ude00") to one four-byte code point; a lone surrogate becomes U+FFFD
+// (what a browser's TextEncoder makes of one) rather than an error, so one bad escape in a server's text does not lose
+// the whole document; a \u without four hex digits is an error. Object keys are kept sorted (std::map). Numbers are
+// parsed and written with the C library, so the process must keep the "C" numeric locale.
 struct Value {
     enum class Type { Null, Bool, Number, String, Array, Object };
     Type type = Type::Null;
