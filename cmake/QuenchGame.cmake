@@ -21,14 +21,18 @@ set(QUENCH_IOS_BUNDLE_ID_SUFFIX "${_quench_bundle_suffix}" CACHE STRING "Appende
 
 # quench_add_game(<target> NAME <display name> SOURCES <file>...
 #                 [OUTPUT_NAME <file name>] [BUNDLE_ID <reverse dns>] [VERSION <x.y.z>]
-#                 [ASSETS <dir>] [COOKED_ASSETS <quench_cook_assets name>...]
+#                 [ASSETS <dir>] [COOKED_ASSETS <quench_cook_assets name>...] [DEFERRED_ASSETS <pattern>...]
 #                 [ICON <square png, 1024 px or larger>] [ORIENTATIONS landscape|portrait|all] [CUSTOM_MAIN])
 # ASSETS is copied as it is; COOKED_ASSETS (cmake/QuenchCook.cmake) are cooked first and merged into the same assets/.
+# DEFERRED_ASSETS: in a web build these files are not in the page's .data package but beside the page in
+# <OUTPUT_NAME>.assets/<path>, fetched while the program runs (fs::requestAsset; docs/assets.md, "Deferred assets").
+# Patterns are relative to the asset root: a file, a directory or a file(GLOB) expression (`music/*.mp3`). Every
+# other platform ignores them: the files are in the bundle as all others.
 # CUSTOM_MAIN: the target defines main itself instead of linking quench_main (the device test app).
 # The sources get QUENCH_GAME_NAME and QUENCH_GAME_VERSION (string literals) for AppDesc.
 function(quench_add_game target)
     cmake_parse_arguments(PARSE_ARGV 1 arg "CUSTOM_MAIN" "NAME;OUTPUT_NAME;BUNDLE_ID;VERSION;ASSETS;ICON;ORIENTATIONS"
-                          "SOURCES;COOKED_ASSETS")
+                          "SOURCES;COOKED_ASSETS;DEFERRED_ASSETS")
     if(NOT arg_NAME OR NOT arg_SOURCES)
         message(FATAL_ERROR "quench_add_game: NAME and SOURCES are required")
     endif()
@@ -68,6 +72,15 @@ function(quench_add_game target)
     endforeach()
     # The asset directories in copy order: cooked files win over plain ones of the same name.
     set(_asset_dirs ${arg_ASSETS} ${_cooked_dirs})
+    foreach(_pattern IN LISTS arg_DEFERRED_ASSETS)
+        if(_pattern MATCHES "^/|\\\\|:|(^|/)\\.\\.?(/|$)|//|/$|^$")
+            message(FATAL_ERROR "quench_add_game: DEFERRED_ASSETS '${_pattern}' must be a path relative to the asset "
+                                "root, with '/' and without '.' or '..' segments")
+        endif()
+    endforeach()
+    if(arg_DEFERRED_ASSETS AND NOT _asset_dirs)
+        message(FATAL_ERROR "quench_add_game: DEFERRED_ASSETS needs ASSETS or COOKED_ASSETS")
+    endif()
 
     add_executable(${target} ${arg_SOURCES})
     if(arg_CUSTOM_MAIN)
@@ -84,7 +97,9 @@ function(quench_add_game target)
         # into the virtual file system's /assets (SDL_GetBasePath() is "/"). Asyncify: the WebGPU backend and
         # miniaudio's Web Audio backend wait for the browser with emscripten_sleep. A stack of 1 MB as in
         # quench_physics (Jolt's jobs run nested without threads). FS is exported so that a page's script can read
-        # the files a run wrote (captures of a scripted run).
+        # the files a run wrote (captures of a scripted run). DEFERRED_ASSETS go to <OUTPUT_NAME>.assets/ beside the
+        # page instead of into the .data; their list (StageAssets.cmake) is packed at /quench/deferred_assets.txt,
+        # where the app's file system reads it (src/app/SdlFileSystem.cpp).
         set(_gen ${CMAKE_CURRENT_BINARY_DIR}/quench_game/${target})
         file(MAKE_DIRECTORY ${_gen})
         set(QUENCH_GAME_NAME ${arg_NAME})
@@ -96,18 +111,33 @@ function(quench_add_game target)
             set(_stage ${_gen}/assets)
             file(MAKE_DIRECTORY ${_stage})
             string(REPLACE ";" "|" _sources "${_asset_dirs}")
+            set(_deferred_args "")
+            set(_byproducts ${_stage})
+            if(arg_DEFERRED_ASSETS)
+                set(_manifest ${_gen}/deferred_assets.txt)
+                string(REPLACE ";" "|" _patterns "${arg_DEFERRED_ASSETS}")
+                set(_deferred_args -DDEFERRED=${_patterns}
+                    -DDEFERRED_DIR=$<TARGET_FILE_DIR:${target}>/${arg_OUTPUT_NAME}.assets -DMANIFEST=${_manifest}
+                    -DFOLDER=${arg_OUTPUT_NAME}.assets)
+                list(APPEND _byproducts ${_manifest})
+            endif()
             # The stamp changes when a staged file did (StageAssets.cmake touches the folder), which links again.
             add_custom_target(${target}_assets
-                COMMAND ${CMAKE_COMMAND} -DSTAGE=${_stage} -DSOURCES=${_sources}
+                COMMAND ${CMAKE_COMMAND} -DSTAGE=${_stage} -DSOURCES=${_sources} ${_deferred_args}
                         -P ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/StageAssets.cmake
-                BYPRODUCTS ${_stage}
+                BYPRODUCTS ${_byproducts}
                 COMMENT "Merging the assets of ${target}" VERBATIM)
             if(arg_COOKED_ASSETS)
                 add_dependencies(${target}_assets ${arg_COOKED_ASSETS})
             endif()
             add_dependencies(${target} ${target}_assets)
-            target_link_options(${target} PRIVATE --preload-file ${_stage}@/assets)
+            target_link_options(${target} PRIVATE "SHELL:--preload-file ${_stage}@/assets")
             set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${_stage})
+            if(arg_DEFERRED_ASSETS)
+                # SHELL: CMake would merge the two --preload-file flags into one.
+                target_link_options(${target} PRIVATE "SHELL:--preload-file ${_manifest}@/quench/deferred_assets.txt")
+                set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${_manifest})
+            endif()
         endif()
         return()
     endif()

@@ -118,7 +118,8 @@ Link what the game uses beside `quench_add_game()`:
   (`Renderer::addPass`).
 - **Assets.** Sources are cooked at build time by `quench_cook_assets()` (`cmake/QuenchCook.cmake`: `TEXTURES`,
   `DATA_TEXTURES`, `MODELS`, `SOUNDS`, `SKELETONS`, `ANIMATIONS`, `NAVMESHES`, `FILES`) and merged into the game's
-  assets by `quench_add_game(... COOKED_ASSETS <name>)`; `ASSETS <dir>` copies files as they are. The runtime path is
+  assets by `quench_add_game(... COOKED_ASSETS <name>)`; `ASSETS <dir>` copies files as they are;
+  `DEFERRED_ASSETS <pattern>...` leaves files out of a web page's package, to be fetched while it runs ("Web"). The runtime path is
   the path under `SOURCE_DIR` with the cooked extension: `models/crate.gltf` becomes `models/crate.qmodel`, textures
   `.ktx2`, navmeshes `.qnav`, sounds keep theirs. Load through `render::SceneAssets` (textures, models),
   `app.audio()` (sounds), `animation::AnimationSystem` or `navigation::NavMeshAsset`: loads run on jobs and show
@@ -265,6 +266,12 @@ demo; a template game in headless Chrome). What differs there:
   `init`, stored after each `fs::writeUser`; not the last moment before a tab closes, not across browsers or private
   windows; in memory when IndexedDB is missing or blocked; `docs/app.md`, "User files in a browser"); `--user-dir`
   stays in memory. Sound starts with the first click, key or touch.
+- Everything in `.data` loads before the first frame. Large files the game can start without (music) go into
+  `quench_add_game(... DEFERRED_ASSETS music/*.mp3)`: beside the page in `<name>.assets/`, fetched while the game
+  runs. Ask for them early with `fs::requestAsset(path, priority)` and use one only once `fs::assetState(path)` is
+  `fs::AssetState::Present` (`Deferred`, `Fetching`, `Failed`, `Missing` otherwise; never wait for it). On the
+  desktop and iOS they are in the bundle, `Present` from the start, so the same code runs there. A site publishes
+  the `<name>.assets/` folder with the page. `docs/assets.md`, "Deferred assets".
 - Cooked textures are BC7 there (`TEXTURE_FORMAT auto`), which desktop browsers have; phones' browsers need
   `TEXTURE_FORMAT basis` (not tried in a browser).
 - Checks: the same scenarios, run in headless Chrome by the engine's `tools/web_check.mjs`

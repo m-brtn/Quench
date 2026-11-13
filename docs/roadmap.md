@@ -859,6 +859,8 @@ assets). The web: an experimental build since 2026-11-10 (the user's request: th
 shaders through Tint, single-thread jobs; the demo's scripted checks pass in Chrome on the Mac, headless). Open
 there: other browsers and phones, a person's look and play, sound by ear, threads, download size, hosting. The
 user directory is kept in IndexedDB since 2026-11-13, released with 0.16.0 ([its notes](releases/v0.16.0.md);
+checked in headless Chrome on the Mac only). Deferred assets (files a page fetches while it runs, so large ones such
+as music do not hold back the first frame) since 2026-11-13, released with 0.17.0 ([its notes](releases/v0.17.0.md);
 checked in headless Chrome on the Mac only).
 See [Platforms](platforms.md#web-webassembly).
 

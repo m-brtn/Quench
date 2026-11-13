@@ -20,8 +20,8 @@
 #                               into a temporary directory), package, web (not a part of full: host-tools and
 #                               release for the tools, the web preset, then the sample's and the demo's scripted
 #                               checks in headless Chrome through tools/web_check.mjs, the demo's captures against
-#                               the Metal golden images, the user files kept in IndexedDB across loads of the
-#                               demo; needs Homebrew's emscripten, Node.js and Google Chrome)
+#                               the Metal golden images, hello's deferred assets fetched (and one that fails), the
+#                               user files kept in IndexedDB across loads of the demo; needs Homebrew's emscripten, Node.js and Google Chrome)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -86,6 +86,22 @@ run_step() {
             fail "web: hello (log: $hello_log)"
         }
         grep -E "scenario: [^ ]*check.txt: |web_check: (passed|[0-9]+ failed)" "$hello_log"
+        # Deferred assets: hello's two files in hello.assets/ beside the page, not in its package; one arrives and is
+        # read through quench::fs, the other is answered with 404 and ends failed after its second try.
+        local deferred_log=build/web/check_deferred.log
+        [[ -f build/web/examples/hello/hello.assets/deferred/greeting.txt ]] ||
+            fail "web: hello's deferred assets are not beside its page"
+        ! grep -qa "A deferred asset" build/web/examples/hello/hello.data ||
+            fail "web: hello's deferred assets are in its package"
+        node tools/web_check.mjs --page examples/hello/hello.html --out build/web/check/deferred --timeout 120 \
+            --not-found examples/hello/hello.assets/deferred/unserved.txt -- \
+            --window 320x180 --script /repo/examples/hello/scenarios/deferred_web.txt >"$deferred_log" 2>&1 || {
+            tail -40 "$deferred_log"
+            fail "web: deferred assets (log: $deferred_log)"
+        }
+        grep -q "web_check: 2 requests answered with 404" "$deferred_log" ||
+            fail "web: the failed deferred asset was not tried twice (log: $deferred_log)"
+        grep -E "assets: |deferred_web.txt: |web_check: ([0-9]+ requests|passed|[0-9]+ failed)" "$deferred_log"
         # The demo's captures are compared with the Metal golden images (the sample's shows the backend's name).
         node tools/web_check.mjs --page examples/demo/quench-demo.html --out build/web/check/demo \
             --golden tests/golden/metal/apple-m4-pro --compare build/release/tests/quench_image_compare -- \

@@ -21,6 +21,16 @@ enum class Root { Assets, User };
 
 using Bytes = std::vector<std::uint8_t>;
 
+// Where an asset is (assetState). Deferred and Fetching exist only in a browser build, for the files a game's
+// quench_add_game(... DEFERRED_ASSETS ...) left out of the page's package (docs/assets.md, "Deferred assets").
+enum class AssetState {
+    Missing,  // not there and not to be fetched
+    Present,  // there: readAsset, openAsset and assetExists see it
+    Deferred, // on the server beside the page, not asked for yet (requestAsset)
+    Fetching, // asked for: waiting in the queue or being downloaded
+    Failed,   // its download failed twice: not there for the rest of the session
+};
+
 // A file opened for reading in pieces (streamed audio). One thread at a time, which may change between calls (a job,
 // then the next job).
 class Reader {
@@ -55,6 +65,15 @@ public:
         (void)path;
         return std::nullopt;
     }
+    // Deferred assets (fs::assetState, fs::requestAsset). The defaults have none: a file that exists is Present,
+    // anything else Missing, and a request does nothing.
+    virtual AssetState assetState(std::string_view path) {
+        return exists(Root::Assets, path) ? AssetState::Present : AssetState::Missing;
+    }
+    virtual void requestAsset(std::string_view path, int priority) {
+        (void)path;
+        (void)priority;
+    }
 };
 
 // Standard library backend; an empty root is the current directory for assets and refuses user writes.
@@ -77,6 +96,15 @@ Result<std::string> readAssetText(std::string_view path);
 Result<std::unique_ptr<Reader>> openAsset(std::string_view path);
 bool assetExists(std::string_view path);
 std::optional<std::int64_t> assetModifiedTime(std::string_view path);
+
+// Deferred assets: in a browser build, files that quench_add_game(... DEFERRED_ASSETS ...) put beside the page
+// instead of into its package are downloaded while the program runs, into the assets, after which every function
+// above sees them. On every other platform (and for any other file) an asset that exists is Present, anything else
+// Missing, and requestAsset does nothing. A browser build fetches at most two files at a time, the highest
+// `priority` first (in the order asked among equal ones), tries a failed download once more and then reports
+// Failed; asking again raises a waiting file's priority. Call both from the main thread; neither waits.
+AssetState assetState(std::string_view path);
+void requestAsset(std::string_view path, int priority = 0);
 
 Result<Bytes> readUser(std::string_view path);
 Result<std::string> readUserText(std::string_view path);

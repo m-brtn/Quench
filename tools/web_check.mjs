@@ -4,7 +4,8 @@
 //
 //   node tools/web_check.mjs --page examples/demo/quench-demo.html [--build build/web] [--out DIR]
 //        [--golden DIR --compare quench_image_compare] [--timeout SECONDS] [--chrome PATH] [--repo DIR]
-//        [--onscreen] [--system-user-dir] [--databases N,N,...] -- APP ARGUMENTS... [-- APP ARGUMENTS...]
+//        [--onscreen] [--system-user-dir] [--databases N,N,...] [--not-found PATH]... -- APP ARGUMENTS...
+//        [-- APP ARGUMENTS...]
 //
 // The script serves the build directory at / and the repository at /repo/ on 127.0.0.1, so that a scenario is named
 // by its URL (--script /repo/examples/demo/scenarios/batch.txt: the page fetches what its virtual file system does
@@ -24,6 +25,10 @@
 // in IndexedDB. After each load the script waits for the program's stores to IndexedDB to end; --databases gives the
 // number of IndexedDB databases the page's origin must have after each load (the persistence check of
 // tools/check.sh step web). Without these options a run is one load in a fresh profile, as before.
+//
+// --not-found PATH (relative to the build directory, may be given several times) answers that file with 404 as if it
+// were not on the server: the check of a deferred asset whose download fails (tools/check.sh step web). Files beside
+// the page, such as a game's <OUTPUT_NAME>.assets/ of deferred assets, are served like the page itself.
 //
 // Exit code: 0 when the program ended with 0, no WebGPU error was logged and every compared capture passed; 1
 // otherwise; 2 when the page did not reach the program's end.
@@ -51,6 +56,8 @@ const options = {
 let onscreen = false;
 let systemUserDir = false;
 let databases = [];
+const notFound = new Set();
+let notFoundAnswers = 0; // requests answered with 404 because of --not-found
 const loads = [];
 {
     const argv = process.argv.slice(2);
@@ -74,6 +81,10 @@ const loads = [];
         }
         if (argv[i] === '--system-user-dir') {
             systemUserDir = true;
+            continue;
+        }
+        if (argv[i] === '--not-found' && i + 1 < argv.length) {
+            notFound.add(normalize(argv[++i]).replace(/^\/+/, ''));
             continue;
         }
         if (argv[i] === '--databases' && i + 1 < argv.length) {
@@ -112,7 +123,7 @@ if (!existsSync(options.chrome)) {
 
 const mime = {
     '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.txt': 'text/plain',
-    '.png': 'image/png', '.json': 'application/json',
+    '.png': 'image/png', '.json': 'application/json', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg',
 };
 const server = createServer((request, response) => {
     let path = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
@@ -122,7 +133,9 @@ const server = createServer((request, response) => {
         path = path.substring('/repo'.length);
     }
     const file = normalize(join(base, path));
-    if (!file.startsWith(base) || !existsSync(file) || !statSync(file).isFile()) {
+    const hidden = base === buildDir && notFound.has(normalize(path).replace(/^\/+/, ''));
+    if (hidden) ++notFoundAnswers;
+    if (hidden || !file.startsWith(base) || !existsSync(file) || !statSync(file).isFile()) {
         response.writeHead(404).end('not found');
         return;
     }
@@ -307,6 +320,7 @@ if (options.out) {
 }
 socket.close();
 cleanUp();
+if (notFound.size) console.log(`web_check: ${notFoundAnswers} requests answered with 404 (--not-found)`);
 
 if (stopped) {
     console.error(`web_check: the page stopped: ${stopped}`);

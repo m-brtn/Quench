@@ -7,9 +7,9 @@
 #   tools/publish_web.sh --push      # also commit the site to the gh-pages branch and push it (a normal push)
 #
 # The site: index.html (the demo's page; its arguments come from the query string, index.html?--section&sky),
-# hello.html (the sample), their .js, .wasm and .data files, LICENSE, THIRD_PARTY_LICENSES, Emscripten's licence and
-# the licences of its system libraries in licenses/emscripten/, version.txt (the version and the commit) and
-# .nojekyll (the files are served as they are). The check starts the site's index.html in headless Chrome (no window)
+# hello.html (the sample), their .js, .wasm and .data files, the folders of their deferred assets (hello.assets/),
+# LICENSE, THIRD_PARTY_LICENSES, Emscripten's licence and the licences of its system libraries in
+# licenses/emscripten/, version.txt (the version and the commit) and .nojekyll (the files are served as they are). The check starts the site's index.html in headless Chrome (no window)
 # with the demo's smoke scenario, on the path a person's page takes (--onscreen): exit code 0 and no WebGPU error.
 #
 # --push needs a clean working tree (the site is then that commit's build) and refuses otherwise. It checks the
@@ -64,6 +64,10 @@ mkdir -p "$SITE/licenses/emscripten"
 cp "$DEMO/quench-demo.html" "$SITE/index.html"
 cp "$DEMO"/quench-demo.{js,wasm,data} "$HELLO"/hello.{html,js,wasm} "$SITE/"
 [[ ! -f "$HELLO/hello.data" ]] || cp "$HELLO/hello.data" "$SITE/"
+# Deferred assets (quench_add_game's DEFERRED_ASSETS) beside their page: hello.assets/.
+for d in "$DEMO/quench-demo.assets" "$HELLO/hello.assets"; do
+    [[ ! -d "$d" ]] || cp -R "$d" "$SITE/"
+done
 cp LICENSE THIRD_PARTY_LICENSES "$SITE/"
 # Emscripten's own licence and those of the system libraries it links (musl, libc++, libc++abi, compiler-rt, ...).
 EM_ROOT="$(em-config EMSCRIPTEN_ROOT)"

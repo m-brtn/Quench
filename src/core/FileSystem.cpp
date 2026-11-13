@@ -158,6 +158,12 @@ public:
         return m_inner->modifiedTime(root, path);
     }
 
+    AssetState assetState(std::string_view path) override {
+        return overlaid(path) ? AssetState::Present : m_inner->assetState(path);
+    }
+
+    void requestAsset(std::string_view path, int priority) override { m_inner->requestAsset(path, priority); }
+
 private:
     bool overlaid(std::string_view path) { return m_inner->exists(Root::User, m_prefix + std::string(path)); }
 
@@ -223,6 +229,15 @@ bool assetExists(std::string_view path) { return checkPath(path).empty() && back
 std::optional<std::int64_t> assetModifiedTime(std::string_view path) {
     if (!checkPath(path).empty()) return std::nullopt;
     return backend()->modifiedTime(Root::Assets, path);
+}
+
+AssetState assetState(std::string_view path) {
+    if (!checkPath(path).empty()) return AssetState::Missing;
+    return backend()->assetState(path);
+}
+
+void requestAsset(std::string_view path, int priority) {
+    if (checkPath(path).empty()) backend()->requestAsset(path, priority);
 }
 
 Result<Bytes> readUser(std::string_view path) {

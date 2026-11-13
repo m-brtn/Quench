@@ -8,6 +8,7 @@
 #include "core/Platform.h"
 
 #include <quench/audio/Analysis.h>
+#include <quench/core/FileSystem.h>
 #include <quench/core/Log.h>
 #include <quench/core/Parse.h>
 #include <quench/core/Profile.h>
@@ -508,6 +509,13 @@ std::optional<double> scenarioValue(AppState& s, std::string_view name) {
         if (name == "audio_clipped") return double(stats.clipped);
         if (name == "audio_device") return s.audioDevice ? 1.0 : 0.0;
     }
+    // Deferred assets (docs/assets.md, "Deferred assets"): fs::AssetState as a number (0 missing, 1 present,
+    // 2 deferred, 3 fetching, 4 failed), and the size of the file as fs::readAsset reads it (-1: it cannot be read).
+    if (name.starts_with("asset_state:")) return double(int(fs::assetState(name.substr(12))));
+    if (name.starts_with("asset_size:")) {
+        const Result<fs::Bytes> bytes = fs::readAsset(name.substr(11));
+        return bytes ? double(bytes->size()) : -1.0;
+    }
     if (name.starts_with("action:")) {
         const auto action = s.input.findAction(name.substr(7));
         if (action) return double(s.input.value(*action));
@@ -710,6 +718,16 @@ Scenario::Exec scenarioCommand(AppState& s, const ScenarioCommand& c) {
                                         .cpu = cpuMs ? *cpuMs / 1000.0 : 0.0,
                                         .gpu = gpuMs ? *gpuMs / 1000.0 : -1.0};
         }
+        return Exec::Done;
+    }
+
+    if (op == "asset_request") {
+        const auto priority = number(c.args, 1);
+        if (c.args.empty() || c.args.size() > 2 || (c.args.size() == 2 && !priority)) {
+            log::error("scenario", "line {}: asset_request PATH [PRIORITY]", c.line);
+            return Exec::Failed;
+        }
+        fs::requestAsset(first, priority ? int(*priority) : 0);
         return Exec::Done;
     }
 

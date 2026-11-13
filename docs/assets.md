@@ -312,6 +312,41 @@ The cook is built from source in host builds. Cross builds (iOS) take it from th
 dependencies (fastgltf with its bundled simdjson and simdutf, stb) are fetched at configure time in host builds and
 built only when the cook is (`EXCLUDE_FROM_ALL`).
 
+### Deferred assets
+
+A browser build loads its `.data` package, every asset in it, before the first frame. Large files the game can start
+without (music, a later level's textures) can wait beside the page instead and come while the game runs:
+
+```cmake
+quench_add_game(my_game ... ASSETS assets COOKED_ASSETS my_game_cooked
+    DEFERRED_ASSETS music/*.mp3 levels/two)   # relative to the asset root: a file, a directory, a file(GLOB)
+```
+
+- **The build.** In a web build (`cmake/StageAssets.cmake`) the matching files are left out of `<OUTPUT_NAME>.data`
+  and copied to `<OUTPUT_NAME>.assets/<path>` beside the page; the package carries their list, a path and a size
+  each, at `/quench/deferred_assets.txt`. A pattern that matches nothing is a build warning. Everywhere else the
+  option changes nothing: the files are in the bundle as all others. A site publishes the folder with the page
+  (`tools/publish_web.sh` copies `hello.assets/`). Finder's `.DS_Store` files are kept out of the staged assets.
+- **The program.** `fs::assetState(path)` says where a file is: `Present` (`readAsset`, `openAsset`, `assetExists`
+  see it), `Deferred` (beside the page, not asked for), `Fetching` (asked for, queued or downloading), `Failed` or
+  `Missing`. `fs::requestAsset(path, priority)` asks for it; nothing waits. In a browser at most two files are
+  downloaded at a time, the highest priority first and among equal ones in the order asked; asking again raises a
+  waiting file's priority. A file is written into the virtual file system at `assets/<path>` when it is complete
+  (`emscripten_async_wget2`: XMLHttpRequest, its callbacks on the main thread between frames; no Asyncify wait),
+  so from then on it is read like a packed one, also by a stream (`AudioSystem::playMusic`). A failed download is
+  tried once more, then the file is `Failed` for the session (a warning). The log has a line per file:
+  `assets: fetched music/intro.mp3 (4.4 MB, 812 ms)`. On every other platform a file that exists is `Present`,
+  anything else `Missing`, and a request does nothing, so a game written for both needs no `#if`.
+- **What a game does.** It asks for its deferred files early, in the order it wants them, and uses a file only
+  once it is `Present` (an `AssetManager` load of one that is not there yet fails like any missing file). Outpost
+  defers its music this way: the menu is silent until its track has arrived.
+- **Memory.** A fetched file stays in the browser's memory for the session (Emscripten's in-memory file system, as
+  the packed files do); it is not cached by the engine between visits (the browser's HTTP cache may keep it).
+- **Checked** in `tools/check.sh step web`: hello's two files in `hello.assets/deferred/` are not in `hello.data`;
+  in headless Chrome one arrives and is read through `quench::fs`, the other one is answered with 404
+  (`web_check.mjs --not-found`), tried twice and ends `Failed` without a hang (`scenarios/deferred_web.txt`; the
+  scenario command `asset_request` and the values `asset_state:PATH` and `asset_size:PATH`, [App](app.md#scenarios)).
+
 ## Basis Universal
 
 One cooked set for every device: a Basis Universal file (KTX 2.0, ETC1S or UASTC LDR 4x4) is transcoded at load

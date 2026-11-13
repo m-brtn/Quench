@@ -41,6 +41,7 @@ quench_add_game(my_game
     ICON icon/icon.png
     ASSETS assets                           # copied as they are
     COOKED_ASSETS my_game_cooked            # cooked files win over plain ones of the same name
+    DEFERRED_ASSETS music/*.mp3             # web: beside the page in my_game.assets/, fetched while it runs
     ORIENTATIONS landscape
     SOURCES src/Game.cpp)
 target_link_libraries(my_game PRIVATE quench_render quench_physics) # quench_animation for characters
@@ -804,3 +805,19 @@ the captures of the user directory into `--out`, and exits with 1 when a check f
 images of the same names, and
 `--onscreen` with a `--quit-after` runs the page as a person's browser would. `<engine>` is the engine checkout
 (`FETCHCONTENT_SOURCE_DIR_QUENCH`, or `build/<preset>/_deps/quench-src`).
+
+Deferred assets (`DEFERRED_ASSETS` above; engine `docs/assets.md`, "Deferred assets"): the web build copies them to
+`build/web/my_game.assets/`, which `web_check.mjs` serves beside the page and a site must publish with it. The game
+asks for them and looks at them through `quench::fs`:
+
+```cpp
+// At startup, in the order they are wanted (the highest priority first; at most two downloads at a time):
+quench::fs::requestAsset("music/menu.mp3", 10);
+quench::fs::requestAsset("music/level1.mp3", 5);
+// Each frame, before using one (Present on the desktop and iOS at once; nothing waits):
+if (quench::fs::assetState("music/menu.mp3") == quench::fs::AssetState::Present) startMenuMusic();
+```
+
+A scenario sees them with `asset_state:PATH` (0 missing, 1 present, 2 deferred, 3 fetching, 4 failed) and
+`asset_size:PATH`, and asks with `asset_request PATH [PRIORITY]`; `web_check.mjs --not-found PATH` answers a file
+with 404 to check the failure path.

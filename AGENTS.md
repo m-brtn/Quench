@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-13, version 0.16.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-13, version 0.17.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -246,7 +246,14 @@ save was lost at a reload of its page. On its tree before the commit `tools/chec
 TSan 689 tests each with 70 skipped, Release 832 with 69 skipped on the Mac's three backends, `wasm-node` 205 with 9
 skipped, the iOS Simulator 523 with 70 skipped, the Xcode project, a new game, the demo's package) and `step web`
 passes in headless Chrome on the Mac (the demo's batch 806 passed, 41 captures within the thresholds, the user files
-kept across three loads of the demo).
+kept across three loads of the demo). Version 0.17.0 (2026-11-13; `docs/releases/v0.17.0.md`) adds deferred assets:
+`quench_add_game(... DEFERRED_ASSETS <pattern>...)` leaves files out of a web page's `.data` package, beside the
+page in `<name>.assets/`, fetched while the program runs (`fs::requestAsset`, `fs::assetState`; at most two at a
+time, one retry): asked for so that Outpost's page loads 21 MB before its first frame instead of 87 MB (its music
+fetched later). On its code before the version number changed `tools/check.sh full` passes (Debug, ASan and TSan 690
+tests each with 70 skipped, Release 833 with 69 skipped, `wasm-node` 206 with 9 skipped, the iOS Simulator 524 with
+70 skipped, the Xcode project, a new game) and `step web` passes in headless Chrome on the Mac (the deferred case
+10 of 10: one file fetched and read, one answered with 404 ends failed).
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the

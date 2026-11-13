@@ -11,14 +11,16 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.16.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+The engine (version 0.17.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases (those
 of 0.13.1: 0.13.2, a patch of the renderer, ran the render and demo tests only, [its notes](releases/v0.13.2.md);
 0.14.0, the weather's look and sound, ran no gate, [its notes](releases/v0.14.0.md); after its tag the golden
 captures of the demo's Weather section were renewed, and the Release tests of the Mac's three backends, 818 with 69
 skipped, and the web check in headless Chrome on the Mac pass again; 0.15.0, phones in a browser, ran the full
 gate and the web check before its version number changed, [its notes](releases/v0.15.0.md); 0.16.0, the user files
-of a browser build kept in IndexedDB, ran the release gate, [its notes](releases/v0.16.0.md)).
+of a browser build kept in IndexedDB, ran the release gate, [its notes](releases/v0.16.0.md); 0.17.0, deferred
+assets of a web page, ran the full gate and the web check before its version number changed, [its
+notes](releases/v0.17.0.md)).
 Its GPU tests render offscreen and check the
 pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
 Mac (with the Khronos validation layer; a test of
@@ -376,7 +378,11 @@ WebAssembly on the browser's WebGPU. Run so far only in Chromium on the Mac (Web
   are therefore mapped when their command buffer is submitted and read between frames; a `map()` after the
   submission's fence does not wait (the rain's cover readback works this way). `Device::download`, `waitIdle` and
   `Fence::wait` inside a frame on the screen still do; captures are taken in offscreen runs.
-- **Files.** Assets are preloaded into the virtual file system (`<name>.data`, fetched before `main`). The default
+- **Files.** Assets are preloaded into the virtual file system (`<name>.data`, fetched before `main`), except a
+  game's deferred assets (`quench_add_game(... DEFERRED_ASSETS ...)`, since 2026-11-13): those wait beside the page
+  in `<name>.assets/` and are downloaded while the program runs when it asks for them (`fs::requestAsset`, at most
+  two at a time, XMLHttpRequest on the main thread between frames; [Deferred assets](assets.md#deferred-assets);
+  checked in headless Chrome on the Mac by `step web`: one file arrives, one answered with 404 ends failed). The default
   user directory is kept in the browser's IndexedDB since 2026-11-13 (IDBFS, one database per app named
   `/libsdl/<organization>/<name>`; loaded before the game starts, at most 5 s, stored after each write; in memory
   when IndexedDB is missing, blocked or slow; [App shell](app.md#web-runs)). Checked in headless

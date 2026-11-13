@@ -8,11 +8,15 @@
 
 #if QUENCH_PLATFORM_WEB
 #include <emscripten/emscripten.h>
+#include <emscripten/wget.h>
 #endif
 
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <format>
+#include <map>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -140,6 +144,182 @@ std::string withSeparator(std::string dir) {
 
 Error sdlError(const std::string& what) { return Error{what + ": " + SDL_GetError()}; }
 
+#if QUENCH_PLATFORM_WEB
+// Deferred assets (quench_add_game's DEFERRED_ASSETS; docs/assets.md, "Deferred assets"). The build lists them in
+// /quench/deferred_assets.txt inside the page's package: a line "folder <name>" (the folder beside the page that
+// holds them, <OUTPUT_NAME>.assets), then a line "<size> <path>" per file. A request queues the file; at most
+// kMaxDownloads are downloaded at a time with emscripten_async_wget2 (XMLHttpRequest, written into the virtual file
+// system at the asset root when complete; its callbacks run on the main thread between frames), the highest
+// priority first. A failed download is tried once more, then the file is Failed. One instance for the program's
+// whole life: a download's callback may come after a backend was replaced.
+class DeferredAssets {
+public:
+    static DeferredAssets& get() {
+        static DeferredAssets* instance = new DeferredAssets; // never destroyed (callbacks hold pointers into it)
+        return *instance;
+    }
+
+    // Reads the manifest once; `assetRoot` ends with '/'.
+    void load(const std::string& assetRoot) {
+        if (m_loaded) return;
+        m_loaded = true;
+        m_root = assetRoot;
+        std::size_t length = 0;
+        char* data = static_cast<char*>(SDL_LoadFile(kManifest, &length));
+        if (!data) return; // no deferred assets in this build
+        std::istringstream in(std::string(data, length));
+        SDL_free(data);
+        std::uint64_t bytes = 0;
+        for (std::string line; std::getline(in, line);) {
+            if (line.starts_with("folder ")) {
+                m_folder = line.substr(7);
+                continue;
+            }
+            const std::size_t space = line.find(' ');
+            if (space == std::string::npos || line.starts_with("#")) continue;
+            Entry entry;
+            entry.size = std::strtoull(line.c_str(), nullptr, 10);
+            std::string path = line.substr(space + 1);
+            if (!fs::checkPath(path).empty()) continue;
+            bytes += entry.size;
+            m_entries.emplace(std::move(path), entry);
+        }
+        if (m_entries.empty() || m_folder.empty()) {
+            m_entries.clear();
+            return;
+        }
+        log::info("assets", "{} deferred assets ({}) beside the page in {}/, fetched when asked for", m_entries.size(),
+                  sizeText(bytes), m_folder);
+    }
+
+    // Empty for a file that is not deferred.
+    std::optional<fs::AssetState> state(std::string_view path) const {
+        const auto it = m_entries.find(path);
+        if (it == m_entries.end()) return std::nullopt;
+        return it->second.state;
+    }
+
+    // False for a file that is not deferred.
+    bool request(std::string_view path, int priority) {
+        const auto it = m_entries.find(path);
+        if (it == m_entries.end()) return false;
+        Entry& entry = it->second;
+        if (entry.state == fs::AssetState::Deferred) {
+            entry.state = fs::AssetState::Fetching;
+            entry.priority = priority;
+            entry.order = m_nextOrder++;
+            pump();
+        } else if (entry.state == fs::AssetState::Fetching && !entry.active) {
+            entry.priority = std::max(entry.priority, priority);
+        }
+        return true;
+    }
+
+private:
+    static constexpr const char* kManifest = "/quench/deferred_assets.txt";
+    static constexpr int kMaxDownloads = 2;
+    static constexpr int kMaxTries = 2;
+
+    struct Entry {
+        std::uint64_t size = 0;
+        fs::AssetState state = fs::AssetState::Deferred;
+        int priority = 0;
+        std::uint64_t order = 0; // when it was asked for: first among equal priorities
+        int tries = 0;
+        bool active = false;  // being downloaded
+        double started = 0.0; // emscripten_get_now() of this try, ms
+    };
+    using Item = std::pair<const std::string, Entry>;
+
+    static std::string sizeText(std::uint64_t bytes) {
+        if (bytes >= 1000 * 1000) return std::format("{:.1f} MB", double(bytes) / 1e6);
+        if (bytes >= 1000) return std::format("{:.1f} kB", double(bytes) / 1e3);
+        return std::format("{} B", bytes);
+    }
+
+    // The URL relative to the page: the folder, then the path with everything but unreserved characters and '/'
+    // percent-encoded.
+    std::string url(const std::string& path) const {
+        std::string out = m_folder + "/";
+        for (const char c : path) {
+            const unsigned char u = static_cast<unsigned char>(c);
+            if ((u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') || (u >= '0' && u <= '9') || c == '-' || c == '.' ||
+                c == '_' || c == '~' || c == '/')
+                out += c;
+            else
+                out += std::format("%{:02X}", unsigned(u));
+        }
+        return out;
+    }
+
+    // Starts the waiting downloads that fit.
+    void pump() {
+        while (m_active < kMaxDownloads) {
+            Item* next = nullptr;
+            for (Item& item : m_entries) {
+                const Entry& e = item.second;
+                if (e.state != fs::AssetState::Fetching || e.active) continue;
+                if (!next || e.priority > next->second.priority ||
+                    (e.priority == next->second.priority && e.order < next->second.order))
+                    next = &item;
+            }
+            if (!next) return;
+            start(*next);
+        }
+    }
+
+    void start(Item& item) {
+        Entry& entry = item.second;
+        entry.active = true;
+        ++entry.tries;
+        entry.started = emscripten_get_now();
+        ++m_active;
+        const std::string file = m_root + item.first;
+        emscripten_async_wget2(url(item.first).c_str(), file.c_str(), "GET", "", &item, &DeferredAssets::onLoad,
+                               &DeferredAssets::onError, nullptr);
+    }
+
+    static void onLoad(unsigned handle, void* userdata, const char* file) {
+        (void)handle;
+        (void)file;
+        Item& item = *static_cast<Item*>(userdata);
+        Entry& entry = item.second;
+        DeferredAssets& self = get();
+        entry.active = false;
+        --self.m_active;
+        entry.state = fs::AssetState::Present;
+        log::info("assets", "fetched {} ({}, {:.0f} ms)", item.first, sizeText(entry.size),
+                  emscripten_get_now() - entry.started);
+        self.pump();
+    }
+
+    static void onError(unsigned handle, void* userdata, int status) {
+        (void)handle;
+        Item& item = *static_cast<Item*>(userdata);
+        Entry& entry = item.second;
+        DeferredAssets& self = get();
+        entry.active = false;
+        --self.m_active;
+        const std::string why = status > 0 ? std::format("HTTP {}", status) : std::string("no answer");
+        if (entry.tries < kMaxTries) {
+            log::info("assets", "{}: {}, trying once more", item.first, why);
+        } else {
+            entry.state = fs::AssetState::Failed;
+            log::warning("assets", "{} could not be fetched ({}, {} tries): not there for this session", item.first,
+                         why, entry.tries);
+        }
+        self.pump();
+    }
+
+    std::map<std::string, Entry, std::less<>> m_entries; // map nodes do not move: the callbacks keep pointers
+    std::string m_root;
+    std::string m_folder;
+    std::uint64_t m_nextOrder = 0;
+    int m_active = 0;
+    bool m_loaded = false;
+};
+#endif
+
 class SdlReader final : public fs::Reader {
 public:
     SdlReader(SDL_IOStream* io, std::uint64_t size, std::string name)
@@ -251,6 +431,22 @@ public:
         return std::int64_t(info.modify_time);
     }
 
+    fs::AssetState assetState(std::string_view path) override {
+#if QUENCH_PLATFORM_WEB
+        if (const std::optional<fs::AssetState> state = DeferredAssets::get().state(path)) return *state;
+#endif
+        return exists(fs::Root::Assets, path) ? fs::AssetState::Present : fs::AssetState::Missing;
+    }
+
+    void requestAsset(std::string_view path, int priority) override {
+#if QUENCH_PLATFORM_WEB
+        DeferredAssets::get().request(path, priority);
+#else
+        (void)path;
+        (void)priority;
+#endif
+    }
+
 private:
     std::string resolve(fs::Root root, std::string_view path) const {
         return (root == fs::Root::Assets ? m_assetRoot : m_userRoot) + std::string(path);
@@ -318,6 +514,9 @@ Result<std::unique_ptr<fs::Backend>> makeSdlFileSystem(const SdlFileSystemDesc& 
     } else if (!SDL_CreateDirectory(userRoot.c_str())) {
         return sdlError("cannot create " + userRoot);
     }
+#if QUENCH_PLATFORM_WEB
+    DeferredAssets::get().load(assetRoot);
+#endif
     return std::unique_ptr<fs::Backend>(
         std::make_unique<SdlBackend>(std::move(assetRoot), withSeparator(std::move(userRoot)), storeUserFiles));
 }

@@ -118,6 +118,24 @@ QUENCH_TEST(fs_asset_overlay) {
     fs::setBackend(nullptr);
 }
 
+// Without deferred assets (every backend but a browser build's with DEFERRED_ASSETS): a file that exists is Present,
+// anything else Missing, and a request changes nothing. The browser's side: tools/check.sh step web.
+QUENCH_TEST(fs_asset_state) {
+    const std::filesystem::path dir = testDir("fs_asset_state");
+    std::ofstream(dir / "assets" / "models" / "rock.txt", std::ios::binary) << "granite\n";
+    fs::setBackend(fs::makeOverlayBackend(fs::makeStdBackend(dir / "assets", dir / "user"), "overlay"));
+    CHECK(fs::assetState("models/rock.txt") == fs::AssetState::Present, "an existing file");
+    CHECK(fs::assetState("models/none.txt") == fs::AssetState::Missing, "a missing file");
+    CHECK(fs::assetState("../models/rock.txt") == fs::AssetState::Missing, "'..' accepted");
+    fs::requestAsset("models/none.txt", 5);
+    fs::requestAsset("../x");
+    CHECK(fs::assetState("models/none.txt") == fs::AssetState::Missing, "a request changed a missing file");
+    std::filesystem::create_directories(dir / "user" / "overlay" / "models");
+    std::ofstream(dir / "user" / "overlay" / "models" / "none.txt", std::ios::binary) << "pumice\n";
+    CHECK(fs::assetState("models/none.txt") == fs::AssetState::Present, "a file only in the overlay");
+    fs::setBackend(nullptr);
+}
+
 QUENCH_TEST(fs_no_user_dir) {
     fs::setBackend(nullptr);
     const Result<void> r = fs::writeUserText("x.txt", "x");

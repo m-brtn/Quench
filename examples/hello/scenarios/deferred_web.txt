@@ -1,0 +1,17 @@
+# Deferred assets in a browser (tools/check.sh step web; docs/assets.md, "Deferred assets"). The page is served by
+# tools/web_check.mjs with `--not-found examples/hello/hello.assets/deferred/unserved.txt`, so one file arrives and
+# the other one's fetch fails. asset_state: 0 missing, 1 present, 2 deferred, 3 fetching, 4 failed; asset_size: the
+# bytes fs::readAsset reads (-1: it cannot be read). Web only: elsewhere both files are in the bundle (state 1).
+expect asset_state:deferred/greeting.txt == 2   # beside the page, not in its package
+expect asset_state:deferred/unserved.txt == 2
+expect asset_size:deferred/greeting.txt == -1   # not readable before it is fetched
+expect asset_state:deferred/nothing.txt == 0    # neither packed nor deferred
+asset_request deferred/unserved.txt
+asset_request deferred/greeting.txt 10
+expect asset_state:deferred/greeting.txt == 3
+until asset_state:deferred/greeting.txt == 1 20
+expect asset_size:deferred/greeting.txt == 85   # read through quench::fs
+until asset_state:deferred/unserved.txt == 4 20 # tried twice, then failed: no hang, no abort
+expect asset_size:deferred/unserved.txt == -1
+expect asset_state:deferred/greeting.txt == 1
+quit

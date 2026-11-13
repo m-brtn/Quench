@@ -213,6 +213,7 @@ through real SDL events, so it takes the same path as a player's. Example: `exam
 | `max_frame_rate HZ` | `App::setMaxFrameRate` (0: the display's rate); value `max_frame_rate` |
 | `thermal_state NAME` | a fake thermal state (`nominal`, `fair`, `serious`, `critical`, `unknown`) in place of the system's, read at once, so the thermal reaction follows in the same frame; `thermal_state system` gives the state back to the system ([Thermal state](#thermal-state)) |
 | `frame_load FRAME_MS [CPU_MS [GPU_MS]]` | fake frames for the reaction to late frames ([Frame load](#frame-load)): from now on every frame counts as FRAME_MS long, with CPU_MS of main thread work (default 0) and GPU_MS on the GPU (default: unknown), against the game's frame rate or 60 Hz whatever the display; also offscreen, where no real frame counts. `frame_load system`: the measured frames again |
+| `asset_request PATH [PRIORITY]` | `fs::requestAsset`: in a browser build a deferred asset is fetched ([Deferred assets](assets.md#deferred-assets)); elsewhere nothing happens |
 | `audio_measure S [MIN_HZ MAX_HZ]` | measure the newest S seconds (at most 4) of the mix: RMS per channel and of both, peak, and the strongest frequency between MIN_HZ and MAX_HZ (default 20 to 20000; a Hann-windowed FFT with interpolation between bins); logs a line and sets the `audio_rms*`, `audio_peak`, `audio_freq*` and `audio_measured` values. A script with this command keeps the last 4 s of the mix for it |
 
 A point P is `X Y` in window points (`480 420`), in percent of the window's width and height (`50% 75%`; the two
@@ -249,7 +250,8 @@ for a full-scale sine) and `audio_measured` (seconds actually measured); at any 
 `audio_hrtf_voices`, `audio_sounds`,
 `audio_pending`, `audio_streams`, `audio_played`, `audio_stolen`, `audio_rejected`, `audio_failed`,
 `audio_underruns`, `audio_clipped` (the `AudioStats` counters) and `audio_device` (1 with a device, 0 offline);
-`memory_mb` (`App::memoryFootprint` in MiB; -1 where unknown) and `gpu_resources` (`gpu::Device::liveResources`:
+`asset_state:PATH` (`fs::assetState`: 0 missing, 1 present, 2 deferred, 3 fetching, 4 failed) and
+`asset_size:PATH` (the bytes `fs::readAsset` reads; -1 when it cannot); `memory_mb` (`App::memoryFootprint` in MiB; -1 where unknown) and `gpu_resources` (`gpu::Device::liveResources`:
 textures, buffers, samplers, pipelines, transfer buffers and fences alive; fences and transfer buffers come and go
 with the frames and uploads in flight), for leak checks with `mark`; `shader_reloads`, `shader_reload_failures` and
 `shader_reload_pipelines` (`gpu::Device::shaderReloadStatus`: [Shader hot reload](#shader-hot-reload));
@@ -435,7 +437,7 @@ own, except where ray tracing runs (`demo_raytracing_native.png`).
 ```cmake
 quench_add_game(<target> NAME <display name> SOURCES <file>...
                 [OUTPUT_NAME <file name>] [BUNDLE_ID <reverse dns>] [VERSION <x.y.z>]
-                [ASSETS <dir>] [COOKED_ASSETS <quench_cook_assets name>...]
+                [ASSETS <dir>] [COOKED_ASSETS <quench_cook_assets name>...] [DEFERRED_ASSETS <pattern>...]
                 [ICON <square png, 1024 px or larger>] [ORIENTATIONS landscape|portrait|all] [CUSTOM_MAIN])
 quench_add_shaders(<target> NAME <set> SOURCE <file.hlsl> ENTRIES <entry>:vertex <entry>:fragment <entry>:compute ...)
 quench_cook_assets(<name> SOURCE_DIR <dir> [TEXTURES <file>...] [MODELS <file>...] [SOUNDS <file>...]
@@ -463,7 +465,10 @@ time, per file and only when a source changed ([Jobs, assets and the cook](asset
   way to keep one orientation on an iPad.
 - **The web** (the `web` preset, experimental): `<OUTPUT_NAME>.html` from `cmake/shell.web.html` with `.js`,
   `.wasm` and, with assets, `.data` (the assets preloaded at `assets/` in the virtual file system) next to it
-  ([Web runs](#web-runs)). No icon, bundle id or orientations there.
+  ([Web runs](#web-runs)). No icon, bundle id or orientations there. `DEFERRED_ASSETS` (paths, directories or
+  globs relative to the asset root, `music/*.mp3`) are left out of the `.data` and copied beside the page in
+  `<OUTPUT_NAME>.assets/`, fetched while the program runs (`fs::requestAsset`;
+  [Deferred assets](assets.md#deferred-assets)); every other platform bundles them as usual.
 - `CUSTOM_MAIN`: the target defines `main` itself (the device test app).
 
 New games start from `templates/game`: `python3 tools/new_game.py "My Game" <directory>` copies it, renames it, pins
@@ -606,7 +611,10 @@ The page needs HTTP (`file://` cannot fetch the `.wasm` and `.data` files) and a
   it creates the window (offscreen: the `--window` size; the scenario command `resize` sets it too), and SDL takes
   the size from the page (SDL's fill-document window is not used: under a page zoom SDL measured the canvas as
   0 x 0). The frame size follows the page and its device pixel ratio.
-- `quench::fs` reads the preloaded assets. The default user directory, SDL's `/libsdl/<organization>/<name>/`, is
+- `quench::fs` reads the preloaded assets. Deferred assets (`quench_add_game(... DEFERRED_ASSETS ...)`) wait
+  beside the page in `<OUTPUT_NAME>.assets/` and are downloaded into the virtual file system when the program asks
+  for them (`fs::requestAsset`, `fs::assetState`), at most two at a time, without blocking a frame
+  ([Deferred assets](assets.md#deferred-assets)). The default user directory, SDL's `/libsdl/<organization>/<name>/`, is
   kept in the browser's IndexedDB (since 2026-11-13; "User files in a browser" below); what
   `--user-dir` names stays in memory and is empty again after a reload (the scripted checks use `/user`).
 - Sound starts with the first click, key or touch (the browser's rule). `--audio-device null` does not exist there;
@@ -671,22 +679,26 @@ the `--user-dir /user` it adds otherwise, and `--databases N,N,...` is the numbe
 origin must have after each load (the script waits for the program's stores first). The persistence check of
 `step web` loads the demo three times this way: with `--user-dir /user` and `settings_save.txt` (no database
 afterwards), without it and `settings_save.txt` (`settings_loaded == 0`: nothing left behind; one database), then
-`settings_load.txt` (the settings read back through `quench::fs`; still one database).
+`settings_load.txt` (the settings read back through `quench::fs`; still one database). Files beside the page (a
+game's `<OUTPUT_NAME>.assets/`) are served like the page; `--not-found PATH` (relative to the build directory, may
+be repeated) answers that file with 404, and the script says how many requests it answered so: the check of a
+deferred asset whose download fails.
 
 ```sh
 node tools/web_check.mjs --page examples/demo/quench-demo.html --out build/web/check/demo \
     --golden tests/golden/metal/apple-m4-pro --compare build/release/tests/quench_image_compare \
     -- --window 960x540 --hdr-headroom 4 --script /repo/examples/demo/scenarios/batch.txt
-tools/check.sh step web   # host-tools, the web build, hello's check scenario, the demo's batch, the user files
-                          # across three loads of the demo and a few seconds of each page with --onscreen (about
-                          # 2 minutes after the first build); not in `full`
+tools/check.sh step web   # host-tools, the web build, hello's check scenario, hello's deferred assets (one
+                          # fetched and read, one answered with 404: failed after two tries), the demo's batch, the
+                          # user files across three loads of the demo and a few seconds of each page with
+                          # --onscreen (about 2 minutes after the first build); not in `full`
 ```
 
 The web captures are compared with the Mac's Metal golden images (there are no web ones): the demo's 41 are within
 the thresholds on Chrome 157 on the Mac. `hello`'s capture is not compared: its text names the backend.
 
-**Publishing.** A web build is static files: the `.html`, `.js`, `.wasm` and, with assets, `.data` of a game, served
-over HTTPS by any host. `tools/publish_web.sh` does it for the engine's demo and sample: it assembles `dist/web`
+**Publishing.** A web build is static files: the `.html`, `.js`, `.wasm` and, with assets, `.data` of a game (and
+the folder `<OUTPUT_NAME>.assets/` of its deferred assets), served over HTTPS by any host. `tools/publish_web.sh` does it for the engine's demo and sample: it assembles `dist/web`
 (`index.html` is the demo's page, `hello.html` the sample, the licences, `version.txt`), checks it in headless Chrome
 (the demo's smoke scenario with `--onscreen`) and, with `--push` and a clean working tree, commits it to the
 `gh-pages` branch that GitHub Pages serves (<https://m-brtn.github.io/Quench/>; a normal push, so the branch keeps
