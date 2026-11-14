@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-13, version 0.18.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-14, version 0.19.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -96,7 +96,9 @@ type (WAV, FLAC, MP3, Ogg Vorbis), streamed music with crossfades, game-generate
 panned or through an HRTF for headphones (off by default), WAV writing
 and signal analysis; since 2026-11-13 (0.18.0) the microphone's recording side: `audio::Microphone`,
 a lock-free ring the input fills, resampling to 16 kHz on the main thread, a level meter, a length limit, 16-bit WAV
-in memory, a fake source for tests and scenarios), `quench_audio_device` (output through miniaudio, the iOS audio
+in memory, a fake source for tests and scenarios; since 2026-11-14 (0.19.0) its streaming mode (pieces while it
+records, no limit, a mute that keeps the input open) and `audio::VoiceStream`, streamed playback with a jitter buffer
+and fades, checked offline only, not listened to), `quench_audio_device` (output through miniaudio, the iOS audio
 session; `App::audio()`, `--no-audio`, `--audio-device`, `--audio-capture`, the scenario command `audio_measure`;
 the microphone's input: miniaudio's capture opened and closed on jobs, the permission through AVFoundation on macOS
 and iOS, `PlayAndRecord` on iOS while recording, `getUserMedia` in a browser; `App::microphone()`, `--microphone`,
@@ -165,7 +167,11 @@ or query strings, secret headers dropped on redirects to another origin, no cook
 platforms, the browser's fetch in web builds, none elsewhere yet, `net::FakeNetwork` for tests; run on the Mac
 against a local server and in headless Chrome on the Mac, against a real provider only through the assistant's manual
 check (OpenRouter, on the Mac, with a server-sent event stream that arrived piece by piece), in the iOS Simulator only
-with the fake network, not on an iPhone; `docs/net.md`), `quench_assistant` (headless, 2026-11-13, released with 0.18.0;
+with the fake network, not on an iPhone; since 2026-11-14 (0.19.0) a WebSocket client
+(`net::WebSocket`: wss only except loopback, whole messages, pings, closes with codes, a message limit;
+NSURLSessionWebSocketTask on Apple platforms, none elsewhere, the browser included; `net::FakeWebSocketServer`;
+run on the Mac against a WebSocket in the local test server and, through the live session, against GPT-Live);
+`docs/net.md`), `quench_assistant` (headless, 2026-11-13, released with 0.18.0;
 on `quench_net`: a language model that operates a game through tools it registers, for OpenAI-compatible APIs
 (OpenRouter, OpenAI, a local server by settings only): tools in MCP's shape (`tools/list` and `tools/call` results,
 annotations, a JSON Schema check before a handler runs, bad calls as error results), the chat request and an
@@ -174,7 +180,12 @@ cancel at any stage, one operation at a time, a bounded history, states and coun
 (JSON or multipart) and text-to-speech (PCM or MP3 to mono samples), the voice turn in one call, the key in memory
 only; its tests with `net::FakeNetwork` on the Mac and under Node.js, its manual check
 (`quench-assistant-check`) against OpenRouter on the Mac; not run in a browser against a provider, on iOS, against
-OpenAI's own API or a local server; `docs/assistant.md`)
+OpenAI's own API or a local server; `docs/assistant.md`; since 2026-11-14 (0.19.0) `assistant::LiveSession`: a
+live, full-duplex spoken conversation with OpenAI's GPT-Live over the WebSocket, the game's tools through Responses
+delegation, transcripts, context appends, an uplink gate for loudspeakers, an idle close, a reconnect with the
+history; its tests with the fake WebSocket server, its manual check (`quench-live-check`, which costs money for
+every open second: run it only when asked) against the real service on the Mac with spoken files, not with a real
+microphone, not on iOS or in a browser; `docs/live.md`)
 and `quench_add_game()` (macOS executables, iOS bundles,
 cooked assets, sounds, skeletons, clips and navmeshes).
 `examples/hello` is the minimal sample, `examples/demo` the engine demo (finished in stage 10: a section per feature,
@@ -222,7 +233,7 @@ remaining work) is built with the web build below and not listened to; what come
 `docs/roadmap.md`, "What is next".**
 `docs/migration.md` describes what exists in the two games; `docs/app.md`, `docs/render.md`, `docs/assets.md`,
 `docs/audio.md`, `docs/animation.md`, `docs/navigation.md`, `docs/weather.md`, `docs/particles.md`, `docs/net.md`,
-`docs/assistant.md`, `docs/demo.md`,
+`docs/assistant.md`, `docs/live.md`, `docs/demo.md`,
 `docs/performance.md` and `docs/platforms.md` describe what is built, `docs/architecture.md` the design with the
 native backend and ray tracing as built; the rest of `docs/` is design and plan beyond stage 14. Update this paragraph whenever that changes.
 
@@ -284,7 +295,12 @@ microphone capture (`audio::Microphone`, `quench_add_game(... MICROPHONE "reason
 `quench::json` decodes `\u` surrogate pairs. On its code before the version number changed `tools/check.sh full`
 passes (Debug, ASan and TSan 771 tests each with 70 skipped, Release 917 with 69 skipped, `wasm-node` 275 with 11
 skipped, the iOS Simulator 594 with 70 skipped after one test's bound was fixed, the Xcode project, a new game) and
-`step web` passes in headless Chrome on the Mac (hello's network check 18 of 18, the fake microphone 13 of 13).
+`step web` passes in headless Chrome on the Mac (hello's network check 18 of 18, the fake microphone 13 of 13). Version 0.19.0 (2026-11-14; `docs/releases/v0.19.0.md`) adds a live,
+full-duplex spoken conversation with OpenAI's GPT-Live, asked for by the user for Outpost: a WebSocket client in
+`quench_net`, the microphone's streaming mode, `audio::VoiceStream` and `assistant::LiveSession`. On its code before
+the version number changed the full gate passes step by step (Debug, ASan and TSan 820 tests each with 70 skipped,
+Release 967 with 69 skipped, `wasm-node` 317 with 12 skipped, the iOS Simulator 636 with 70 skipped, the Xcode project,
+a new game) and `step web` passes; four short sessions against the real service on the Mac.
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the

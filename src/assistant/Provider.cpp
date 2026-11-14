@@ -76,6 +76,7 @@ json::Value settingsToJson(const ProviderSettings& s) {
     o["parallelToolCalls"] = json::Value::makeBool(s.parallelToolCalls);
     o["maxTokens"] = json::Value::makeNumber(s.maxTokens);
     o["temperature"] = json::Value::makeNumber(s.temperature);
+    o["cacheMarker"] = json::Value::makeBool(s.cacheMarker);
     // Extra headers only when their names do not look secret: a secret one belongs with the key.
     json::Value headers = json::Value::makeObject();
     for (const net::Header& h : s.extraHeaders) {
@@ -109,6 +110,7 @@ ProviderSettings settingsFromJson(const json::Value& v, ProviderSettings s) {
     flag("streamChat", s.streamChat);
     flag("streamUsage", s.streamUsage);
     flag("parallelToolCalls", s.parallelToolCalls);
+    flag("cacheMarker", s.cacheMarker);
     if (v["speechFormat"].type == json::Value::Type::String) {
         s.speechFormat = v["speechFormat"].string == "mp3" ? SpeechFormat::Mp3 : SpeechFormat::Pcm;
     }

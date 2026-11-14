@@ -5,7 +5,7 @@ if(NOT DEFINED PROJECT_NAME AND CMAKE_HOST_APPLE AND NOT CMAKE_SYSTEM_NAME STREQ
    AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Minimum macOS version" FORCE)
 endif()
-project(Quench VERSION 0.18.0 LANGUAGES C CXX)
+project(Quench VERSION 0.19.0 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJC)
     enable_language(OBJCXX)
@@ -126,6 +126,7 @@ add_library(quench_audio STATIC
     src/audio/Mixer.cpp
     src/audio/Sound.cpp
     src/audio/Spatial.cpp
+    src/audio/VoiceStream.cpp
     src/audio/Wav.cpp
     src/audio/WeatherAudio.cpp)
 quench_configure_target(quench_audio)
@@ -183,19 +184,22 @@ quench_configure_target(quench_particles)
 target_link_libraries(quench_particles PUBLIC quench_core quench_gpu_shaders quench_glm)
 
 # ------------------------------------------------------------------ net
-# Headless: asynchronous HTTPS requests (docs/net.md), their rules, limits and log, delivered on the main thread by
-# Client::update(); the fake network for tests. One platform backend per build: NSURLSession on Apple platforms
-# (AppleBackend.cpp and .m), the browser's fetch in web builds (WebBackend.cpp), none elsewhere yet (NonePlatform.cpp,
-# where a libcurl or WinHTTP backend would go). Nothing to add for a game: HTTPS needs no Info.plist entry on iOS,
+# Headless: asynchronous HTTPS requests and WebSocket connections (docs/net.md), their rules, limits and log, delivered
+# on the main thread by Client::update() and WebSocket::update(); the fakes for tests. One platform backend per build:
+# NSURLSession on Apple platforms (AppleBackend.cpp and .m, AppleWebSocket.cpp and .m), the browser's fetch in web
+# builds (WebBackend.cpp; no WebSocket there), none elsewhere yet (NonePlatform.cpp and NoneWebSocket.cpp, where a
+# libcurl or WinHTTP backend would go). Nothing to add for a game: HTTPS needs no Info.plist entry on iOS,
 # and EM_JS needs no link option.
-add_library(quench_net STATIC src/net/Client.cpp src/net/FakeNetwork.cpp src/net/NoneBackend.cpp src/net/Rules.cpp)
+add_library(quench_net STATIC src/net/Client.cpp src/net/FakeNetwork.cpp src/net/FakeWebSocket.cpp
+                              src/net/NoneBackend.cpp src/net/Rules.cpp src/net/WebSocket.cpp)
 if(APPLE)
-    target_sources(quench_net PRIVATE src/net/AppleBackend.cpp src/net/AppleBackend.m)
+    target_sources(quench_net PRIVATE src/net/AppleBackend.cpp src/net/AppleBackend.m src/net/AppleWebSocket.cpp
+                                      src/net/AppleWebSocket.m)
     target_link_libraries(quench_net PRIVATE "-framework Foundation")
 elseif(EMSCRIPTEN AND QUENCH_WEB)
-    target_sources(quench_net PRIVATE src/net/WebBackend.cpp)
+    target_sources(quench_net PRIVATE src/net/WebBackend.cpp src/net/NoneWebSocket.cpp)
 else()
-    target_sources(quench_net PRIVATE src/net/NonePlatform.cpp)
+    target_sources(quench_net PRIVATE src/net/NonePlatform.cpp src/net/NoneWebSocket.cpp)
 endif()
 quench_configure_target(quench_net)
 target_link_libraries(quench_net PUBLIC quench_core)
@@ -207,6 +211,7 @@ target_link_libraries(quench_net PUBLIC quench_core)
 add_library(quench_assistant STATIC
     src/assistant/Assistant.cpp
     src/assistant/Chat.cpp
+    src/assistant/Live.cpp
     src/assistant/Provider.cpp
     src/assistant/Speech.cpp
     src/assistant/Text.cpp

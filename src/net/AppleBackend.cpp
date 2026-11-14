@@ -2,6 +2,7 @@
 // delegate queue (a background thread the system owns); they only append to a locked queue that poll() takes on the
 // main thread.
 
+#include "net/AppleErrors.h"
 #include "net/Backend.h"
 
 #include <algorithm>
@@ -42,32 +43,6 @@ struct Sink {
         events.push_back(std::move(event));
     }
 };
-
-// NSURLErrorDomain codes (NSURLError.h) to the engine's kinds.
-ErrorKind kindOfUrlError(long code) {
-    switch (code) {
-    case -999: return ErrorKind::Cancelled;   // NSURLErrorCancelled
-    case -1001: return ErrorKind::Timeout;    // NSURLErrorTimedOut
-    case -1003:                               // NSURLErrorCannotFindHost
-    case -1004:                               // NSURLErrorCannotConnectToHost
-    case -1005:                               // NSURLErrorNetworkConnectionLost
-    case -1006:                               // NSURLErrorDNSLookupFailed
-    case -1009:                               // NSURLErrorNotConnectedToInternet
-    case -1018:                               // NSURLErrorInternationalRoamingOff
-    case -1019:                               // NSURLErrorCallIsActive
-    case -1020: return ErrorKind::NoNetwork;  // NSURLErrorDataNotAllowed
-    case -1022: return ErrorKind::NotAllowed; // NSURLErrorAppTransportSecurityRequiresSecureConnection
-    case -1103: return ErrorKind::TooLarge;   // NSURLErrorDataLengthExceedsMaximum
-    case -1200:                               // NSURLErrorSecureConnectionFailed
-    case -1201:                               // NSURLErrorServerCertificateHasBadDate
-    case -1202:                               // NSURLErrorServerCertificateUntrusted
-    case -1203:                               // NSURLErrorServerCertificateHasUnknownRoot
-    case -1204:                               // NSURLErrorServerCertificateNotYetValid
-    case -1205:                               // NSURLErrorClientCertificateRejected
-    case -1206: return ErrorKind::Tls;        // NSURLErrorClientCertificateRequired
-    default: return ErrorKind::Failed;
-    }
-}
 
 class AppleBackend final : public Backend {
 public:
@@ -113,6 +88,32 @@ private:
 Sink& sinkOf(void* sink) { return **static_cast<std::shared_ptr<Sink>*>(sink); }
 
 } // namespace
+
+// NSURLErrorDomain codes (NSURLError.h) to the engine's kinds.
+ErrorKind kindOfUrlError(long code) {
+    switch (code) {
+    case -999: return ErrorKind::Cancelled;   // NSURLErrorCancelled
+    case -1001: return ErrorKind::Timeout;    // NSURLErrorTimedOut
+    case -1003:                               // NSURLErrorCannotFindHost
+    case -1004:                               // NSURLErrorCannotConnectToHost
+    case -1005:                               // NSURLErrorNetworkConnectionLost
+    case -1006:                               // NSURLErrorDNSLookupFailed
+    case -1009:                               // NSURLErrorNotConnectedToInternet
+    case -1018:                               // NSURLErrorInternationalRoamingOff
+    case -1019:                               // NSURLErrorCallIsActive
+    case -1020: return ErrorKind::NoNetwork;  // NSURLErrorDataNotAllowed
+    case -1022: return ErrorKind::NotAllowed; // NSURLErrorAppTransportSecurityRequiresSecureConnection
+    case -1103: return ErrorKind::TooLarge;   // NSURLErrorDataLengthExceedsMaximum
+    case -1200:                               // NSURLErrorSecureConnectionFailed
+    case -1201:                               // NSURLErrorServerCertificateHasBadDate
+    case -1202:                               // NSURLErrorServerCertificateUntrusted
+    case -1203:                               // NSURLErrorServerCertificateHasUnknownRoot
+    case -1204:                               // NSURLErrorServerCertificateNotYetValid
+    case -1205:                               // NSURLErrorClientCertificateRejected
+    case -1206: return ErrorKind::Tls;        // NSURLErrorClientCertificateRequired
+    default: return ErrorKind::Failed;
+    }
+}
 
 std::unique_ptr<Backend> createPlatformBackend() { return std::make_unique<AppleBackend>(); }
 std::string platformPageOrigin() { return {}; }

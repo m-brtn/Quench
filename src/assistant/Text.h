@@ -22,6 +22,11 @@ std::size_t codePoints(std::string_view text);
 // At most `limit` code points of `text`; when it is longer, its start and "... (N more characters)".
 std::string trimText(std::string_view text, std::size_t limit);
 
+// trimText for a text that may have been cut by it before: a trailing "... (N more characters)" is taken off and its N
+// added to what this cut leaves out, so that the count stays the whole original's. A text within `limit` is returned
+// as it is (its own marker included).
+std::string retrimText(std::string_view text, std::size_t limit);
+
 // The longest prefix of `text` of at most `bytes` bytes that does not end inside a UTF-8 sequence.
 std::string_view utf8Prefix(std::string_view text, std::size_t bytes);
 

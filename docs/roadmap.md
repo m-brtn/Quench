@@ -799,6 +799,16 @@ case run in the iOS Simulator, the permission and the session's switch not run. 
 cancellation and voice activity detection, a headset's microphone over Bluetooth on iOS (the session keeps Bluetooth
 output in A2DP, so the phone's microphone records), the iOS run.
 
+Asked by the user on 2026-11-14: a live, full-duplex spoken conversation with OpenAI's GPT-Live ("the very latest"),
+so that the player simply talks to the station: built the same day and released with 0.19.0 ([its notes](releases/v0.19.0.md); [Live session](live.md)): a
+WebSocket client in `quench_net` (NSURLSessionWebSocketTask on Apple platforms, a fake server, none elsewhere), the
+microphone's streaming mode, `audio::VoiceStream` (streamed playback with a jitter buffer), and
+`assistant::LiveSession` (Responses delegation with the game's `ToolRegistry`, transcripts, context appends, the
+uplink gate, the idle close, the reconnect with the history, usage and cost). Checked with the fakes on the Mac, the
+WebSocket against a local server, and four short sessions against the real service on the Mac (English, Russian, two
+barge-ins; 93 s billed). Open: the browser's path (WebRTC), echo cancellation for barge-in on loudspeakers (Apple's
+voice-processing I/O unit), a real microphone into a session, iOS, long sessions, the game's side in Outpost.
+
 Asked by the user on 2026-11-10 (evening, after 0.14.0): phones in a browser, after the Outpost micro game ran at
 30 to 40 frames per second on an iPhone and warmed it. Built the same evening and released with 0.15.0 ([its notes](releases/v0.15.0.md)):
 `App::mobile()` in a phone's browser and `--mobile`, a frame rate limit that stays on the browser's animation

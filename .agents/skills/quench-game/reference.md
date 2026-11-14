@@ -18,6 +18,7 @@ Code for the modules in [SKILL.md](SKILL.md), as a game uses them. Names come fr
 - Microphone
 - HTTP requests
 - Assistant
+- Live session
 - Jobs
 - Heat
 - Profiling
@@ -749,14 +750,66 @@ void onTyped(std::string text) {
 void onRecording(const audio::MicRecording& recording) {
     (void)m_assistant.askByVoice(recording.wav()); // transcribe, the turn, speech
 }
+// A turn the game starts: the model reads "Game event (not the player): Rover 2 arrived at E7" (setEventHeading to
+// rename it), may answer or act, at most 2 rounds and 1 call of a tool not marked readOnly (more are refused to it).
+void onRoverArrived(const std::string& rover, const std::string& cell) {
+    if (m_assistant.busy()) { m_pendingEvents.push_back(rover + " arrived at " + cell + "."); return; } // queue it
+    (void)m_assistant.ask(rover + " arrived at " + cell + ".",
+                          {.speak = true, .source = assistant::InputSource::Event, .maxRounds = 2, .maxActions = 1});
+}
+// The history: m_assistant.limits().historyTokens (6000 estimated tokens, 3 characters each), the oldest turns first;
+// event turns 3 turns old keep only their first line and answer. stats().usage.cachedTokens: the provider's cache;
+// settings().cacheMarker = true for Anthropic's models (they cache only from a marker).
 // Each frame: m_assistant.state() (assistant::stateName), toolName(), partialText(), answer(), failure().message;
 // takeSpeech() once it is ready: mono float samples at their sampleRate, for a game-generated source.
 ```
 
 Tests of the game's tools and prompts against canned answers: `assistant::Assistant a({.fake = &fake, .clock =
 [&] { return now; }})` and `fake.respond("POST", ".../chat/completions", ...)` with server-sent events as in "HTTP
-requests" above; `tests/assistant/Rig.h` in the engine builds such answers. `docs/assistant.md` (settings, the turn
-and its states, errors, privacy, what is not there).
+requests" above; `tests/assistant/Rig.h` in the engine builds such answers (`tests/assistant/EventTests.cpp`: event turns, the caps,
+the budget). `docs/assistant.md` (settings, the turn and its states, event turns, the history, caching, errors,
+privacy, what is not there).
+
+## Live session
+
+A spoken conversation that runs all the time (OpenAI's GPT-Live; the player's own OpenAI key), with the same tools:
+
+```cpp
+#include <quench/assistant/Live.h>
+#include <quench/audio/VoiceStream.h>
+
+assistant::LiveSession m_live;  // members
+std::shared_ptr<audio::VoiceStream> m_voice = std::make_shared<audio::VoiceStream>();
+std::vector<float> m_buf;
+
+void startLive(app::App& app, const std::string& playerKey) {
+    m_live.settings().apiKey = playerKey; // memory only
+    m_live.settings().instructions = "You are the station's computer. Speak briefly. Speak English unless asked.";
+    m_live.settings().backendInstructions = "Operate the station through its tools; check get_power first.";
+    (void)m_live.tools().add(getPowerTool());   // assistant::Tool, as above
+    (void)m_live.tools().add(orderCollectTool());
+    m_live.setStateSummary([this] { return colonySummary(); });
+    app.audio().playGenerator(m_voice, {.bus = app.audio().bus("voice")});
+    (void)app.microphone().start({.sampleRate = 24000, .stream = true});
+    if (Result<void> r = m_live.start(); !r) showError(r.error());
+}
+
+void updateLive(app::App& app) { // each frame in Game::update
+    m_buf.clear(); app.microphone().takeStream(m_buf); m_live.sendAudio(m_buf);
+    m_live.update();
+    m_buf.clear(); m_live.takeAudio(m_buf); m_voice->push(m_buf);
+    m_live.setPlaybackActive(m_voice->audible()); // the uplink gate on loudspeakers, the idle timer
+    for (const assistant::LiveEvent& e : m_live.takeEvents())
+        if (e.kind == assistant::LiveEventKind::OutputTranscript) captions.append(e.text);
+}
+// The game's own events: m_live.appendCommentary("Rover 2 has arrived."); appendThinking() for silent facts.
+```
+
+It bills every open second (0.05 US dollars a minute, silence included) and closes itself after
+`settings().idleSeconds` without speech (`start()` again resumes with the text history); show the player when it
+is open. `settings().uplinkGate = false` with headphones lets the player interrupt. Tests:
+`assistant::LiveDesc{.fake = &server, .clock = ...}` with a `net::FakeWebSocketServer` that answers `session.start`
+(`tests/assistant/LiveTests.cpp` in the engine). `docs/live.md`.
 
 ## Jobs
 

@@ -19,6 +19,8 @@ void Usage::add(const Usage& other) {
     completionTokens += other.completionTokens;
     cost += other.cost;
     costKnown = costKnown || other.costKnown;
+    cachedTokens += other.cachedTokens;
+    cacheWriteTokens += other.cacheWriteTokens;
 }
 
 // ---------------------------------------------------------------------------------------------------- compact JSON
@@ -191,6 +193,10 @@ void ChatStreamParser::chunk(const json::Value& v) {
         // The last chunk's usage covers the whole answer: replace, do not add.
         m_result.usage.promptTokens = std::int64_t(usage["prompt_tokens"].numberOr(0.0));
         m_result.usage.completionTokens = std::int64_t(usage["completion_tokens"].numberOr(0.0));
+        // OpenAI-compatible usage, OpenRouter's documented fields (docs: "Usage Accounting").
+        const json::Value& details = usage["prompt_tokens_details"];
+        m_result.usage.cachedTokens = std::int64_t(details["cached_tokens"].numberOr(0.0));
+        m_result.usage.cacheWriteTokens = std::int64_t(details["cache_write_tokens"].numberOr(0.0));
         if (usage["cost"].isNumber()) {
             m_result.usage.cost = usage["cost"].number;
             m_result.usage.costKnown = true;
@@ -312,6 +318,22 @@ net::Request buildChatRequest(const ProviderSettings& s, const json::Value& mess
     auto& o = body.object;
     o["model"] = json::Value::makeString(s.chatModel);
     o["messages"] = messages;
+    if (s.cacheMarker && o["messages"].isArray() && !o["messages"].array.empty()) {
+        // Anthropic through OpenRouter caches up to an explicit breakpoint; its prefix is the tools, then the system
+        // prompt, so one marker on the system prompt covers both.
+        json::Value& first = o["messages"].array.front();
+        if (first["role"].stringOr("") == "system" && first["content"].type == json::Value::Type::String) {
+            json::Value control = json::Value::makeObject();
+            control.object["type"] = json::Value::makeString("ephemeral");
+            json::Value part = json::Value::makeObject();
+            part.object["type"] = json::Value::makeString("text");
+            part.object["text"] = std::move(first.object["content"]);
+            part.object["cache_control"] = std::move(control);
+            json::Value parts = json::Value::makeArray();
+            parts.array.push_back(std::move(part));
+            first.object["content"] = std::move(parts);
+        }
+    }
     if (tools.isArray() && !tools.array.empty()) {
         o["tools"] = tools;
         if (!options.forceTool.empty()) {
@@ -342,7 +364,26 @@ net::Request buildChatRequest(const ProviderSettings& s, const json::Value& mess
     r.url = endpoint(s, "/chat/completions");
     r.headers = detail::requestHeaders(s, "application/json");
     if (s.streamChat) r.headers.push_back({"Accept", "text/event-stream"});
-    r.setBody(writeCompactJson(body));
+    // The keys in a fixed order (not the map's): what is the same in every request first, so that the body's bytes
+    // agree with the previous request's as far as the content does; tool_choice changes on a turn's last round.
+    std::string text = "{";
+    const auto put = [&](const std::string& key) {
+        const auto it = o.find(key);
+        if (it == o.end()) return;
+        if (text.size() > 1) text += ',';
+        writeString(text, key);
+        text += ':';
+        writeValue(text, it->second);
+    };
+    put("model");
+    for (const auto& [key, value] : o) {
+        if (key != "model" && key != "tools" && key != "messages" && key != "tool_choice") put(key);
+    }
+    put("tools");
+    put("messages");
+    put("tool_choice");
+    text += '}';
+    r.setBody(text);
     r.timeoutSeconds = s.chatTimeout;
     r.streamBody = s.streamChat;
     return r;

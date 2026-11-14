@@ -29,6 +29,43 @@ std::string costText(const Usage& usage) {
     return usage.costKnown ? std::format(", ${:.6f}", usage.cost) : std::string();
 }
 
+// "120+30 tokens (64 cached)", "(64 cached, 32 written)" when the provider wrote to its cache.
+std::string tokenText(const Usage& usage) {
+    std::string out =
+        std::format("{}+{} tokens ({} cached", usage.promptTokens, usage.completionTokens, usage.cachedTokens);
+    if (usage.cacheWriteTokens > 0) out += std::format(", {} written", usage.cacheWriteTokens);
+    return out + ")";
+}
+
+// The estimated tokens of a chat message: its text, its tool calls' names and arguments, and 4 for its frame.
+std::int64_t messageTokens(const json::Value& m) {
+    std::int64_t n = 4;
+    const json::Value& content = m["content"];
+    if (content.type == json::Value::Type::String) {
+        n += estimateTokens(content.string);
+    } else if (content.isArray()) {
+        for (const json::Value& part : content.array) n += estimateTokens(part["text"].stringOr(""));
+    }
+    for (const json::Value& call : m["tool_calls"].array) {
+        n += estimateTokens(call["function"]["name"].stringOr("")) +
+             estimateTokens(call["function"]["arguments"].stringOr(""));
+    }
+    return n;
+}
+
+std::int64_t turnTokens(const std::vector<json::Value>& turn) {
+    std::int64_t n = 0;
+    for (const json::Value& m : turn) n += messageTokens(m);
+    return n;
+}
+
+// The first line of a text, at most `limit` characters.
+std::string firstLine(std::string_view text, std::size_t limit) {
+    text = detail::trimSpace(text);
+    const std::size_t end = text.find('\n');
+    return detail::trimText(detail::trimSpace(text.substr(0, end)), limit);
+}
+
 int ms(double seconds) { return int(seconds * 1000.0 + 0.5); }
 
 // The seconds of a 16-bit PCM WAV file (the microphone's recording), 0 when it is not one.
@@ -43,6 +80,8 @@ double wavSeconds(std::span<const std::uint8_t> wav) {
 }
 
 } // namespace
+
+std::int64_t estimateTokens(std::string_view text) { return std::int64_t((detail::codePoints(text) + 2) / 3); }
 
 const char* stateName(State state) {
     switch (state) {
@@ -70,6 +109,7 @@ void Stats::add(const Stats& o) {
     toolTime += o.toolTime;
     speakTime += o.speakTime;
     totalTime += o.totalTime;
+    refusedCalls += o.refusedCalls;
 }
 
 Assistant::Assistant(const AssistantDesc& desc) : m_alive(std::make_shared<int>(0)) {
@@ -125,6 +165,7 @@ Result<void> Assistant::begin(Op op) {
     m_stats = {};
     m_turn.clear();
     m_round = 0;
+    m_actions = 0;
     m_opStart = now();
     return {};
 }
@@ -211,9 +252,8 @@ void Assistant::finishOperation() {
     m_totals.add(m_stats);
     m_op = Op::None;
     m_toolName.clear();
-    log::info(kLog, "done: {} requests, {} rounds, {} tool calls, {}+{} tokens{}, {} ms", m_stats.requests,
-              m_stats.rounds, m_stats.toolCalls, m_stats.usage.promptTokens, m_stats.usage.completionTokens,
-              costText(m_stats.usage), ms(m_stats.totalTime));
+    log::info(kLog, "done: {} requests, {} rounds, {} tool calls, {}{}, {} ms", m_stats.requests, m_stats.rounds,
+              m_stats.toolCalls, tokenText(m_stats.usage), costText(m_stats.usage), ms(m_stats.totalTime));
     setState(State::Done);
 }
 
@@ -266,15 +306,29 @@ void Assistant::startTurn(std::string text) {
     sendChat();
 }
 
+int Assistant::roundLimit() const { return m_options.maxRounds > 0 ? m_options.maxRounds : m_limits.maxRounds; }
+
+std::string Assistant::inputText() const {
+    return m_options.source == InputSource::Event ? m_eventHeading + " " + m_userText : m_userText;
+}
+
 json::Value Assistant::messages() const {
+    // The static part first (the system prompt; the tools are beside it in the body), then the history, which changes
+    // only between turns, then this turn's input with its state summary (fresh each turn) and this turn's rounds.
     json::Value list = json::Value::makeArray();
     if (!m_systemPrompt.empty()) list.array.push_back(message("system", m_systemPrompt));
     for (const std::vector<json::Value>& turn : m_history) {
         for (const json::Value& m : turn) list.array.push_back(m);
     }
     const std::string_view state = detail::trimSpace(m_turnState);
-    list.array.push_back(
-        message("user", state.empty() ? m_userText : std::format("Game state:\n{}\n\nPlayer: {}", state, m_userText)));
+    const bool event = m_options.source == InputSource::Event;
+    std::string input;
+    if (state.empty()) {
+        input = inputText();
+    } else {
+        input = std::format("Game state:\n{}\n\n{} {}", state, event ? m_eventHeading : "Player:", m_userText);
+    }
+    list.array.push_back(message("user", std::move(input)));
     for (const json::Value& m : m_turn) list.array.push_back(m);
     return list;
 }
@@ -288,7 +342,7 @@ void Assistant::sendChat() {
         if (m_stats.firstTextTime < 0.0) m_stats.firstTextTime = now() - m_opStart;
     };
     ChatOptions options;
-    if (m_limits.answerOnLastRound && m_round >= m_limits.maxRounds) options.toolChoice = ToolChoice::None;
+    if (m_limits.answerOnLastRound && m_round >= roundLimit()) options.toolChoice = ToolChoice::None;
     net::Request request = buildChatRequest(m_settings, messages(), m_tools.chatTools(), options);
     setState(State::Thinking);
     m_stageStart = now();
@@ -328,12 +382,11 @@ void Assistant::chatDone(const net::Response& r) {
     }
     const ChatResult& result = m_parser->result();
     m_stats.usage.add(result.usage);
-    log::info(kLog, "round {}: {}, {} characters, {} tool calls, {}+{} tokens{}, {} ms{}", m_round, r.status,
-              detail::codePoints(result.text), result.toolCalls.size(), result.usage.promptTokens,
-              result.usage.completionTokens, costText(result.usage), ms(r.seconds),
-              result.model.empty() ? std::string() : " (" + result.model + ")");
+    log::info(kLog, "round {}: {}, {} characters, {} tool calls, {}{}, {} ms{}", m_round, r.status,
+              detail::codePoints(result.text), result.toolCalls.size(), tokenText(result.usage), costText(result.usage),
+              ms(r.seconds), result.model.empty() ? std::string() : " (" + result.model + ")");
 
-    if (!result.toolCalls.empty() && m_round < m_limits.maxRounds) {
+    if (!result.toolCalls.empty() && m_round < roundLimit()) {
         json::Value assistant = json::Value::makeObject();
         assistant.object["role"] = json::Value::makeString("assistant");
         assistant.object["content"] = result.text.empty() ? json::Value() : json::Value::makeString(result.text);
@@ -366,7 +419,7 @@ void Assistant::chatDone(const net::Response& r) {
     if (text.empty()) {
         if (!result.toolCalls.empty()) {
             fail({ErrorKind::RoundLimit, 0,
-                  std::format("the model still asked for tools after {} rounds", m_limits.maxRounds)});
+                  std::format("the model still asked for tools after {} rounds", roundLimit())});
         } else {
             fail({ErrorKind::BadResponse, 0, "the model answered with no text"});
         }
@@ -400,7 +453,20 @@ void Assistant::stepTools() {
     const std::string name = m_calls[index].name;
     const std::string arguments = m_calls[index].arguments;
     const double start = now();
-    ToolResult result = m_tools.callWithText(name, arguments);
+    // A tool not marked read-only is an action; over this turn's cap it is refused, not run.
+    const Tool* found = m_tools.find(name);
+    const bool action = found && !found->annotations.readOnly.value_or(false);
+    const bool refused = action && m_options.maxActions >= 0 && m_actions >= m_options.maxActions;
+    ToolResult result;
+    if (refused) {
+        result = ToolResult::error(std::format("not run: this turn may make at most {} change{} to the game "
+                                               "(tools that are not read-only), and it has; read-only tools still "
+                                               "work. Answer with what you know.",
+                                               m_options.maxActions, m_options.maxActions == 1 ? "" : "s"));
+    } else {
+        if (action) ++m_actions;
+        result = m_tools.callWithText(name, arguments);
+    }
     const double seconds = now() - start;
     if (serial != m_serial || m_state != State::CallingTool) return; // the handler cancelled or started something
     ToolCallRecord& record = m_calls[index];
@@ -408,6 +474,7 @@ void Assistant::stepTools() {
     record.finished = true;
     record.seconds = seconds;
     ++m_stats.toolCalls;
+    if (refused) ++m_stats.refusedCalls;
     m_stats.toolTime += seconds;
     std::string content = detail::trimText(record.result.contentText(), m_limits.toolResultChars);
     if (record.result.isError) content = "Error: " + content;
@@ -416,7 +483,11 @@ void Assistant::stepTools() {
     tool.object["tool_call_id"] = json::Value::makeString(record.id);
     tool.object["content"] = json::Value::makeString(std::move(content));
     m_turn.push_back(std::move(tool));
-    log::info(kLog, "tool {}: {}, {:.2f} ms", record.name, record.result.isError ? "error" : "ok", seconds * 1000.0);
+    log::info(kLog, "tool {}: {}, {:.2f} ms", record.name,
+              refused                 ? "refused (the turn's action cap)"
+              : record.result.isError ? "error"
+                                      : "ok",
+              seconds * 1000.0);
     m_events.push_back({.kind = EventKind::ToolFinished, .state = State::CallingTool, .tool = index});
     ++m_nextTool;
     if (m_nextTool < m_calls.size()) {
@@ -428,29 +499,77 @@ void Assistant::stepTools() {
 }
 
 void Assistant::commitTurn() {
-    if (m_limits.historyTurns <= 0) {
+    if (m_limits.historyTurns == 0) {
+        m_history.clear();
+        m_turn.clear();
+        return;
+    }
+    // The newest turn as it was sent (its tool results cut at toolResultChars only); compactHistory() cuts it further
+    // once a newer one follows.
+    std::vector<json::Value> turn;
+    turn.reserve(m_turn.size() + 1);
+    turn.push_back(message("user", inputText()));
+    for (json::Value& m : m_turn) turn.push_back(std::move(m));
+    m_turn.clear();
+    m_history.push_back(std::move(turn));
+    compactHistory();
+}
+
+bool Assistant::isEventTurn(const std::vector<json::Value>& turn) const {
+    if (turn.empty() || m_eventHeading.empty()) return false;
+    const std::string content = turn.front()["content"].stringOr("");
+    return content.starts_with(m_eventHeading);
+}
+
+void Assistant::compactHistory() {
+    if (m_limits.historyTurns == 0) {
         m_history.clear();
         return;
     }
-    std::vector<json::Value> turn;
-    turn.reserve(m_turn.size() + 1);
-    turn.push_back(message("user", m_userText));
-    for (json::Value m : m_turn) {
-        if (m["role"].stringOr("") == "tool") {
-            // Cut from the whole result, so that the count of what is left out is right.
-            std::string content = m["content"].stringOr("");
-            for (const ToolCallRecord& record : m_calls) {
-                if (record.id == m["tool_call_id"].stringOr("") && record.finished) {
-                    content = (record.result.isError ? "Error: " : "") + record.result.contentText();
+    if (m_limits.historyTurns > 0) {
+        while (m_history.size() > std::size_t(m_limits.historyTurns)) m_history.erase(m_history.begin());
+    }
+    // Every turn but the newest: tool results cut to historyToolResultChars (the count of what is left out stays the
+    // whole result's), old event turns down to their marked first line and their answer. Both are idempotent, so a
+    // turn's messages change once, when it stops being the newest (or the old event turn), and not again.
+    const std::size_t n = m_history.size();
+    for (std::size_t i = 0; i + 1 < n; ++i) {
+        std::vector<json::Value>& turn = m_history[i];
+        const std::size_t age = n - 1 - i;
+        if (isEventTurn(turn) && m_limits.historyEventTurns >= 0 && age >= std::size_t(m_limits.historyEventTurns)) {
+            std::vector<json::Value> compact;
+            compact.push_back(message("user", firstLine(turn.front()["content"].stringOr(""), 300)));
+            for (std::size_t k = turn.size(); k-- > 1;) {
+                const json::Value& m = turn[k];
+                if (m["role"].stringOr("") == "assistant" && m["content"].type == json::Value::Type::String &&
+                    !m["tool_calls"].isArray()) {
+                    compact.push_back(m);
+                    break;
                 }
             }
-            m.object["content"] = json::Value::makeString(detail::trimText(content, m_limits.historyToolResultChars));
+            turn = std::move(compact);
+            continue;
         }
-        turn.push_back(std::move(m));
+        for (json::Value& m : turn) {
+            if (m["role"].stringOr("") != "tool") continue;
+            m.object["content"] =
+                json::Value::makeString(detail::retrimText(m["content"].stringOr(""), m_limits.historyToolResultChars));
+        }
     }
-    m_turn.clear();
-    m_history.push_back(std::move(turn));
-    while (m_history.size() > std::size_t(m_limits.historyTurns)) m_history.erase(m_history.begin());
+    // The budget: the oldest turns go first; the newest stays whatever its size.
+    if (m_limits.historyTokens > 0) {
+        std::int64_t total = historyTokenEstimate();
+        while (m_history.size() > 1 && total > m_limits.historyTokens) {
+            total -= turnTokens(m_history.front());
+            m_history.erase(m_history.begin());
+        }
+    }
+}
+
+std::int64_t Assistant::historyTokenEstimate() const {
+    std::int64_t n = 0;
+    for (const std::vector<json::Value>& turn : m_history) n += turnTokens(turn);
+    return n;
 }
 
 // ---------------------------------------------------------------------------------------------------- speech
@@ -562,9 +681,8 @@ Result<void> Assistant::setHistory(const json::Value& history) {
             return Error{"a turn of the history starts without the player"};
         loaded.push_back(turn.array);
     }
-    while (m_limits.historyTurns >= 0 && loaded.size() > std::size_t(m_limits.historyTurns))
-        loaded.erase(loaded.begin());
     m_history = std::move(loaded);
+    compactHistory(); // a save from before the budget loads the same way: its turns are plain player turns
     return {};
 }
 

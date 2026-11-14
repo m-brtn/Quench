@@ -126,6 +126,34 @@ its own `Format` and follows the audio thread's rules (no allocation, locks, log
 demo's tone is one. `PcmStream` is a generator fed from the game thread through a single-producer single-consumer
 ring (`push`, `writable`, `queued`, `finish`); when it runs empty it plays silence and counts an underrun.
 
+## Streamed playback
+
+`audio::VoiceStream` (`include/quench/audio/VoiceStream.h`, 2026-11-14, released with 0.19.0) plays a voice that arrives in
+pieces over the network (a live session's audio) as a generator on a bus the game names:
+
+```cpp
+auto voice = std::make_shared<audio::VoiceStream>();   // 24 kHz mono, an 80 ms jitter buffer
+app.audio().playGenerator(voice, {.bus = app.audio().bus("voice")});
+voice->push(samples);                                   // game thread, as they arrive
+if (playerInterrupted) voice->flush();
+bool speaking = voice->audible();                       // a gate on the microphone, a UI
+```
+
+- **The jitter buffer**: it starts (and starts again after running dry) once `prebufferSeconds` (0.08) are queued,
+  or once what is queued has waited that long, so the last short piece of a sentence is not held back.
+- **No clicks**: running dry while playing fades the last sample to zero over `fadeSeconds` (4 ms) instead of
+  stepping, a start fades in over the same time, and `flush()` fades out what plays while it drops everything queued
+  before it (what is pushed after it plays normally). A constant 0.8 level through an underrun steps by at most
+  0.8/96 per sample (`audio.voice_stream_underrun_without_click`).
+- `queuedSeconds()`, `active()` (queued or playing), `audible()` (`level()` above about -50 dBFS), `level()` (a peak
+  falling by half in 0.1 s), `playedFrames()` / `playedSeconds()` (pushed audio played, not the waiting silence),
+  `underruns()`, `droppedFrames()` (pushes over `capacitySeconds`, 60 s: a server may send faster than real time),
+  `flushes()`.
+- The sound never ends by itself; stop it through the AudioSystem. `push()`, `flush()` and the queries are for the
+  game thread, `generate()` for the audio thread (lock-free, no allocation). GPT-Live sends silence between answers
+  (seen 2026-11-14), so with it `active()` stays true: use `audible()` for "the station speaks".
+- Not listened to: checked offline by numbers and through the mixer (`audio.voice_stream_*`).
+
 ## 3D sound
 
 One listener (`setListener`: position, forward, up, velocity) and an `Emitter` per spatial sound (`spatial = true`;
@@ -349,6 +377,31 @@ commands ([App shell](app.md#scenarios)): `mic_permission STATE`, `mic_request`,
 `examples/hello/scenarios/mic.txt` (a part of hello's batches, `hello_mic_<backend>`, and of its check in headless
 Chrome) "speaks" a 660 Hz tone file and checks the recording's length, rate, frequency and peak, the limit, the
 meter in silence and a refusal.
+
+### Streaming
+
+For a live conversation ([Live session](live.md)) the microphone also hands its samples over while it records
+(2026-11-14, released with 0.19.0): `MicDesc::stream`.
+
+```cpp
+mic.start({.sampleRate = 24000, .stream = true});   // no length limit; maxSeconds is not used
+// every frame, after the app's mic.update():
+std::vector<float> piece;
+mic.takeStream(piece);                                // what this frame's update() made: about 400 samples at 60 Hz
+live.sendAudio(piece);
+mic.setStreamMuted(true);                             // silence goes on, the input stays open, level() still moves
+```
+
+- The same input, resampler, meter, permission and fake source as a recording; the samples go into a stream buffer
+  instead (`takeStream(out)` appends and returns how many). Up to `MicDesc::streamBufferSeconds` (5 s, at most 60)
+  are kept when nothing takes them, the oldest dropped beyond (`streamDropped()`).
+- `setStreamMuted()`: silence in place of the input, so the timeline stays continuous, without closing the device
+  (closing and opening take a job each and, on iOS, a session change). Kept across starts.
+- `streaming()`, `streamedSeconds()` (also `seconds()` in this mode). `stop()` ends it: what the resampler held goes
+  into the stream, the state is `Finished`, and `takeRecording()` gives a recording without samples (its `error` and
+  `droppedFrames`).
+- The fake source feeds a stream at the pace of `update(dt)`: a scripted run with long frames streams faster than
+  real time, in bigger pieces (`audio.mic_stream_fast_pace`).
 
 ### The manual check
 

@@ -202,11 +202,24 @@ Link what the game uses beside `quench_add_game()`:
   handler})`, the handler returning `assistant::ToolResult::ok(text or JSON)` or `ToolResult::error("readable")`
   (bad arguments never reach it: they fail the schema and go back to the model as an error); `setSystemPrompt`,
   `setStateSummary` (called once per turn); `ask(text)` for a typed turn, `askByVoice(recording.wav())` for a
-  recording to speech, `cancel()`; one operation at a time (a second is refused with "busy"). Show `state()`,
+  recording to speech, `ask(text, {.source = assistant::InputSource::Event, .maxRounds = 2, .maxActions = 1})` for
+  a turn the game starts on an event ("Rover 2 arrived at E7": marked to the model as not the player's words, under
+  `setEventHeading`; `maxActions` caps calls of tools not marked `readOnly`), `cancel()`; one operation at a time
+  (a second is refused with "busy": queue events in the game). The history is a budget of estimated tokens
+  (`limits().historyTokens`, 6000). Show `state()`,
   `toolName()`, `partialText()`, `answer()`, `failure()` each frame; play `takeSpeech()` through the audio system.
   The player's key goes in `settings().apiKey` only: `settingsToJson()` and `historyJson()` leave it out; tell the
-  player what leaves the machine (`docs/assistant.md`, "Privacy"). Tests: `assistant::AssistantDesc::fake` with a
+  player what leaves the machine (`docs/assistant.md`, "Privacy"). `stats().usage.cachedTokens` shows the provider's
+  prompt cache; for Anthropic's models set `settings().cacheMarker = true`. Tests: `assistant::AssistantDesc::fake` with a
   manual clock. [reference.md](reference.md), "Assistant"; `docs/assistant.md`.
+- **Live session.** `assistant::LiveSession`: a spoken conversation with OpenAI's GPT-Live that listens all the
+  time, answers by voice and calls the same `assistant::Tool`s (through its backend model). Feed it the microphone's
+  streaming mode (`app.microphone().start({.sampleRate = 24000, .stream = true})`, `takeStream()` into
+  `sendAudio()`), play `takeAudio()` through an `audio::VoiceStream` on a bus, report
+  `setPlaybackActive(voice->audible())`, show `state()` and the transcripts from `takeEvents()`, report the game's events with `appendCommentary()` (said) or
+  `appendThinking()` (silent). It bills every open second; it closes itself after `settings().idleSeconds` without
+  speech. macOS and iOS only (no WebSocket backend elsewhere; a browser needs WebRTC, not there).
+  [reference.md](reference.md), "Live session"; `docs/live.md`.
 - **Jobs.** `app.jobs()`: `run`, `parallelFor`; poll `Job::done()` across frames for long work, `wait` only for work
   the frame needs now. Jobs must not throw. `docs/assets.md`, "Job system".
 - **Input.** `app.input().addAction(name, {bindings})` with `Binding::key("Space")` (returns an optional:

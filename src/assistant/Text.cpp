@@ -24,9 +24,12 @@ std::string_view utf8Prefix(std::string_view text, std::size_t bytes) {
     return text.substr(0, end);
 }
 
-std::string trimText(std::string_view text, std::size_t limit) {
+namespace {
+
+std::string cut(std::string_view text, std::size_t limit, std::size_t alreadyOut) {
     const std::size_t total = codePoints(text);
-    if (total <= limit) return std::string(text);
+    if (total <= limit && alreadyOut == 0) return std::string(text);
+    if (total <= limit) return std::format("{}... ({} more characters)", text, alreadyOut);
     std::size_t count = 0;
     std::size_t end = 0;
     while (end < text.size()) {
@@ -36,7 +39,40 @@ std::string trimText(std::string_view text, std::size_t limit) {
         }
         ++end;
     }
-    return std::format("{}... ({} more characters)", text.substr(0, end), total - limit);
+    return std::format("{}... ({} more characters)", text.substr(0, end), total - limit + alreadyOut);
+}
+
+} // namespace
+
+std::string trimText(std::string_view text, std::size_t limit) { return cut(text, limit, 0); }
+
+std::string retrimText(std::string_view text, std::size_t limit) {
+    if (codePoints(text) <= limit) return std::string(text);
+    constexpr std::string_view open = "... (";
+    constexpr std::string_view close = " more characters)";
+    std::size_t alreadyOut = 0;
+    std::string_view body = text;
+    if (text.ends_with(close)) {
+        const std::size_t at = text.rfind(open);
+        if (at != std::string_view::npos) {
+            const std::string_view digits =
+                text.substr(at + open.size(), text.size() - close.size() - at - open.size());
+            bool number = !digits.empty() && digits.size() < 16;
+            std::size_t value = 0;
+            for (const char c : digits) {
+                if (c < '0' || c > '9') {
+                    number = false;
+                    break;
+                }
+                value = value * 10 + std::size_t(c - '0');
+            }
+            if (number) {
+                alreadyOut = value;
+                body = text.substr(0, at);
+            }
+        }
+    }
+    return cut(body, limit, alreadyOut);
 }
 
 std::string_view trimSpace(std::string_view text) {

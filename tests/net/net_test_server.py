@@ -19,16 +19,102 @@ Paths (the server never echoes a header's value that could be a secret; it says 
     GET  /secrets                200 "authorization=present|absent;x-api-key=present|absent;cookie=present|absent"
     GET  /set-cookie             200 with Set-Cookie: session=abc
     GET  /big?bytes=N[&chunked=1] N bytes, with a Content-Length or chunked without one
+
+WebSocket paths (an upgrade request, RFC 6455 framing written with the standard library; ws://127.0.0.1:<port>):
+    /ws/echo                     every text or binary message back; pings answered; a close answered with its code
+    /ws/script                   "one", 0.2 s later "two", a binary message 00 01 02, then a close 4000 "done"
+    /ws/big?bytes=N              a text message of N bytes, then as /ws/echo
+    /ws/secrets                  one text message "authorization=present|absent;protocol=<offered or none>"
+    /ws/nopong                   as /ws/echo without answering pings
+    /ws/drop                     0.2 s after the upgrade the TCP connection closes without a close frame
+    /ws/status/<code>            the upgrade refused with that status
 """
 
+import base64
+import hashlib
 import http.server
 import os
+import struct
 import socketserver
 import subprocess
 import sys
 import threading
 import time
 import urllib.parse
+
+
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+class WsConnection:
+    """The server's side of one WebSocket connection: frames read and written on the handler's streams."""
+
+    def __init__(self, rfile, wfile):
+        self.rfile, self.wfile = rfile, wfile
+        self.lock = threading.Lock()
+
+    def read_exact(self, n):
+        data = b""
+        while len(data) < n:
+            piece = self.rfile.read(n - len(data))
+            if not piece:
+                raise ConnectionResetError()
+            data += piece
+        return data
+
+    def read_frame(self):
+        b0, b1 = self.read_exact(2)
+        fin, opcode, masked, length = b0 & 0x80, b0 & 0x0F, b1 & 0x80, b1 & 0x7F
+        if length == 126:
+            length = struct.unpack(">H", self.read_exact(2))[0]
+        elif length == 127:
+            length = struct.unpack(">Q", self.read_exact(8))[0]
+        mask = self.read_exact(4) if masked else b"\0\0\0\0"
+        payload = bytearray(self.read_exact(length))
+        for i in range(length):
+            payload[i] ^= mask[i % 4]
+        return bool(fin), opcode, bytes(payload)
+
+    def write_frame(self, opcode, payload):
+        header = bytes([0x80 | opcode])
+        n = len(payload)
+        if n < 126:
+            header += bytes([n])
+        elif n < 65536:
+            header += bytes([126]) + struct.pack(">H", n)
+        else:
+            header += bytes([127]) + struct.pack(">Q", n)
+        with self.lock:
+            self.wfile.write(header + payload)
+            self.wfile.flush()
+
+    def send_text(self, text):
+        self.write_frame(0x1, text.encode() if isinstance(text, str) else text)
+
+    def send_binary(self, data):
+        self.write_frame(0x2, data)
+
+    def send_close(self, code, reason=b""):
+        self.write_frame(0x8, struct.pack(">H", code) + reason)
+
+    def serve(self, answer_pings=True):
+        """Echoes messages until a close; answers the close with the same code."""
+        message, kind = b"", None
+        while True:
+            fin, opcode, payload = self.read_frame()
+            if opcode == 0x9:
+                if answer_pings:
+                    self.write_frame(0xA, payload)
+            elif opcode == 0x8:
+                self.write_frame(0x8, payload)
+                return
+            elif opcode in (0x1, 0x2, 0x0):
+                if opcode != 0x0:
+                    kind = opcode
+                message += payload
+                if fin:
+                    self.write_frame(kind, message)
+                    message = b""
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -70,7 +156,60 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.route(self.read_body())
 
     def do_GET(self):
+        if self.headers.get("Upgrade", "").lower() == "websocket":
+            self.websocket()
+            return
         self.route(b"")
+
+    def websocket(self):
+        url = urllib.parse.urlsplit(self.path)
+        query = dict(urllib.parse.parse_qsl(url.query))
+        path = url.path
+        if path.startswith("/ws/status/"):
+            self.send_body(int(path[len("/ws/status/"):]), b"refused")
+            return
+        key = self.headers.get("Sec-WebSocket-Key")
+        if not key:
+            self.send_body(400, b"no Sec-WebSocket-Key")
+            return
+        accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        offered = self.headers.get("Sec-WebSocket-Protocol")
+        if offered:
+            self.send_header("Sec-WebSocket-Protocol", offered.split(",")[0].strip())
+        self.end_headers()
+        self.wfile.flush()
+        self.close_connection = True
+        ws = WsConnection(self.rfile, self.wfile)
+        try:
+            if path == "/ws/echo":
+                ws.serve()
+            elif path == "/ws/script":
+                ws.send_text("one")
+                time.sleep(0.2)
+                ws.send_text("two")
+                ws.send_binary(bytes([0, 1, 2]))
+                ws.send_close(4000, b"done")
+                ws.read_frame()  # the client's answer
+            elif path == "/ws/big":
+                ws.send_text("b" * int(query.get("bytes", "100000")))
+                ws.serve()
+            elif path == "/ws/secrets":
+                seen = "present" if self.headers.get("Authorization") is not None else "absent"
+                ws.send_text("authorization=%s;protocol=%s" % (seen, offered or "none"))
+                ws.serve()
+            elif path == "/ws/nopong":
+                ws.serve(answer_pings=False)
+            elif path == "/ws/drop":
+                time.sleep(0.2)
+                self.connection.shutdown(2)
+            else:
+                ws.send_close(1008, b"unknown path")
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def route(self, body):
         url = urllib.parse.urlsplit(self.path)

@@ -38,6 +38,36 @@ std::string base64Encode(std::span<const std::uint8_t> bytes) {
     return out;
 }
 
+Result<std::vector<std::uint8_t>> base64Decode(std::string_view text) {
+    while (!text.empty() && text.back() == '=') text.remove_suffix(1);
+    std::vector<std::uint8_t> out;
+    out.reserve(text.size() * 3 / 4);
+    std::uint32_t bits = 0;
+    int count = 0;
+    for (char c : text) {
+        int v = -1;
+        if (c >= 'A' && c <= 'Z')
+            v = c - 'A';
+        else if (c >= 'a' && c <= 'z')
+            v = c - 'a' + 26;
+        else if (c >= '0' && c <= '9')
+            v = c - '0' + 52;
+        else if (c == '+')
+            v = 62;
+        else if (c == '/')
+            v = 63;
+        if (v < 0) return Error{"not base64"};
+        bits = (bits << 6) | std::uint32_t(v);
+        count += 6;
+        if (count >= 8) {
+            count -= 8;
+            out.push_back(std::uint8_t((bits >> count) & 0xFF));
+        }
+    }
+    if (count >= 6) return Error{"base64 that ends inside a byte"};
+    return out;
+}
+
 namespace {
 
 // A boundary that does not occur in the file: derived from its bytes, made longer until it is absent.

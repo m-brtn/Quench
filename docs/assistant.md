@@ -5,7 +5,8 @@ the game registers: the player types or says something ("send walker one to the 
 balance?"), the model calls the game's tools, the game executes them, and the model answers, as text and optionally as
 speech. It is a client for OpenAI-compatible APIs (chat completions with tool calls, speech-to-text, text-to-speech)
 on [`quench_net`](net.md): OpenRouter first, OpenAI's own API or a local server by settings only. Turn-based (push to
-talk); a live speech-to-speech session is a later, separate backend.
+talk). A live, full-duplex spoken conversation (OpenAI's GPT-Live, the same tools) is `assistant::LiveSession` in the
+same module since 2026-11-14: [Live session](live.md).
 
 Public headers in `include/quench/assistant/`: `Assistant.h` (the turn), `Tools.h` (the tools), `Provider.h` (the
 settings, presets and errors), `Chat.h` (the chat request and the stream parser), `Speech.h` (transcription and
@@ -48,7 +49,8 @@ them; not in the answer the player reads), speech instructions and speed (sent o
 (`pcm`: 16-bit mono, the rate from the answer's `Content-Type`, else `pcmRate`, 24 kHz; or `mp3`, decoded by the
 engine), the transcription form (JSON with base64 audio, or a multipart form), a language hint, a timeout per kind of
 request (30 s; 120 s for the local preset), streaming on or off, `stream_options.include_usage`,
-`parallel_tool_calls`, `max_tokens`, `temperature`, extra headers (OpenRouter's `HTTP-Referer` and `X-Title`).
+`parallel_tool_calls`, `max_tokens`, `temperature`, extra headers (OpenRouter's `HTTP-Referer` and `X-Title`), and
+`cacheMarker` (off; [Caching](#caching)).
 
 | Preset | Base URL | Chat | Transcription | Speech | Form |
 |---|---|---|---|---|---|
@@ -109,6 +111,27 @@ stay as they are.
 The stages alone: `transcribe(wav)` (to `transcript()`), `ask(text)` without speech (a typed-text game uses only this),
 `speak(text)`.
 
+### Turns the game starts
+
+A game can start a turn itself when something happens, so that the model decides and speaks without the player
+asking: `ask("Rover 2 arrived at E7.", {.source = InputSource::Event})` (since 2026-11-14, released with 0.19.0).
+
+- **The marking.** The input goes to the model under the event heading instead of the player's: `Game state:\n...\n\n
+  Game event (not the player): Rover 2 arrived at E7.` (without a state summary just the heading and the text). The
+  heading is `kDefaultEventHeading` and can be renamed with `setEventHeading("Station event (not the player):")`;
+  it is the only place the marking is made. The history keeps the input with its heading (and without the state),
+  so later turns, the player's included, read it as the game's, not the player's.
+- **Per-turn limits** (`AskOptions`, for any turn, meant for events): `maxRounds` (above 0: this turn's round limit
+  instead of `Limits::maxRounds`; the last round asks for text as usual) and `maxActions` (0 or above: at most this
+  many calls of tools *not* marked `readOnly` in their annotations; read-only tools are never counted). A call over
+  the cap is not run: the model gets `Error: not run: this turn may make at most N changes to the game (tools that
+  are not read-only), and it has; read-only tools still work. Answer with what you know.`, the record is finished
+  with that error, the log line says `refused (the turn's action cap)`, and `Stats::refusedCalls` counts it (also in
+  `toolCalls`). Any call to a tool that is not read-only counts, whatever its result.
+- **Everything else is a player's turn**: the states, `cancel()`, the events, the stats, speech
+  (`.speak = true`), the failures. One operation at a time holds for events too: an event while a turn runs is
+  refused with `busy`, and the game decides whether to queue it, drop it or `cancel()` the running turn.
+
 **One operation at a time**: a second `ask`, `askByVoice`, `transcribe` or `speak` while one runs is refused with an
 error that says `busy` (not queued: a voice turn that waited behind another would answer a moment that has passed;
 the game decides, and can `cancel()` first). **Cancel** works in every state: the request in flight is cancelled,
@@ -119,15 +142,30 @@ back to `Idle` with a `Cancelled` event and `failure().kind == Cancelled`, and t
 Observable every frame: `state()` (`idle`, `transcribing`, `thinking`, `calling tool`, `speaking`, `done`, `failed`),
 `toolName()`, `transcript()`, `partialText()`, `answer()`, `toolCalls()`, `failure()`, `takeEvents()` (state changes,
 `Transcribed`, `ToolStarted`, `ToolFinished`, `Answered`, `SpeechReady`, `Failed`, `Cancelled`) and the counters:
-`stats()` of the last operation and `totals()` (requests, rounds, tool calls, prompt and completion tokens, the
-provider's cost when it says (OpenRouter does for chat and transcription, not for speech), seconds of audio
+`stats()` of the last operation and `totals()` (requests, rounds, tool calls and the refused ones, prompt and
+completion tokens and of the prompt's the cached and the cache-written ones ([Caching](#caching)), the provider's cost
+when it says (OpenRouter does for chat and transcription, not for speech), seconds of audio
 transcribed and received, characters sent to speech, and the seconds of each stage, the first text and the whole).
 
-**History**: finished turns as chat messages (the player's words, the assistant's tool calls, the tool results, the
-answer), the last `Limits::historyTurns` (6) of them; a tool result is cut to `toolResultChars` (4000 characters) in
-its own turn and to `historyToolResultChars` (400) once in the history ("... (N more characters)"). A failed or
-cancelled turn is not kept. `historyJson()` and `setHistory()` save and restore it (no system prompt, no state
-summaries, no key); `clearHistory()`.
+**History**: finished turns as chat messages (the player's words or the marked event, the assistant's tool calls, the
+tool results, the answer), kept by a budget of estimated tokens (since 0.19.0; before, the last 6 turns):
+
+- `Limits::historyTokens` (6000): after each finished turn (and on `setHistory`), the oldest turns are dropped first
+  until the rest fits; the newest turn always stays, whatever its size. 0 or below: no budget.
+  `historyTokenEstimate()` gives the history's count. The estimate (`estimateTokens()`) is one token per 3
+  characters (code points), rounded up, plus 4 per message for its frame; a tool call counts its name and
+  arguments. 3, not the 4 characters a token of English prose usually is: tool results are JSON, numbers and names,
+  which tokenize denser, and so does most other languages' text, and a budget should hold against the provider's own
+  count rather than be exceeded by it.
+- `Limits::historyTurns` (-1: no count) still caps the number of turns when set above 0; 0 keeps no history.
+- A tool result is cut to `toolResultChars` (4000 characters) in its own turn and stays so while its turn is the
+  newest in the history ("nothing cut in the newest turn"); once a newer turn follows, it is cut to
+  `historyToolResultChars` (400), "... (N more characters)" still counting from the whole result.
+- An event turn at least `Limits::historyEventTurns` (3) turns old keeps only its marked input's first line (at most
+  300 characters) and its answer: its tool calls and results are dropped.
+- What remains keeps its order. A failed or cancelled turn is not kept. `historyJson()` and `setHistory()` save and
+  restore it (no system prompt, no state summaries, no key; the same `{"turns":[[...]]}` shape, so a save of 0.18.0
+  loads, its turns as the player's); `clearHistory()`.
 
 ## The chat client
 
@@ -136,10 +174,49 @@ end anywhere (in the middle of a line, of a UTF-8 character or of a JSON string)
 several joined, `:` comments as keep-alives ignored, `event:` and `id:` ignored, `\r\n` or `\n`), `data: [DONE]`, text
 deltas, tool calls gathered by their `index` (the first delta has the id and the name, later ones the argument
 fragments; sorted by index at the end), the finish reason, the usage of the last chunk (`prompt_tokens`,
-`completion_tokens`, OpenRouter's `cost`). A body that starts with `{` is read as one JSON answer (a server that does
+`completion_tokens`, `prompt_tokens_details.cached_tokens` and `cache_write_tokens`, OpenRouter's `cost`). A body that starts with `{` is read as one JSON answer (a server that does
 not stream, `stream: false`). A stream that ends without `[DONE]` is complete when it had a finish reason; without
 either it is a `StreamError`. JSON's `\u` surrogate pairs (an emoji from a server that escapes non-ASCII) arrive as
 UTF-8: `quench::json` decodes a pair to one code point and a lone surrogate to U+FFFD.
+
+## Caching
+
+Providers cache the start of a prompt that repeats: OpenAI's models and most others through OpenRouter on their own
+(from 1024 tokens of prompt), Anthropic's models only up to an explicit `cache_control` breakpoint. Read from
+OpenRouter's documentation on 2026-11-14 ("Usage Accounting", <https://openrouter.ai/docs/use-cases/usage-accounting>,
+and "Prompt Caching", <https://openrouter.ai/docs/features/prompt-caching>): the chat answer's `usage` has
+`prompt_tokens_details.cached_tokens` (prompt tokens read from the cache) and `cache_write_tokens` (written to it,
+"only returned for models with explicit caching and cache write pricing"); a breakpoint is a `cache_control`
+(`{"type":"ephemeral"}`) on a text part of a message's content (or one at the top level of the request, which
+OpenRouter moves forward itself). Anthropic's documentation (<https://platform.claude.com/docs/en/build-with-claude/prompt-caching>)
+puts the prefix in the order tools, system, messages, so one breakpoint at the end of the system prompt covers the
+tools too.
+
+- **The counts.** `Usage::cachedTokens` and `cacheWriteTokens` (of `promptTokens`), summed over a turn's rounds in
+  `stats()` and in `totals()`; a round's log line says `1300+5 tokens (1024 cached, 256 written)` (the written part
+  only when there is one).
+- **The static part first, byte for byte.** The body's keys are written in a fixed order, not the map's alphabetical
+  one: `model`, the settings' keys (`max_tokens`, `parallel_tool_calls`, `stream`, `stream_options`,
+  `temperature`), `tools`, then `messages` (the system prompt first, then the history, then this turn's input with
+  the state summary, then this turn's rounds) and last `tool_choice`, the one key that changes within a turn (to
+  `none` on the last round). Every object inside is written with its keys sorted, so equal content gives equal bytes.
+  Nothing volatile (the state summary, a time) is before the end of the system prompt: from request to request the
+  body is the same up to there, and within a turn each round's body starts with the whole previous round's messages.
+- **What still changes**, by design: the history changes between turns (the newest turn gets the next one's
+  cuts, the oldest are dropped by the budget, the history's user message is the input without the state summary
+  it was sent with), so a turn's first request matches the previous turn's only up to where the history changed;
+  with Anthropic a `tool_choice` that changes (the last round's `none`) invalidates the cached messages but not the
+  tools and the system prompt (Anthropic's table of what invalidates the cache).
+- **`ProviderSettings::cacheMarker`** (off): the system message goes as one text part with `"cache_control":
+  {"type":"ephemeral"}` (`[{"type":"text","text":...,"cache_control":{"type":"ephemeral"}}]`), for Anthropic's
+  models through OpenRouter; saved with the settings. A marker on the tools is not written: OpenRouter's page does
+  not describe one, and the system prompt's covers them.
+
+Measured on 2026-11-14 through OpenRouter (two requests to `anthropic/claude-haiku-5.5`, served by "Claude Platform
+on AWS", a 7048-token prompt whose system prompt had the marker): the first answer's usage had `cached_tokens` 0 and
+`cache_write_tokens` 7032 ($0.000883), the same request again `cached_tokens` 7032 and `cache_write_tokens` 0
+($0.000074); `prompt_tokens_details` also had `audio_tokens` and `video_tokens`, `usage` also `cost_details` and
+`is_byok`.
 
 ## Errors
 
@@ -210,6 +287,15 @@ rounds of the default limit.
   bad event, a whole JSON answer, surrogate pairs, the compact writer;
 - the tools: `tools/list` and `tools/call` shapes, refused registrations, every schema keyword, bad calls as error
   results;
+- turns the game starts (`EventTests.cpp`): the marking in the request (with and without a state summary, the
+  default and a renamed heading) and in the history, a player's turn after an event turn reading it, the turn's
+  round limit (and its failure), the cap of actions (read-only calls not counted, the refusal's text to the model,
+  a cap of 0, a player's turn after it uncapped), cancel and events; cached and written tokens per round, per turn
+  and in the totals and the log line; the static part of four requests byte for byte, `tool_choice` last, a round's
+  body extending the previous one's, the cache marker's shape and its save; the history's budget held after every
+  turn, the newest turns kept in order, the newest turn over the budget kept uncut, its result cut later with the
+  whole count, an old event turn compacted and a player's turn not, a 0.18.0 save loaded within the budget,
+  `historyTurns` as a cap;
 - the turn: one tool, two parallel tools (in order, each visible for an update), two rounds (the last with
   `tool_choice: "none"`), the round limit, a handler's error, arguments that fail the schema or are not JSON, an
   unknown tool, the state summary, history trimming and its save, one operation at a time, cancel while transcribing,
@@ -233,7 +319,8 @@ expected around a millisecond, not measured). Not measured in a frame.
 
 ## Not there
 
-A live speech-to-speech session (a realtime WebSocket or WebRTC backend), an MCP transport (above), OAuth sign-in
+A live speech-to-speech session in this turn-based class (it is `LiveSession`, [Live session](live.md); its browser
+path, WebRTC, is not there), an MCP transport (above), OAuth sign-in
 (OpenRouter's PKCE flow), keeping the key (in the system's keychain or anywhere else: the game decides, and should
 not put it in a save), any UI, recording and playback (the app's), voice activity detection, streaming speech
 playback while it is generated, the Responses API, images, a queue of turns, async tool handlers (a handler returns

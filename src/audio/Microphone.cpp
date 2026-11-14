@@ -236,6 +236,27 @@ struct Microphone::Impl {
     std::vector<float> chunk = std::vector<float>(kChunk);
     std::optional<MicRecording> finished;
     bool warnedFake = false;
+    // The streaming mode.
+    std::vector<float> stream;  // samples not taken yet
+    std::vector<float> scratch; // the resampler's output of one chunk
+    std::uint64_t streamed = 0;
+    std::uint64_t streamDropped = 0;
+    bool muted = false;
+
+    // Moves the resampler's output into the stream (silence while muted), the oldest dropped beyond the buffer.
+    void pushStream() {
+        if (scratch.empty()) return;
+        if (muted) std::fill(scratch.begin(), scratch.end(), 0.0f);
+        stream.insert(stream.end(), scratch.begin(), scratch.end());
+        streamed += scratch.size();
+        scratch.clear();
+        const auto max = std::size_t(std::max(0.1, desc.streamBufferSeconds) * desc.sampleRate);
+        if (stream.size() > max) {
+            const std::size_t drop = stream.size() - max;
+            stream.erase(stream.begin(), stream.begin() + std::ptrdiff_t(drop));
+            streamDropped += drop;
+        }
+    }
 
     void readPermission() {
         const MicPermission now =
@@ -257,6 +278,11 @@ struct Microphone::Impl {
             for (std::uint32_t i = 0; i < n; ++i) peak = std::max(peak, std::abs(chunk[i]));
             const float decay = float(std::pow(0.5, double(n) / rate / kLevelHalfLife));
             level = std::min(1.0f, std::max(peak, level * decay));
+            if (desc.stream) {
+                resampler.process(std::span(chunk.data(), n), scratch);
+                pushStream();
+                continue;
+            }
             resampler.process(std::span(chunk.data(), n), recorded);
             if (recorded.size() >= maxFrames) {
                 recorded.resize(maxFrames);
@@ -267,7 +293,10 @@ struct Microphone::Impl {
     }
 
     void finish(std::string why) {
-        if (!limit) {
+        if (desc.stream) {
+            resampler.flush(scratch);
+            pushStream();
+        } else if (!limit) {
             resampler.flush(recorded);
             if (recorded.size() > maxFrames) {
                 recorded.resize(maxFrames);
@@ -282,9 +311,15 @@ struct Microphone::Impl {
                        .error = why,
                        .droppedFrames = dropped};
         recorded = {};
-        log::info("audio", "microphone: recorded {:.3f} s at {} Hz{}{}{}", r.seconds(), r.sampleRate,
-                  limit ? " (the limit)" : "", dropped ? std::format(", {} input frames lost", dropped) : "",
-                  why.empty() ? "" : ", ended: " + why);
+        if (desc.stream)
+            log::info("audio", "microphone: streamed {:.3f} s at {} Hz{}{}{}", double(streamed) / desc.sampleRate,
+                      desc.sampleRate, dropped ? std::format(", {} input frames lost", dropped) : "",
+                      streamDropped ? std::format(", {} samples not taken in time", streamDropped) : "",
+                      why.empty() ? "" : ", ended: " + why);
+        else
+            log::info("audio", "microphone: recorded {:.3f} s at {} Hz{}{}{}", r.seconds(), r.sampleRate,
+                      limit ? " (the limit)" : "", dropped ? std::format(", {} input frames lost", dropped) : "",
+                      why.empty() ? "" : ", ended: " + why);
         error = std::move(why);
         finished = std::move(r);
         state = MicState::Finished;
@@ -324,9 +359,12 @@ void Microphone::requestPermission() {
 Result<void> Microphone::start(const MicDesc& desc) {
     Impl& s = *m_impl;
     if (microphoneUsage().empty()) return Error{undeclaredError()};
-    if (desc.sampleRate < 8000 || desc.sampleRate > 48000 || !(desc.maxSeconds > 0.0) || desc.maxSeconds > 600.0)
+    if (desc.sampleRate < 8000 || desc.sampleRate > 48000 ||
+        (!desc.stream && (!(desc.maxSeconds > 0.0) || desc.maxSeconds > 600.0)))
         return Error{std::format("microphone: a rate of 8000 .. 48000 Hz and a limit of up to 600 s (not {} Hz, {} s)",
                                  desc.sampleRate, desc.maxSeconds)};
+    if (desc.stream && !(desc.streamBufferSeconds > 0.0 && desc.streamBufferSeconds <= 60.0))
+        return Error{std::format("microphone: a stream buffer of up to 60 s (not {} s)", desc.streamBufferSeconds)};
     if (active()) return Error{std::string("microphone: a recording is under way (") + micStateName(s.state) + ")"};
     s.readPermission();
     if (s.permission != MicPermission::Granted && s.permission != MicPermission::Unknown)
@@ -339,6 +377,10 @@ Result<void> Microphone::start(const MicDesc& desc) {
     s.limit = false;
     s.level = 0.0f;
     s.error.clear();
+    s.stream.clear();
+    s.scratch.clear();
+    s.streamed = 0;
+    s.streamDropped = 0;
     s.state = MicState::Opening;
     s.backend->open();
     return {};
@@ -360,6 +402,8 @@ void Microphone::cancel() {
     Impl& s = *m_impl;
     if (active()) s.backend->close();
     s.recorded.clear();
+    s.stream.clear();
+    s.scratch.clear();
     s.finished.reset();
     s.resampler.reset();
     s.level = 0.0f;
@@ -395,8 +439,12 @@ void Microphone::update(double dt) {
         }
         s.droppedAtOpen = s.backend->dropped();
         s.state = MicState::Recording;
-        log::info("audio", "microphone: recording from '{}' ({}, {} Hz) at {} Hz, up to {} s", s.info.device,
-                  s.info.backend, s.info.deviceSampleRate, s.desc.sampleRate, s.desc.maxSeconds);
+        if (s.desc.stream)
+            log::info("audio", "microphone: streaming from '{}' ({}, {} Hz) at {} Hz", s.info.device, s.info.backend,
+                      s.info.deviceSampleRate, s.desc.sampleRate);
+        else
+            log::info("audio", "microphone: recording from '{}' ({}, {} Hz) at {} Hz, up to {} s", s.info.device,
+                      s.info.backend, s.info.deviceSampleRate, s.desc.sampleRate, s.desc.maxSeconds);
     }
     if (open == detail::MicOpen::Failed) {
         s.drain();
@@ -413,6 +461,7 @@ float Microphone::level() const { return m_impl->state == MicState::Recording ? 
 
 double Microphone::seconds() const {
     const Impl& s = *m_impl;
+    if (s.desc.stream) return streamedSeconds();
     if (s.finished) return s.finished->seconds();
     return s.desc.sampleRate ? double(s.recorded.size()) / s.desc.sampleRate : 0.0;
 }
@@ -431,6 +480,30 @@ std::optional<MicRecording> Microphone::takeRecording() {
 }
 
 const MicInfo& Microphone::info() const { return m_impl->info; }
+
+bool Microphone::streaming() const { return m_impl->desc.stream && active(); }
+
+std::size_t Microphone::takeStream(std::vector<float>& out) {
+    Impl& s = *m_impl;
+    const std::size_t n = s.stream.size();
+    out.insert(out.end(), s.stream.begin(), s.stream.end());
+    s.stream.clear();
+    return n;
+}
+
+void Microphone::setStreamMuted(bool muted) {
+    if (m_impl->muted != muted) log::info("audio", "microphone: stream {}", muted ? "muted" : "unmuted");
+    m_impl->muted = muted;
+}
+
+bool Microphone::streamMuted() const { return m_impl->muted; }
+
+double Microphone::streamedSeconds() const {
+    const Impl& s = *m_impl;
+    return s.desc.sampleRate ? double(s.streamed) / s.desc.sampleRate : 0.0;
+}
+
+std::uint64_t Microphone::streamDropped() const { return m_impl->streamDropped; }
 
 bool Microphone::fake() const { return m_impl->fake != nullptr; }
 

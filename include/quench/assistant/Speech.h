@@ -50,5 +50,7 @@ Result<SpeechAudio> decodeSpeech(std::span<const std::uint8_t> body, std::string
 
 // Standard base64 with padding.
 std::string base64Encode(std::span<const std::uint8_t> bytes);
+// Standard base64 back to bytes (padding optional, no whitespace); an error for any other character.
+Result<std::vector<std::uint8_t>> base64Decode(std::string_view text);
 
 } // namespace quench::assistant

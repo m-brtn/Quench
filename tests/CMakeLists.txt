@@ -57,13 +57,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             audio/AudioTests.cpp
             audio/DeviceTests.cpp
             audio/MicrophoneTests.cpp
+            audio/VoiceStreamTests.cpp
             ${audio_test_data}
             animation/AnimationTests.cpp
             navigation/NavigationTests.cpp
             weather/WeatherTests.cpp
             particles/ParticlesTests.cpp
             net/NetTests.cpp
+            net/WebSocketTests.cpp
             assistant/AssistantTests.cpp
+            assistant/EventTests.cpp
+            assistant/LiveTests.cpp
             assistant/SpeechTests.cpp
             assistant/StreamTests.cpp
             assistant/ToolsTests.cpp
@@ -197,7 +201,7 @@ quench_add_test_executable(quench_assets_tests PREFIX assets LABEL assets
     LIBS quench_assets)
 
 quench_add_test_executable(quench_audio_tests PREFIX audio LABEL audio
-    SOURCES audio/AudioTests.cpp audio/MicrophoneTests.cpp ${audio_test_data}
+    SOURCES audio/AudioTests.cpp audio/MicrophoneTests.cpp audio/VoiceStreamTests.cpp ${audio_test_data}
     LIBS quench_audio)
 
 quench_add_test_executable(quench_animation_tests PREFIX animation LABEL animation
@@ -220,7 +224,7 @@ quench_add_test_executable(quench_particles_tests PREFIX particles LABEL particl
 # on 127.0.0.1 (tests/net/net_test_server.py starts it for each case; without Python 3 those cases are not
 # registered).
 quench_add_test_executable(quench_net_tests PREFIX net LABEL net
-    SOURCES net/NetTests.cpp
+    SOURCES net/NetTests.cpp net/WebSocketTests.cpp
     LIBS quench_net)
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     find_package(Python3 COMPONENTS Interpreter)
@@ -238,6 +242,8 @@ endif()
 quench_add_test_executable(quench_assistant_tests PREFIX assistant LABEL assistant
     SOURCES
         assistant/AssistantTests.cpp
+        assistant/EventTests.cpp
+        assistant/LiveTests.cpp
         assistant/SpeechTests.cpp
         assistant/StreamTests.cpp
         assistant/ToolsTests.cpp

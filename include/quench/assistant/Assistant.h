@@ -46,12 +46,33 @@ enum class State : std::uint8_t {
 const char* stateName(State state); // "idle", "transcribing", ...
 
 struct Limits {
-    int maxRounds = 3;                        // chat requests per turn; the last one asks for text (answerOnLastRound)
-    bool answerOnLastRound = true;            // the last round sends tool_choice "none"
-    int historyTurns = 6;                     // finished turns kept for the next ones
-    std::size_t toolResultChars = 4000;       // a tool result as sent in its turn, cut beyond (UTF-8 safe)
-    std::size_t historyToolResultChars = 400; // the same once the turn is in the history
+    int maxRounds = 3;             // chat requests per turn; the last one asks for text (answerOnLastRound)
+    bool answerOnLastRound = true; // the last round sends tool_choice "none"
+    // Finished turns kept for the next ones, at most; below 0: no count (historyTokens decides); 0: no history.
+    int historyTurns = -1;
+    std::size_t toolResultChars = 4000; // a tool result as sent in its turn, cut beyond (UTF-8 safe)
+    // A tool result in a history turn older than the newest one, cut beyond (the newest keeps it as it was sent).
+    std::size_t historyToolResultChars = 400;
+    // The history's budget in estimated tokens (estimateTokens()): the oldest turns are dropped first until the rest
+    // fits; the newest finished turn is always kept, whatever its size. 0 or below: no budget.
+    std::int64_t historyTokens = 6000;
+    // An event turn (InputSource::Event) at least this many turns old (0: the newest) keeps only its marked input's
+    // first line and its answer in the history: its tool calls and results are dropped.
+    int historyEventTurns = 3;
 };
+
+// Where a turn's input comes from: the player (typed or spoken), or the game itself (an event it reports so that the
+// model can decide and speak without being asked: "Rover 2 arrived at E7"). An event's input is put to the model
+// under the event heading (Assistant::setEventHeading) instead of the player's, in the request and in the history.
+enum class InputSource : std::uint8_t { Player, Event };
+
+// The default heading of an event's input: "Game event (not the player): Rover 2 arrived at E7".
+inline constexpr const char* kDefaultEventHeading = "Game event (not the player):";
+
+// The tokens a text is estimated at for the history's budget: one per 3 characters (code points), rounded up.
+// Deliberately more than the 4 characters a token of English prose: tool results are JSON, numbers and names, which
+// tokenize denser, and so do most other languages; a budget should hold against the provider's own count.
+std::int64_t estimateTokens(std::string_view text);
 
 enum class EventKind : std::uint8_t {
     StateChanged, // state
@@ -96,6 +117,7 @@ struct Stats {
     double speakTime = 0.0;
     double firstTextTime = -1.0; // from the start to the model's first text; -1 without text (and in totals())
     double totalTime = 0.0;
+    int refusedCalls = 0; // tool calls refused by AskOptions::maxActions (also in toolCalls)
 
     void add(const Stats& other);
 };
@@ -109,7 +131,12 @@ struct AssistantDesc {
 };
 
 struct AskOptions {
-    bool speak = false; // turn the answer into speech after the turn
+    bool speak = false;                       // turn the answer into speech after the turn
+    InputSource source = InputSource::Player; // Event: the game's own input, marked as not the player's words
+    int maxRounds = 0;                        // above 0: this turn's round limit instead of Limits::maxRounds
+    // 0 or above: at most this many calls of tools not marked read-only (ToolAnnotations::readOnly) in this turn;
+    // a call over it is not run, the model gets an error result that says why. Below 0: no cap.
+    int maxActions = -1;
 };
 
 class Assistant {
@@ -130,8 +157,12 @@ public:
     // Called once at the start of each turn; its text goes before the player's words in that turn's user message
     // ("Game state:\n...\n\nPlayer: ..."), and not into the history.
     void setStateSummary(std::function<std::string()> summary) { m_stateSummary = std::move(summary); }
+    // The heading of an event turn's input, in its request and in the history (kDefaultEventHeading); a history turn
+    // whose first message starts with it is an event turn (historyEventTurns).
+    void setEventHeading(std::string heading) { m_eventHeading = std::move(heading); }
+    const std::string& eventHeading() const { return m_eventHeading; }
 
-    // A typed turn.
+    // A typed turn, or with {.source = InputSource::Event} a turn the game starts.
     Result<void> ask(std::string text, AskOptions options = {});
     // A voice turn: the recording (a WAV file) -> transcription -> the turn -> speech (AskOptions::speak).
     Result<void> askByVoice(std::span<const std::uint8_t> wav, AskOptions options = {.speak = true});
@@ -165,6 +196,8 @@ public:
     Result<void> setHistory(const json::Value& history);
     void clearHistory() { m_history.clear(); }
     std::size_t historyTurns() const { return m_history.size(); }
+    // The history's estimated tokens, as Limits::historyTokens counts them.
+    std::int64_t historyTokenEstimate() const;
 
     net::Client& client() { return *m_client; }
 
@@ -185,6 +218,10 @@ private:
     void speechDone(const net::Response& response);
     json::Value messages() const;
     void commitTurn();
+    void compactHistory();
+    bool isEventTurn(const std::vector<json::Value>& turn) const;
+    std::string inputText() const; // the turn's input with its heading for an event (as the history keeps it)
+    int roundLimit() const;
     double now() const;
     bool sendRequest(net::Request request, net::Handlers handlers);
     void announceTool();
@@ -198,6 +235,7 @@ private:
     Limits m_limits;
     std::string m_systemPrompt;
     std::function<std::string()> m_stateSummary;
+    std::string m_eventHeading = kDefaultEventHeading;
 
     // The running operation.
     Op m_op = Op::None;
@@ -217,6 +255,7 @@ private:
     std::uint64_t m_toolAnnounced = 0;
     std::size_t m_nextTool = 0; // the next record of m_calls to execute
     int m_round = 0;
+    int m_actions = 0;               // calls of tools not marked read-only in this turn
     std::string m_turnState;         // the state summary of this turn
     std::vector<json::Value> m_turn; // this turn's messages after the user's
     std::string m_userText;

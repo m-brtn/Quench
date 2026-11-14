@@ -112,10 +112,12 @@ bool run(qa::Assistant& a) {
 }
 
 void printStats(const char* what, const qa::Stats& s) {
-    std::printf("%s: %d requests, %d rounds, %d tool calls, %lld+%lld tokens, cost %s%.6f, stages: transcribe %.0f "
-                "ms, think %.0f ms, tools %.2f ms, speak %.0f ms, first text %.0f ms, total %.0f ms\n",
+    std::printf("%s: %d requests, %d rounds, %d tool calls, %lld+%lld tokens (%lld cached, %lld written), cost "
+                "%s%.6f, stages: transcribe %.0f ms, think %.0f ms, tools %.2f ms, speak %.0f ms, first text %.0f ms, "
+                "total %.0f ms\n",
                 what, s.requests, s.rounds, s.toolCalls, (long long)s.usage.promptTokens,
-                (long long)s.usage.completionTokens, s.usage.costKnown ? "$" : "(unknown) $", s.usage.cost,
+                (long long)s.usage.completionTokens, (long long)s.usage.cachedTokens,
+                (long long)s.usage.cacheWriteTokens, s.usage.costKnown ? "$" : "(unknown) $", s.usage.cost,
                 s.transcribeTime * 1000, s.thinkTime * 1000, s.toolTime * 1000, s.speakTime * 1000,
                 s.firstTextTime * 1000, s.totalTime * 1000);
 }

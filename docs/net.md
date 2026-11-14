@@ -1,4 +1,4 @@
-# Network: HTTPS requests
+# Network: HTTPS requests and WebSocket
 
 `quench_net` (since 2026-11-13, released with 0.18.0) sends asynchronous HTTP requests: what a game needs to talk to a
 web API, first of all an OpenAI-compatible one (OpenRouter, OpenAI, a local server) for an in-game assistant (chat
@@ -7,8 +7,11 @@ recorded audio uploaded as JSON with base64 or as multipart; text-to-speech, aud
 streamed). It is the transport only: the assistant is `quench_assistant` on top of it ([Assistant](assistant.md)).
 Nothing in it blocks a frame or waits through Asyncify.
 
-Public headers: `include/quench/net/Http.h` (the client) and `include/quench/net/FakeNetwork.h` (the fake). The
-target is headless (no SDL, no GPU); `quench_add_game()` links it into every game, so a game only includes it.
+Since 2026-11-14 (released with 0.19.0) it also has a WebSocket client ([WebSocket](#websocket)), for OpenAI's GPT-Live
+([Live session](live.md)).
+
+Public headers: `include/quench/net/Http.h` (the client), `include/quench/net/FakeNetwork.h` (the fake),
+`include/quench/net/WebSocket.h` and `include/quench/net/FakeWebSocket.h`. The target is headless (no SDL, no GPU); `quench_add_game()` links it into every game, so a game only includes it.
 
 ## Use
 
@@ -124,6 +127,59 @@ net::Client client(net::ClientDesc{.fake = &fake, .clock = [&] { return now; }})
 fake.respond("GET", "https://api.example.com/v1/models", net::FakeResponse::text(200, R"({"data":[]})"));
 ```
 
+## WebSocket
+
+`net::WebSocket` (2026-11-14): one connection at a time per object, in the module's style.
+
+```cpp
+#include <quench/net/WebSocket.h>
+
+net::WebSocket m_ws;                                   // a member; m_ws.update() once a frame
+m_ws.connect({.url = "wss://api.openai.com/v1/live/sessions", .headers = {{"Authorization", "Bearer " + key}}},
+             {.onOpen = [] { /* send the first message */ },
+              .onMessage = [](const net::WsMessage& m) { /* m.kind Text or Binary, m.data whole */ },
+              .onPong = [](double seconds) {},
+              .onEnd = [](const net::WsEnd& end) { /* end.clean(), closeCode, status, error, message */ }});
+m_ws.sendText(json);  m_ws.sendBinary(bytes);  m_ws.ping();  m_ws.close(1000, "bye");  m_ws.abort();
+```
+
+- `WsConnect`: `url`, `headers` (their values are never logged; the handshake's own headers are refused),
+  `protocols` (Sec-WebSocket-Protocol), `connectTimeout` (15 s), `closeTimeout` (5 s: after `close()` the
+  connection is dropped if the server does not answer, still a clean end), `pongTimeout` (10 s; 0 for none),
+  `maxMessageBytes` (4 MB: a bigger received message ends the connection with `TooLarge`, close code 1009).
+- States (`WsState`): `Idle`, `Connecting`, `Open`, `Closing`, `Closed` (a close handshake by either side),
+  `Failed` (an error, a timeout, `abort()`). `WsEnd`: `error` (`None` for a close), `closeCode`, `closeReason`,
+  `byServer`, `status` (the HTTP status of a refused upgrade: 401, 403, 404 ...), `message`, `seconds`, the
+  messages and bytes each way.
+- Handlers only from `update()`, in arrival order; `onEnd` exactly once per successful `connect()`, also after
+  `abort()` (`Cancelled`); a handler may connect again from `onEnd`. The destructor drops the connection without a
+  close frame and without handlers. Sends while not `Open` return an error and send nothing.
+- **Rules**: wss only, except `ws://localhost`, `ws://127.0.0.1` and `ws://[::1]` (`WebSocketDesc::allowInsecure`
+  for tests; `net::checkWebSocketUrl()`); no `user:password@`. **The log** (category `net`): the host and path, the
+  open time, the close code, the counts and the milliseconds (`net: ws api.openai.com/v1/live/sessions: closed by
+  the client with 1000, 3 messages in (444 bytes), 2 out (1397 bytes), 15360 ms`), never a header's value, a message
+  or the query string.
+- **Backends**: `nsurlsession` on macOS and iOS (`src/net/AppleWebSocket.m`, `.cpp`): an ephemeral NSURLSession per
+  `WebSocket` (no cookies, cache or stored credentials), an `NSURLSessionWebSocketTask` per connection made from a
+  request with the headers, its delegate on a serial background queue that only queues events for `update()`. The
+  task receives one whole message per receive call (the backend asks for the next after each), sends pings only when
+  asked (`ping()`; an idle connection gets none from NSURLSession) and fails a receive over its
+  `maximumMessageSize`, which the backend sets to `maxMessageBytes` (Apple does not state its default); that failure
+  was seen as POSIX `EMSGSIZE` (40) and is reported as `TooLarge`; a TCP connection closed without a close frame was
+  seen as POSIX `ENOTCONN` (57) and is reported as `NoNetwork`. `none` elsewhere (`src/net/NoneWebSocket.cpp`),
+  **the browser included**: a browser's WebSocket cannot send an Authorization header, so it would not reach the API
+  this was made for (GPT-Live reaches a browser by WebRTC instead, a later stage). `fake` in every build.
+
+### The WebSocket fake
+
+`net::FakeWebSocketServer` (`WebSocketDesc::fake`): `answer(url, FakeWsAnswer)` accepts an upgrade (status 101,
+after `delay`, with a `protocol`), refuses it (`status` 401 ...), fails it (`error`) or never answers (`never`);
+without one the upgrade is refused with 404. Each connection is a `FakeWsPeer`: what the client sent (`received()`,
+`pings()`, `clientCloseCode()`), the upgrade request (`url()`, `headers()`), and the server's actions, each after a
+delay that follows the previous one: `sendText`, `sendBinary`, `close(code, reason)`, `fail(kind, message)`;
+`setAnswerClose`, `setAnswerPings`. `onOpen`, `onMessage` and `onClose` handlers let a test answer like a server
+(the live session's tests play GPT-Live that way). Time is the client's clock.
+
 ## Tests
 
 - `net.*` (label `net`, `tests/net/NetTests.cpp`, with the fake; also in the `headless`, `wasm-node` and iOS
@@ -140,6 +196,15 @@ fake.respond("GET", "https://api.example.com/v1/models", net::FakeResponse::text
   answer against a 0.5 s timeout, a cancel in the middle, redirects (the same origin keeps `Authorization` and the
   key, another origin, `localhost`, drops them, plain http elsewhere refused), the size limit (declared, chunked,
   exact), no cookies kept, three at once, a refused connection.
+- `net.ws_*` (`tests/net/WebSocketTests.cpp`, the fake, every build): the URL rule, refused connects, messages
+  both ways in order by the clock, chained delays, closes by either side, the close timeout, a refused, missing,
+  failing and silent upgrade, the message limit, pings and the pong timeout, abort and a reconnect from `onEnd`, the
+  destructor, the log's redaction, the `none` backend.
+- `net_apple.apple_ws_*` (macOS): NSURLSession's WebSocket against the same test server, which also speaks
+  WebSocket (RFC 6455 framing in the standard library: `/ws/echo`, `/ws/script`, `/ws/big`, `/ws/secrets`,
+  `/ws/nopong`, `/ws/drop`, `/ws/status/<code>`): text, binary and a 200 kB message echoed, a ping's pong, the
+  server's messages 0.2 s apart and its close with 4000 "done", the Authorization header and a protocol, a 401
+  upgrade, the message limit, a lost connection, the pong timeout, a refused connection.
 - `tools/check.sh step web`: hello's `scenarios/net_web.txt` in headless Chrome against `tools/web_check.mjs`'s
   `/net/` paths (a GET, a POST echoed, 4 chunks over 0.75 s delivered as they came, a 404, a cancel in the middle;
   `examples/hello/NetCheck.h` has its commands).
@@ -160,7 +225,8 @@ not measured. A request's body is copied when it is sent.
 
 ## Not there
 
-WebSocket, HTTP/3 and protocol control, proxies set by the game (the system's proxy settings apply on Apple
+A WebSocket backend in a browser and off Apple platforms, permessage-deflate (NSURLSession's own choice, not set),
+fragmented sends; HTTP/3 and protocol control, proxies set by the game (the system's proxy settings apply on Apple
 platforms and in browsers), certificate pinning or own trust roots, uploads from a file and downloads to a file
 (bodies are in memory), multipart building (a game builds the body), cookies, a response cache, request priorities,
 progress of an upload, a backend for Linux, Windows or Android, and requests from the Node.js test build.

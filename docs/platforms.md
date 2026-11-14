@@ -11,7 +11,7 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.18.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+The engine (version 0.19.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases (those
 of 0.13.1: 0.13.2, a patch of the renderer, ran the render and demo tests only, [its notes](releases/v0.13.2.md);
 0.14.0, the weather's look and sound, ran no gate, [its notes](releases/v0.14.0.md); after its tag the golden
@@ -21,7 +21,9 @@ gate and the web check before its version number changed, [its notes](releases/v
 of a browser build kept in IndexedDB, ran the release gate, [its notes](releases/v0.16.0.md); 0.17.0, deferred
 assets of a web page, ran the full gate and the web check before its version number changed, [its
 notes](releases/v0.17.0.md); 0.18.0, HTTPS requests, microphone capture and the assistant, ran the full gate and the
-web check before its version number changed, [its notes](releases/v0.18.0.md)).
+web check before its version number changed, [its notes](releases/v0.18.0.md); 0.19.0, the live session with
+GPT-Live, ran the full gate step by step and the web check before its version number changed, [its
+notes](releases/v0.19.0.md)).
 Its GPU tests render offscreen and check the
 pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
 Mac (with the Khronos validation layer; a test of
@@ -100,6 +102,13 @@ while recording), `getUserMedia` in a browser, miniaudio's capture with an unkno
 with the fake source and on miniaudio's null backend on the Mac and in the iOS Simulator, under Node.js (headless), and
 in headless Chrome on the Mac with Chrome's fake media device; a real input only by the user's manual check on a Mac
 (`hello --mic-check`); the iOS permission and audio session switch not run, Windows and Linux not built with it.
+
+The live session (`assistant::LiveSession`, the WebSocket client, the microphone's streaming mode and
+`audio::VoiceStream`, 2026-11-14, released with 0.19.0; [Live session](live.md)): the WebSocket on NSURLSession on
+macOS and iOS, none elsewhere (the browser included). Its tests with the fakes on the Mac (also under the sanitizers),
+in the iOS Simulator and under Node.js; NSURLSession's WebSocket against a local server on the Mac; four sessions
+against GPT-Live on the Mac with spoken files fed through the fake microphone. Not run: a real microphone into a
+session, an iPhone, a browser.
 
 TrailForge also ran on Vulkan through MoltenVK on the Mac as a test of the SPIR-V path. Ashfall has only run on macOS;
 its CMake files keep the SPIR-V and DXIL outputs from TrailForge, unbuilt elsewhere.

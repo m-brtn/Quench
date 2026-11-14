@@ -76,6 +76,11 @@ public:
     json::Value list() const;
     // The chat request's "tools": [{"type":"function","function":{"name","description","parameters"}}...].
     json::Value chatTools() const;
+    // The Responses API's function tools (a live session's delegation.responses.tools):
+    // [{"type":"function","name","description","parameters","strict":false}...]. Not strict: strict mode would
+    // demand every property in "required" and additionalProperties false in every schema; the registry's own check
+    // runs before a handler either way.
+    json::Value responsesTools() const;
 
     // Runs a tool: an unknown name or arguments that fail the schema return an error result without running it; a
     // handler's exception becomes an error result too (where exceptions are caught: not in the web builds).

@@ -60,6 +60,12 @@ struct ProviderSettings {
     // Sent with every request (OpenRouter's HTTP-Referer and X-Title name an app on its dashboard). A header
     // whose name looks secret (net::isSecretHeader) is never logged either.
     net::Headers extraHeaders;
+
+    // Marks the end of the static part of a chat request (the tools and the system prompt) for a provider that caches
+    // only from an explicit marker: Anthropic's models through OpenRouter. The system message goes as
+    // [{"type":"text","text":...,"cache_control":{"type":"ephemeral"}}]. Off: nothing is marked (OpenAI's and
+    // OpenRouter's automatic caching need no marker).
+    bool cacheMarker = false;
 };
 
 // OpenRouter (https://openrouter.ai/api/v1): JSON transcription, PCM speech, the models measured on 2026-11-13.

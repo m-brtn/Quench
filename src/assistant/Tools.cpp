@@ -285,6 +285,20 @@ json::Value ToolRegistry::chatTools() const {
     return tools;
 }
 
+json::Value ToolRegistry::responsesTools() const {
+    json::Value tools = json::Value::makeArray();
+    for (const Tool& t : m_tools) {
+        json::Value v = json::Value::makeObject();
+        v.object["type"] = json::Value::makeString("function");
+        v.object["name"] = json::Value::makeString(t.name);
+        v.object["description"] = json::Value::makeString(t.description);
+        v.object["parameters"] = t.inputSchema;
+        v.object["strict"] = json::Value::makeBool(false);
+        tools.array.push_back(std::move(v));
+    }
+    return tools;
+}
+
 ToolResult ToolRegistry::call(std::string_view name, const json::Value& arguments) const {
     const Tool* tool = find(name);
     if (!tool) {

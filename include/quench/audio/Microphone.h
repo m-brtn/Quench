@@ -2,9 +2,11 @@
 
 // Microphone capture (docs/audio.md, "Microphone"): short recordings from the default input, mono, resampled to the
 // rate a game asks for (16 kHz by default, what speech-to-text services take), with a length limit and a level for a
-// meter. Headless: the recording side (the ring buffer the input fills, the resampler, the meter, the limit) and the
-// fake source live here and run in tests and under Node.js; the system's input is a backend that quench_audio_device
-// adds (audio::makeMicrophone in Device.h; App::microphone() in a game).
+// meter; or, in the streaming mode (MicDesc::stream), the same samples handed over in pieces while it records
+// (takeStream()), without a length limit, for a live conversation (assistant::LiveSession), with a mute that keeps
+// the input open. Headless: the recording side (the ring buffer the input fills, the resampler, the meter, the limit)
+// and the fake source live here and run in tests and under Node.js; the system's input is a backend that
+// quench_audio_device adds (audio::makeMicrophone in Device.h; App::microphone() in a game).
 //
 // Threads: a device's callback thread only copies its frames into a lock-free ring buffer. Everything a game reads is
 // made on the main thread in update(): the ring is drained there, measured, resampled and cut at the limit. Opening
@@ -59,8 +61,15 @@ const char* micPermissionName(MicPermission permission); // "unknown", "not aske
 const char* micStateName(MicState state);                // "idle", "opening", ...
 
 struct MicDesc {
-    std::uint32_t sampleRate = 16000; // of the recording, 8000 .. 48000 Hz
+    std::uint32_t sampleRate = 16000; // of the recording, 8000 .. 48000 Hz (a live session takes 24000)
     double maxSeconds = 30.0;         // a recording that reaches it ends there (MicRecording::limitReached), up to 600
+    // The streaming mode: the samples go to takeStream() as they arrive instead of into a recording; no length limit
+    // (maxSeconds is not used); takeRecording() gives a recording without samples at the end (its error and dropped
+    // frames).
+    bool stream = false;
+    // Streaming: samples not taken yet are kept up to this many seconds; beyond it the oldest are dropped
+    // (streamDropped()).
+    double streamBufferSeconds = 5.0;
 };
 
 struct MicRecording {
@@ -135,6 +144,21 @@ public:
     // The finished recording, once (state() becomes Idle); nullopt before it finished.
     std::optional<MicRecording> takeRecording();
     const MicInfo& info() const;
+
+    // ---- the streaming mode (MicDesc::stream)
+    // True while a stream records (Opening, Recording with MicDesc::stream).
+    bool streaming() const;
+    // Appends the samples (mono, -1 .. 1, at MicDesc::sampleRate) made since the last call to `out`; returns how many.
+    // Call it every frame after update(); the samples of a frame's update() are there (about 1/60 s at 60 Hz).
+    std::size_t takeStream(std::vector<float>& out);
+    // Muted: silence goes into the stream instead of the input (the timeline stays continuous), the input stays open
+    // and level() still shows it (a meter while the player is not heard). Kept across start() calls.
+    void setStreamMuted(bool muted);
+    bool streamMuted() const;
+    // Seconds handed to the stream since start() (also after it ended).
+    double streamedSeconds() const;
+    // Samples dropped because takeStream() was not called for longer than MicDesc::streamBufferSeconds.
+    std::uint64_t streamDropped() const;
 
     // The fake source. On a device's microphone feed() and setFakePermission() do nothing (one warning).
     bool fake() const;

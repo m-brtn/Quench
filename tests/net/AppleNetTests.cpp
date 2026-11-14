@@ -1,10 +1,11 @@
-// quench_net's NSURLSession backend against the local test server (tests/net/net_test_server.py, which starts this
-// executable with QUENCH_TEST_NET_URL=http://127.0.0.1:<port>): plain HTTP to the loopback address, the rule's one
-// exception. macOS only; a case run without the server skips.
+// quench_net's NSURLSession backends against the local test server (tests/net/net_test_server.py, which starts this
+// executable with QUENCH_TEST_NET_URL=http://127.0.0.1:<port>): plain HTTP and ws:// to the loopback address, the
+// rules' one exception. macOS only; a case run without the server skips.
 
 #include "Test.h"
 
 #include <quench/net/Http.h>
+#include <quench/net/WebSocket.h>
 
 #include <chrono>
 #include <cstdlib>
@@ -296,4 +297,165 @@ QUENCH_TEST(apple_connection_refused) {
     REQUIRE(run(client, request, r, 6.0), "done");
     CHECK(r.last.error == ErrorKind::NoNetwork, "NoNetwork: %s (%s)", errorKindName(r.last.error),
           r.last.message.c_str());
+}
+
+// ---------------------------------------------------------------------------------------------------- WebSocket
+
+namespace {
+
+std::string wsServer() {
+    std::string url = server();
+    return url.starts_with("http://") ? "ws://" + url.substr(7) : url;
+}
+
+struct WsRun {
+    int opens = 0;
+    std::vector<WsMessage> messages;
+    std::vector<double> messageTimes;
+    std::vector<double> pongs;
+    int ends = 0;
+    WsEnd end;
+
+    WsHandlers handlers() {
+        return {.onOpen = [this] { ++opens; },
+                .onMessage =
+                    [this](const WsMessage& m) {
+                        messages.push_back(m);
+                        messageTimes.push_back(seconds());
+                    },
+                .onPong = [this](double rtt) { pongs.push_back(rtt); },
+                .onEnd =
+                    [this](const WsEnd& e) {
+                        ++ends;
+                        end = e;
+                    }};
+    }
+};
+
+// update() every 2 ms until `done` or `limit` seconds.
+template <class Done>
+bool pump(WebSocket& ws, double limit, Done done) {
+    const double end = seconds() + limit;
+    while (!done() && seconds() < end) {
+        ws.update();
+        if (!done()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return done();
+}
+
+} // namespace
+
+QUENCH_TEST(apple_ws_echo) {
+    NEED_SERVER();
+    WebSocket ws;
+    CHECK(std::string(ws.backendName()) == "nsurlsession", "backend %s", ws.backendName());
+    WsRun r;
+    REQUIRE(ws.connect({.url = wsServer() + "/ws/echo"}, r.handlers()), "connect");
+    REQUIRE(pump(ws, 5.0, [&] { return r.opens == 1 || r.ends == 1; }), "open");
+    REQUIRE(ws.open(), "open: %s", ws.end().message.c_str());
+    CHECK(ws.sendText("hello"), "send text");
+    const std::uint8_t bytes[] = {0, 1, 2, 255};
+    CHECK(ws.sendBinary(bytes), "send binary");
+    std::string big(200000, 'x');
+    CHECK(ws.sendText(big), "send 200 kB");
+    CHECK(ws.ping(), "ping");
+    REQUIRE(pump(ws, 5.0, [&] { return r.messages.size() == 3 && r.pongs.size() == 1; }), "echoes: %zu, pongs %zu",
+            r.messages.size(), r.pongs.size());
+    CHECK(r.messages[0].kind == WsKind::Text && r.messages[0].data == "hello", "text back");
+    CHECK(r.messages[1].kind == WsKind::Binary && r.messages[1].data == std::string("\0\1\2\xff", 4), "binary back");
+    CHECK(r.messages[2].data.size() == big.size(), "200 kB back whole (%zu)", r.messages[2].data.size());
+    CHECK(r.pongs[0] >= 0.0 && r.pongs[0] < 1.0, "pong after %.4f s", r.pongs[0]);
+    ws.close(kWsNormalClosure, "bye");
+    REQUIRE(pump(ws, 6.0, [&] { return r.ends == 1; }), "end");
+    CHECK(r.end.clean() && r.end.closeCode == kWsNormalClosure && !r.end.byServer,
+          "a clean close by the client: %s %d %s", errorKindName(r.end.error), r.end.closeCode, r.end.message.c_str());
+    CHECK(r.end.messagesIn == 3 && r.end.messagesOut == 3, "counts %llu in, %llu out",
+          (unsigned long long)r.end.messagesIn, (unsigned long long)r.end.messagesOut);
+    CHECK(ws.state() == WsState::Closed, "state %s", wsStateName(ws.state()));
+}
+
+QUENCH_TEST(apple_ws_server_script) {
+    NEED_SERVER();
+    WebSocket ws;
+    WsRun r;
+    REQUIRE(ws.connect({.url = wsServer() + "/ws/script"}, r.handlers()), "connect");
+    REQUIRE(pump(ws, 5.0, [&] { return r.ends == 1; }), "end");
+    REQUIRE(r.messages.size() == 3, "three messages: %zu (%s)", r.messages.size(), r.end.message.c_str());
+    CHECK(r.messages[0].data == "one" && r.messages[1].data == "two", "in order");
+    CHECK(r.messages[2].kind == WsKind::Binary && r.messages[2].data.size() == 3, "binary");
+    CHECK(r.messageTimes[1] - r.messageTimes[0] > 0.12, "the second 0.2 s later (%.3f s)",
+          r.messageTimes[1] - r.messageTimes[0]);
+    CHECK(r.end.clean() && r.end.byServer && r.end.closeCode == 4000 && r.end.closeReason == "done",
+          "the server's close: %s, code %d, '%s'", errorKindName(r.end.error), r.end.closeCode,
+          r.end.closeReason.c_str());
+}
+
+QUENCH_TEST(apple_ws_headers_and_protocol) {
+    NEED_SERVER();
+    WebSocket ws;
+    WsRun r;
+    REQUIRE(ws.connect({.url = wsServer() + "/ws/secrets",
+                        .headers = {{"Authorization", "Bearer sk-test-not-a-key"}},
+                        .protocols = {"quench.test"}},
+                       r.handlers()),
+            "connect");
+    REQUIRE(pump(ws, 5.0, [&] { return r.messages.size() == 1 || r.ends == 1; }), "message");
+    REQUIRE(!r.messages.empty(), "a message: %s", r.end.message.c_str());
+    CHECK(r.messages[0].data == "authorization=present;protocol=quench.test", "'%s'", r.messages[0].data.c_str());
+    CHECK(ws.protocol() == "quench.test", "protocol '%s'", ws.protocol().c_str());
+    ws.abort();
+    pump(ws, 1.0, [&] { return r.ends == 1; });
+    CHECK(r.end.error == ErrorKind::Cancelled, "aborted: %s", errorKindName(r.end.error));
+}
+
+QUENCH_TEST(apple_ws_refused_upgrade) {
+    NEED_SERVER();
+    WebSocket ws;
+    WsRun r;
+    REQUIRE(ws.connect({.url = wsServer() + "/ws/status/401"}, r.handlers()), "connect");
+    REQUIRE(pump(ws, 5.0, [&] { return r.ends == 1; }), "end");
+    CHECK(r.opens == 0, "never open");
+    CHECK(!r.end.clean() && r.end.status == 401, "refused with 401: %s, status %d, %s", errorKindName(r.end.error),
+          r.end.status, r.end.message.c_str());
+}
+
+QUENCH_TEST(apple_ws_message_limit) {
+    NEED_SERVER();
+    WebSocket ws;
+    WsRun r;
+    REQUIRE(ws.connect({.url = wsServer() + "/ws/big?bytes=50000", .maxMessageBytes = 10000}, r.handlers()), "connect");
+    REQUIRE(pump(ws, 5.0, [&] { return r.ends == 1; }), "end");
+    CHECK(r.messages.empty(), "nothing delivered (%zu)", r.messages.size());
+    CHECK(r.end.error == ErrorKind::TooLarge, "TooLarge: %s (%s)", errorKindName(r.end.error), r.end.message.c_str());
+}
+
+QUENCH_TEST(apple_ws_connection_lost) {
+    NEED_SERVER();
+    WebSocket ws;
+    WsRun r;
+    REQUIRE(ws.connect({.url = wsServer() + "/ws/drop"}, r.handlers()), "connect");
+    REQUIRE(pump(ws, 5.0, [&] { return r.ends == 1; }), "end");
+    CHECK(r.opens == 1, "it was open");
+    CHECK(r.end.error == ErrorKind::NoNetwork && r.end.byServer, "lost: %s (%s), code %d", errorKindName(r.end.error),
+          r.end.message.c_str(), r.end.closeCode);
+}
+
+QUENCH_TEST(apple_ws_pong_timeout) {
+    NEED_SERVER();
+    WebSocket ws;
+    WsRun r;
+    REQUIRE(ws.connect({.url = wsServer() + "/ws/nopong", .pongTimeout = 0.5}, r.handlers()), "connect");
+    REQUIRE(pump(ws, 5.0, [&] { return r.opens == 1; }), "open");
+    CHECK(ws.ping(), "ping");
+    REQUIRE(pump(ws, 3.0, [&] { return r.ends == 1; }), "end");
+    CHECK(r.end.error == ErrorKind::Timeout, "Timeout: %s", errorKindName(r.end.error));
+}
+
+QUENCH_TEST(apple_ws_connection_refused) {
+    NEED_SERVER();
+    WebSocket ws;
+    WsRun r;
+    REQUIRE(ws.connect({.url = "ws://127.0.0.1:9/"}, r.handlers()), "connect");
+    REQUIRE(pump(ws, 6.0, [&] { return r.ends == 1; }), "end");
+    CHECK(r.end.error == ErrorKind::NoNetwork, "NoNetwork: %s (%s)", errorKindName(r.end.error), r.end.message.c_str());
 }

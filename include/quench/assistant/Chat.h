@@ -29,6 +29,10 @@ struct Usage {
     std::int64_t completionTokens = 0;
     double cost = 0.0;      // in the provider's credits (US dollars on OpenRouter), when it says
     bool costKnown = false; // some answer carried a cost
+    // Of promptTokens, read from the provider's prompt cache (usage.prompt_tokens_details.cached_tokens) and
+    // written to it (cache_write_tokens: OpenRouter, for models with explicit caching); 0 when not reported.
+    std::int64_t cachedTokens = 0;
+    std::int64_t cacheWriteTokens = 0;
 
     void add(const Usage& other);
 };
@@ -84,6 +88,10 @@ struct ChatOptions {
 
 // POST <baseUrl>/chat/completions with the settings' model, `messages` (an array of {role, content, ...}), `tools`
 // (ToolRegistry::chatTools(); left out when empty), tool_choice, parallel_tool_calls, stream and the options.
+// The body's keys in a fixed order, what stays the same from request to request first: "model", the settings'
+// keys, "tools", then "messages" and last "tool_choice" (it changes on a turn's last round). With
+// ProviderSettings::cacheMarker, a first message of role "system" with text content goes as one text part with
+// "cache_control":{"type":"ephemeral"}.
 net::Request buildChatRequest(const ProviderSettings& settings, const json::Value& messages, const json::Value& tools,
                               const ChatOptions& options = {});
 

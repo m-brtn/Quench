@@ -272,3 +272,102 @@ QUENCH_TEST(mic_permission_states) {
     std::optional<MicRecording> r = mic.takeRecording();
     CHECK(r && r->samples.empty(), "stopped while opening");
 }
+
+// ---------------------------------------------------------------------------------------------------- streaming
+
+// The streaming mode: a fed tone comes out in pieces as it records, at the asked rate, with no length limit, at the
+// pace of update()'s time; the samples equal those of a recording of the same input.
+QUENCH_TEST(mic_stream_chunks) {
+    Microphone mic;
+    grant(mic);
+    mic.feed(sine(440.0, 1.0, 48000, 0.5), 1, 48000);
+    REQUIRE(mic.start({.sampleRate = 24000, .maxSeconds = 0.0, .stream = true}), "start a stream (no limit needed)");
+    CHECK(mic.streaming(), "streaming");
+    std::vector<float> all;
+    std::vector<std::size_t> pieces;
+    for (int i = 0; i < 90; ++i) { // 1.5 s at 60 Hz
+        mic.update(kFrame);
+        const std::size_t n = mic.takeStream(all);
+        if (n) pieces.push_back(n);
+    }
+    CHECK(mic.state() == MicState::Recording, "still recording after the tone: no limit");
+    CHECK(std::abs(mic.streamedSeconds() - 1.5) < 0.02, "1.5 s streamed: %f", mic.streamedSeconds());
+    CHECK(pieces.size() >= 85, "a piece per frame: %zu", pieces.size());
+    CHECK(!pieces.empty() && pieces[pieces.size() / 2] >= 350 && pieces[pieces.size() / 2] <= 450,
+          "about 400 samples a frame at 24 kHz: %zu", pieces.empty() ? 0 : pieces[pieces.size() / 2]);
+    const Peak peak = dominantFrequency(std::span(all).subspan(1000, 12000), 1, 24000);
+    CHECK(std::abs(peak.frequency - 440.0f) < 2.0f, "the tone: %f Hz", double(peak.frequency));
+    float tail = 0.0f;
+    for (std::size_t i = all.size() - 6000; i < all.size(); ++i) tail = std::max(tail, std::abs(all[i]));
+    CHECK(tail < 0.001f, "silence after the fed tone: %f", double(tail));
+    mic.stop();
+    mic.takeStream(all);
+    std::optional<MicRecording> end = mic.takeRecording();
+    CHECK(end && end->samples.empty() && end->error.empty(), "the end of a stream has no samples");
+    CHECK(mic.state() == MicState::Idle, "idle");
+}
+
+// Faster than real time: a scripted run's long frames give the same samples, only in bigger pieces.
+QUENCH_TEST(mic_stream_fast_pace) {
+    Microphone mic;
+    grant(mic);
+    mic.feed(sine(300.0, 2.0, 16000, 0.4), 1, 16000);
+    REQUIRE(mic.start({.sampleRate = 24000, .stream = true}), "start");
+    std::vector<float> all;
+    for (int i = 0; i < 10; ++i) {
+        mic.update(0.25);
+        mic.takeStream(all);
+    }
+    CHECK(std::abs(double(all.size()) / 24000.0 - 2.5) < 0.01, "2.5 s in 10 updates: %zu samples", all.size());
+    const Peak peak = dominantFrequency(std::span(all).subspan(2400, 24000), 1, 24000);
+    CHECK(std::abs(peak.frequency - 300.0f) < 2.0f, "the tone: %f Hz", double(peak.frequency));
+}
+
+// Muted: silence goes on (the timeline stays continuous), the meter still moves, the input stays open.
+QUENCH_TEST(mic_stream_mute) {
+    Microphone mic;
+    grant(mic);
+    mic.feed(sine(500.0, 2.0, 48000, 0.6), 1, 48000);
+    REQUIRE(mic.start({.sampleRate = 24000, .stream = true}), "start");
+    std::vector<float> loud, muted, again;
+    for (int i = 0; i < 20; ++i) {
+        mic.update(kFrame);
+        mic.takeStream(loud);
+    }
+    mic.setStreamMuted(true);
+    CHECK(mic.streamMuted(), "muted");
+    for (int i = 0; i < 20; ++i) {
+        mic.update(kFrame);
+        mic.takeStream(muted);
+    }
+    CHECK(mic.level() > 0.5f, "the meter shows the input while muted: %f", double(mic.level()));
+    CHECK(mic.state() == MicState::Recording, "the input stays open");
+    mic.setStreamMuted(false);
+    for (int i = 0; i < 20; ++i) {
+        mic.update(kFrame);
+        mic.takeStream(again);
+    }
+    auto peakOf = [](const std::vector<float>& v) {
+        float p = 0.0f;
+        for (float s : v) p = std::max(p, std::abs(s));
+        return p;
+    };
+    CHECK(peakOf(loud) > 0.5f && peakOf(again) > 0.5f, "heard before and after");
+    CHECK(muted.size() > 7000 && peakOf(muted) == 0.0f, "silence while muted: %zu samples, peak %f", muted.size(),
+          double(peakOf(muted)));
+}
+
+// Samples not taken are kept up to the buffer, the oldest dropped beyond it.
+QUENCH_TEST(mic_stream_buffer_limit) {
+    Microphone mic;
+    grant(mic);
+    REQUIRE(mic.start({.sampleRate = 16000, .stream = true, .streamBufferSeconds = 0.5}), "start");
+    for (int i = 0; i < 60; ++i) mic.update(kFrame);
+    std::vector<float> all;
+    CHECK(mic.takeStream(all) == 8000, "half a second kept: %zu", all.size());
+    CHECK(mic.streamDropped() >= 7900 && mic.streamDropped() <= 8100, "the rest dropped: %llu",
+          (unsigned long long)mic.streamDropped());
+    CHECK(!mic.start({.stream = true}), "one at a time");
+    mic.cancel();
+    CHECK(!mic.start({.stream = true, .streamBufferSeconds = 0.0}), "a buffer out of range");
+}
