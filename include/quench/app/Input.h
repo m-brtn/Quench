@@ -103,6 +103,9 @@ public:
     glm::vec2 wheel() const { return m_wheel; } // + y: away from the user
     bool mouseDown(MouseButton button) const { return m_mouse[std::size_t(button)].down; }
     bool mousePressed(MouseButton button) const { return m_mouse[std::size_t(button)].pressed; }
+    // It went up this frame. A click whose press and release arrive in one frame (a tap on a trackpad) is pressed
+    // and released in that frame and never down in one: read the edges, not the level, to catch it.
+    bool mouseReleased(MouseButton button) const { return m_mouse[std::size_t(button)].released; }
     // The mouse events of this frame were synthesized by SDL from a finger.
     bool mouseFromTouch() const { return m_mouseFromTouch; }
     std::span<const Finger> fingers() const { return m_fingers; }

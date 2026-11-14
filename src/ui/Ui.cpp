@@ -40,9 +40,14 @@ void Ui::begin(const app::App& app, Canvas& canvas, float dt) {
     if (glm::distance(pointer, m_pointer) > 1.0f) m_focusVisible = false;
     m_pointer = pointer;
     // A tool window of ImGui's under the pointer takes the mouse: the game's widgets see no button then.
-    const bool down = input.mouseDown(app::MouseButton::Left) && !input.uiCapturesMouse();
-    m_wentDown = down && !m_down;
-    m_wentUp = !down && m_down;
+    // The press and the release are read as the frame's edges, not from the level: a click whose two halves arrive
+    // in one frame (a tap on a trackpad, at 120 frames a second) is never "down" in any frame.
+    const bool mine = !input.uiCapturesMouse();
+    const bool down = input.mouseDown(app::MouseButton::Left) && mine;
+    const bool pressedNow = input.mousePressed(app::MouseButton::Left) && mine;
+    const bool releasedNow = input.mouseReleased(app::MouseButton::Left);
+    m_wentDown = pressedNow || (down && !m_down);
+    m_wentUp = (releasedNow && (m_down || pressedNow)) || (!down && m_down);
     m_down = down;
 
     m_fingers.clear();

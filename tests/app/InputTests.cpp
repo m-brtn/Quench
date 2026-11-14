@@ -122,3 +122,30 @@ QUENCH_TEST(input_mouse) {
     frame(input, false);
     CHECK(input.mouseDelta().x == 0.0f, "delta per frame");
 }
+
+// A click whose press and release arrive in one frame (a tap on a trackpad): the button is never down in a frame,
+// but it was pressed and released in that one. What reads clicks reads these edges.
+QUENCH_TEST(input_mouse_click_within_one_frame) {
+    app::Input input;
+    SDL_Event press{};
+    press.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    press.button.button = SDL_BUTTON_LEFT;
+    press.button.down = true;
+    press.button.x = 30.0f;
+    press.button.y = 40.0f;
+    SDL_Event release = press;
+    release.type = SDL_EVENT_MOUSE_BUTTON_UP;
+    release.button.down = false;
+    frame(input, false, press, release);
+    CHECK(!input.mouseDown(app::MouseButton::Left), "not down at the end of the frame");
+    CHECK(input.mousePressed(app::MouseButton::Left), "pressed in the frame");
+    CHECK(input.mouseReleased(app::MouseButton::Left), "released in the frame");
+    frame(input, false);
+    CHECK(!input.mousePressed(app::MouseButton::Left) && !input.mouseReleased(app::MouseButton::Left),
+          "the edges last one frame");
+    // The usual click over two frames: released only in the second.
+    frame(input, false, press);
+    CHECK(input.mouseDown(app::MouseButton::Left) && !input.mouseReleased(app::MouseButton::Left), "held");
+    frame(input, false, release);
+    CHECK(!input.mouseDown(app::MouseButton::Left) && input.mouseReleased(app::MouseButton::Left), "let go");
+}

@@ -60,6 +60,9 @@ void Game::ui(app::App& app) {
 
 - **A press** is a release over the widget that was pressed (`Press::pressed`), or the confirm button on the
   focused one. `Press::hovered`, `held` and `focused` are for drawing.
+- **A click inside one frame counts.** The press and the release are read as the frame's edges
+  (`app::Input::mousePressed`, `mouseReleased`), not from the button's level, so a tap on a trackpad whose two
+  halves arrive in one frame presses a widget (since 0.20.2; before, such clicks were lost).
 - **The pointer** is the mouse; on a touch screen the first finger arrives as the mouse (the app's rule). A tool
   window of ImGui's under the pointer takes the mouse first.
 - **`pointerOverUi()`** says the pointer was over a widget or a pane in the last frame: the game then leaves that
