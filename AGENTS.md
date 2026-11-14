@@ -21,7 +21,7 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-14, version 0.19.0): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-14, version 0.19.1): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,
@@ -179,8 +179,9 @@ incremental parser of its streamed answer, the turn of rounds of tool calls on t
 cancel at any stage, one operation at a time, a bounded history, states and counters for a UI), speech-to-text
 (JSON or multipart) and text-to-speech (PCM or MP3 to mono samples), the voice turn in one call, the key in memory
 only; its tests with `net::FakeNetwork` on the Mac and under Node.js, its manual check
-(`quench-assistant-check`) against OpenRouter on the Mac; not run in a browser against a provider, on iOS, against
-OpenAI's own API or a local server; `docs/assistant.md`; since 2026-11-14 (0.19.0) `assistant::LiveSession`: a
+(`quench-assistant-check`) against OpenRouter on the Mac and, since 0.19.1, its chat with tools against OpenAI's own
+API on the Mac; not run in a browser against a provider, on iOS, against OpenAI's transcription and speech or a local
+server; `docs/assistant.md`; since 2026-11-14 (0.19.0) `assistant::LiveSession`: a
 live, full-duplex spoken conversation with OpenAI's GPT-Live over the WebSocket, the game's tools through Responses
 delegation, transcripts, context appends, an uplink gate for loudspeakers, an idle close, a reconnect with the
 history; its tests with the fake WebSocket server, its manual check (`quench-live-check`, which costs money for
@@ -300,7 +301,14 @@ full-duplex spoken conversation with OpenAI's GPT-Live, asked for by the user fo
 `quench_net`, the microphone's streaming mode, `audio::VoiceStream` and `assistant::LiveSession`. On its code before
 the version number changed the full gate passes step by step (Debug, ASan and TSan 820 tests each with 70 skipped,
 Release 967 with 69 skipped, `wasm-node` 317 with 12 skipped, the iOS Simulator 636 with 70 skipped, the Xcode project,
-a new game) and `step web` passes; four short sessions against the real service on the Mac.
+a new game) and `step web` passes; four short sessions against the real service on the Mac. The 0.19.1 patch
+(2026-11-14; `docs/releases/v0.19.1.md`) fixes two defects Outpost found against the real providers: every text a
+provider sends passes through one scrubbing function (`net::scrubSecrets`, `assistant::redact`: the key, any `sk-`
+token masked or whole, any `Bearer` token become `<key>`) before it is logged, kept or handed to the game, and the
+OpenAI preset sends `max_completion_tokens` and `reasoning_effort: "none"` (new settings `maxTokensField`,
+`reasoningEffort`; a model that does not know the effort gets its round again without it); its gate was the format
+check, the Release tests and `wasm-node` (no debug, sanitizers, iOS, xcode, new game, package or web: no platform
+code changed).
 
 Windows (since 2026-11-09, the user's request; developed in the branch `windows-build`): the engine, the sample and
 the demo build with MSVC (`/W4 /WX`) on GitHub's `windows-2025` runner (`.github/workflows/windows.yml`, the

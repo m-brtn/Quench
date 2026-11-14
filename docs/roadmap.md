@@ -808,6 +808,10 @@ uplink gate, the idle close, the reconnect with the history, usage and cost). Ch
 WebSocket against a local server, and four short sessions against the real service on the Mac (English, Russian, two
 barge-ins; 93 s billed). Open: the browser's path (WebRTC), echo cancellation for barge-in on loudspeakers (Apple's
 voice-processing I/O unit), a real microphone into a session, iOS, long sessions, the game's side in Outpost.
+The 0.19.1 patch (2026-11-14, [its notes](releases/v0.19.1.md)) fixes two defects Outpost found against the real
+providers: a refused key's masked echo in the log and the errors (now every provider text is scrubbed by one
+function), and the OpenAI preset's chat request (`max_completion_tokens`, `reasoning_effort: "none"`, so that
+`gpt-6-luna` takes the tools).
 
 Asked by the user on 2026-11-10 (evening, after 0.14.0): phones in a browser, after the Outpost micro game ran at
 30 to 40 frames per second on an iPhone and warmed it. Built the same evening and released with 0.15.0 ([its notes](releases/v0.15.0.md)):

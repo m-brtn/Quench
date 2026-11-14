@@ -11,7 +11,7 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.19.0) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+The engine (version 0.19.1) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases (those
 of 0.13.1: 0.13.2, a patch of the renderer, ran the render and demo tests only, [its notes](releases/v0.13.2.md);
 0.14.0, the weather's look and sound, ran no gate, [its notes](releases/v0.14.0.md); after its tag the golden
@@ -23,7 +23,9 @@ assets of a web page, ran the full gate and the web check before its version num
 notes](releases/v0.17.0.md); 0.18.0, HTTPS requests, microphone capture and the assistant, ran the full gate and the
 web check before its version number changed, [its notes](releases/v0.18.0.md); 0.19.0, the live session with
 GPT-Live, ran the full gate step by step and the web check before its version number changed, [its
-notes](releases/v0.19.0.md)).
+notes](releases/v0.19.0.md); 0.19.1, a patch of the assistant (key material scrubbed from providers' words, the
+OpenAI preset's chat request), ran the format check, the Release tests and the headless tests under Node.js, [its
+notes](releases/v0.19.1.md)).
 Its GPU tests render offscreen and check the
 pixels read back on Metal (Apple M4 Pro, with the Metal API validation layer), on Vulkan through MoltenVK on the same
 Mac (with the Khronos validation layer; a test of
