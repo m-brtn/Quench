@@ -5,7 +5,7 @@ if(NOT DEFINED PROJECT_NAME AND CMAKE_HOST_APPLE AND NOT CMAKE_SYSTEM_NAME STREQ
    AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0 CACHE STRING "Minimum macOS version" FORCE)
 endif()
-project(Quench VERSION 0.19.1 LANGUAGES C CXX)
+project(Quench VERSION 0.20.0 LANGUAGES C CXX)
 if(APPLE)
     enable_language(OBJC)
     enable_language(OBJCXX)
@@ -183,6 +183,14 @@ add_library(quench_particles STATIC
 quench_configure_target(quench_particles)
 target_link_libraries(quench_particles PUBLIC quench_core quench_gpu_shaders quench_glm)
 
+# ------------------------------------------------------------------ ecs
+# Headless, optional: an entity component system for a game's own objects (docs/ecs.md): a Flecs world with the
+# engine's log, no threads of its own, and two ways to run systems that match the game interface (fixedStep, update).
+# Nothing else in the engine uses it; engine APIs keep taking plain handles.
+add_library(quench_ecs STATIC src/ecs/World.cpp)
+quench_configure_target(quench_ecs)
+target_link_libraries(quench_ecs PUBLIC quench_core quench_flecs)
+
 # ------------------------------------------------------------------ net
 # Headless: asynchronous HTTPS requests and WebSocket connections (docs/net.md), their rules, limits and log, delivered
 # on the main thread by Client::update() and WebSocket::update(); the fakes for tests. One platform backend per build:
@@ -335,12 +343,21 @@ if(NOT QUENCH_HEADLESS)
     quench_add_shaders(quench_app NAME imgui SOURCE src/app/shaders/imgui.hlsl
         ENTRIES imgui_vs:vertex imgui_fs:fragment fullscreen_vs:vertex ui_composite_fs:fragment)
 
+    # ------------------------------------------------------------------ ui
+    # A game's interface (docs/ui.md): a canvas of text in the game's fonts, shapes and comic pieces, and widgets
+    # that take the app's input (buttons, slots with drag and drop, tips, a touch stick, a focus for the gamepad).
+    # Drawn through Dear ImGui's draw lists, which the app renders on every backend.
+    add_library(quench_ui STATIC src/ui/Canvas.cpp src/ui/Ui.cpp)
+    quench_configure_target(quench_ui)
+    target_link_libraries(quench_ui PUBLIC quench_app)
+
     # ------------------------------------------------------------------ render
     # The retained scene and the standard frame (shadows, HDR pass, sky, fog, TAA, bloom, tone mapping) on quench_gpu.
     add_library(quench_render STATIC
         src/render/Cascades.cpp
         src/render/Clouds.cpp
         src/render/Daylight.cpp
+        src/render/Decals.cpp
         src/render/Effects.cpp
         src/render/MeshBuilder.cpp
         src/render/Particles.cpp

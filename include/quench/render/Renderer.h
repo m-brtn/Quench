@@ -218,6 +218,9 @@ struct RenderSettings {
     int pathSamples = 1024; // the mean stops changing after this many
     AntiAliasing antiAliasing = AntiAliasing::Taa;
     float sharpen = 0.25f; // after TAA, 0..1
+    // A surface shades only the local lights that reach its tile of the screen (20 x 12 tiles). Off: every pixel
+    // shades every light of the frame, as before 2026-11-14 (to compare the cost; the picture is the same).
+    bool lightTiles = true;
     bool bloom = true;
     float bloomStrength = 0.05f;
     float bloomThreshold = 1.6f; // linear HDR value where bloom starts (soft knee)
@@ -388,8 +391,11 @@ struct RenderStats {
     std::uint32_t transmittanceInstances = 0; // translucent casters drawn into the transmittance maps (summed)
     std::uint32_t transmittanceDraws = 0;
     std::uint32_t movedInstances = 0; // instances drawn into the motion vectors
-    std::uint32_t lights = 0;         // local lights used this frame
+    std::uint32_t lights = 0;         // local lights used this frame (at most 64)
     std::uint32_t areaLights = 0;     // of them, area lights (at most 8)
+    // Lights per screen tile, summed over the 240 tiles (RenderSettings::lightTiles): lights * 240 when every
+    // pixel shades every light, less the fewer tiles each light reaches.
+    std::uint32_t lightTileRefs = 0;
     // Lights with ray-traced shadows (RenderSettings::localLightShadows) that took a channel another light, or none,
     // had in the previous frame: the channel's history was another light's shadow.
     std::uint32_t localShadowChanges = 0;

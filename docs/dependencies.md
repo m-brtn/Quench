@@ -485,13 +485,34 @@ SDL's pull request #16020 was pinned for a trial and removed again.
 
 **Games.** Neither game builds for the web; nothing changes for them.
 
+## Added for the ECS module
+
+The ECS module ([ECS](ecs.md)), 2026-11-14. One library, in `cmake/Dependencies.cmake` (also in the `headless` and
+`wasm-node` builds), listed with its licence in `THIRD_PARTY_LICENSES` (shipped).
+
+| Library | Version | Commit | Licence | Linked into | Purpose |
+|---|---|---|---|---|---|
+| Flecs | 4.2.0 | `6566d4b7bdc597d0b74d5e0a4104d4ae6ac49402`, SHA256 `545e50b4118974cc8d89c57e3bcb5464b0a32afd23434403e9d6de16615503d6` | MIT (`LICENSE`) | `quench_ecs` (`quench_flecs`) | entities, components, queries, systems and observers for a game's own objects |
+
+Built from its two distribution files (`distr/flecs.c`, `distr/flecs.h`) with `FLECS_CUSTOM_BUILD`: the C++ API,
+systems, pipelines, timers, modules, cached queries, prefabs, the log and the default OS layer. Left out: the HTTP
+server and the REST API (sockets and a thread of their own), the script language, reflection, JSON, units, alerts,
+metrics, statistics and the app addon. `quench_ecs` takes the thread functions out of the OS layer, so Flecs starts
+no thread (checked: `ecs_os_has_threading()` is false, `ecs.flecs_has_no_threads_and_logs_to_the_engine`). Read in
+the source of this commit: `ecs_os_set_api` takes an OS layer only before the first world; a system's phase is
+added to it as a tag and as its `DependsOn` target, which is what the fixed step's pipeline matches. Not built or
+run: under Emscripten, for iOS, with MSVC.
+
+**Games.** Neither game uses it; nothing changes for them.
+
+
 ## Planned
 
 Added only when the stage that needs them starts ([Roadmap](roadmap.md)). Latest releases as of 2026-11-04.
 
 | Library | Latest release | Licence | Planned use |
 |---|---|---|---|
-| Flecs | 4.2.0 (2026-11-04) | MIT | optional ECS module for games that want one |
+| (none) | | | |
 
 Already pinned and kept: Dear ImGui (diagnostics). miniaudio was pinned with stage 7 (above); Vorbis decoding
 (`stb_vorbis`, from miniaudio's archive) was added on 2026-11-07.

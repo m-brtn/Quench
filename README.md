@@ -6,7 +6,7 @@
 
 <p align="center">
   A game engine designed for making games entirely with AI coding agents.<br>
-  Version 0.19.1 · macOS and iOS · MIT
+  Version 0.20.0 · macOS and iOS · MIT
 </p>
 
 <p align="center">
@@ -45,8 +45,9 @@ flower-lined paths, discover old ruins and glide above the clouds, with animated
   mapping, TAA, HDR displays; your own render passes and surface shaders in HLSL.
 - **Ray tracing** on Apple GPUs: shadows, ambient occlusion, reflections, global illumination, a path tracer,
   denoisers and MetalFX upscaling.
-- **Lights and materials:** rect, disk and tube area lights with soft shadows, brushed metal, glass with tinted
-  shadows, cut-outs.
+- **Lights and materials:** up to 64 lamps lighting a frame, rect, disk and tube area lights with soft shadows,
+  brushed metal, glass with tinted shadows, cut-outs; decals for scorches, splats and painted marks on floors and
+  walls.
 - **Weather:** volumetric clouds that drift with the wind and change shape, from fair-weather cumulus to storm
   clouds and overcast, a single shower in a blue sky, cloud shadows on the ground, light that dims and greys under
   them, sunsets; rain that falls only under raining clouds, dry under roofs, shafts of rain in the distance and a
@@ -66,7 +67,10 @@ flower-lined paths, discover old ruins and glide above the clouds, with animated
   moving obstacles, crowds that walk around each other.
 - **Assets:** a build-time cooker for glTF models and images (BC7 on the Mac, ASTC on the iPhone, or Basis Universal
   for every device, transcoded at load time), loading in the background, streaming, hot reload.
-- **Input and UI:** keyboard, mouse, gamepad and touch through named actions; Dear ImGui for tools.
+- **Input and UI:** keyboard, mouse, gamepad and touch through named actions; a game interface kit with your own
+  fonts, comic speech bubbles and stickers, buttons, an inventory with drag and drop, and a stick and buttons for
+  touch screens; Dear ImGui for tools.
+- **Entities:** an optional entity component system (Flecs) for games with many kinds of objects.
 - **Testing:** scripted scenarios, runs without a window, screenshot comparison, frame time and memory measurements.
 - **Profiling:** Tracy zones on the CPU and the GPU for the engine and your game, recorded from a scripted run into
   a table of where the frame's time goes.

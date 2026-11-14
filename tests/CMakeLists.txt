@@ -124,7 +124,7 @@ target_include_directories(quench_test_harness PUBLIC harness)
 target_compile_definitions(quench_test_harness PRIVATE QUENCH_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}/tmp")
 
 # Every test has the label of the module it checks (ctest -L <label>; tools/check.sh quick picks them from the changed
-# files): core, physics, assets, audio, animation, navigation, weather, particles, net, assistant, cook, gpu, render,
+# files): core, physics, assets, audio, animation, navigation, weather, particles, ecs, net, assistant, cook, gpu, render,
 # app, hello, demo. The variants on Vulkan through MoltenVK also have the label vulkan: tools/check.sh quick leaves them out
 # (-LE vulkan), full and release run them.
 # quench_add_test_executable(<name> PREFIX <ctest prefix> LABEL <label> SOURCES <file>... LIBS <target>...
@@ -220,6 +220,10 @@ quench_add_test_executable(quench_weather_tests PREFIX weather LABEL weather
 quench_add_test_executable(quench_particles_tests PREFIX particles LABEL particles
     SOURCES particles/ParticlesTests.cpp
     LIBS quench_particles)
+
+quench_add_test_executable(quench_ecs_tests PREFIX ecs LABEL ecs
+    SOURCES ecs/EcsTests.cpp
+    LIBS quench_ecs)
 
 # quench_net with the fake network (every build); on macOS also the NSURLSession backend against a local HTTP server
 # on 127.0.0.1 (tests/net/net_test_server.py starts it for each case; without Python 3 those cases are not
@@ -603,7 +607,8 @@ if(NOT QUENCH_HEADLESS)
                 rain:demo_rain:demo_rain_rainbow:demo_rain_shelter
                 snow:demo_snow:demo_snow_building:demo_snow_thaw:demo_snow_sky
                 wind:demo_wind_calm:demo_wind:demo_wind_gust:demo_wind_flash physics_wind
-                particles:demo_particles:demo_particles_fire load)
+                particles:demo_particles:demo_particles_fire load ecs:demo_ecs lights:demo_lights hud:demo_hud
+                decals:demo_decals)
             set(demo_args --window 960x540 --gpu-debug --hdr-headroom 4)
             if(QUENCH_TEST_CAPTURES)
                 quench_add_batch(demo metal APP quench_demo SCRIPT ${demo_scenarios}/batch.txt BACKEND metal
@@ -689,7 +694,8 @@ add_library(quench_header_check OBJECT ${header_sources})
 quench_configure_target(quench_header_check)
 target_link_libraries(quench_header_check PRIVATE quench_core quench_physics quench_assets quench_audio
                                                   quench_animation quench_navigation quench_particles
-                                                  quench_weather quench_net quench_assistant quench_gpu_shaders)
+                                                  quench_weather quench_net quench_assistant quench_gpu_shaders
+                                                  quench_ecs)
 if(NOT QUENCH_HEADLESS)
     target_link_libraries(quench_header_check PRIVATE quench_app quench_render)
 endif()

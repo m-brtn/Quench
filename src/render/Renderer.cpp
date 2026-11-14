@@ -1668,6 +1668,7 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         bool shadows = false; // LightDesc::castsShadows
         bool area = false;
         std::uint32_t key = 0; // scene slot + 1
+        float reach = -1.0f;   // m around its position that it lights; negative: everywhere (a directional light)
     };
     std::vector<Candidate> candidates;
     for (std::uint32_t i = 0; i < scene.lights.capacity(); ++i) {
@@ -1697,8 +1698,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
             local.direction = glm::vec4(f.normal, l.twoSided ? 1.0f : 0.0f);
             local.cone = glm::vec4(f.half.x, 0.0f, f.half.y, 0.0f);
             local.shape = glm::vec4(f.tangent, float(i + 1));
-            candidates.push_back(
-                {std::max(0.0f, glm::length(l.position - cameraPos) - reach), local, l.castsShadows, true, i + 1});
+            candidates.push_back({std::max(0.0f, glm::length(l.position - cameraPos) - reach), local, l.castsShadows,
+                                  true, i + 1, reach});
             continue;
         }
         if (l.range <= 0.0f || !sphereVisible(planes, l.position, l.range)) continue;
@@ -1708,8 +1709,8 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         const float cosOuter = std::cos(l.outerAngle), cosInner = std::cos(std::min(l.innerAngle, l.outerAngle));
         local.direction = glm::vec4(dir, cosOuter);
         local.cone = glm::vec4(1.0f / std::max(cosInner - cosOuter, 1e-4f), 0.0f, std::max(l.sourceRadius, 0.0f), 0.0f);
-        candidates.push_back(
-            {std::max(0.0f, glm::length(l.position - cameraPos) - l.range), local, l.castsShadows, false, i + 1});
+        candidates.push_back({std::max(0.0f, glm::length(l.position - cameraPos) - l.range), local, l.castsShadows,
+                              false, i + 1, l.range});
     }
     std::stable_sort(candidates.begin(), candidates.end(),
                      [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
@@ -1725,9 +1726,51 @@ void RendererImpl::render(SceneImpl& scene, const View& view, gpu::CommandBuffer
         lu.lights[i] = candidates[i].light;
         if (candidates[i].area) ++areaCount;
     }
-    lu.count = glm::vec4(float(lightCount), float(areaCount), 0.0f, 0.0f);
+    lu.count = glm::vec4(float(lightCount), float(areaCount),
+                         float(std::min<std::size_t>(lightCount, QUENCH_MAX_RAY_LIGHTS)), 0.0f);
     stats.lights = std::uint32_t(lightCount);
     stats.areaLights = std::uint32_t(areaCount);
+    // The screen's tiles: each light's sphere of reach as a rectangle of tiles (its box in view space, projected:
+    // never smaller than the sphere). A light that reaches the camera's plane, a directional light and, with
+    // RenderSettings::lightTiles off, every light are in every tile.
+    {
+        constexpr int kTilesX = QUENCH_LIGHT_TILES_X, kTilesY = QUENCH_LIGHT_TILES_Y;
+        std::array<std::uint64_t, kTilesX * kTilesY> sets{};
+        std::uint32_t refs = 0;
+        for (std::size_t i = 0; i < lightCount; ++i) {
+            int x0 = 0, x1 = kTilesX - 1, y0 = 0, y1 = kTilesY - 1;
+            const float r = candidates[i].reach;
+            const glm::vec3 c(view.view * glm::vec4(glm::vec3(lu.lights[i].positionRange), 1.0f));
+            const float nearest = -c.z - r, farthest = -c.z + r; // distances along the view direction
+            if (settings.lightTiles && r >= 0.0f && nearest > view.nearPlane) {
+                const auto span = [&](float center, float scale, float& lo, float& hi) {
+                    const float a = center - r, b = center + r;
+                    lo = scale * a / (a < 0.0f ? nearest : farthest);
+                    hi = scale * b / (b > 0.0f ? nearest : farthest);
+                };
+                float xl, xr, yb, yt;
+                span(c.x, proj[0][0], xl, xr);
+                span(c.y, proj[1][1], yb, yt);
+                // A margin for the sub-pixel jitter of the frame's projection.
+                constexpr float kMargin = 0.01f;
+                const auto tile = [](float ndc, int count) {
+                    return std::clamp(int(std::floor((ndc * 0.5f + 0.5f) * float(count))), 0, count - 1);
+                };
+                x0 = tile(xl - kMargin, kTilesX);
+                x1 = tile(xr + kMargin, kTilesX);
+                y0 = tile(-yt - kMargin, kTilesY); // the target's rows run down
+                y1 = tile(-yb + kMargin, kTilesY);
+            }
+            for (int y = y0; y <= y1; ++y)
+                for (int x = x0; x <= x1; ++x) sets[std::size_t(y * kTilesX + x)] |= std::uint64_t(1) << i;
+            refs += std::uint32_t((x1 - x0 + 1) * (y1 - y0 + 1));
+        }
+        constexpr std::uint64_t kWord = (std::uint64_t(1) << QUENCH_LIGHT_TILE_BITS) - 1;
+        for (std::size_t t = 0; t < sets.size(); ++t)
+            lu.tiles[t] = glm::vec4(float(sets[t] & kWord), float((sets[t] >> QUENCH_LIGHT_TILE_BITS) & kWord),
+                                    float(sets[t] >> (2 * QUENCH_LIGHT_TILE_BITS)), 0.0f);
+        stats.lightTileRefs = refs;
+    }
 
     glm::vec3 towardSun(0.0f, 1.0f, 0.0f);
     if (sun) {

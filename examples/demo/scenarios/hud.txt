@@ -1,0 +1,87 @@
+# Game UI (ctest: demo_hud_<backend>, a part of the batches): quench_ui's widgets take a click, a drag between
+# slots, a pointer resting on a slot (a tip), the gamepad's focus carrying an item, and a finger on the touch stick.
+# The demo's windows are hidden: they take the mouse first. The capture is taken at the end with the first line shown
+# again.
+section hud
+reset_section
+set ui_reset 1
+windows off
+wait 0.3
+
+expect ui_slot0 == 0
+expect ui_slot6 == -1
+expect ui_line == 0
+# A button: a press is a release over it.
+click @hud:next
+until ui_line == 1 1
+expect ui_presses == 1
+click @hud:hurt
+until ui_presses == 2 1
+expect ui_shield < 0.7
+expect ui_health == 1
+# The shield comes back.
+until ui_shield == 1 4
+
+# A drag: the cutter from slot 0 to the empty slot 6 (two to the right, one down; a cell and its gap are 54 points
+# at this window's height of 540).
+touch @hud:slot:0 108 54 12
+until ui_moves == 1 1
+expect ui_slot0 == -1
+expect ui_slot6 == 0
+# Onto a filled slot: the two change places.
+touch @hud:slot:6 -54 -54 12
+until ui_moves == 2 1
+expect ui_slot1 == 0
+expect ui_slot6 == 1
+# Let go over no slot: it goes back.
+touch @hud:slot:1 0 -200 12
+wait 0.1
+expect ui_moves == 2
+expect ui_slot1 == 0
+expect ui_dragged == -1
+
+# A tip while the pointer rests on a filled slot, none on an empty one.
+mouse @hud:slot:2
+wait 0.1
+expect ui_tip == 1
+mouse @hud:slot:3
+wait 0.1
+expect ui_tip == 0
+expect ui_over == 1
+mouse 50% 60%
+wait 0.1
+expect ui_over == 0
+
+# The gamepad's focus: A picks the medkit up in slot 2, right moves, A puts it down in slot 3.
+set ui_focus 1
+gamepad attach
+until gamepad == 1 2
+mouse @hud:slot:2
+click @hud:slot:2
+gamepad button dpright tap
+wait 0.05
+gamepad button dpleft tap
+wait 0.05
+gamepad button a tap
+until ui_dragged == 2 1
+gamepad button dpright tap
+wait 0.05
+gamepad button a tap
+until ui_moves == 3 1
+expect ui_slot2 == -1
+expect ui_slot3 == 2
+gamepad detach
+until gamepad == 0 2
+set ui_focus 0
+
+# The touch stick: a finger dragged up and to the right in the left part of the screen.
+touch 15% 55% 60 -60 20
+expect ui_moves == 3
+wait 0.05
+
+set ui_reset 1
+wait 0.5
+expect imgui_id_conflicts == 0
+capture demo_hud.png
+windows on
+quit

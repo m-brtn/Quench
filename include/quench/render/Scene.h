@@ -171,11 +171,12 @@ enum class LightType : std::uint8_t { Directional, Point, Spot, Rect, Disk, Tube
 
 // The first directional light is the sun: it lights the scene with cascaded shadow maps (when castsShadows and the
 // renderer has cascades) and places the sun in the sky. Further directional lights, point, spot and area lights light
-// the surfaces; per frame the renderer uses at most 16 of them, the nearest to the camera, of which at most 8 area
-// lights. Local lights have shadows where they are ray traced (RenderSettings::localLightShadows: the nearest ones
-// with castsShadows; area lights soft by their area) and, without ray tracing, from shadow maps where
-// RenderSettings::localShadowMapSize asks for them. A light with zero color or intensity is off (a sun that is off
-// still places the sun disc and casts no shadows).
+// the surfaces; per frame the renderer uses at most 64 of them, the nearest to the camera, of which at most 8 area
+// lights, and a surface shades those that reach its part of the screen (RenderSettings::lightTiles); ray hits and the
+// path tracer use the nearest 16. Local lights have shadows where they are ray traced
+// (RenderSettings::localLightShadows: the nearest ones with castsShadows; area lights soft by their area) and, without
+// ray tracing, from shadow maps where RenderSettings::localShadowMapSize asks for them. A light with zero color or
+// intensity is off (a sun that is off still places the sun disc and casts no shadows).
 //
 // Area lights are shaded with linearly transformed cosines (diffuse and specular, docs/render.md, "Area lights").
 // The scene draws their shape with the light's radiance (an instance, a material and a mesh of its own, not in the

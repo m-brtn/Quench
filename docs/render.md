@@ -302,6 +302,71 @@ where the light fades to zero.
   0.000 in the umbra, 0.326 in the penumbra, 0.961 in the open. `renderer_area_light_shapes_follow_their_lights`:
   the shapes move, turn, change sides and type and go with their light.
 
+### Many lights
+
+Since 2026-11-14 (asked for a game set inside a space station, where every lamp is a local light): a frame takes up
+to 64 local lights, the nearest to the camera of those whose reach is in view (16 before), of which at most 8 area
+lights as before. What keeps 64 lights affordable is that a surface does not shade all of them:
+
+- **Screen tiles.** The render target is laid out in 20 x 12 tiles whatever its size. For each light the renderer
+  takes the sphere it reaches (`LightDesc::range`, plus the shape's radius for an area light), its box in view
+  space, and the rectangle of tiles that box projects to: never smaller than the sphere. A light whose sphere
+  reaches the camera's plane, and a directional light, are in every tile. Each tile gets the set of its lights as
+  64 bits.
+- **No new binding.** The sets ride in the light uniforms (`LightUniforms::tiles`, a `float4` per tile holding the
+  bits as three whole numbers of 24 bits, which a float carries exactly), so every backend and every surface
+  shader gets them with what it already binds; the block grew from 1.3 KB to 9 KB, pushed a few times a frame.
+- **In the shader** (`quench/Surface.hlsli`, `quenchLightTile`, `quenchLightInTile`): the pixel's tile from its
+  position, then the loops over the punctual and the area lights skip a light whose bit is not set. A game's
+  surface functions need no change.
+- **Rays.** A ray's hit is anywhere in the world, not in a screen tile: ray hits and the path tracer use the
+  nearest `QUENCH_MAX_RAY_LIGHTS` (16) of the frame's lights, `LightUniforms::count.z`, exactly the lights they
+  used before. The passes that trace or filter the shadows of local lights look through all of them for the (at
+  most 4) that have a channel.
+- **`RenderSettings::lightTiles`** (on): off puts every light into every tile, the picture of before at the cost
+  of before, to compare. `RenderStats::lightTileRefs` is the number of lights per tile summed over the 240 tiles.
+- **Not a clustered renderer:** the tiles have no depth slices, so a light far behind or in front of a surface on
+  the same part of the screen is still shaded there (its range window gives 0). That suits a view from above;
+  a long corridor seen along its length gets less from it.
+
+Checked 2026-11-14 on the Mac (M4 Pro), Release: `renderer_many_lights_by_screen_tiles` (40 lamps over a ground:
+the picture with tiles equal to the one without, pixel for pixel, on SDL GPU's Metal driver, the native backend
+and Vulkan through MoltenVK; 1.0 lights per tile on average against 40; 70 lights in view: 64 used); the 180
+render cases of the two Metal variants passed (the ray-traced ones on the native backend), and every golden image
+of the demo is unchanged on the three backends. Cost in the demo's section 17 (64 lamps standing still, 1920 x
+1080 offscreen on the native backend, the median GPU time of a frame over 3 s): 8.0 ms with tiles and 13.4 ms
+without at a reach of 4 m (9.6 lights per tile on average); 10.3 ms and 13.6 ms at 8 m (31.8 per tile). The frame
+without lamps was not measured. Not run: on the screen, in a browser (the WGSL of the changed shaders is not
+built here), on a phone, on Windows.
+
+### Decals
+
+Since 2026-11-14 (`render::Decals`, `include/quench/render/Decals.h`): marks laid on flat surfaces of a scene: a
+scorch, a splat, a ring, a painted stripe or plate.
+
+- **What a decal is:** a thin quad of the scene on a plane the game names (a point and its normal), 4 mm above it,
+  with an alpha-blended material of the standard surface and a soft-edged shape in its texture's alpha. It is lit
+  and shadowed like the surface under it, takes fog and wetness as any surface, and casts no shadow.
+- **Shapes** the engine makes on first use (128 x 128, white with the shape in alpha): `Disc`, `Ring`, `Splat`,
+  `Scorch` (darker toward its middle), `Square`, `Stripes`; or a texture of the game's (`DecalDesc::texture`).
+  `color` tints it (linear rgb and opacity), `roughness` makes it wet, `rotation` turns it around the normal.
+- **Life:** `life` seconds, then `fade` seconds of fading out, then it is gone (`Decals::update(dt)` once a frame);
+  0 stays. A `Decals` holds at most its capacity (256 by default): one more replaces the oldest.
+- **Order:** declare the `Decals` after its `Scene` (it removes its instances when it goes).
+
+**Flat decals, not projected ones.** A mark does not wrap around corners or follow curved geometry: one that
+crosses an edge sticks out past it, and one on a sphere is a flat plate. For floors, walls and other flat faces. A
+projected decal (a box that prints onto whatever is inside it) needs the frame's depth in the transparent pass,
+which the renderer does not give a surface today; not built. Decals are alpha-blended instances: they are not in
+the ray tracing structures (a traced reflection does not show them) and are sorted with the other transparent
+surfaces, back to front, by instance.
+
+Checked 2026-11-14 on the Mac (M4 Pro), Release: `renderer_decals_mark_fade_and_recycle` on the three backends (a
+black disc on a lit white ground: 564 before, 48 under it, unchanged beside it; half faded halfway through its
+fade; gone after it with the scene's instance count as before; a fifth decal into a capacity of four replaces the
+first; a decal on a wall) and the demo's section 19 (its capture identical on the three backends). Not looked at
+in motion; flicker against the surface at grazing angles and far away was not examined.
+
 ### Anisotropic GGX
 
 Stage 12. `MaterialDesc::anisotropy` (0..1) and `anisotropyRotation` (radians), the model of
@@ -1131,10 +1196,11 @@ through MoltenVK and the native Metal backend, and `scene_assets_blend_shapes`.
   iPhone 17 (2026-11-08: fine), their cost on a phone not measured.
 - No MSAA, no image-based lighting from a cubemap (the sky model is the environment; with clouds the sky cube is the
   sky reflection's, not the ambient light's), shadows of local and area
-  lights only by rays or shadow maps (at most 4), at most 16 local lights per frame (8 of them area lights) and no clustered or
-  tiled light lists.
+  lights only by rays or shadow maps (at most 4), at most 64 local lights per frame (8 of them area lights), shaded by
+  screen tiles without depth slices ([Many lights](#many-lights)); ray hits use the nearest 16.
 - One render per scene and frame (several views of one scene need a scene per view).
 - Not in this stage, listed in the roadmap: Ashfall's other screen-space effects (bounce light, sun shafts) as
-  fallbacks for devices without ray tracing (GTAO and SSR are there since 2026-11-07), terrain, decals, quality
+  fallbacks for devices without ray tracing (GTAO and SSR are there since 2026-11-07), terrain, projected decals
+  (flat ones are there since 2026-11-14, [Decals](#decals)), quality
   presets (particles are there since 2026-11-08, [Particles](particles.md#limitations)). GPU timing per pass exists only on the
   native Metal backend (SDL GPU has no timestamps inside a command buffer).

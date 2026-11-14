@@ -62,9 +62,21 @@ wait 0.03
 section particles
 reset_section
 wait 0.03
+section ecs
+reset_section
+wait 0.03
+section lights
+reset_section
+wait 0.03
+section hud
+reset_section
+wait 0.03
+section decals
+reset_section
+wait 0.03
 section materials
 wait 0.2
-expect sections_ready == 15
+expect sections_ready == 19
 mark gpu_resources
 mark memory_mb
 mark scene_instances
@@ -98,6 +110,14 @@ wait 0.03
 section weather
 wait 0.03
 section particles
+wait 0.03
+section ecs
+wait 0.03
+section lights
+wait 0.03
+section hud
+wait 0.03
+section decals
 wait 0.03
 section materials
 wait 0.2
@@ -157,9 +177,21 @@ wait 0.03
 section particles
 reset_section
 wait 0.03
+section ecs
+reset_section
+wait 0.03
+section lights
+reset_section
+wait 0.03
+section hud
+reset_section
+wait 0.03
+section decals
+reset_section
+wait 0.03
 section materials
 wait 0.3
-expect sections_ready == 15
+expect sections_ready == 19
 expect d_gpu_resources < 4
 expect d_gpu_resources > -4
 expect d_scene_instances == 0

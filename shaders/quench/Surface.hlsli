@@ -177,6 +177,20 @@ bool quenchHasTexture(int n) { return (uint(quenchMaterial.surface.w) & (1u << u
 
 #if !QUENCH_SURFACE_HIT
 
+// The set of lights that reach the screen tile of a pixel (LightUniforms::tiles), and whether light k is in it.
+uint3 quenchLightTile(float2 pixel) {
+    const float2 uv = saturate(pixel * quenchFrame.screen.zw);
+    const int x = min(int(uv.x * float(QUENCH_LIGHT_TILES_X)), QUENCH_LIGHT_TILES_X - 1);
+    const int y = min(int(uv.y * float(QUENCH_LIGHT_TILES_Y)), QUENCH_LIGHT_TILES_Y - 1);
+    const float3 set = quenchLights.tiles[y * QUENCH_LIGHT_TILES_X + x].xyz;
+    return uint3(uint(set.x), uint(set.y), uint(set.z));
+}
+bool quenchLightInTile(uint3 tile, int k) {
+    const int word = k / QUENCH_LIGHT_TILE_BITS;
+    const uint bits = word == 0 ? tile.x : (word == 1 ? tile.y : tile.z);
+    return ((bits >> uint(k - word * QUENCH_LIGHT_TILE_BITS)) & 1u) != 0u;
+}
+
 // In a frame with local light shadow maps (FrameUniforms::localShadows.x is not 0): the shadows of the point and spot
 // lights that have them, in their channels (LocalLight::cone.y = channel + 1), 1 = lit. Area lights' maps are read in
 // a screen-space pass (src/render/shaders/localshadow.hlsl), which opaque surfaces read as traced shadows; here they
@@ -404,7 +418,10 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
                                                          0.0);
     }
 #endif
+    // Only the lights that reach this pixel's tile of the screen.
+    const uint3 lightTile = quenchLightTile(i.pixel);
     for (int k = 0; k < lights; ++k) {
+        if (!quenchLightInTile(lightTile, k)) continue;
         const LocalLight light = quenchLights.lights[k];
         const int type = int(light.color.w);
 #if QUENCH_SURFACE_FULL
@@ -437,6 +454,7 @@ float3 quenchShade(QuenchSurface s, QuenchSurfaceInput i) {
     [branch] if (quenchLights.count.y > 0.0) {
         const QuenchLtc ltc = quenchLtcAt(quenchAreaTable, N, lobeNormal, V, lobeRoughness, s.albedo, s.metallic);
         for (int k = 0; k < lights; ++k) {
+            if (!quenchLightInTile(lightTile, k)) continue;
             const LocalLight light = quenchLights.lights[k];
             if (int(light.color.w) < QUENCH_LIGHT_RECT) continue;
             float a = quenchAreaWindow(light, i.world);

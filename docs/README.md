@@ -2,7 +2,7 @@
 
 Stages 1 to 3 and 5 to 14 of the [Roadmap](roadmap.md) are implemented (stages 11 and 12 except their runs on the iPhone
 18 Pro Max and the checks by eye, stage 13 except its costs on a phone and its runs on the iPhone 18 Pro Max, stage 14
-except its runs on a phone and the checks by eye; browser audio still open), stage 4 (games on the engine) for one game (version 0.19.1): the core and physics modules (with the
+except its runs on a phone and the checks by eye; browser audio still open), stage 4 (games on the engine) for one game (version 0.20.0): the core and physics modules (with the
 wind's drag on chosen bodies), the job system, profiling with Tracy (opt-in), the asset system and the asset cooker
 (BC7, ASTC in iOS builds, Basis Universal as an option, transcoded at load time; asset hot reload on the Mac and on a
 device), the GPU layer over SDL GPU and a native Metal backend with GPU timestamps per pass, acceleration structures and
@@ -58,6 +58,8 @@ in `images/`.
 | [Navigation](navigation.md) | Navmeshes built at run time on jobs or cooked (`.qnav`), area types, off-mesh links, obstacles and rebuilds, queries, crowds and their link events, debug geometry, cooking, threads, cost, the demo section and tests, platforms, limitations |
 | [Weather](weather.md) | Stage 13's design and what is built: the headless weather map, its queries and the wetness and snow cover it remembers, the clouds (volumetric and the 2D layer), their light and shadows, the sky cube, the rain (occlusion map, streaks, splashes, wet surfaces, puddles, ripples, shafts, rainbow) and its sound, the snow (flakes, the cover on surfaces, shafts, quiet), the wind (gusts and eddies, plants' sway, drag on bodies, its sound), lightning and thunder, phone defaults, cost, the demo section and tests, platforms, limitations |
 | [Particles](particles.md) | Stage 14: particle systems in the retained scene (spawning, motion with curl noise and the weather's wind, the look, GPU and CPU simulation), trails behind moving points, paths, where they are in the frame, budgets, cost, the demo section and tests, platforms, limitations |
+| [ECS](ecs.md) | `quench_ecs`, optional: a Flecs world for a game's own objects, with systems of the fixed step and of the frame, the engine's log and no threads of its own; the demo's swarm; what was verified |
+| [Game UI](ui.md) | `quench_ui`: a game's interface through ImGui's draw lists: fonts with merged subsets, text, shapes, turning and scaling, speech bubbles, stickers and halftone, buttons, slots with drag and drop, tips, a touch stick, the gamepad's focus; the demo's HUD; what was verified |
 | [Network](net.md) | `quench_net`: asynchronous HTTPS requests (streamed bodies, cancel, timeouts, a size limit) delivered on the main thread, the HTTPS rule, the log's redaction, redirects, the backends per platform (NSURLSession, fetch, none), the fake for tests; the WebSocket client (wss only, whole messages, pings, closes, NSURLSessionWebSocketTask, its fake server), what is not there |
 | [Live session](live.md) | `assistant::LiveSession`: a live, full-duplex spoken conversation with OpenAI's GPT-Live over a WebSocket (released with 0.19.0): the settings, the game's tools through Responses delegation, transcripts, states and events, the game's events as context, the uplink gate for loudspeakers, cost and the idle close, the reconnect with the history, the manual check against the real service and what it showed, what is not there (the browser's WebRTC) |
 | [Assistant](assistant.md) | `quench_assistant`: a language model that operates a game through its tools (OpenAI-compatible chat with tool calls, speech-to-text, text-to-speech; OpenRouter, OpenAI or a local server by settings), tools in MCP's shape and their schema check, the turn and its states, cancel, the history, the errors, privacy, the manual check against OpenRouter, what is not there |
@@ -68,6 +70,6 @@ in `images/`.
 | [Dependencies](dependencies.md) | Pinned libraries, planned libraries with licences and verified capabilities |
 | [Migration](migration.md) | Inventory of the engine code in TrailForge and Ashfall, how far the copies diverged, the procedure for moving code, progress per game |
 | [Roadmap](roadmap.md) | Stages from the skeleton to ray tracing and the finished demo, the weather stage (its four parts built), particles and trails, what is next, the requested features and their priorities |
-| [Releases](releases/) | Release notes per version, the latest [0.19.1](releases/v0.19.1.md) |
+| [Releases](releases/) | Release notes per version, the latest [0.20.0](releases/v0.20.0.md) |
 
 Coding agents: see [AGENTS.md](../AGENTS.md). The daily development log is in [devlog/](../devlog/).

@@ -437,7 +437,7 @@ build/debug/quench_cook --help
 ```
 
 Every test case is its own CTest test (`core.json_round_trip`, `physics.physics_sphere_settles`, ...) with its
-module's label (`ctest -L animation`; labels: core, physics, assets, audio, animation, navigation, weather, particles, net, assistant, cook,
+module's label (`ctest -L animation`; labels: core, physics, assets, audio, animation, navigation, weather, particles, ecs, net, assistant, cook,
 gpu, app, render, hello, demo; the variants on Vulkan through MoltenVK also have `vulkan`). A test executable runs one case by
 name (`build/debug/tests/quench_core_tests json_round_trip`), all cases
 without arguments, and lists them with `--list`. A case that cannot run in a build (threads in the single-threaded
@@ -573,8 +573,9 @@ Details and rationale: `docs/architecture.md`.
   (`docs/architecture.md`, "Threads and jobs"; `docs/audio.md`, "Threads"). The other is NSURLSession's delegate
   queue (`quench_net` on Apple platforms): it only copies a request's headers and body pieces into a locked queue
   that `net::Client::update()` takes on the main thread (`docs/net.md`).
-- **No ECS in the core, no plugin system.** Engine APIs take plain handles; a game may put an ECS on top (Flecs is the
-  candidate, as an optional module). Modules are linked statically.
+- **No ECS in the core, no plugin system.** Engine APIs take plain handles; a game may put an ECS on top:
+  `quench_ecs` (Flecs, optional, since 2026-11-14, `docs/ecs.md`), which no other engine module links. Flecs starts
+  no thread there (see "Threads"). Modules are linked statically.
 - **No abstraction without a concrete need.** The GPU layer above is the decided exception, for the reasons given.
 - Resources are released via RAII; member order defines destruction order.
 - Fixed simulation step 1/120 s by default; rendering interpolates between ticks.

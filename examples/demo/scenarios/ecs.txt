@@ -1,0 +1,72 @@
+# ECS (ctest: demo_ecs_<backend>, a part of the batches): the swarm fills up to its target and is kept there while its
+# entities end and are replaced; every entity's scene instance is given back when it ends; a system switched off stops
+# its part (no charge near the beacon, nobody ends, nobody is made); a burst and a clear. The capture is taken at 12 s
+# with the defaults (600 movers, every system on).
+section ecs
+# A new swarm: a part before this one in a batch (the cycle) may have left one running.
+reset_section
+wait 0.03
+
+set dither 0
+wait 0.1
+expect fixed_systems == 6
+# 900 a second up to the target.
+until movers == 600 2
+expect held == 600
+mark scene_instances
+expect seekers > 300
+expect seekers < 420
+# The seekers reach the beacon and are charged.
+until charged > 5 3
+# Entities live 4.8 to 8 s. With a lifetime of half a second, a new swarm ends and is replaced again and again;
+# the scene holds as many instances as before.
+set lifetime 0.5
+set clear 1
+until removed > 2400 6
+expect leaked == 0
+# 900 a second living 0.3 to 0.5 s: about 360 at a time.
+expect movers > 250
+expect movers < 480
+set lifetime 8
+set clear 1
+until movers == 600 2
+expect d_scene_instances == 0
+until charged > 5 3
+
+# Charge off: the charged ones run out (1.6 s) and none is added.
+set charge 0
+until charged == 0 3
+wait 0.3
+expect charged == 0
+set charge 1
+until charged > 0 3
+
+# Age and spawn off: nobody ends, nobody is made.
+set age 0
+set spawn 0
+mark removed
+mark spawned
+wait 1
+expect d_removed == 0
+expect d_spawned == 0
+set burst 200
+expect d_spawned == 200
+expect movers > 700
+# Clear: every entity gone, every instance back.
+set clear 1
+wait 0.05
+expect movers == 0
+expect held == 0
+expect d_scene_instances == -600
+expect charged == 0
+
+# The defaults again, restarted for the capture.
+set age 1
+set spawn 1
+until movers == 600 2
+until charged > 5 3
+until time >= 12 15
+windows off
+capture demo_ecs.png
+windows on
+quit

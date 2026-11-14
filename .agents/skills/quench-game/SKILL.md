@@ -184,6 +184,26 @@ Link what the game uses beside `quench_add_game()`:
   (or a cooked `.qnav` through `navigation::NavMeshAsset`), `update()` every frame (it never waits; tiles appear as
   their jobs finish), `navigation::Crowd` stepped in `fixedStep`, `navigation::NavQuery` for paths. The mesh
   outlives its crowds and queries (declare it first). `docs/navigation.md`, "Use".
+- **Decals.** `render::Decals decals(scene)` (declared after the scene): `decals.add({.position, .normal, .size,
+  .shape = render::DecalShape::Scorch, .color, .life, .fade})` lays a lit mark on a flat surface, `decals.update(dt)`
+  once a frame ages those with a life; at most 256, the oldest replaced. Flat: they do not wrap around edges.
+  `docs/render.md`, "Decals".
+- **The game's interface.** Link `quench_ui` (Dear ImGui stays for debug panels). In `Game::ui`:
+  `ui::Canvas canvas = ui::Canvas::screen(app);`, a `ui::Ui` member's `begin(app, canvas, dt)` and `end()` around
+  the widgets. `ui::addFont(name, {base file, subset files...})` once, then `TextStyle{.font, .size, .color}`;
+  sizes in `canvas.unit()` so they follow the window; `canvas.safe()` for the edges. `canvas.transform(pivot,
+  angle, scale, alpha)` turns what is drawn while its result lives. Widgets: `button`, `area`, `panel`, `tip`,
+  `slot` (drag and drop), `stick` and `touchButton` (touch), `presence` (pop in); `setNavigation(true)` for the
+  gamepad's focus on a screen of widgets; `pointerOverUi()` before the game takes a click; `point(id)` for
+  `Game::scenarioPoint`. Player-visible strings come from the game's string table. `docs/ui.md`.
+- **Entities (ECS).** Optional: link `quench_ecs` for a game with many kinds of objects. An `ecs::World` member
+  (declared after the scene and whatever else its components point at), `world.flecs()` is the Flecs world: its
+  own C++ API for entities, components, queries, systems and observers. Systems made with
+  `.kind<ecs::FixedStep>()` run in `world.fixedStep(dt)` (call it in `Game::fixedStep`), all others in
+  `world.update(dt)` (in `Game::update`), each in the order they were made. Engine handles (a scene instance, a
+  body) live in components; an observer on the component's removal gives them back. A `flecs::query` member is
+  reset before the world goes (it ends itself in it: a crash at exit otherwise). No Flecs worker threads, no
+  reflection or JSON. `docs/ecs.md`.
 - **HTTP requests.** `quench_net`, linked into every game: a `net::Client` member, `client.update()` once a frame in
   `Game::update` (every handler runs there, on the main thread), `client.send(net::Request, net::Handlers)` with
   `onHeaders`, `onChunk` (with `Request::streamBody`: server-sent events, streamed audio) and `onDone` (once per

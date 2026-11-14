@@ -3,6 +3,7 @@
 #include "GpuTest.h"
 
 #include <quench/render/Daylight.h>
+#include <quench/render/Decals.h>
 #include <quench/render/MeshBuilder.h>
 #include <quench/render/Projection.h>
 #include <quench/render/Renderer.h>
@@ -4209,4 +4210,145 @@ QUENCH_TEST(renderer_anisotropic_highlight_stretches) {
           pz.y);
     CHECK(std::abs(px.x - x.x) * 5 <= x.x + 5 && std::abs(px.y - x.y) * 5 <= x.y + 5,
           "as wide as the raster's: %d x %d", px.x, px.y);
+}
+
+// More lights than a pixel should shade: 40 small point lights over a ground. The screen's tiles let a surface
+// shade only the lights that reach it, and the picture is the one with every pixel shading every light; a frame
+// takes at most 64 lights, the nearest.
+QUENCH_TEST(renderer_many_lights_by_screen_tiles) {
+    QUENCH_GPU_DEVICE(device);
+    RenderSettings settings = plainSettings();
+    Result<Renderer> renderer = Renderer::create(device, settings);
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    scene.setEnvironment(sunOnly());
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(8.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = 1.0f})});
+    // 8 x 5 lamps 1.2 m apart, 0.5 m up, each reaching 1.1 m: neighbours overlap a little.
+    std::vector<LightId> lamps;
+    for (int z = 0; z < 5; ++z)
+        for (int x = 0; x < 8; ++x)
+            lamps.push_back(scene.addLight({.type = LightType::Point,
+                                            .color = glm::vec3(0.3f + 0.1f * float(x), 1.0f, 0.3f + 0.15f * float(z)),
+                                            .intensity = 0.6f,
+                                            .position = {(float(x) - 3.5f) * 1.2f, 0.5f, (float(z) - 2.0f) * 1.2f},
+                                            .range = 1.1f,
+                                            .castsShadows = false}));
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0.0f, 9.0f, 6.5f), glm::vec3(0.0f));
+
+    const std::vector<Rgba8> tiled = renderOnce(device, *renderer, scene, view, *target);
+    REQUIRE(tiled.size() == kSize * kSize, "%zu pixels", tiled.size());
+    const RenderStats withTiles = renderer->stats();
+    CHECK(withTiles.lights == 40, "%u lights", withTiles.lights);
+
+    settings.lightTiles = false;
+    renderer->setSettings(settings);
+    const std::vector<Rgba8> all = renderOnce(device, *renderer, scene, view, *target);
+    const RenderStats withoutTiles = renderer->stats();
+    CHECK(withoutTiles.lightTileRefs == 40u * 240u, "every light in every tile: %u", withoutTiles.lightTileRefs);
+    CHECK(withTiles.lightTileRefs * 4 < withoutTiles.lightTileRefs, "tiles keep under a quarter: %u of %u",
+          withTiles.lightTileRefs, withoutTiles.lightTileRefs);
+    std::printf("  lights per tile: %.1f with tiles, %.0f without\n", double(withTiles.lightTileRefs) / 240.0,
+                double(withoutTiles.lightTileRefs) / 240.0);
+
+    // The same picture, pixel for pixel: no tile misses a light that reaches it.
+    int different = 0, lit = 0, dark = 0;
+    for (std::size_t i = 0; i < tiled.size(); ++i) {
+        if (tiled[i].r != all[i].r || tiled[i].g != all[i].g || tiled[i].b != all[i].b) ++different;
+        if (sum(all[i]) > 60) ++lit;
+        if (sum(all[i]) < 6) ++dark;
+    }
+    CHECK(different == 0, "%d pixels differ between tiles and all lights", different);
+    CHECK(lit > 300 && dark > 300, "the lamps light a part of the picture: %d lit, %d dark", lit, dark);
+    // Under a lamp its own colour: the first is the least red and blue, the last the most.
+    const Rgba8 first = at(all, pixelOf(view, glm::vec3(-4.2f, 0.0f, -2.4f)));
+    const Rgba8 last = at(all, pixelOf(view, glm::vec3(4.2f, 0.0f, 2.4f)));
+    CHECK(first.g > first.r && last.r > first.r + 20, "colours by lamp: first %d %d %d, last %d %d %d", first.r,
+          first.g, first.b, last.r, last.g, last.b);
+
+    // 70 lights in view: the nearest 64 are used.
+    for (int i = 0; i < 30; ++i)
+        scene.addLight({.type = LightType::Point,
+                        .color = glm::vec3(1.0f),
+                        .intensity = 0.2f,
+                        .position = {(float(i % 10) - 4.5f) * 0.9f, 0.4f, -4.5f - 0.5f * float(i / 10)},
+                        .range = 0.8f,
+                        .castsShadows = false});
+    settings.lightTiles = true;
+    renderer->setSettings(settings);
+    renderOnce(device, *renderer, scene, view, *target);
+    CHECK(renderer->stats().lights == 64, "%u lights of 70", renderer->stats().lights);
+}
+
+// Decals: a dark disc laid on a lit white ground darkens the ground under it and nothing beside it; it fades out at
+// the end of its life and is gone; one more than the capacity replaces the oldest; nothing is left in the scene.
+QUENCH_TEST(renderer_decals_mark_fade_and_recycle) {
+    QUENCH_GPU_DEVICE(device);
+    Result<Renderer> renderer = Renderer::create(device, plainSettings());
+    REQUIRE(renderer, "%s", renderer.error().c_str());
+    Scene scene(device);
+    Environment e = sunOnly();
+    e.skyAmbient = e.groundAmbient = glm::vec3(0.6f); // an even light from everywhere
+    scene.setEnvironment(e);
+    const MeshId ground = addMesh(scene, planeMesh(glm::vec2(6.0f)));
+    scene.addInstance(
+        {.mesh = ground, .material = scene.addMaterial({.baseColor = glm::vec4(1.0f), .roughness = 1.0f})});
+    Result<gpu::Texture> target = makeTarget(device);
+    REQUIRE(target, "%s", target.error().c_str());
+    const View view = lookAt(glm::vec3(0.0f, 8.0f, 0.01f), glm::vec3(0.0f));
+    const std::uint32_t instancesBefore = scene.instanceCount();
+    {
+        Decals decals(scene, 4);
+        const std::vector<Rgba8> bare = renderOnce(device, *renderer, scene, view, *target);
+        const glm::ivec2 under = pixelOf(view, glm::vec3(0.0f)), beside = pixelOf(view, glm::vec3(2.5f, 0.0f, 0.0f));
+        const DecalId mark = decals.add({.position = glm::vec3(0.0f),
+                                         .size = glm::vec2(2.0f),
+                                         .shape = DecalShape::Disc,
+                                         .color = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f),
+                                         .life = 1.0f,
+                                         .fade = 1.0f});
+        REQUIRE(mark != 0, "no decal");
+        CHECK(decals.count() == 1 && scene.instanceCount() == instancesBefore + 1, "%u decals, %u instances",
+              decals.count(), scene.instanceCount());
+        const std::vector<Rgba8> marked = renderOnce(device, *renderer, scene, view, *target);
+        std::printf("  ground %d, under the decal %d, beside it %d\n", sum(at(bare, under)), sum(at(marked, under)),
+                    sum(at(marked, beside)));
+        CHECK(sum(at(bare, under)) > 300, "the ground is lit: %d", sum(at(bare, under)));
+        // A black surface still mirrors a little of the light around it.
+        CHECK(sum(at(marked, under)) < 70, "black under the decal: %d", sum(at(marked, under)));
+        CHECK(std::abs(sum(at(marked, beside)) - sum(at(bare, beside))) <= 3, "unchanged beside it: %d, %d",
+              sum(at(marked, beside)), sum(at(bare, beside)));
+
+        // Halfway through its fade it is half there; after it, gone.
+        decals.update(1.5f);
+        CHECK(std::abs(decals.opacity(mark) - 0.5f) < 0.01f, "opacity %f", double(decals.opacity(mark)));
+        const std::vector<Rgba8> fading = renderOnce(device, *renderer, scene, view, *target);
+        CHECK(sum(at(fading, under)) > sum(at(marked, under)) + 60 &&
+                  sum(at(fading, under)) < sum(at(bare, under)) - 60,
+              "half faded: %d", sum(at(fading, under)));
+        decals.update(0.6f);
+        CHECK(decals.count() == 0 && scene.instanceCount() == instancesBefore, "%u decals, %u instances",
+              decals.count(), scene.instanceCount());
+
+        // Five into a capacity of four: the first is replaced. Every shape is made.
+        std::vector<DecalId> ids;
+        for (int i = 0; i < 5; ++i)
+            ids.push_back(decals.add({.position = glm::vec3(float(i) - 2.0f, 0.0f, 2.0f),
+                                      .rotation = 0.5f * float(i),
+                                      .shape = DecalShape(i),
+                                      .color = glm::vec4(1.0f, 0.2f, 0.1f, 0.9f)}));
+        CHECK(decals.count() == 4, "%u decals", decals.count());
+        CHECK(decals.opacity(ids[0]) == 0.0f && decals.opacity(ids[4]) > 0.8f, "the oldest went: %f, %f",
+              double(decals.opacity(ids[0])), double(decals.opacity(ids[4])));
+        // On a wall: no crash and an instance more (its picture is the demo's to show).
+        decals.remove(ids[1]);
+        CHECK(decals.add({.position = {0.0f, 1.0f, -3.0f}, .normal = {0.0f, 0.0f, 1.0f}, .shape = DecalShape::Stripes}),
+              "no decal on a wall");
+        renderOnce(device, *renderer, scene, view, *target);
+        CHECK(decals.count() == 4, "%u decals", decals.count());
+    }
+    CHECK(scene.instanceCount() == instancesBefore, "%u instances left", scene.instanceCount());
 }

@@ -36,8 +36,17 @@
 #define QUENCH_WETNESS_GRID 16
 
 #define QUENCH_MAX_CASCADES 4
-#define QUENCH_MAX_LIGHTS 16
+#define QUENCH_MAX_LIGHTS 64
 #define QUENCH_MAX_AREA_LIGHTS 8 // of QUENCH_MAX_LIGHTS
+// The lights a ray's hit is shaded with and the path tracer samples: the nearest of the frame's (a hit is anywhere
+// in the world, so the screen's tiles below do not serve it).
+#define QUENCH_MAX_RAY_LIGHTS 16
+// The screen in tiles, each with the set of lights that can reach a pixel in it (LightUniforms::tiles): a surface
+// shades only those. The grid is laid over the render target whatever its size.
+#define QUENCH_LIGHT_TILES_X 20
+#define QUENCH_LIGHT_TILES_Y 12
+// A tile's set: bit k of the light k in three numbers of 24 bits each (whole numbers a float holds exactly).
+#define QUENCH_LIGHT_TILE_BITS 24
 #define QUENCH_MAX_PROBE_CASCADES 4
 
 // LocalLight::color.w of the area lights.
@@ -185,8 +194,13 @@ struct QUENCH_ALIGN16 LocalLight {
 };
 
 struct QUENCH_ALIGN16 LightUniforms {
-    float4 count; // x: lights in use, y: area lights among them
+    // x: lights in use, y: area lights among them, z: the first of them, the nearest, that ray hits and the path
+    // tracer use (at most QUENCH_MAX_RAY_LIGHTS)
+    float4 count;
     LocalLight lights[QUENCH_MAX_LIGHTS];
+    // Per screen tile (row by row from the top left): xyz: the set of lights that reach it, bits 0..23, 24..47 and
+    // 48..63 of the light indices as whole numbers; w: unused.
+    float4 tiles[QUENCH_LIGHT_TILES_X * QUENCH_LIGHT_TILES_Y];
 };
 
 QUENCH_SHARED_END

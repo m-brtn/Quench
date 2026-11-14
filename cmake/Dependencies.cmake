@@ -294,6 +294,27 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(quench_recast PRIVATE -w)
 endif()
 
+# ---------------------------------------------------------------- Flecs
+# Flecs 4.2.0 (MIT), the entity component system under quench_ecs (docs/ecs.md), built from its two distribution
+# files. A custom build: the C++ API, systems, pipelines, timers, modules, cached queries and prefabs; not its HTTP
+# server and REST API (sockets and a thread of its own), its script language, reflection, JSON, the app addon or its
+# statistics. The definitions are PUBLIC: flecs.h and flecs.c have to agree on them. FLECS_OS_API_IMPL is the default
+# OS layer (heap, time, mutexes); quench_ecs takes its thread functions out, so Flecs starts no thread.
+FetchContent_Declare(flecs
+    URL https://github.com/SanderMertens/flecs/archive/6566d4b7bdc597d0b74d5e0a4104d4ae6ac49402.tar.gz
+    URL_HASH SHA256=545e50b4118974cc8d89c57e3bcb5464b0a32afd23434403e9d6de16615503d6
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR no-cmake)
+FetchContent_MakeAvailable(flecs)
+add_library(quench_flecs STATIC ${flecs_SOURCE_DIR}/distr/flecs.c)
+target_include_directories(quench_flecs SYSTEM PUBLIC ${flecs_SOURCE_DIR}/distr)
+target_compile_definitions(quench_flecs PUBLIC
+    FLECS_CUSTOM_BUILD FLECS_CPP FLECS_SYSTEM FLECS_PIPELINE FLECS_TIMER FLECS_MODULE FLECS_CACHED_QUERIES
+    FLECS_PREFAB FLECS_LOG FLECS_OS_API_IMPL)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(quench_flecs PRIVATE -w)
+endif()
+
 if(QUENCH_HEADLESS)
     return()
 endif()

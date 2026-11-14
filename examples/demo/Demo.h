@@ -150,6 +150,10 @@ std::unique_ptr<Section> makeTunnelSection();
 std::unique_ptr<Section> makeNavigationSection();
 std::unique_ptr<Section> makeWeatherSection();
 std::unique_ptr<Section> makeParticlesSection();
+std::unique_ptr<Section> makeEcsSection();
+std::unique_ptr<Section> makeLightsSection();
+std::unique_ptr<Section> makeHudSection();
+std::unique_ptr<Section> makeDecalsSection();
 
 // ---- helpers shared by the sections (Common.cpp)
 

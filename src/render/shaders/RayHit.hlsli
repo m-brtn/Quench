@@ -381,7 +381,7 @@ float3 rtShade(RtSurface s, float3 V) {
     QuenchLtc ltc = quenchNoLtc();
     if (rtLights.count.y > 0.0)
         ltc = quenchLtcAt(rtAreaTable, s.normal, lobeNormal, V, lobeRoughness, s.albedo, s.metallic);
-    const int lights = int(rtLights.count.x);
+    const int lights = int(rtLights.count.z); // the nearest: a hit is not in a screen tile
     for (int k = 0; k < lights; ++k) {
         const LocalLight light = rtLights.lights[k];
         const int type = int(light.color.w);

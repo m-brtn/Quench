@@ -1,0 +1,41 @@
+# Decals (ctest: demo_decals_<backend>, a part of the batches): the laid-out marks; a click on the floor stamps one
+# more; a mark with a life fades out and goes; past the capacity of 256 the oldest goes; clear. The capture shows the
+# layout and one stamped scorch.
+section decals
+reset_section
+reset_camera
+
+set dither 0
+wait 0.2
+# 6 stripes, 2 rings, 2 discs, 3 plates, 4 scorches, 3 splats on the floor, 3 marks on the wall.
+expect decals == 23
+mark scene_instances
+tap H
+until ui == 0 1
+click @floor
+until stamped == 1 1
+expect decals == 24
+expect d_scene_instances == 1
+tap H
+until ui == 1 1
+windows off
+wait 0.1
+capture demo_decals.png
+windows on
+
+# A life of half a second, then 1.5 s of fading: gone after two.
+set decal_life 0.5
+set decal_fill 10
+expect decals == 34
+wait 1
+expect decals == 34
+until decals == 24 2
+set decal_life 0
+# 300 more: the capacity holds, the oldest went.
+set decal_fill 300
+expect decals == 256
+expect stamped == 311
+set decal_clear 1
+expect decals == 0
+expect d_scene_instances == -23
+quit

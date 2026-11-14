@@ -1,0 +1,46 @@
+# Many lights (ctest: demo_lights_<backend>, a part of the batches): 64 lamps light the frame and a pixel shades only
+# those that reach its tile of the screen; without the tiles every tile holds every lamp; past 64 lamps the nearest
+# 64 light; fewer lamps, fewer lights. The capture is taken at 3 s with the defaults (64 lamps, tiles on); the
+# picture without tiles is the same (checked by numbers in the render tests, `renderer_many_lights_by_screen_tiles`).
+section lights
+reset_section
+reset_camera
+
+set dither 0
+wait 0.2
+expect lamps == 64
+expect lights == 64
+expect light_tiles == 1
+# Each lamp reaches 4 m: a share of the 240 tiles, far from all of them (64 x 240 = 15360).
+expect light_tile_refs < 6000
+expect light_tile_refs > 500
+set light_tiles 0
+wait 0.05
+expect light_tile_refs == 15360
+set light_tiles 1
+wait 0.05
+expect light_tile_refs < 6000
+# A longer reach, more tiles.
+mark light_tile_refs
+set reach 8
+wait 0.05
+expect d_light_tile_refs > 500
+set reach 4
+# 96 lamps: the nearest 64.
+set lamps 96
+wait 0.05
+expect lights == 64
+set lamps 10
+wait 0.05
+expect lights == 10
+set lamps 0
+wait 0.05
+expect lights == 0
+expect light_tile_refs == 0
+set lamps 64
+until time >= 3 5
+expect lights == 64
+windows off
+capture demo_lights.png
+windows on
+quit

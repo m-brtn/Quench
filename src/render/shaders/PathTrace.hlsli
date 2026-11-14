@@ -98,7 +98,7 @@ float4 pt_fs(FullscreenOut vin) : SV_Target0 {
     float3 radiance = float3(0.0, 0.0, 0.0);
     float brdfPdf = 0.0; // the density the last bounce chose `dir` with (0: the camera ray)
     const int bounces = int(rtHit.path.x);
-    const int lights = int(rtLights.count.x);
+    const int lights = int(rtLights.count.z); // the nearest, as the ray hits
     const float sunCos = quenchFrame.sunDisc.w;
     for (int bounce = 0; bounce <= bounces; ++bounce) {
         const RtHit hit = rtTraceClosest(origin, dir, 1e5,

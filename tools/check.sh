@@ -5,7 +5,7 @@
 #   tools/check.sh quick [--preset NAME] [--base REF] [LABEL...]
 #       A small change: format the changed C and C++ files (check only), an incremental build of the preset
 #       (default: release, where the captures are compared), and ctest of the labels the changed files map to
-#       (or of the LABELs given): core physics assets audio animation navigation weather particles net assistant
+#       (or of the LABELs given): core physics assets audio animation navigation weather particles ecs net assistant
 #       cook gpu app render hello demo, without the variants on Vulkan through MoltenVK (label vulkan; full and
 #       release run them). The changed files are those that differ from HEAD (from REF with --base) and the untracked ones. A
 #       change to a shared foundation (core, gpu, app, the build) is reported: it needs the full gate; so is a change
@@ -249,6 +249,8 @@ labels_for() {
     src/particles/* | include/quench/particles/* | tests/particles/* | shaders/quench/ParticleField.h)
         echo "particles render demo"
         ;;
+    src/ecs/* | include/quench/ecs/* | tests/ecs/*) echo "ecs demo" ;;
+    src/ui/* | include/quench/ui/*) echo "demo" ;;
     src/net/* | include/quench/net/* | tests/net/*) echo "net assistant" ;;
     src/assistant/* | include/quench/assistant/* | tests/assistant/* | examples/assistant_check/*) echo "assistant" ;;
     cmake/QuenchCook.cmake) echo "cook hello demo" ;;
@@ -335,7 +337,7 @@ quick() {
         echo "NOTE: the change touches CMake files: run tools/check.sh step xcode (it generates the ios-xcode project,"
         echo "which refuses some things Ninja accepts) before committing it."
     fi
-    if [[ $shared -eq 0 && " $labels " =~ \ (physics|assets|audio|animation|navigation|weather|particles|net|assistant)\  ]]; then
+    if [[ $shared -eq 0 && " $labels " =~ \ (physics|assets|audio|animation|navigation|weather|particles|ecs|net|assistant)\  ]]; then
         echo
         echo "NOTE: the change touches a headless module: run tools/check.sh step wasm (its tests as WebAssembly under"
         echo "Node.js) before committing it."

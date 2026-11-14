@@ -2,7 +2,7 @@
 # the frame at 1.5 s (the HDR output section, in SDR).
 
 wait 0.2
-expect sections == 15
+expect sections == 19
 section materials
 wait 0.25
 expect draws > 0
@@ -54,4 +54,20 @@ section particles
 wait 0.5
 expect particle_systems >= 9
 expect trails == 20
+# The swarm of the ECS section fills up to its target.
+section ecs
+until movers == 600 3
+expect leaked == 0
+# 64 lamps light the frame of the many lights section.
+section lights
+wait 0.2
+expect lights == 64
+# The game UI section draws its interface: its first slot holds an item.
+section hud
+wait 0.2
+expect ui_slot0 == 0
+# The decals section lays its marks out.
+section decals
+wait 0.2
+expect decals == 23
 quit

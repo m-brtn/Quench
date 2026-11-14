@@ -149,8 +149,12 @@ quench_add_game(quench_demo
         sections/AnimationSection.cpp
         sections/AssetsSection.cpp
         sections/AudioSection.cpp
+        sections/DecalsSection.cpp
+        sections/EcsSection.cpp
         sections/HdrSection.cpp
+        sections/HudSection.cpp
         sections/InputSection.cpp
+        sections/LightsSection.cpp
         sections/MaterialsSection.cpp
         sections/NavigationSection.cpp
         sections/ParticlesSection.cpp
@@ -162,7 +166,8 @@ quench_add_game(quench_demo
         sections/TunnelSection.cpp
         sections/WeatherSection.cpp)
 quench_configure_target(quench_demo)
-target_link_libraries(quench_demo PRIVATE quench_render quench_physics quench_animation quench_navigation)
+target_link_libraries(quench_demo PRIVATE quench_render quench_physics quench_animation quench_navigation quench_ecs
+                                         quench_ui)
 target_include_directories(quench_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${demo_build_info_dir})
 target_compile_definitions(quench_demo PRIVATE QUENCH_DEMO_CONFIG="$<CONFIG>")
 add_dependencies(quench_demo quench_demo_build_info)
