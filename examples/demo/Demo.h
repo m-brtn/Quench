@@ -103,6 +103,11 @@ public:
     // false: fingers and sticks are the section's own (the input section's virtual stick and player), the camera
     // only zooms.
     virtual bool freeCamera() const { return true; }
+    // The pointer is on the section's own interface (drawn in overlay): the camera does not take that press or drag.
+    virtual bool pointerOnInterface() const { return false; }
+    // The section moves a focus of its own with the D-pad: the demo does not hand the gamepad to its windows on it
+    // (Tab still does).
+    virtual bool ownsDpad() const { return false; }
     // Scenario values and `set NAME VALUE` commands of the section; false: unknown name or bad value.
     virtual std::optional<double> value(std::string_view name) const {
         (void)name;

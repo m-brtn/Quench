@@ -65,8 +65,9 @@ public:
     std::string_view title() const override { return "Game UI"; }
     std::string_view about() const override {
         return "A game's interface from quench_ui: meters, a radio line with a sticker face and a speech bubble, an "
-               "inventory (drag an item to another slot; with Focus on, the D-pad or the arrows move and A or Return "
-               "carries), tips, buttons. Hide the demo's windows (H) to see all of it.";
+               "inventory (drag an item to another slot, or move a focus with the D-pad or the arrows and carry an "
+               "item "
+               "with A or Return), tips, buttons. Hide the demo's windows (H) to see all of it.";
     }
 
     Result<void> init(Context& c) override {
@@ -127,7 +128,8 @@ public:
         const app::WindowRect area = c.app.safeArea();
         const Rect safe{{float(area.x), float(area.y)}, {float(area.x + area.width), float(area.y + area.height)}};
         Canvas canvas(ImGui::GetBackgroundDrawList(), window, safe, std::max(window.y / 720.0f, 0.6f));
-        m_ui.setNavigation(m_navigation);
+        // The focus is the interface's unless the demo's windows have the keys and the gamepad.
+        m_ui.setNavigation(m_navigation && c.sceneInput);
         m_ui.begin(c.app, canvas, m_dt);
         const float u = canvas.unit();
         const ui::TextStyle label{.font = m_font,
@@ -227,6 +229,10 @@ public:
     }
 
     Scene& scene() override { return *m_scene; }
+
+    // A press or a drag on the interface is not the camera's; the D-pad is the interface's while its focus is on.
+    bool pointerOnInterface() const override { return m_ui.pointerOverUi(); }
+    bool ownsDpad() const override { return m_navigation; }
 
     std::optional<double> value(std::string_view name) const override {
         if (name == "ui_presses") return double(m_presses);
@@ -380,7 +386,9 @@ private:
     float m_health = 1.0f, m_shield = 1.0f, m_heat = 0.0f;
     float m_lineAge = 0.0f;
     int m_line = 0, m_presses = 0, m_moves = 0;
-    bool m_navigation = false, m_touch = true, m_tip = false;
+    // The focus is on from the start (the D-pad works without a switch); the stick is for touch screens, off until
+    // asked for, so that a mouse's drag on the scene stays the camera's.
+    bool m_navigation = true, m_touch = false, m_tip = false;
     glm::vec2 m_stick{0.0f};
 };
 

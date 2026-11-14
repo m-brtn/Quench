@@ -351,7 +351,8 @@ void DemoGame::updateFocus(App& app) {
         const bool dpad =
             input.gamepadPressed(GamepadButton::DpadUp) || input.gamepadPressed(GamepadButton::DpadDown) ||
             input.gamepadPressed(GamepadButton::DpadLeft) || input.gamepadPressed(GamepadButton::DpadRight);
-        if ((input.keyPressed(SDL_SCANCODE_TAB) && !io.WantTextInput) || dpad) {
+        const bool sectionDpad = currentReady() && current().ownsDpad();
+        if ((input.keyPressed(SDL_SCANCODE_TAB) && !io.WantTextInput) || (dpad && !sectionDpad)) {
             m_menuFocus = true;
             m_focusMenuNow = true;
             if (!m_showUi) {
@@ -759,6 +760,8 @@ std::optional<double> DemoGame::scenarioValue(std::string_view name) const {
     if (name == "fallbacks") return double(m_renderer->fallbacks().size());
     if (name == "camera_yaw") return double(glm::degrees(current().camera.yaw));
     if (name == "camera_pitch") return double(glm::degrees(current().camera.pitch));
+    if (name == "camera_target_x") return double(current().camera.target.x);
+    if (name == "camera_target_z") return double(current().camera.target.z);
     if (name == "camera_distance") return double(current().camera.distance);
     if (name == "camera_x") return double(current().camera.target.x);
     if (name == "camera_z") return double(current().camera.target.z);

@@ -96,7 +96,11 @@ void CameraControls::update(app::App& app, Section& section, float dt, bool scen
 
     // Mouse: drag with the left button to orbit, the right or middle one to pan, the wheel; a press and release
     // without a drag is a click.
-    if (!input.mouseFromTouch()) {
+    // The section's own interface under the pointer (a drag between its slots, its stick): the camera leaves the
+    // mouse and the fingers to it.
+    const bool own = section.pointerOnInterface();
+    if (own) m_pressed = m_dragged = false;
+    if (!input.mouseFromTouch() && !own) {
         const bool orbitPress = input.pressed(m_orbitDrag), panPress = input.pressed(m_panDrag);
         if (orbitPress || panPress) {
             m_pressed = true;
@@ -122,7 +126,8 @@ void CameraControls::update(app::App& app, Section& section, float dt, bool scen
 
     // Fingers (not on a window): one drags the orbit, two pan by their midpoint and pinch; a short touch without a
     // drag is a tap.
-    const std::span<const app::Finger> fingers = input.fingers();
+    const std::span<const app::Finger> allFingers = input.fingers();
+    const std::span<const app::Finger> fingers = own ? std::span<const app::Finger>() : allFingers;
     for (const app::Finger& f : fingers) {
         if (f.pressed) {
             m_touchStart = f.position;
@@ -151,7 +156,8 @@ void CameraControls::update(app::App& app, Section& section, float dt, bool scen
         if (section.freeCamera()) {
             turn.x += input.axis(m_orbitLeft, m_orbitRight) * 2.0f * dt;
             turn.y += input.axis(m_orbitUp, m_orbitDown) * 1.5f * dt;
-            pan += glm::vec2(input.axis(m_panLeft, m_panRight), -input.axis(m_panBack, m_panForward)) * height * dt;
+            // The stick moves the view the way it is pushed (a drag moves the scene with the hand: the other sign).
+            pan += glm::vec2(-input.axis(m_panLeft, m_panRight), input.axis(m_panBack, m_panForward)) * height * dt;
         }
         zoom *= std::pow(2.0f, (input.value(m_zoomOut) - input.value(m_zoomIn)) * dt);
     }

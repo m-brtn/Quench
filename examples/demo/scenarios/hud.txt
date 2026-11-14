@@ -11,6 +11,7 @@ wait 0.3
 expect ui_slot0 == 0
 expect ui_slot6 == -1
 expect ui_line == 0
+mark camera_yaw
 # A button: a press is a release over it.
 click @hud:next
 until ui_line == 1 1
@@ -53,6 +54,9 @@ wait 0.1
 expect ui_over == 0
 
 # The gamepad's focus: A picks the medkit up in slot 2, right moves, A puts it down in slot 3.
+# The camera did not turn through all that pressing and dragging on the interface.
+expect d_camera_yaw == 0
+
 set ui_focus 1
 gamepad attach
 until gamepad == 1 2
@@ -72,9 +76,10 @@ expect ui_slot2 == -1
 expect ui_slot3 == 2
 gamepad detach
 until gamepad == 0 2
-set ui_focus 0
 
-# The touch stick: a finger dragged up and to the right in the left part of the screen.
+# The touch stick (switched on: it is for touch screens): a finger dragged up and to the right in the left part
+# of the screen.
+set ui_touch 1
 touch 15% 55% 60 -60 20
 expect ui_moves == 3
 wait 0.05

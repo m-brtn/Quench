@@ -21,7 +21,10 @@ which carry their own copy of an engine today:
 Both games are to build on the engine, and future games start from it. Long-term features (hardware ray tracing,
 skeletal animation, navigation, asset streaming) are listed in `docs/roadmap.md`.
 
-**Current state (2026-11-14, version 0.19.1): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
+**Current state (2026-11-14, version 0.20.1: 0.20.0 added `quench_ecs` (`docs/ecs.md`), 64 local lights a frame
+shaded by screen tiles and flat decals (`docs/render.md`, "Many lights", "Decals") and `quench_ui` (`docs/ui.md`),
+each with a demo section (16 to 19), and 0.20.1 fixed three defects of the demo; both were released without the
+full gate by the user's decision (`docs/releases/v0.20.0.md`, `v0.20.1.md`); what follows describes 0.19.1): stages 1 to 3 and 5 to 10 of `docs/roadmap.md` are in place, stage 4
 for TrailForge only, stage 11 (full ray tracing) and stage 12 (area lights and anisotropic GGX) except their runs on
 the iPhone 18 Pro Max and the checks by eye, stage 13 (weather) parts 1 (the weather map, the clouds and their
 light), 2 (rain, wetness, puddles, ripples, the rain's sound), 3 (snow: flakes, a snow cover that builds and melts,

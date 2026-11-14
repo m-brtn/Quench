@@ -6,7 +6,7 @@
 
 <p align="center">
   A game engine designed for making games entirely with AI coding agents.<br>
-  Version 0.20.0 · macOS and iOS · MIT
+  Version 0.20.1 · macOS and iOS · MIT
 </p>
 
 <p align="center">

@@ -11,7 +11,7 @@ portability rules in [AGENTS.md](../AGENTS.md) keep them reachable.
 
 ## Status
 
-The engine (version 0.20.0; its four additions were checked on the Mac only and without the full gate, [its notes](releases/v0.20.0.md)) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
+The engine (version 0.20.1; 0.20.0's four additions were checked on the Mac only and without the full gate, [its notes](releases/v0.20.0.md)) builds and passes its tests on macOS (arm64; also under the address, undefined-behaviour
 and thread sanitizers); [the release notes](releases/v0.13.1.md) give the counts of passed and skipped cases (those
 of 0.13.1: 0.13.2, a patch of the renderer, ran the render and demo tests only, [its notes](releases/v0.13.2.md);
 0.14.0, the weather's look and sound, ran no gate, [its notes](releases/v0.14.0.md); after its tag the golden
