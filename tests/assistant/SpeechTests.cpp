@@ -224,7 +224,7 @@ QUENCH_TEST(speech_settings_and_presets) {
     CHECK(openAiPreset().transcriptionForm == TranscriptionForm::Multipart &&
               localPreset().baseUrl.starts_with("http://localhost"),
           "presets");
-    CHECK(redact("a sk-123456 b sk-123456", "sk-123456") == "a [key] b [key]", "%s",
+    CHECK(redact("a sk-123456 b sk-123456", "sk-123456") == "a <key> b <key>", "%s",
           redact("a sk-123456 b sk-123456", "sk-123456").c_str());
     // A local server: no key, no Authorization header.
     ProviderSettings local = localPreset("http://127.0.0.1:9000/v1/");
@@ -232,4 +232,90 @@ QUENCH_TEST(speech_settings_and_presets) {
     const net::Request r = buildChatRequest(local, json::Value::makeArray(), json::Value::makeArray());
     CHECK(r.url == "http://127.0.0.1:9000/v1/chat/completions" && !net::findHeader(r.headers, "Authorization"), "%s",
           r.url.c_str());
+}
+
+// The token limit's name and reasoning_effort per preset (since 0.19.1): OpenAI's own API wants
+// max_completion_tokens, and its reasoning models take function tools on chat completions only with
+// reasoning_effort "none"; OpenRouter's request stays as it was.
+QUENCH_TEST(speech_chat_token_limit_and_reasoning_per_preset) {
+    json::Value messages = json::Value::makeArray();
+    messages.array.push_back(parse(R"({"role":"user","content":"Hi"})"));
+    json::Value tools = json::Value::makeArray();
+    tools.array.push_back(parse(R"({"type":"function","function":{"name":"get_status","description":"Status.",)"
+                                R"("parameters":{"type":"object","properties":{}}}})"));
+
+    ProviderSettings openAi = openAiPreset();
+    CHECK(openAi.maxTokensField == "max_completion_tokens" && openAi.reasoningEffort == "none", "the preset");
+    openAi.maxTokens = 300;
+    const json::Value a = parse(text(buildChatRequest(openAi, messages, tools).body));
+    CHECK(a["max_completion_tokens"].numberOr(0) == 300 && !a.has("max_tokens"), "%s", compact(a).c_str());
+    CHECK(a["reasoning_effort"].stringOr("") == "none" && a["tools"].isArray(), "%s", compact(a).c_str());
+
+    ProviderSettings router = openRouterPreset();
+    CHECK(router.maxTokensField == "max_tokens" && router.reasoningEffort.empty(), "OpenRouter's preset");
+    router.maxTokens = 300;
+    const std::string body = text(buildChatRequest(router, messages, tools).body);
+    const json::Value b = parse(body);
+    CHECK(b["max_tokens"].numberOr(0) == 300 && !b.has("max_completion_tokens") && !b.has("reasoning_effort"), "%s",
+          body.c_str());
+    // Byte for byte what 0.19.0 sent: model, the settings' keys, tools, messages, tool_choice.
+    CHECK(body.starts_with(R"({"model":"anthropic/claude-haiku-5.5","max_tokens":300,"parallel_tool_calls":true,)"
+                           R"("stream":true,"stream_options":{"include_usage":true},"tools":[)"),
+          "%s", body.c_str());
+    router.reasoningEffort = "low";
+    CHECK(parse(text(buildChatRequest(router, messages, tools).body))["reasoning_effort"].stringOr("") == "low",
+          "sent when set");
+    router.maxTokens = 0;
+    const json::Value none = parse(text(buildChatRequest(router, messages, tools).body));
+    CHECK(!none.has("max_tokens") && !none.has("max_completion_tokens"), "no limit: neither name");
+
+    // Saved and read back; an unknown name for the limit is not taken.
+    ProviderSettings saved = openAiPreset();
+    saved.reasoningEffort = "low";
+    const ProviderSettings back = settingsFromJson(settingsToJson(saved), openRouterPreset());
+    CHECK(back.maxTokensField == "max_completion_tokens" && back.reasoningEffort == "low", "round trip");
+    json::Value odd = settingsToJson(openRouterPreset());
+    odd.object["maxTokensField"] = json::Value::makeString("max_output_tokens");
+    CHECK(settingsFromJson(odd, openAiPreset()).maxTokensField == "max_completion_tokens", "the base's name kept");
+}
+
+// A model without reasoning (OpenAI's gpt-4.1-mini on the OpenAI preset) refuses reasoning_effort as an unknown
+// argument (HTTP 400, seen on 2026-11-14): the round goes again once without it, and so do that model's later
+// requests; a refusal of the value itself is a failure as before.
+QUENCH_TEST(speech_chat_model_without_reasoning_effort) {
+    Rig rig;
+    rig.a.settings() = openAiPreset();
+    rig.a.settings().apiKey = kKey;
+    rig.a.settings().chatModel = "gpt-4.1-mini";
+    const std::string url = "https://api.openai.com/v1/chat/completions";
+    const std::string refusal = R"({"error":{"message":"Unrecognized request argument supplied: reasoning_effort",)"
+                                R"("type":"invalid_request_error","param":null,"code":null}})";
+    rig.fake.respond("POST", url, jsonAnswer(400, refusal));
+    REQUIRE(rig.a.ask("Hello"), "ask");
+    rig.fake.respond("POST", url, stream(sseText({"Hi."}))); // the first request already has its answer
+    REQUIRE(rig.run(), "not finished");
+    CHECK(rig.a.state() == State::Done && rig.a.answer() == "Hi.", "%s", rig.a.failure().message.c_str());
+    std::vector<json::Value> bodies = rig.bodies(url);
+    REQUIRE(bodies.size() == 2, "%zu requests", bodies.size());
+    CHECK(bodies[0]["reasoning_effort"].stringOr("") == "none" && !bodies[1].has("reasoning_effort"), "%s",
+          compact(bodies[1]).c_str());
+    CHECK(rig.a.stats().rounds == 1 && rig.a.stats().requests == 2, "rounds %d, requests %d", rig.a.stats().rounds,
+          rig.a.stats().requests);
+    REQUIRE(rig.a.ask("Again") && rig.run(), "a second turn");
+    bodies = rig.bodies(url);
+    CHECK(bodies.size() == 3 && !bodies[2].has("reasoning_effort"), "the model's later requests leave it out");
+
+    // Another model, and a refusal of the value: no second request.
+    rig.a.settings().chatModel = "gpt-6-luna";
+    rig.a.settings().reasoningEffort = "low";
+    rig.fake.respond("POST", url,
+                     jsonAnswer(400, R"({"error":{"message":"Function tools with reasoning_effort are not supported )"
+                                     R"(for gpt-6-luna in /v1/chat/completions. To use function tools, use )"
+                                     R"(/v1/responses or set reasoning_effort to 'none'."}})"));
+    REQUIRE(rig.a.ask("Third"), "ask");
+    rig.run();
+    CHECK(rig.a.state() == State::Failed && rig.a.failure().kind == ErrorKind::BadRequest &&
+              rig.bodies(url).size() == 4,
+          "%s, %zu", rig.a.failure().message.c_str(), rig.bodies(url).size());
+    CHECK(rig.bodies(url)[3]["reasoning_effort"].stringOr("") == "low", "the game's value sent");
 }

@@ -1,11 +1,13 @@
 // The assistant's manual check against a real provider (docs/assistant.md, "The manual check"), a command line
 // program without a window: one typed turn with two invented tools of a test colony, optionally the answer as speech
 // and that speech transcribed back, each stage printed with its milliseconds, the text as it streams, the tool calls
-// and the answer. The key comes from the environment variable OPENROUTER_API_KEY only and is never printed. Never run
-// by the automated checks: it sends requests to a provider and costs a little.
+// and the answer. The key comes from the environment variable OPENROUTER_API_KEY (OPENAI_API_KEY with --provider
+// openai) only and is never printed. Never run by the automated checks: it sends requests to a provider and costs a
+// little.
 //
 //   OPENROUTER_API_KEY=... build/release/examples/assistant_check/quench-assistant-check "Send walker one to E7"
-//       [--speak] [--transcribe] [--wav FILE] [--chat-model M] [--no-stream]
+//       [--provider openrouter|openai] [--speak] [--transcribe] [--wav FILE] [--chat-model M] [--no-stream]
+//       [--max-tokens N] [--reasoning-effort E]
 
 #include <quench/assistant/Assistant.h>
 #include <quench/audio/Wav.h>
@@ -143,6 +145,10 @@ int main(int argc, char** argv) {
     bool speak = false;
     bool transcribe = false;
     bool stream = true;
+    bool openAi = false;
+    int maxTokens = -1;
+    std::string effort;
+    bool effortSet = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--speak") {
@@ -155,18 +161,33 @@ int main(int argc, char** argv) {
             wavPath = argv[++i];
         } else if (arg == "--chat-model" && i + 1 < argc) {
             chatModel = argv[++i];
+        } else if (arg == "--provider" && i + 1 < argc) {
+            const std::string name = argv[++i];
+            if (name != "openai" && name != "openrouter") {
+                std::printf("assistant-check: --provider is openrouter or openai\n");
+                return 2;
+            }
+            openAi = name == "openai";
+        } else if (arg == "--max-tokens" && i + 1 < argc) {
+            maxTokens = std::atoi(argv[++i]);
+        } else if (arg == "--reasoning-effort" && i + 1 < argc) {
+            effort = argv[++i];
+            effortSet = true;
         } else if (arg == "--help" || arg == "-h" || arg.starts_with("--")) {
-            std::printf("usage: %s \"TEXT\" [--speak] [--transcribe] [--wav FILE] [--chat-model M] [--no-stream]\n"
-                        "The key comes from OPENROUTER_API_KEY. Sends requests to OpenRouter (costs a little).\n",
+            std::printf("usage: %s \"TEXT\" [--provider openrouter|openai] [--speak] [--transcribe] [--wav FILE]\n"
+                        "    [--chat-model M] [--no-stream] [--max-tokens N] [--reasoning-effort E]\n"
+                        "The key comes from OPENROUTER_API_KEY (OPENAI_API_KEY with --provider openai). Sends\n"
+                        "requests to the provider (costs a little).\n",
                         argv[0]);
             return arg == "--help" || arg == "-h" ? 0 : 2;
         } else {
             text = arg;
         }
     }
-    const char* key = std::getenv("OPENROUTER_API_KEY");
+    const char* keyName = openAi ? "OPENAI_API_KEY" : "OPENROUTER_API_KEY";
+    const char* key = std::getenv(keyName);
     if (!key || !*key) {
-        std::printf("assistant-check: OPENROUTER_API_KEY is not set\n");
+        std::printf("assistant-check: %s is not set\n", keyName);
         return 2;
     }
     if (text.empty() && wavPath.empty()) {
@@ -175,18 +196,23 @@ int main(int argc, char** argv) {
     }
 
     qa::Assistant a;
-    a.settings() = qa::openRouterPreset();
+    a.settings() = openAi ? qa::openAiPreset() : qa::openRouterPreset();
     a.settings().apiKey = key;
     a.settings().streamChat = stream;
-    a.settings().extraHeaders = {{"X-Title", "Quench assistant check"}};
+    if (!openAi) a.settings().extraHeaders = {{"X-Title", "Quench assistant check"}};
     if (!chatModel.empty()) a.settings().chatModel = chatModel;
+    if (maxTokens >= 0) a.settings().maxTokens = maxTokens;
+    if (effortSet) a.settings().reasoningEffort = effort;
     a.setSystemPrompt("You are the assistant of a small test colony game. Use the tools to look things up and to give "
                       "orders. Answer in one short sentence.");
     a.setStateSummary([] { return std::string("Day 3, 14:20. Two walkers idle near the base."); });
     addTools(a);
-    std::printf("assistant-check: %s backend, chat %s, transcription %s, speech %s (%s)\n", a.client().backendName(),
-                a.settings().chatModel.c_str(), a.settings().transcriptionModel.c_str(),
-                a.settings().speechModel.c_str(), a.settings().voice.c_str());
+    std::printf("assistant-check: %s, %s backend, chat %s (%s %d, reasoning_effort %s), transcription %s, speech %s "
+                "(%s)\n",
+                a.settings().name.c_str(), a.client().backendName(), a.settings().chatModel.c_str(),
+                a.settings().maxTokensField.c_str(), a.settings().maxTokens,
+                a.settings().reasoningEffort.empty() ? "not sent" : a.settings().reasoningEffort.c_str(),
+                a.settings().transcriptionModel.c_str(), a.settings().speechModel.c_str(), a.settings().voice.c_str());
     qa::Stats total;
     bool ok = true;
 

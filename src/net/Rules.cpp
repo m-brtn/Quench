@@ -90,6 +90,87 @@ bool isSecretHeader(std::string_view name) {
     return false;
 }
 
+namespace {
+
+constexpr std::string_view kKeyMark = "<key>";
+
+bool endsToken(char c) {
+    switch (c) {
+    case ' ':
+    case '\t':
+    case '\n':
+    case '\r':
+    case '\f':
+    case '\v':
+    case '"':
+    case '\'':
+    case '`':
+    case ')':
+    case ']':
+    case '}':
+    case '>': return true;
+    default: return false;
+    }
+}
+
+bool inWord(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+}
+
+// The bytes of the token at `from`: up to whitespace, a quote or a closing bracket, without a sentence's trailing
+// punctuation.
+std::size_t tokenLength(std::string_view text, std::size_t from) {
+    std::size_t end = from;
+    while (end < text.size() && !endsToken(text[end])) ++end;
+    while (end > from && std::string_view(".,;:!?").find(text[end - 1]) != std::string_view::npos) --end;
+    return end - from;
+}
+
+bool bearerAt(std::string_view text, std::size_t at) {
+    static constexpr std::string_view kBearer = "bearer";
+    if (at + kBearer.size() > text.size() || (at > 0 && inWord(text[at - 1]))) return false;
+    for (std::size_t i = 0; i < kBearer.size(); ++i) {
+        const char c = text[at + i];
+        if ((c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c) != kBearer[i]) return false;
+    }
+    const std::size_t next = at + kBearer.size();
+    return next < text.size() && (text[next] == ' ' || text[next] == '\t');
+}
+
+} // namespace
+
+std::string scrubSecrets(std::string_view text, std::string_view key) {
+    std::string out(text);
+    if (key.size() >= 4) {
+        for (std::size_t at = out.find(key); at != std::string::npos; at = out.find(key, at + kKeyMark.size()))
+            out.replace(at, key.size(), kKeyMark);
+    }
+    for (std::size_t at = 0; at < out.size();) {
+        if (bearerAt(out, at)) {
+            std::size_t token = at + 6;
+            while (token < out.size() && (out[token] == ' ' || out[token] == '\t')) ++token;
+            if (out.compare(token, kKeyMark.size(), kKeyMark) == 0) {
+                at = token + kKeyMark.size();
+                continue;
+            }
+            const std::size_t length = tokenLength(out, token);
+            if (length > 0) out.replace(token, length, kKeyMark);
+            at = token + (length > 0 ? kKeyMark.size() : 0);
+            continue;
+        }
+        if (out.compare(at, 3, "sk-") == 0 && (at == 0 || !inWord(out[at - 1]))) {
+            const std::size_t length = tokenLength(out, at);
+            if (length > 3) {
+                out.replace(at, length, kKeyMark);
+                at += kKeyMark.size();
+                continue;
+            }
+        }
+        ++at;
+    }
+    return out;
+}
+
 std::string pageOrigin() { return detail::platformPageOrigin(); }
 
 namespace detail {
@@ -210,6 +291,7 @@ Result<Request> redirectRequest(const Request& from, int status, std::string_vie
 }
 
 std::string redactText(std::string text, std::string_view url) {
+    text = scrubSecrets(text);
     const std::optional<Url> parsed = parseUrl(url);
     if (!parsed || parsed->query.empty()) return text;
     const std::string& query = parsed->query;

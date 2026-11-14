@@ -266,7 +266,8 @@ public:
     // The session.start event this session would send now (tests, the manual check); the key is not in it.
     json::Value startEvent() const;
     // Diagnostics: called with every server event as parsed, before the session handles it (the manual check prints
-    // them). The key is never in an event the client receives, but output audio is: keep the tap cheap.
+    // them), every string in it scrubbed of key material (redact(): a server's error can echo the key) except the
+    // output audio's, which is passed as it is: keep the tap cheap.
     void setEventTap(std::function<void(const json::Value& event)> tap) { m_tap = std::move(tap); }
 
 private:

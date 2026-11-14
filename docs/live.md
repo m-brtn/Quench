@@ -71,7 +71,7 @@ m_live.appendThinking("A dust storm starts in 3 minutes."); // known, not said n
 | Field | Default | What |
 |---|---|---|
 | `url` | `wss://api.openai.com/v1/live/sessions` | |
-| `apiKey` | | sent as `Authorization: Bearer`; never logged, never in an error, a history or an event |
+| `apiKey` | | sent as `Authorization: Bearer`; never logged, never in an error, a history or an event: since 0.19.1 every text the server sends that the session logs, keeps or hands on (an `error` event's code and message, the backend's failed response, an `info` event, a close reason, the event tap's copy) goes through `redact()` ([Assistant](assistant.md#errors)): the key, any `sk-` token, masked or whole, and any `Bearer` token become `<key>` |
 | `model`, `voice` | `gpt-live-1`, `marin` | fixed for a session; 38 built-in voices (the reference's list) |
 | `instructions` | | the voice model's: who it is, how it speaks, the language (there is no language setting: "Speak Russian unless the player asks to switch") |
 | `describeTools` | true | appends the docs' "Delegation policy" template with the tools' names and descriptions |
@@ -214,7 +214,10 @@ connecting, transcripts in pieces, a tool call and its result then `response.cre
 `delegation_id`, the acknowledgement), the uplink gate (closed, held, open, off), the idle close with the final
 usage, each close reason of the server, the connection lost without `session.closed`, an expiry that reconnects with
 the history and the state summary, the reconnect before the expiry, error events before and after the start, a 401,
-a start timeout, cancel and close, silence that is not speech, the key in no log line.
+a start timeout, cancel and close, silence that is not speech, the key in no log line. `assistant.scrub_live_*`
+(`tests/assistant/ScrubTests.cpp`, since 0.19.1): an error event in a running session, one before the start
+followed by a close, and a clean close whose reason quotes the key, each with a masked and with the whole key: no
+`sk-` and no key in any log line, the failure, `lastServerError()`, the events, the event tap or the history.
 
 ## Not there
 

@@ -506,7 +506,7 @@ QUENCH_TEST(turn_key_never_leaks) {
         REQUIRE(rig.a.ask("Hello"), "ask");
         rig.run();
         errors += rig.a.failure().message + "\n";
-        CHECK(rig.a.failure().message.find("[key]") != std::string::npos, "%s", rig.a.failure().message.c_str());
+        CHECK(rig.a.failure().message.find("<key>") != std::string::npos, "%s", rig.a.failure().message.c_str());
     }
     {
         Rig rig;

@@ -68,6 +68,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_CROSSCOMPILING_EMULATOR)
             assistant/AssistantTests.cpp
             assistant/EventTests.cpp
             assistant/LiveTests.cpp
+            assistant/ScrubTests.cpp
             assistant/SpeechTests.cpp
             assistant/StreamTests.cpp
             assistant/ToolsTests.cpp
@@ -244,6 +245,7 @@ quench_add_test_executable(quench_assistant_tests PREFIX assistant LABEL assista
         assistant/AssistantTests.cpp
         assistant/EventTests.cpp
         assistant/LiveTests.cpp
+        assistant/ScrubTests.cpp
         assistant/SpeechTests.cpp
         assistant/StreamTests.cpp
         assistant/ToolsTests.cpp

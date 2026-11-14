@@ -154,6 +154,12 @@ std::string logUrl(std::string_view url);
 // Authorization, Proxy-Authorization, Cookie, Set-Cookie and names with "key", "token", "secret", "password" or
 // "session" in them (X-API-Key, api-key, X-Goog-Api-Key, X-Auth-Token ...): dropped on a redirect to another origin.
 bool isSecretHeader(std::string_view name);
+// `text` with key material replaced by "<key>", for any text that came from a server before it is logged, kept or
+// shown: `key` itself wherever it appears (when it has at least 4 bytes), every token that starts with "sk-" (not
+// inside a word) up to the next whitespace, quote or closing bracket, masked or whole ("sk-or-v1****abcd", a
+// provider's echo of a refused key; a trailing '.', ',', ';', ':', '!' or '?' stays), and the token after "Bearer "
+// (any case). Idempotent.
+std::string scrubSecrets(std::string_view text, std::string_view key = {});
 // The origin of the web page the program runs in ("http://127.0.0.1:8000"), empty outside a browser.
 std::string pageOrigin();
 

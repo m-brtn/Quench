@@ -49,22 +49,64 @@ them; not in the answer the player reads), speech instructions and speed (sent o
 (`pcm`: 16-bit mono, the rate from the answer's `Content-Type`, else `pcmRate`, 24 kHz; or `mp3`, decoded by the
 engine), the transcription form (JSON with base64 audio, or a multipart form), a language hint, a timeout per kind of
 request (30 s; 120 s for the local preset), streaming on or off, `stream_options.include_usage`,
-`parallel_tool_calls`, `max_tokens`, `temperature`, extra headers (OpenRouter's `HTTP-Referer` and `X-Title`), and
-`cacheMarker` (off; [Caching](#caching)).
+`parallel_tool_calls`, the answer's token limit `maxTokens` (0: not sent) and the name it is sent under,
+`maxTokensField` (`max_tokens`, or `max_completion_tokens` for OpenAI's own API; since 0.19.1), `reasoningEffort`
+(`reasoning_effort`, sent when not empty; since 0.19.1), `temperature`, extra headers (OpenRouter's `HTTP-Referer`
+and `X-Title`), and `cacheMarker` (off; [Caching](#caching)).
 
-| Preset | Base URL | Chat | Transcription | Speech | Form |
-|---|---|---|---|---|---|
-| `openRouterPreset()` | `https://openrouter.ai/api/v1` | `anthropic/claude-haiku-5.5` | `openai/whisper-large-v3-turbo` | `elevenlabs/eleven-v4-turbo`, `matilda`, pcm | JSON |
-| `openAiPreset()` | `https://api.openai.com/v1` | `gpt-6-luna` | `whisper-1` | `gpt-4o-mini-tts`, `alloy`, pcm | multipart |
-| `localPreset(url)` | `http://localhost:8080/v1` | (the game's) | (the game's) | (the game's) | multipart |
+| Preset | Base URL | Chat | Token limit, reasoning | Transcription | Speech | Form |
+|---|---|---|---|---|---|---|
+| `openRouterPreset()` | `https://openrouter.ai/api/v1` | `anthropic/claude-haiku-5.5` | `max_tokens`, not sent | `openai/whisper-large-v3-turbo` | `elevenlabs/eleven-v4-turbo`, `matilda`, pcm | JSON |
+| `openAiPreset()` | `https://api.openai.com/v1` | `gpt-6-luna` | `max_completion_tokens`, `"none"` | `whisper-1` | `gpt-4o-mini-tts`, `alloy`, pcm | multipart |
+| `localPreset(url)` | `http://localhost:8080/v1` | (the game's) | `max_tokens`, not sent | (the game's) | (the game's) | multipart |
 
-The OpenRouter preset's models are the ones measured on 2026-11-13 (below). The OpenAI preset's model names were not
-checked against OpenAI's API, and nothing has run against it or against a local server. Plain `http` is allowed to
+The OpenRouter preset's models are the ones measured on 2026-11-13 (below). The OpenAI preset's chat model ran on
+2026-11-14 ([OpenAI's own API](#openais-own-api)); its transcription and speech models have not run, and nothing has
+run against a local server. Plain `http` is allowed to
 `localhost`, `127.0.0.1` and `[::1]` only (`quench_net`'s rule); an app bundle on Apple platforms also needs ATS's
 `NSAllowsLocalNetworking` for it ([Network](net.md)).
 
 `settingsToJson()` and `settingsFromJson()` save and read everything but the key (and extra headers whose names look
-secret), for a game's settings file.
+secret), for a game's settings file. A save without `maxTokensField` or `reasoningEffort` (0.19.0's) keeps the
+values of the preset it is read onto; `maxTokensField` is read only as one of the two names.
+
+### OpenAI's own API
+
+What the OpenAI preset sends rests on OpenAI's documentation as read on 2026-11-14:
+
+- "Create chat completion" (API reference, <https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create>):
+  `max_tokens` "is now deprecated in favor of `max_completion_tokens`" and is not compatible with the reasoning
+  models; `max_completion_tokens` bounds the visible and the reasoning tokens. `reasoning_effort` (default
+  `medium`) takes `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, "not all reasoning models support
+  every value". The page says nothing about function tools and the effort.
+- "GPT-6 Luna" (model page, <https://developers.openai.com/api/docs/models/gpt-6-luna>): its effort is `none`,
+  `low`, `medium` (the default), `high`, `xhigh` or `max`; chat completions are supported, and "Chat Completions
+  supports function calling only with `reasoning_effort` set to `none`".
+- "Reasoning models" (guide, <https://developers.openai.com/api/docs/guides/reasoning>): the efforts are
+  model-dependent; GPT-6 Astra and GPT-6.1 Sol take no function calling on chat completions at all (the Responses
+  API is recommended), and Astra answers `none` with HTTP 400.
+
+So the preset sends the token limit as `max_completion_tokens` and `reasoning_effort: "none"`: GPT-6 Luna then
+takes the game's tools on chat completions without thinking first (no reasoning tokens). A game that chooses
+another effort for a model without tools may set `reasoningEffort`; one that names a model without reasoning keeps
+working too: OpenAI's older models (`gpt-4.1-mini`) answer `reasoning_effort` with HTTP 400 ("Unrecognized request
+argument supplied: reasoning_effort", seen on 2026-11-14, not in the documentation), and the assistant then sends
+the round once more without it and leaves it out of that model's later requests (one log line: `round 1:
+gpt-4.1-mini does not take reasoning_effort: sent again without it`). A 400 that refuses the effort's value (Luna's
+"Function tools with reasoning_effort are not supported ... set reasoning_effort to 'none'") is a failure as
+before. Models that take no tools on chat completions (Astra, Sol) would need the Responses API, which the
+assistant does not speak (`LiveSession`'s backend does).
+
+Run on the Mac on 2026-11-14 with `quench-assistant-check --provider openai --max-tokens 400` and the question
+"What is the power balance? Then send walker one to its nearest energy cell.": `gpt-6-luna` called `get_status`
+(round 1, 2283 ms), `order_collect {"unit":"Walker 1","item":"E7"}` (1313 ms) and answered "The power balance is
+12 kW, and Walker 1 is on its way to collect E7." (1402 ms), 917 + 62 tokens (OpenAI's answers carry no cost). The
+same preset without `reasoning_effort` (0.19.0's request) got HTTP 400: "Function tools with reasoning_effort are
+not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set
+reasoning_effort to 'none'." The OpenRouter preset, unchanged, with `--max-tokens 400`: the same two tool calls and
+answer in 1180, 839 and 776 ms, 2037 + 208 tokens, $0.000308. The OpenAI preset with `--chat-model gpt-4.1-mini`
+and "What is the power balance?": the first request got the 400 above (972 ms), the round went again without
+`reasoning_effort` (783 ms, `get_status`), the answer came in round 2 (877 ms), 364 + 28 tokens.
 
 ## Tools and MCP
 
@@ -223,6 +265,16 @@ on AWS", a 7048-token prompt whose system prompt had the marker): the first answ
 `Failure{kind, status, message}`; the message is readable for a player or a log, with the provider's own words when it
 sent them (`{"error":{"message"}}`, OpenRouter's `metadata.raw`), at most 300 characters, never the key.
 
+**Key material in a provider's words** (since 0.19.1). A provider that refuses a key echoes it, masked with its
+prefix and last four characters (OpenAI: `Incorrect API key provided: sk-or-v1****…****abcd. You can find your API
+key at ...`) or whole. Every text that came from a provider (an HTTP error body or message, a stream's error chunk,
+a transport's message, a live session's `error` event, a close reason) goes through one function, `redact(text,
+key)` (`net::scrubSecrets()`), before it is logged, put into a `Failure`, an `Event`, a `LiveEvent` or
+`lastServerError()`, or handed to the game: the configured key wherever it appears, every `sk-` token masked or
+whole, and every `Bearer` token become `<key>` (`the provider refused the API key (HTTP 401): Incorrect API key
+provided: <key>. You can find ...`). Before 0.19.1, `redact()` replaced only the whole configured key, with
+`[key]`, so a masked echo reached the log and the failure as it was.
+
 | Kind | When |
 |---|---|
 | `BadKey` | HTTP 401 |
@@ -249,18 +301,22 @@ results), the player's words, the tools' names, descriptions and schemas and thi
 answer's text. The key goes in the `Authorization` header of each request. The log (category `assistant`, beside
 `quench_net`'s line per request) has counts, statuses, tool names, tokens, cost and milliseconds, never the key, the
 player's words, the answer or a tool's arguments or result. The key is kept in `settings()` only; it is not in
-`settingsToJson()`, `historyJson()` or a `Failure`'s message (`redact()` takes it out of a provider's message that
-echoes it).
+`settingsToJson()`, `historyJson()` or a `Failure`'s message: every text a provider sent is scrubbed before it is
+logged, kept or handed on, the key itself, any `sk-` token (masked or whole) and any `Bearer` token replaced by
+`<key>` ([Errors](#errors)). What is not scrubbed: the model's answers and transcripts (the player's and the
+model's words, never logged), which a provider writes but which do not carry the request's key.
 
 ## The manual check
 
-`build/release/examples/assistant_check/quench-assistant-check "TEXT" [--speak] [--transcribe] [--wav FILE]
-[--chat-model M] [--no-stream]` (macOS, a command line program without a window): one typed turn with two invented
+`build/release/examples/assistant_check/quench-assistant-check "TEXT" [--provider openrouter|openai] [--speak]
+[--transcribe] [--wav FILE] [--chat-model M] [--no-stream] [--max-tokens N] [--reasoning-effort E]` (macOS, a
+command line program without a window; `--reasoning-effort ""` sends none): one typed turn with two invented
 tools of a test colony (`get_status`, `order_collect`), optionally the answer spoken (`--speak`) and that speech
 transcribed back (`--transcribe`), or a voice turn from a 16 kHz WAV file (`--wav`); it prints each stage with its
 milliseconds, the text as it streams, the tool calls and their results, the answer and the counters. The key comes
-from the environment variable `OPENROUTER_API_KEY` only. It sends requests to OpenRouter and costs a little; no
-automated check runs it.
+from the environment variable `OPENROUTER_API_KEY` only (`OPENAI_API_KEY` with `--provider openai`). It sends
+requests to the provider and costs a little; no automated check runs it. Its runs against OpenAI's API:
+[OpenAI's own API](#openais-own-api).
 
 Run on the Mac on 2026-11-13 through NSURLSession (OpenRouter preset, `anthropic/claude-haiku-5.5`,
 `openai/whisper-large-v3-turbo`, `elevenlabs/eleven-v4-turbo`):
@@ -304,6 +360,14 @@ rounds of the default limit.
 - HTTP failures (401, 402, 403, 404, 400, 429, 500, 503, streamed and not), a timeout, no network, a mid-stream error,
   a URL the HTTPS rule refuses, missing settings; the key in no log line, error, saved history or saved settings
   (searched in the captured log), and no player words or answers in the log;
+- key material in a provider's words (`ScrubTests.cpp`, since 0.19.1): `net::scrubSecrets()`'s patterns (masked and
+  whole `sk-` tokens, quotes and brackets around them, words that only contain `sk-`, `Bearer` in any case, the
+  configured key without `sk-`, idempotence); a 401 of chat, transcription and speech and a mid-stream error
+  quoting the key and an `Authorization` header, each with the key masked and whole: no `sk-` and no key in any
+  log line, failure, event or the history;
+- the token limit's name and `reasoning_effort` per preset (OpenAI's `max_completion_tokens` and `none`,
+  OpenRouter's body byte for byte as 0.19.0's), their save, and a model that refuses `reasoning_effort` as an
+  unknown argument (sent again once without it, and its later requests without it; a refused value fails);
 - transcription bodies (JSON with base64, multipart with its parts and the file's bytes), speech bodies (prefix, voice,
   format, speed), PCM answers (rate and channels from the `Content-Type`, the settings' rate without one) and an MP3
   answer (the audio tests' tone, decoded to the decoder's length and rate), a voice turn's states and counters,
@@ -324,6 +388,7 @@ path, WebRTC, is not there), an MCP transport (above), OAuth sign-in
 (OpenRouter's PKCE flow), keeping the key (in the system's keychain or anywhere else: the game decides, and should
 not put it in a save), any UI, recording and playback (the app's), voice activity detection, streaming speech
 playback while it is generated, the Responses API, images, a queue of turns, async tool handlers (a handler returns
-its result at once), retries on 429 or 5xx. Not run: the web build against a real provider (CORS was measured as
-allowed by OpenRouter, the fetch backend only ran against the test page's server), OpenAI's own API, a local server,
-iOS (neither the Simulator nor an iPhone), Windows and Linux (no network backend there yet).
+its result at once), retries on 429 or 5xx (the one retry is the round sent again without `reasoning_effort`). Not run: the web build
+against a real provider (CORS was measured as allowed by OpenRouter, the fetch backend only ran against the test
+page's server), OpenAI's transcription and speech, a local server, iOS (neither the Simulator nor an iPhone),
+Windows and Linux (no network backend there yet).

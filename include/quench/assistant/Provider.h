@@ -3,7 +3,8 @@
 // The provider an assistant talks to (docs/assistant.md, "Settings"): an OpenAI-compatible API (OpenRouter, OpenAI's
 // own, a local server) chosen by settings only, and the errors its answers map to. The API key lives in memory only:
 // nothing in this module writes it to a log line, an error message, a saved conversation or a settings file
-// (settingsToJson leaves it out, redact() takes it out of a provider's own messages).
+// (settingsToJson leaves it out; every text a provider sent, before it is logged or kept in a Failure or an event,
+// goes through redact(), which takes out the key and anything that looks like one).
 
 #include <quench/core/Json.h>
 #include <quench/net/Http.h>
@@ -54,8 +55,15 @@ struct ProviderSettings {
     bool streamChat = true;        // server-sent events: the text arrives as it is written
     bool streamUsage = true;       // stream_options.include_usage (OpenAI needs it for usage in a stream)
     bool parallelToolCalls = true; // parallel_tool_calls
-    int maxTokens = 0;             // max_tokens of an answer; 0: not sent
-    double temperature = -1.0;     // below 0: not sent
+    int maxTokens = 0;             // the token limit of an answer; 0: not sent
+    // The name the token limit is sent under: "max_tokens" (OpenRouter, most local servers) or
+    // "max_completion_tokens" (OpenAI's own API: there max_tokens is deprecated and refused by reasoning models).
+    std::string maxTokensField = "max_tokens";
+    // reasoning_effort of a chat request ("none", "minimal", "low", "medium", "high", "xhigh", "max"; which ones a
+    // model takes is the model's); empty: not sent. OpenAI's reasoning models take function tools on chat
+    // completions only with "none" (docs/assistant.md, "OpenAI's own API").
+    std::string reasoningEffort;
+    double temperature = -1.0; // below 0: not sent
 
     // Sent with every request (OpenRouter's HTTP-Referer and X-Title name an app on its dashboard). A header
     // whose name looks secret (net::isSecretHeader) is never logged either.
@@ -70,7 +78,8 @@ struct ProviderSettings {
 
 // OpenRouter (https://openrouter.ai/api/v1): JSON transcription, PCM speech, the models measured on 2026-11-13.
 ProviderSettings openRouterPreset();
-// OpenAI's own API (https://api.openai.com/v1): multipart transcription. Its model names are not verified here.
+// OpenAI's own API (https://api.openai.com/v1): multipart transcription; the token limit as max_completion_tokens and
+// reasoning_effort "none", so that the chat model takes the game's tools (docs/assistant.md, "OpenAI's own API").
 ProviderSettings openAiPreset();
 // A local OpenAI-compatible server (http://localhost is allowed without TLS); no key, multipart transcription, the
 // models left for the game to name.
@@ -81,7 +90,9 @@ ProviderSettings localPreset(std::string baseUrl = "http://localhost:8080/v1");
 json::Value settingsToJson(const ProviderSettings& settings);
 ProviderSettings settingsFromJson(const json::Value& value, ProviderSettings base = openRouterPreset());
 
-// `text` with every occurrence of `key` replaced by "[key]" (nothing when the key is shorter than 4 bytes).
+// A provider's text scrubbed of key material (net::scrubSecrets): `key` itself (at least 4 bytes), every "sk-" token,
+// masked or whole, and every "Bearer <token>" become "<key>". Every provider text the module logs, puts in a Failure,
+// an event or an error passes through it.
 std::string redact(std::string_view text, std::string_view key);
 
 enum class ErrorKind : std::uint8_t {

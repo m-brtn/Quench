@@ -343,7 +343,14 @@ void Assistant::sendChat() {
     };
     ChatOptions options;
     if (m_limits.answerOnLastRound && m_round >= roundLimit()) options.toolChoice = ToolChoice::None;
-    net::Request request = buildChatRequest(m_settings, messages(), m_tools.chatTools(), options);
+    net::Request request;
+    if (!m_settings.reasoningEffort.empty() && m_noEffortModel == m_settings.chatModel) {
+        ProviderSettings without = m_settings;
+        without.reasoningEffort.clear();
+        request = buildChatRequest(without, messages(), m_tools.chatTools(), options);
+    } else {
+        request = buildChatRequest(m_settings, messages(), m_tools.chatTools(), options);
+    }
     setState(State::Thinking);
     m_stageStart = now();
     sendRequest(std::move(request), {
@@ -371,6 +378,17 @@ void Assistant::chatDone(const net::Response& r) {
         }
     }
     Failure f = failureFromResponse(r, m_errorBody, m_settings.apiKey);
+    if (refusedEffort(f)) {
+        // Seen on 2026-11-14: OpenAI's models without reasoning answer reasoning_effort with HTTP 400
+        // ("Unrecognized request argument supplied: reasoning_effort"). The round is sent once more without it, and
+        // this model's later requests leave it out.
+        log::info(kLog, "round {}: {} does not take reasoning_effort: sent again without it", m_round,
+                  m_settings.chatModel);
+        m_noEffortModel = m_settings.chatModel;
+        --m_round;
+        sendChat();
+        return;
+    }
     ++m_stats.rounds;
     if (!f.failed()) {
         m_parser->finish();
@@ -434,6 +452,18 @@ void Assistant::chatDone(const net::Response& r) {
     } else {
         finishOperation();
     }
+}
+
+bool Assistant::refusedEffort(const Failure& f) const {
+    if (f.kind != ErrorKind::BadRequest || m_settings.reasoningEffort.empty() ||
+        m_noEffortModel == m_settings.chatModel)
+        return false;
+    // The parameter named as unknown, not refused for a value: "Function tools with reasoning_effort are not
+    // supported ... set reasoning_effort to 'none'" is a value the game chose, and sending none of it would not help.
+    for (const char* said : {"argument supplied: reasoning_effort", "Unsupported parameter: 'reasoning_effort'",
+                             "Unknown parameter: 'reasoning_effort'"})
+        if (f.message.find(said) != std::string::npos) return true;
+    return false;
 }
 
 void Assistant::announceTool() {

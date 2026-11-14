@@ -225,6 +225,7 @@ private:
     double now() const;
     bool sendRequest(net::Request request, net::Handlers handlers);
     void announceTool();
+    bool refusedEffort(const Failure& failure) const; // a 400 that names reasoning_effort as an unknown parameter
 
     std::unique_ptr<net::Client> m_ownClient;
     net::Client* m_client = nullptr;
@@ -248,6 +249,9 @@ private:
     int m_status = 0;             // its HTTP status, once the headers came
     bool m_inUpdate = false;
     std::string m_errorBody; // an error status's body as it streams
+    // The chat model that refused reasoning_effort as an unknown parameter (a model without reasoning, such as
+    // OpenAI's gpt-4.1-mini): its requests are sent without it (docs/assistant.md, "OpenAI's own API").
+    std::string m_noEffortModel;
     std::unique_ptr<ChatStreamParser> m_parser;
     double m_opStart = 0.0;
     double m_stageStart = 0.0;

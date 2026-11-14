@@ -760,6 +760,10 @@ void onRoverArrived(const std::string& rover, const std::string& cell) {
 // The history: m_assistant.limits().historyTokens (6000 estimated tokens, 3 characters each), the oldest turns first;
 // event turns 3 turns old keep only their first line and answer. stats().usage.cachedTokens: the provider's cache;
 // settings().cacheMarker = true for Anthropic's models (they cache only from a marker).
+// settings().maxTokens is sent as settings().maxTokensField (the OpenAI preset: max_completion_tokens) and
+// settings().reasoningEffort as reasoning_effort (the OpenAI preset: "none", so gpt-6-luna takes the tools; a model
+// that does not know it gets the round again without it). Failure messages, events and the engine's log lines have
+// key material scrubbed ("<key>"); assistant::redact(text, key) does the same for the game's own lines.
 // Each frame: m_assistant.state() (assistant::stateName), toolName(), partialText(), answer(), failure().message;
 // takeSpeech() once it is ready: mono float samples at their sampleRate, for a game-generated source.
 ```

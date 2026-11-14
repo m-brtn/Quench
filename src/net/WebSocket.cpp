@@ -195,7 +195,7 @@ void WebSocket::finish(ErrorKind error, std::string message, int code, std::stri
     m_end.error = error;
     m_end.message = detail::redactText(std::move(message), m_request.url);
     m_end.closeCode = code;
-    m_end.closeReason = std::move(reason);
+    m_end.closeReason = scrubSecrets(reason); // the server's words, logged below and handed to the game
     m_end.byServer = byServer;
     m_end.status = status;
     m_end.seconds = std::max(0.0, now() - m_start);

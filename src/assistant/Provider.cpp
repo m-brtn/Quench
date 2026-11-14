@@ -33,6 +33,11 @@ ProviderSettings openAiPreset() {
     s.name = "openai";
     s.baseUrl = "https://api.openai.com/v1";
     s.chatModel = "gpt-6-luna";
+    // OpenAI's documentation, read on 2026-11-14 (docs/assistant.md, "OpenAI's own API"): max_tokens is deprecated
+    // and not compatible with reasoning models; GPT-6 Luna's chat completions take function tools only with
+    // reasoning_effort "none".
+    s.maxTokensField = "max_completion_tokens";
+    s.reasoningEffort = "none";
     s.transcriptionModel = "whisper-1";
     s.speechModel = "gpt-4o-mini-tts";
     s.voice = "alloy";
@@ -75,6 +80,8 @@ json::Value settingsToJson(const ProviderSettings& s) {
     o["streamUsage"] = json::Value::makeBool(s.streamUsage);
     o["parallelToolCalls"] = json::Value::makeBool(s.parallelToolCalls);
     o["maxTokens"] = json::Value::makeNumber(s.maxTokens);
+    o["maxTokensField"] = json::Value::makeString(s.maxTokensField);
+    o["reasoningEffort"] = json::Value::makeString(s.reasoningEffort);
     o["temperature"] = json::Value::makeNumber(s.temperature);
     o["cacheMarker"] = json::Value::makeBool(s.cacheMarker);
     // Extra headers only when their names do not look secret: a secret one belongs with the key.
@@ -102,6 +109,11 @@ ProviderSettings settingsFromJson(const json::Value& v, ProviderSettings s) {
     str("speechPrefix", s.speechPrefix);
     str("speechInstructions", s.speechInstructions);
     str("language", s.language);
+    str("reasoningEffort", s.reasoningEffort);
+    if (v["maxTokensField"].type == json::Value::Type::String &&
+        (v["maxTokensField"].string == "max_tokens" || v["maxTokensField"].string == "max_completion_tokens")) {
+        s.maxTokensField = v["maxTokensField"].string;
+    }
     num("speechSpeed", s.speechSpeed);
     num("chatTimeout", s.chatTimeout);
     num("transcriptionTimeout", s.transcriptionTimeout);
@@ -133,14 +145,7 @@ ProviderSettings settingsFromJson(const json::Value& v, ProviderSettings s) {
     return s;
 }
 
-std::string redact(std::string_view text, std::string_view key) {
-    std::string out(text);
-    if (key.size() < 4) return out;
-    for (std::size_t at = out.find(key); at != std::string::npos; at = out.find(key, at + 5)) {
-        out.replace(at, key.size(), "[key]");
-    }
-    return out;
-}
+std::string redact(std::string_view text, std::string_view key) { return net::scrubSecrets(text, key); }
 
 const char* errorKindName(ErrorKind kind) {
     switch (kind) {

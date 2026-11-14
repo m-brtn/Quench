@@ -72,7 +72,8 @@ Result<RedirectHeaders> checkRedirect(std::string_view from, std::string_view to
 // body) and the headers (checkRedirect).
 Result<Request> redirectRequest(const Request& from, int status, std::string_view location, bool allowInsecure);
 
-// `text` with every occurrence of the URL's query string replaced by "?...", so that it can be logged.
+// `text` scrubbed of key material (scrubSecrets) and with every occurrence of the URL's query string replaced by
+// "...", so that it can be logged.
 std::string redactText(std::string text, std::string_view url);
 // "name\nvalue\n..." (the backends' header blocks) to headers, and back.
 Headers parseHeaderBlock(std::string_view block);

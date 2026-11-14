@@ -62,7 +62,16 @@ deferred files, whose work also finishes in a call the app makes once a frame on
 - **The log** (category `net`, one line per request at its end) shows the method, the host and path, the status, the
   bytes and the milliseconds (`net: POST openrouter.ai/api/v1/chat/completions: 200, 5123 bytes, 2400 ms`), never a
   header's value, a body or the query string; error messages from a backend have the URL's query string replaced
-  by `...` before they are logged or put into `Response::message`. `net::logUrl()` is the form shown.
+  by `...` and key material scrubbed (`net::scrubSecrets()`, below) before they are logged or put into
+  `Response::message`. `net::logUrl()` is the form shown.
+- **`net::scrubSecrets(text, key)`** (since 0.19.1) is the one function every text that came from a server passes
+  through before the engine logs it, keeps it or hands it to the game: it replaces with `<key>` the configured
+  `key` wherever it appears (when it has at least 4 bytes), every token that starts with `sk-` (not inside a word:
+  `risk-free` stays) up to the next whitespace, quote or closing bracket, masked with asterisks or whole (a
+  provider's echo of a refused key, `Incorrect API key provided: sk-or-v1****…****abcd.`; a sentence's trailing `.`,
+  `,`, `;`, `:`, `!` or `?` stays), and the token after `Bearer ` (any case). It is idempotent. `quench_net` itself
+  calls it without a key on backends' error messages and on a WebSocket's close reason; `quench_assistant` calls it
+  with the player's key (`assistant::redact()`).
 - **Redirects** are followed (at most 5). A redirect's target must pass the HTTPS rule too, and https never continues
   over plain http. To another origin (scheme, host or port), the secret headers stay behind
   (`net::isSecretHeader()`: Authorization, Proxy-Authorization, Cookie, Set-Cookie and names with key, token, secret,
@@ -158,7 +167,8 @@ m_ws.sendText(json);  m_ws.sendBinary(bytes);  m_ws.ping();  m_ws.close(1000, "b
   for tests; `net::checkWebSocketUrl()`); no `user:password@`. **The log** (category `net`): the host and path, the
   open time, the close code, the counts and the milliseconds (`net: ws api.openai.com/v1/live/sessions: closed by
   the client with 1000, 3 messages in (444 bytes), 2 out (1397 bytes), 15360 ms`), never a header's value, a message
-  or the query string.
+  or the query string; the close reason a server sends is scrubbed (`net::scrubSecrets()`) before it is logged or
+  put into `WsEnd::closeReason`.
 - **Backends**: `nsurlsession` on macOS and iOS (`src/net/AppleWebSocket.m`, `.cpp`): an ephemeral NSURLSession per
   `WebSocket` (no cookies, cache or stored credentials), an `NSURLSessionWebSocketTask` per connection made from a
   request with the headers, its delegate on a serial background queue that only queues events for `update()`. The

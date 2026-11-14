@@ -64,6 +64,20 @@ ErrorKind kindOfStartError(const std::string& code, const std::string& type) {
     return ErrorKind::BadRequest;
 }
 
+// Every string in `v` (keys stay) through redact().
+void scrubStrings(json::Value& v, std::string_view key) {
+    switch (v.type) {
+    case json::Value::Type::String: v.string = redact(v.string, key); break;
+    case json::Value::Type::Array:
+        for (json::Value& item : v.array) scrubStrings(item, key);
+        break;
+    case json::Value::Type::Object:
+        for (auto& [name, item] : v.object) scrubStrings(item, key);
+        break;
+    default: break;
+    }
+}
+
 } // namespace
 
 const char* liveStateName(LiveState state) {
@@ -390,7 +404,17 @@ void LiveSession::onMessage(const net::WsMessage& message) {
         log::warning(kLog, "live: a message that is not a JSON object ({} bytes)", message.data.size());
         return;
     }
-    if (m_tap) m_tap(*event);
+    if (m_tap) {
+        // The tap gets the server's words scrubbed like everything else (an error event can echo the key); output
+        // audio is base64, which has no '-', and is passed as it is.
+        if ((*event)["type"].stringOr("") == "session.output_audio.delta") {
+            m_tap(*event);
+        } else {
+            json::Value copy = *event;
+            scrubStrings(copy, m_settings.apiKey);
+            m_tap(copy);
+        }
+    }
     handleEvent(*event);
 }
 
@@ -488,8 +512,9 @@ void LiveSession::handleEvent(const json::Value& e) {
     } else if (type == "error") {
         const json::Value& err = e["error"];
         const std::string code = err["code"].stringOr("");
-        const std::string message = redact(err["message"].stringOr(""), m_settings.apiKey);
-        m_lastServerError = code.empty() ? message : code + ": " + message;
+        const std::string message = err["message"].stringOr("");
+        // The server's words, scrubbed once: they go to the log, lastServerError(), an event and a failure.
+        m_lastServerError = redact(code.empty() ? message : code + ": " + message, m_settings.apiKey);
         m_stats.serverErrors += 1;
         if (!m_sessionStarted && m_state == LiveState::Starting) {
             // Before session.started the session cannot run (a refused model, a bad setting): it fails here.

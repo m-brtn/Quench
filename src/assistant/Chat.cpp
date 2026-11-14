@@ -356,7 +356,10 @@ net::Request buildChatRequest(const ProviderSettings& s, const json::Value& mess
         so.object["include_usage"] = json::Value::makeBool(true);
         o["stream_options"] = std::move(so);
     }
-    if (s.maxTokens > 0) o["max_tokens"] = json::Value::makeNumber(s.maxTokens);
+    if (s.maxTokens > 0)
+        o[s.maxTokensField.empty() ? std::string("max_tokens") : s.maxTokensField] =
+            json::Value::makeNumber(s.maxTokens);
+    if (!s.reasoningEffort.empty()) o["reasoning_effort"] = json::Value::makeString(s.reasoningEffort);
     if (s.temperature >= 0.0) o["temperature"] = json::Value::makeNumber(s.temperature);
 
     net::Request r;
