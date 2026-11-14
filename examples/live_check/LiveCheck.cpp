@@ -7,11 +7,15 @@
 // answer's audio goes to a WAV file. The key comes from the environment variable OPENAI_API_KEY only and is never
 // printed. Never run by the automated checks: a session costs money for every second it is open.
 //
+// The session's instructions are an English text that asks for English; --russian swaps in a Russian one that asks
+// for Russian, and --instructions TEXT replaces them with TEXT in either mode (it wins over --russian).
+//
 //   OPENAI_API_KEY=... build/release/examples/live_check/quench-live-check --wav question.wav
-//       [--barge-in FILE] [--barge-after SECONDS | --barge-after-delegation SECONDS] [--russian] [--out DIR]
-//       [--max-seconds 30] [--voice V]
+//       [--barge-in FILE] [--barge-after SECONDS | --barge-after-delegation SECONDS] [--russian]
+//       [--instructions TEXT] [--out DIR] [--max-seconds 30] [--voice V]
 //       [--backend-model M]
 //   OPENAI_API_KEY=... build/release/examples/live_check/quench-live-check --talk [--gate off|on] [--seconds 60]
+//       [--russian] [--instructions TEXT]
 //       a person talks through the Mac's default microphone and output (Talk.cpp; opens the real microphone)
 //
 // A question can be made with macOS's speech synthesis, for example:
@@ -85,6 +89,7 @@ int main(int argc, char** argv) {
     double bargeAfter = 1.5, maxSeconds = 30.0;
     double bargeAfterDelegation = -1.0; // >= 0: the barge-in that long after the delegation ended instead
     bool russian = false;
+    std::string instructions; // not empty: replaces the session's instructions
     bool talk = false, gate = false;
     double talkSeconds = 60.0;
     for (int i = 1; i < argc; ++i) {
@@ -108,10 +113,19 @@ int main(int argc, char** argv) {
             backendModel = value();
         else if (arg == "--russian")
             russian = true;
+        else if (arg == "--instructions")
+            instructions = value();
+        else if (arg == "--talk")
+            talk = true;
+        else if (arg == "--gate")
+            gate = value() == "on";
+        else if (arg == "--seconds")
+            talkSeconds = std::atof(value().c_str());
         else {
-            std::printf("usage: %s --wav FILE [--barge-in FILE] [--barge-after S] [--russian] [--out DIR] "
-                        "[--max-seconds S] [--voice V] [--backend-model M]\n       %s --talk [--gate off|on] "
-                        "[--seconds N] [--russian]\nThe key comes from OPENAI_API_KEY. "
+            std::printf("usage: %s --wav FILE [--barge-in FILE] [--barge-after S] [--russian] [--instructions TEXT] "
+                        "[--out DIR] [--max-seconds S] [--voice V] [--backend-model M]\n       %s --talk "
+                        "[--gate off|on] [--seconds N] [--russian] [--instructions TEXT]\nThe key comes from "
+                        "OPENAI_API_KEY. --instructions replaces the session's instructions (over --russian). "
                         "Opens a GPT-Live session (billed per second).\n",
                         argv[0], argv[0]);
             return arg == "--help" || arg == "-h" ? 0 : 2;
@@ -130,6 +144,7 @@ int main(int argc, char** argv) {
                                               "язык."
                                             : "You are the onboard computer of a small research station. Speak calmly "
                                               "and briefly. Speak English unless the player asks to switch.";
+        if (!instructions.empty()) s.settings().instructions = instructions;
         s.settings().backendInstructions = "You operate a test station through its tools. Look up the state with "
                                            "get_status before answering questions about it.";
         addTools(s);
@@ -165,6 +180,7 @@ int main(int argc, char** argv) {
                                 "другой язык."
                               : "You are the onboard computer of a small research station. Speak calmly and briefly, "
                                 "in one or two sentences. Speak English unless the player asks to switch.";
+    if (!instructions.empty()) st.instructions = instructions;
     st.backendInstructions = "You operate a test station through its tools. Look up the state with get_status before "
                              "answering questions about it. Report an action as done only after its tool confirms "
                              "it. Answer in one short sentence.";

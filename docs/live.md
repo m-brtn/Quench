@@ -149,10 +149,16 @@ over the answer; it prints every stage with its milliseconds and writes the answ
 ```sh
 say -v Samantha -o question.wav --file-format=WAVE --data-format=LEI16@24000 "Station, what is our power level?"
 OPENAI_API_KEY=... build/release/examples/live_check/quench-live-check --wav question.wav --out /tmp
-#   [--russian] [--barge-in other.wav --barge-after-delegation 1.5] [--max-seconds 30]
+#   [--russian] [--instructions TEXT] [--barge-in other.wav --barge-after-delegation 1.5] [--max-seconds 30]
 ```
 
-`--talk [--gate off|on] [--seconds 60] [--russian]` is for a person in a terminal (never run by the checks or by
+`--russian` swaps the English instructions (which ask for English) for Russian ones; `--instructions TEXT` replaces
+them in either mode and wins over `--russian`. GPT-Live has no language setting: the language follows the
+instructions and the speaker (2026-11-14, four sessions: an English instruction "Always answer in the language the
+player has just spoken." gave Russian, English and German answers to questions in those languages, and the Russian
+question was answered in Russian also without any sentence about language).
+
+`--talk [--gate off|on] [--seconds 60] [--russian] [--instructions TEXT]` is for a person in a terminal (never run by the checks or by
 agents): the Mac's default microphone in the streaming mode into the session, its audio through a `VoiceStream` on
 the default output, no window (miniaudio's devices and the AVFoundation permission need none; the first time the
 prompt is the terminal's). It prints the state, both transcripts (the station's own words in the player's transcript
